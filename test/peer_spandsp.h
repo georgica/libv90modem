@@ -18,6 +18,9 @@ typedef struct {
 
 void sp_v8call_start(unsigned mods, int pcm, int send_ci);
 void sp_v8call_tick(int16_t rx, int16_t *tx);
+/* spandsp as the answering modem: tone 0 = ANSam (V.8), 1 = ANS (V.25);
+ * then sp_v8call_tick / _result / _stop as for the caller */
+void sp_v8ans_start(unsigned mods, int pcm, int tone);
 const sp_v8_result *sp_v8call_result(void);
 void sp_v8call_stop(void);
 

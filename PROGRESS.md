@@ -76,3 +76,84 @@ They test the answerer and are a reference for behaviour, not code to ship.
   yet written refused with `V90M_ENOTSUP`); end reasons for the caller (no
   answer tone, no JM, no common mode); the V.42 endpoint's role from the
   modem's; rate ceilings defined as transmit / receive for both roles.
+
+## C1: V.8 on the calling side (2026-11-17)
+
+- `modem/anstone`: the calling modem's answer tone detector, fixed point.
+  2100 Hz brought to baseband in blocks of 5 ms; a block is tone when its
+  2100 Hz component holds half of its power and is above -43 dBm0 (three
+  quarters of it, for ANSam's troughs); the 15 Hz part of the envelope over
+  windows of 200 ms (three periods): above 0.12 of the mean ANSam (V.8 7.2:
+  0.2), below 0.06 ANS (V.25); two windows that agree decide. A block where
+  the phase reversed is bridged with the one before it.
+- `modem/v8orig`: V.8 8.1 for the call DCE: optional CI (ON 3 sequences,
+  OFF 1 s; the tone is listened for in the OFF periods), ANS -> no CM (7.2),
+  ANSam -> Te (1 s by default, 0.5 s at least) -> CM on V.21(L) until two
+  identical JM on V.21(H) -> CJ at the next octet boundary -> 75 ms.
+  Results: OK, ANS, no tone (10 s), no JM (5 s of CM), no common mode.
+- Each test was seen failing first against a stub (anstone: 35 of 45
+  checks failed; v8orig: 40 of 53).
+
+Test output (`test/test_anstone.c`, `test/test_v8orig.c`, `test/interop_v8orig_spandsp.c`):
+
+```
+ANSam, the library's own transmitter (modem/ansam)
+  peak 5602, reversals 0: ANSam at 0.400 s
+  peak 5602, reversals 1: ANSam at 0.400 s
+  peak  223, reversals 0: ANSam at 0.400 s
+  peak  223, reversals 1: ANSam at 0.400 s
+ANSam and ANS, written here from V.8 7.2 and V.25
+  ANSam -12 dBm0, reversals                                  ANSam at 0.400 s
+  ANSam -12 dBm0, no reversals                               ANSam at 0.400 s
+  ANSam -42 dBm0                                             ANSam at 0.400 s
+  ANSam 0 dBm0                                               ANSam at 0.400 s
+  ANSam 10 Hz high (a carrier shift on the line)             ANSam at 0.400 s
+  ANSam 10 Hz low                                            ANSam at 0.400 s
+  ANSam -30 dBm0 in noise 12 dB below                        ANSam at 0.400 s
+  ANSam at the narrowest envelope V.8 allows (0.81..1.19)    ANSam at 0.400 s
+  ANSam starting off the block grid                          ANSam at 0.398 s
+  ANS -12 dBm0, reversals (V.25)                             ANS at 0.400 s
+  ANS -12 dBm0, no reversals                                 ANS at 0.400 s
+  ANS -40 dBm0                                               ANS at 0.400 s
+  ANS -30 dBm0 in noise 12 dB below                          ANS at 0.400 s
+  ANS with a level step and a phase jump (V.8 7.2 NOTE 1)    ANS at 0.800 s
+  ANSam with the same transient                              ANSam at 0.400 s
+ANS is never taken for ANSam, wherever its reversals fall
+  24 starting offsets: 0 not ANS
+not an answer tone
+  ANSam at -50 dBm0, below the floor                         nothing at -1.000 s
+  1800 Hz with the same modulation                           nothing at -1.000 s
+  2250 Hz (a V.22bis answerer's unscrambled ones)            nothing at -1.000 s
+  white noise at -20 dBm0                                    nothing at -1.000 s
+  dial tone 350 + 440 Hz: nothing; 500 + 1300 + some 2100 Hz: nothing
+anstone: 45 checks, 0 failures
+V.8 calling side against the library's answering side
+  clean line                                   result 1, tone ANSam at 0.910 s, CM from 1.910 s, CJ at 3.177 s, done 3.277 s; selected 3; answerer: result 1, selected 3
+  10 dB loss, echoes, noise, 2 Hz, 100 ppm     result 1, tone ANSam at 0.930 s, CM from 1.930 s, CJ at 3.230 s, done 3.330 s; selected 3; answerer: result 1, selected 3
+  the same with CI, the tone 2.5 s late        result 1, tone ANSam at 3.130 s, CM from 4.130 s, CJ at 5.430 s, done 5.530 s; selected 3; answerer: result 1, selected 3
+PCM: a V.90 / V.92 analogue caller to a digital answerer
+  result 1, selected 100 (V.90 / V.92 is 100), answerer selected 100
+nothing in common: JM with no modulation mode (8.1.2)
+  result 5, answerer result 1
+a pre-V.8 answerer: ANS (V.25), so no CM (V.8 7.2)
+  result 2, tone ANS at 0.730 s, our transmit before and at it 0
+ANSam but never a JM
+  result 4 after 6.730 s; CM from 1.730 s
+no answer tone at all
+  result 3 after 10.000 s
+v8orig: 53 checks, 0 failures
+  V.34 V.32 V.22 V.21 both ways: result 1, selected 1, JM modes 0x101a; spandsp: ok 1, our CM modes 0xa06, protocol 1
+  V.34 V.32 V.22 V.21 both ways, with CI: result 1, selected 1, JM modes 0x101a; spandsp: ok 1, our CM modes 0xa06, protocol 1
+  V.22bis answerer, noise and echo: result 1, selected 4, JM modes 0x0010; spandsp ok 1
+  V.90 digital answerer: result 1, selected 100, JM pcm 1 0x02; spandsp ok 1, our pcm 1
+  ANS answerer: result 2, tone 1, CM at 0
+interop_v8orig_spandsp: 26 checks, 0 failures
+```
+
+The answering side of spandsp repeats in JM the modes of the CM it received;
+its application is to keep only what it has itself when CM is reported
+(V8_STATUS_V8_OFFERED). `test/peer_spandsp.c` does that now; before, a
+V.22bis-only spandsp answered our V.34 offer with V.34.
+
+Not tried yet: a real modem answering (that needs a call to go on after V.8:
+C2).

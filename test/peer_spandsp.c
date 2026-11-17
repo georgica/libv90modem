@@ -5,9 +5,15 @@
 static v8_state_t *sp;
 static sp_v8_result res;
 
+static unsigned ans_mods;      /* answering: what spandsp itself offers */
+static int answering;
+
 static void handler(void *u, v8_parms_t *r)
 {
     (void)u;
+    /* answering: spandsp builds JM from the CM it received; the application
+     * is to keep only what it has itself, here when CM is reported */
+    if (answering && r->status == V8_STATUS_V8_OFFERED) { r->modulations &= ans_mods; return; }
     if (r->status != V8_STATUS_V8_CALL && r->status != V8_STATUS_FAILED) return;
     res.final = 1; res.ok = (r->status == V8_STATUS_V8_CALL);
     res.call_function = r->call_function; res.modulations = (int)r->modulations;
@@ -27,6 +33,7 @@ void sp_v8call_start(unsigned mods, int pcm, int send_ci)
     p.pcm_modem_availability = pcm;
     p.pstn_access = 0; p.nsf = -1; p.t66 = -1;
     memset(&res, 0, sizeof res);
+    answering = 0;
     sp = v8_init(NULL, 1, &p, handler, NULL);
     span_log_set_level(v8_get_logging_state(sp), 0);
 }
@@ -35,6 +42,25 @@ void sp_v8call_tick(int16_t rx, int16_t *tx)
 {
     v8_rx(sp, &rx, 1);
     if (v8_tx(sp, tx, 1) < 1) *tx = 0;
+}
+
+/* spandsp as the ANSWERING modem: tone 0 = ANSam with phase reversals,
+ * 1 = ANS with phase reversals (a V.25 answerer, no V.8) */
+void sp_v8ans_start(unsigned mods, int pcm, int tone)
+{
+    v8_parms_t p;
+    memset(&p, 0, sizeof p);
+    p.modem_connect_tone = tone ? MODEM_CONNECT_TONES_ANS_PR : MODEM_CONNECT_TONES_ANSAM_PR;
+    p.send_ci = 0; p.v92 = -1;
+    p.call_function = V8_CALL_V_SERIES;
+    p.modulations = mods;
+    p.protocol = V8_PROTOCOL_LAPM_V42;
+    p.pcm_modem_availability = pcm;
+    p.pstn_access = pcm ? 4 : 0; p.nsf = -1; p.t66 = -1;
+    memset(&res, 0, sizeof res);
+    answering = 1; ans_mods = mods;
+    sp = v8_init(NULL, 0, &p, handler, NULL);
+    span_log_set_level(v8_get_logging_state(sp), 0);
 }
 
 const sp_v8_result *sp_v8call_result(void) { return &res; }
