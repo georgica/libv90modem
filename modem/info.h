@@ -13,6 +13,7 @@
 #define INFO0A_BITS 49
 #define INFO1D_BITS 109
 #define INFO1A_BITS 70
+#define INFO1C_BITS 109                     /* V.34 Table 15: the length of INFO1d */
 #define INFO_HDR_BITS 12                    /* fill + sync */
 #define INFO_PAYLOAD(total) ((total) - 16)  /* information + CRC */
 #define INFO_MAX_BITS 109
@@ -53,6 +54,11 @@ typedef struct {
     int16_t freq_off;                   /* 0.02 Hz units, -512 = ignore */
 } info1d_t;
 
+/* V.34 INFO1c (Table 15), what the call modem's receiver asks of the
+ * answer modem's transmitter: the same fields in the same places as V.90's
+ * INFO1d */
+typedef info1d_t info1c_t;
+
 typedef struct {
     int     v90;                        /* 1: Table 10, 0: Table 11 (V.34) */
     uint8_t md_len;
@@ -88,11 +94,13 @@ int info1d_build(const info1d_t *i, uint8_t *bits);
  * sr[5].hi_carrier. */
 int info1d_build_v92(const info1d_t *i, int pcm_up, uint8_t *bits);
 int info1a_build(const info1a_t *i, uint8_t *bits);
+int info1c_build(const info1c_t *i, uint8_t *bits);
 
 /* parse a payload (the bits after the sync). CRC is not checked here. */
 void info0d_parse(const uint8_t *payload, info0_t *i);
 void info0a_parse(const uint8_t *payload, info0_t *i);
 void info1d_parse(const uint8_t *payload, info1d_t *i);
 void info1a_parse(const uint8_t *payload, info1a_t *i);
+void info1c_parse(const uint8_t *payload, info1c_t *i);
 
 #endif

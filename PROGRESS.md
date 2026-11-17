@@ -272,3 +272,65 @@ Shortcuts: after the 3.1 s wait the V.22bis caller keeps its 456 ms of
 silence before S1; AA starts 600 ms after ANS was recognised; R2 is judged
 from the receiver's error on R1; the canceller freezes after TRN, as in the
 answerer.
+
+## C4: V.34 on the calling side (2026-11-17)
+
+- `modem/p2call`: V.34 Phase 2 for the call modem (11.2.1.1) with the
+  recovery rules of 11.2.2.1 (it begins a retrain itself when Tone A does
+  not come under its L2; when INFO1a does not come it answers the
+  answerer's Tone A as a retrain, or begins one 2 s later), and a real INFO1c
+  decision from the probe and INFO0a: a symbol rate only where both ends
+  allow it; the carrier by the band SNR per carrier (p2ans's 36 dB floor);
+  the pre-emphasis filter that best evens the measured tone levels (if it
+  beats none by 0.2 dB); the maximum rate by p2ans's formula, capped by
+  Table 8, by 12 without 1664-point support and by our ceiling; power
+  reduction from the empty probe bins' distortion. INFO1c (Table 15) has a
+  builder and parser of its own in `modem/info.c`.
+- `modem/v34orig`: the mirror of `v34ans` (left untouched): p2call, then
+  `v34dx` in the call role, data; retrains from either side (70 ms, Phase 2
+  without INFO0; at most 4 in a row without data), rate renegotiation,
+  cleardown both ways, carrier loss.
+- `modem/orig.c`: JM item 1 -> V.34; separate receive rate; rate ceilings,
+  echo delay and law in its configuration. The API takes V90M_MOD_V34 for
+  the calling role; v90m_cleardown works for a V.34 caller.
+- Written by a subagent from the Recommendation with `sim/p2c` and
+  `sim/v34peer` as behaviour references; reviewed here; the counts below
+  rerun here.
+
+Seen failing first against stubs: p2call 156 of 247, orig_v34 22 of 27,
+api 3 of 128. Now (my run, fresh build): p2call 247 checks, orig_v34 366,
+api 162 (124 before: V.34 calling cases added; two old checks that expected
+V90M_ENOTSUP for V.34 now expect a call), 0 failures; every other line of
+`make check` identical to C3; bench-v90 8e3136e9 six times; on qemu-arm the
+output of test_p2call, test_orig_v34 and test_api is byte-identical to the
+host's.
+
+| line (caller against the library's answerer) | we send | we receive |
+|---|---|---|
+| good (no codec, 20 ms each way, echoes, noise 50 dB down, +30 ppm) | 31200 | 28800 |
+| realistic (mu-law, -100 ppm, +-1 Hz, mild loop) | 24000 | 24000 |
+| noise 30 dB down | 21600 | 19200 |
+| noise 22 dB down | 12000 | 12000 |
+| long loop (our pre-emphasis request helps what we receive) | 12000 | 24000 |
+| ceilings 14400 out / 9600 in | 14400 | 9600 |
+
+Retrain from either side: data again after 5.9 s, error-free. Rate
+renegotiation from each side (16800, then 14400), error-free. Cleardown about
+260 ms from either side. The answerer gone: "lost" after 550 ms in data mode,
+"no carrier" after 16 s (one retrain) in training. The round trip measured
+by the caller equals the answerer's on the good line.
+
+No independent V.34 answerer exists to test against (spandsp has no V.34).
+
+Findings, not explained or not changed:
+- No 33600 anywhere: 31200 is the engine's best in every test; what the
+  library's answerer sends tops out at 28800 because its V.34 always sends
+  G.711 codec values, even on a linear line.
+- With 3 % far echo plus noise and clock offset the answerer receives only
+  16800 from our caller; `sim/v34peer` (the answerer's own test caller) gets
+  the same, so it is the answerer's receiver.
+- INFOMARKSa is not detected; a missing INFO1a falls back to a retrain.
+- The INFO1c decision runs in one sample tick: about 1.5 M ARM instructions
+  (counted under qemu), once per Phase 2. On the box that is one late block.
+- The API counts the caller's V.34 renegotiations; it still does not count
+  the answering side's own (as in Phase 1).

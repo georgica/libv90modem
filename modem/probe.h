@@ -41,6 +41,10 @@ int  proberx_level(const proberx_t *r, int m);
 /* signal-to-noise ratio at tone m in units of 0.1 dB (noise = the part of the
  * bin that does not repeat from block to block), clipped to 0..600 */
 int  proberx_snr(const proberx_t *r, int m);
+/* the repeating part of bin m (a tone, or in an empty bin the distortion
+ * that repeats with the probing signal), |X|^2 units per block; 0 with
+ * fewer than 3 blocks */
+int64_t proberx_power(const proberx_t *r, int m);
 /* level at 150*m Hz in the most recent complete block alone (tone detection
  * under the echo of our own probing signal, which never falls in a gap) */
 int  proberx_last(const proberx_t *r, int m);

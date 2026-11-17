@@ -53,17 +53,17 @@ typedef struct v90m v90m_t;
 typedef enum {
     V90M_ROLE_ANSWER = 0,       /* the called modem */
     V90M_ROLE_ORIGINATE = 1     /* the calling modem, from the moment the far end has answered
-                                   (dialling and call progress are the owner's). So far V.21,
-                                   V.22, V.22bis and V.32bis (after V.8, or V.32bis Annex A after
-                                   a pre-V.8 answer tone): other modulations in cfg.modulations
-                                   give V90M_ENOTSUP */
+                                   (dialling and call progress are the owner's): V.21, V.22,
+                                   V.22bis, V.32bis and V.34 (after V.8, or V.32bis Annex A after
+                                   a pre-V.8 answer tone). V.90 / V.92 (the digital modem's) in
+                                   cfg.modulations give V90M_ENOTSUP */
 } v90m_role;
 
 /* modulations offered (v90m_cfg.modulations) */
 #define V90M_MOD_V21     0x0001u
 #define V90M_MOD_V22     0x0002u     /* V.22 and V.22bis */
 #define V90M_MOD_V32BIS  0x0004u     /* V.32bis and V.32 (both roles) */
-#define V90M_MOD_V34     0x0008u
+#define V90M_MOD_V34     0x0008u     /* (both roles) */
 #define V90M_MOD_V90     0x0010u     /* the digital (server) side: answering only */
 #define V90M_MOD_V92     0x0020u     /* with V90M_MOD_V90: PCM upstream on offer */
 
@@ -147,11 +147,12 @@ int      v90m_process_lin_rx(v90m_t *m, const int16_t *rx, uint8_t *tx, size_t n
 int      v90m_process_linear(v90m_t *m, const int16_t *rx, int16_t *tx, size_t n);
 
 /* Ask for a retrain (data mode of V.92, V.90, V.34, V.32bis; originating:
- * V.22bis at 2400 bit/s, V.32bis). V90M_OK or V90M_ESTATE. */
+ * V.22bis at 2400 bit/s, V.32bis, V.34). V90M_OK or V90M_ESTATE. */
 int      v90m_retrain(v90m_t *m);
 /* Hang up, telling the far modem where the modulation has a way to (V.90
- * 9.7, V.92 9.11): V90M_OK when that has begun (V90M_EV_ENDED follows within
- * a fraction of a second); V90M_ESTATE when there is nothing to send: stop. */
+ * 9.7, V.92 9.11, V.34 11.7, either role): V90M_OK when that has begun
+ * (V90M_EV_ENDED follows within a fraction of a second); V90M_ESTATE when
+ * there is nothing to send: stop. */
 int      v90m_cleardown(v90m_t *m);
 
 typedef enum {
@@ -186,7 +187,7 @@ typedef struct {
     int        rtd;             /* round-trip delay measured in the handshake, samples; -1 = none */
     int        echo_delay;      /* in use (configured or measured), samples; -1 = none */
     unsigned   retrains;        /* begun, this call */
-    unsigned   renegotiations;  /* rate renegotiations (V.90, V.92), this call */
+    unsigned   renegotiations;  /* rate renegotiations (V.90, V.92; V.34 calling), this call */
 } v90m_stats;
 void     v90m_get_stats(const v90m_t *m, v90m_stats *st);
 

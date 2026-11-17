@@ -50,11 +50,11 @@ struct v90m {
 
 #define ORIGINATING(m) ((m)->cfg.role == V90M_ROLE_ORIGINATE)
 #define V90M_MOD_ALL  (V90M_MOD_V21 | V90M_MOD_V22 | V90M_MOD_V32BIS | V90M_MOD_V34 | V90M_MOD_V90 | V90M_MOD_V92)
-/* what the calling side can do so far */
-#define V90M_MOD_ORIG (V90M_MOD_V21 | V90M_MOD_V22 | V90M_MOD_V32BIS)
+/* what the calling side can do: all but the digital side's V.90 / V.92 */
+#define V90M_MOD_ORIG (V90M_MOD_V21 | V90M_MOD_V22 | V90M_MOD_V32BIS | V90M_MOD_V34)
 
 typedef char v90m_check_orig[(SAME(ORIG_MOD_V21, ANS_MOD_V21) && SAME(ORIG_MOD_V22, ANS_MOD_V22) && SAME(ORIG_MOD_V22BIS, ANS_MOD_V22BIS)
-                              && SAME(ORIG_MOD_V32BIS, ANS_MOD_V32BIS)) ? 1 : -1];
+                              && SAME(ORIG_MOD_V32BIS, ANS_MOD_V32BIS) && SAME(ORIG_MOD_V34, ANS_MOD_V34)) ? 1 : -1];
 
 void v90m_cfg_default(v90m_cfg *cfg)
 {
@@ -108,6 +108,11 @@ int v90m_reset(v90m_t *m, const v90m_cfg *cfg)
         /* V.32bis: one rate both ways, the lower ceiling */
         oc.max_bps = cfg->max_down_bps;
         if (cfg->max_up_bps > 0 && (oc.max_bps <= 0 || cfg->max_up_bps < oc.max_bps)) oc.max_bps = cfg->max_up_bps;
+        /* V.34: max_down caps what we send, max_up what we receive (as answering) */
+        oc.max_tx_bps = cfg->max_down_bps; oc.max_rx_bps = cfg->max_up_bps;
+        oc.echo_delay = cfg->echo_delay;
+        /* V.34 sends codec values, as the answering side's does */
+        oc.law = cfg->alaw ? 2 : 1;
         oc.getbit = cfg->getbit;
         oc.putbit = cfg->putbit;
         oc.user = cfg->user;
@@ -169,15 +174,14 @@ static int connected_of(const v90m_t *m) { return ORIGINATING(m) ? m->u.o.connec
 static int moving_of(const v90m_t *m) { return ORIGINATING(m) ? orig_moving(&m->u.o) : answer_moving(&m->u.a); }
 static int retraining_of(const v90m_t *m)
 {
-    if (ORIGINATING(m))
-        return (m->u.o.phase == ORIG_V22 && m->u.o.v22.retraining) || (m->u.o.phase == ORIG_V32 && m->u.o.v32.retraining);
+    if (ORIGINATING(m)) return orig_retraining(&m->u.o);
     return m->u.a.retraining;
 }
 static int mod_of(const v90m_t *m) { return ORIGINATING(m) ? m->u.o.modulation : m->u.a.modulation; }
 static int tx_of(const v90m_t *m) { return ORIGINATING(m) ? m->u.o.bitrate : m->u.a.bitrate; }
 static int rx_of(const v90m_t *m)
 {
-    if (ORIGINATING(m)) return m->u.o.bitrate;
+    if (ORIGINATING(m)) return m->u.o.rx_bitrate > 0 ? m->u.o.rx_bitrate : m->u.o.bitrate;
     return m->u.a.rx_bitrate > 0 ? m->u.a.rx_bitrate : m->u.a.bitrate;
 }
 
@@ -191,6 +195,7 @@ static v90m_end end_of(const v90m_t *m)
         case ORIG_END_NO_COMMON: return V90M_END_NO_COMMON;
         case ORIG_END_LOST: return V90M_END_LOST;
         case ORIG_END_CLEARDOWN: return V90M_END_CLEARDOWN_FAR;
+        case ORIG_END_HANGUP: return V90M_END_CLEARDOWN_OURS;
         default: return V90M_END_FAILED;
         }
     } else {
@@ -280,7 +285,8 @@ int v90m_retrain(v90m_t *m)
 
 int v90m_cleardown(v90m_t *m)
 {
-    if (ORIGINATING(m)) return V90M_ESTATE;        /* V.21, V.22bis and V.32bis have none in data mode */
+    /* V.34 (11.7); V.21, V.22bis and V.32bis have none in data mode */
+    if (ORIGINATING(m)) return orig_cleardown(&m->u.o) == 0 ? V90M_OK : V90M_ESTATE;
     return answer_cleardown(&m->u.a) == 0 ? V90M_OK : V90M_ESTATE;
 }
 
@@ -308,7 +314,7 @@ void v90m_get_stats(const v90m_t *m, v90m_stats *st)
         st->snr_db10 = orig_snr_db10(o);
         st->rtd = orig_rtd(o);
         st->echo_delay = -1;
-        st->retrains = o->phase == ORIG_V22 ? (unsigned)o->v22.retrains : o->phase == ORIG_V32 ? (unsigned)o->v32.retrains : 0;
+        st->retrains = (unsigned)orig_retrains(o);
     } else {
         const answer_t *a = &m->u.a;
         st->snr_db10 = a->connected ? answer_snr_db10(a) : -1;

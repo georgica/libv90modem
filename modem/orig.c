@@ -16,6 +16,7 @@
 #define CD_LOSS_MS       400
 #define V21_CD_AMP       110   /* carrier detect, peak amplitude (about -43 dBm0) */
 #define V32_TOTAL_MS   60000   /* give up on a V.32bis start-up (its every wait has its own time-out too) */
+#define V34_TOTAL_MS   60000   /* the same for V.34, retrains in Phase 2 included */
 /* V.32bis Annex A (see orig.h) */
 #define AA_AFTER_MS      600   /* AA once ANS has been heard 1 s: v8orig needed 400 ms or more of it to tell ANS */
 #define ANS_OFF_MS        40   /* ANS is over when away this long (the gaps of its phase reversals are shorter) */
@@ -45,6 +46,34 @@ static void start_v32(orig_t *o)
     for (i = 1; i < V32_NRATES; i++) if (o->cfg.max_bps <= 0 || rate[i] <= o->cfg.max_bps) c.rates |= 1u << i;
     c.getbit = o->cfg.getbit; c.putbit = o->cfg.putbit; c.user = o->cfg.user;
     v32_init_call(&o->v32, &c);
+}
+
+/* V.34 (11.2.1.1.1): INFO0c now, the 75 ms of silence after CJ being over */
+static void start_v34(orig_t *o)
+{
+    v34orig_cfg c;
+    memset(&c, 0, sizeof c);
+    c.level = o->cfg.level;
+    c.law = o->cfg.law;
+    c.io_delay = o->cfg.echo_delay;
+    c.max_tx_rate = o->cfg.max_tx_bps; c.max_rx_rate = o->cfg.max_rx_bps;
+    c.getbit = o->cfg.getbit; c.putbit = o->cfg.putbit; c.user = o->cfg.user;
+    v34orig_init(&o->v34, &c);
+    o->phase = ORIG_V34; o->t = 0;
+}
+
+/* why a V.34 call ended */
+static int v34_end(const orig_t *o)
+{
+    switch (o->v34.error) {
+    case V34O_ERR_CLEARDOWN: return ORIG_END_CLEARDOWN;
+    case V34O_ERR_HANGUP: return ORIG_END_HANGUP;
+    case V34O_ERR_PHASE2:
+        /* nothing to offer in INFO1c, or an INFO1a we cannot follow */
+        if (!o->connected && o->v34.p2.error == P2L_ERR_NO_RATE) return ORIG_END_NO_COMMON;
+        return o->connected ? ORIG_END_LOST : ORIG_END_NO_CARRIER;
+    default: return o->connected ? ORIG_END_LOST : ORIG_END_NO_CARRIER;
+    }
 }
 
 /* why a V.32bis call ended */
@@ -193,7 +222,8 @@ int16_t orig_tick(orig_t *o, int16_t rx)
             break;
         case V8O_RES_OK:
             o->used_v8 = 1;
-            if (o->v8.selected == 3 && (o->cfg.modes & V8_MOD_V32)) {
+            if (o->v8.selected == 1 && (o->cfg.modes & V8_MOD_V34)) start_v34(o);
+            else if (o->v8.selected == 3 && (o->cfg.modes & V8_MOD_V32)) {
                 start_v32(o);
                 o->aa = 1;
                 o->phase = ORIG_V32; o->t = 0;
@@ -287,6 +317,16 @@ int16_t orig_tick(orig_t *o, int16_t rx)
         } else if (o->t > MS(V32_TOTAL_MS)) fail(o, ORIG_END_NO_CARRIER);
         break;
 
+    case ORIG_V34:
+        tx = v34orig_tick(&o->v34, rx);
+        if (o->v34.state == V34O_ENDED) { fail(o, v34_end(o)); tx = 0; break; }   /* carrier loss included */
+        if (o->v34.state == V34O_DATA) {
+            /* also after a rate renegotiation or a retrain */
+            o->connected = 1; o->modulation = ORIG_MOD_V34;
+            o->bitrate = v34orig_tx_rate(&o->v34); o->rx_bitrate = v34orig_rx_rate(&o->v34);
+        } else if (!o->connected && o->t > MS(V34_TOTAL_MS)) fail(o, ORIG_END_NO_CARRIER);
+        break;
+
     case ORIG_FAILED:
         break;
     }
@@ -298,7 +338,24 @@ int orig_moving(const orig_t *o)
     if (!o->connected) return 0;
     if (o->phase == ORIG_V22) return !o->v22.retraining && o->v22.tx_ready && o->v22.rx_ready;
     if (o->phase == ORIG_V32) return !o->v32.retraining && o->v32.tx_ready && o->v32.rx_ready;
+    if (o->phase == ORIG_V34) return o->v34.state == V34O_DATA;
     return 1;
+}
+
+int orig_retraining(const orig_t *o)
+{
+    if (o->phase == ORIG_V22) return o->v22.retraining != 0;
+    if (o->phase == ORIG_V32) return o->v32.retraining != 0;
+    if (o->phase == ORIG_V34) return o->connected && o->v34.state != V34O_DATA && o->v34.state != V34O_RENEG;
+    return 0;
+}
+
+int orig_retrains(const orig_t *o)
+{
+    if (o->phase == ORIG_V22) return o->v22.retrains;
+    if (o->phase == ORIG_V32) return o->v32.retrains;
+    if (o->phase == ORIG_V34 || (o->phase == ORIG_FAILED && o->modulation == ORIG_MOD_V34)) return o->v34.retrains;
+    return 0;
 }
 
 int orig_snr_db10(const orig_t *o)
@@ -308,6 +365,12 @@ int orig_snr_db10(const orig_t *o)
     static const int v32_pw[V32_NRATES] = { 40, 40, 40, 42, 41 };
     int v;
     if (!o->connected) return -1;
+    if (o->phase == ORIG_V34) {
+        /* as answer_snr_db10: |e|^2 / |d|^2 in Q16; in data mode only */
+        if (o->v34.state != V34O_DATA) return -1;
+        v = probe_db10(65536, o->v34.dx.rx.mse > 0 ? o->v34.dx.rx.mse : 1);
+        return v < 0 ? 0 : v > 600 ? 600 : v;
+    }
     if (o->phase == ORIG_V32) {
         if (o->v32.rate < 0 || o->v32.retraining) return -1;
         /* 4096 = one unit squared, as v32rx_t.mse */
@@ -323,6 +386,7 @@ int orig_snr_db10(const orig_t *o)
 
 int orig_retrain(orig_t *o)
 {
+    if (o->phase == ORIG_V34) return o->connected ? v34orig_retrain(&o->v34) : -1;
     if (o->phase == ORIG_V32) return o->connected ? v32_retrain(&o->v32) : -1;
     if (o->phase != ORIG_V22 || !o->connected || o->v22.bitrate != 2400) return -1;
     v22m_retrain(&o->v22);
@@ -331,6 +395,18 @@ int orig_retrain(orig_t *o)
 
 int orig_rtd(const orig_t *o)
 {
+    if (o->phase == ORIG_V34) return o->connected ? o->v34.p2.rtd : -1;
     if (o->phase != ORIG_V32 || !o->connected || o->v32.nt <= 0) return -1;
     return o->v32.nt - 64 * 10 / 3;
 }
+
+int orig_renegotiate(orig_t *o, int max_rx_bps)
+{
+    return o->phase == ORIG_V34 && o->connected ? v34orig_renegotiate(&o->v34, max_rx_bps) : -1;
+}
+
+int orig_cleardown(orig_t *o)
+{
+    return o->phase == ORIG_V34 && o->connected ? v34orig_cleardown(&o->v34) : -1;
+}
+

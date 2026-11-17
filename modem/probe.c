@@ -129,6 +129,14 @@ int proberx_level(const proberx_t *r, int m)
     return (int)isqrt64(s / 12800);
 }
 
+int64_t proberx_power(const proberx_t *r, int m)
+{
+    int64_t s, t;
+    if (r->nblk < 3 || m < 1 || m > PROBE_NBIN) return 0;
+    powers(r, m, &s, &t);
+    return s > 0 ? s : 0;
+}
+
 int proberx_last(const proberx_t *r, int m)
 {
     if (r->nblk < 1 || m < 1 || m > PROBE_NBIN) return 0;
