@@ -2,6 +2,9 @@
  * and call progress are the owner's) to data mode:
  *
  *   V.8 (modem/v8orig: answer tone, CI, CM / JM / CJ) ->
+ *     JM selects PCM (V.90)     -> the V.90 analogue modem (modem/v90a: Phase 2
+ *                                  to data mode, cleardown; PCM downstream,
+ *                                  V.34 upstream)
  *     JM selects V.34           -> V.34 call modem (modem/v34orig: Phase 2,
  *                                  Phases 3 and 4, data, retrains, rate
  *                                  renegotiation, cleardown)
@@ -34,6 +37,7 @@
 #include "v21.h"
 #include "async.h"
 #include "v34orig.h"
+#include "v90a.h"
 #include "../v32/v32.h"
 
 typedef enum {
@@ -43,7 +47,8 @@ typedef enum {
     ORIG_V21,         /* V.21 */
     ORIG_FAILED,
     ORIG_V32,         /* V.32bis / V.32, start-up and data */
-    ORIG_V34          /* V.34, Phase 2 to data mode, its retrains included */
+    ORIG_V34,         /* V.34, Phase 2 to data mode, its retrains included */
+    ORIG_V90          /* V.90 analogue modem, Phase 2 to data mode */
 } orig_phase;
 
 /* the modulation of a connection: the numbers of ANS_MOD_* (modem/answer.h) */
@@ -53,6 +58,11 @@ typedef enum {
 #define ORIG_MOD_V22BIS 3
 #define ORIG_MOD_V34    5
 #define ORIG_MOD_V32BIS 6
+#define ORIG_MOD_V90    4     /* PCM downstream (received), V.34 upstream (sent) */
+
+/* orig_cfg.modes: V.90 as the analogue modem, next to the V8_MOD_* bits
+ * (the number of ANS_MODE_V90) */
+#define ORIG_MODE_V90 0x10000u
 
 /* why a call ended (orig_t.end) */
 #define ORIG_END_NONE       0
@@ -72,8 +82,9 @@ typedef struct {
     int           max_tx_bps, max_rx_bps;   /* V.34 ceilings, what we send / receive, bit/s; 0 = none */
     int           echo_delay;   /* V.34: samples from a sample handed out until its echo starts
                                    back (a driver's buffering); -1 = find it in training */
-    int           law;       /* V.34: 1 mu-law, 2 A-law when what we send passes a G.711
-                                codec (only codec values are sent), 0 linear */
+    int           law;       /* V.34 and V.90's upstream: 1 mu-law, 2 A-law when what we send
+                                passes a G.711 codec (only codec values are sent), 0 linear */
+    int           v90_table1; /* tests only: V.90 ignores what its DIL measured (Table 1 levels) */
     v22_getbit_fn getbit;
     v22_putbit_fn putbit;
     void         *user;
@@ -88,6 +99,7 @@ typedef struct {
     v22bis_t   v22;
     v32_t      v32;
     v34orig_t  v34;
+    v90a_t     v90;
     v21mod_t   fmod; v21demod_t fdem; arx_t uart;
     int        fbit; int32_t cd_run; int64_t cd_thresh;
     int16_t    bpf[128]; int bpos;  /* V.21 channel 2 receive band-pass history */

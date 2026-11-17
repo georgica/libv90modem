@@ -15,6 +15,20 @@
  * transmitter can do (p2call_decide). INFO1a, the answerer's choice, gives
  * our transmitter its symbol rate, carrier, filter and power reduction.
  *
+ * V.90 (p2call_init_v90): the analogue modem's Phase 2 of V.90 9.2.2, which
+ * is the V.34 answer modem's procedure with V.90's INFO sequences: INFO0a and
+ * Tone A ... the digital modem's INFO0d and Tone B ... our Tone A reversal
+ * once Tone B is there and Tone A has run 50 ms ... the Tone B reversal (the
+ * round trip, RTDEa) ... ours 40 ms after it at the line, 10 ms more, L1, L2
+ * until Tone B is heard under it (`probing` says when, for an echo
+ * canceller that learns meanwhile: the digital modem is silent) ... Tone A
+ * 50 ms, its reversal, 10 ms, silence ... the Tone B reversal, the digital
+ * modem's L1 and L2 (analysed as for INFO1c) ... Tone A ... INFO1d ...
+ * INFO1a of Table 10 (V.90: UINFO, the MD we will send, the upstream symbol
+ * rate: of 3000 and 3200, the one INFO1d projects most for) ... silence.
+ * Recovery: 9.2.2.2.1 to .3; 9.2.2.2.4 (no INFO1d) ends in P2L_FAILED
+ * (P2L_ERR_INFO1A) rather than a retrain.
+ *
  * Sample-driven: one received sample in, one transmit sample out, 8 kHz.
  * Fixed-point, no allocation. */
 #ifndef V90D_MODEM_P2CALL_H
@@ -31,6 +45,9 @@ typedef struct {
                            and back, samples (a driver's buffering) */
     int sr_mask;        /* symbol rates INFO1c may offer (P2N_SR_*); 0 = 2400, 3000 and 3200 */
     int max_rate;       /* ceiling for the projected answer -> call rate, bit/s; 0 = none */
+    /* V.90 (p2call_init_v90) only */
+    int uinfo;          /* INFO1a bits 25:31 */
+    int md_len;         /* INFO1a bits 18:24: the MD we send in Phase 3, units of 35 ms */
 } p2call_cfg;
 
 typedef enum {
@@ -47,7 +64,17 @@ typedef enum {
     P2L_WAIT_INFO1A,    /* silent; waiting for INFO1a */
     P2L_RT_SILENCE,     /* 11.5.1: 70 ms of silence before Tone B (a retrain begun or answered) */
     P2L_DONE,
-    P2L_FAILED
+    P2L_FAILED,
+    /* V.90 analogue modem (9.2.2) */
+    P2L_A_INFO0,        /* INFO0a, Tone A; waiting for INFO0d, Tone B, then our reversal */
+    P2L_A_WAIT_REV1,    /* waiting for the Tone B reversal */
+    P2L_A_REPLY,        /* timed Tone A reversal, 10 ms more */
+    P2L_A_L1, P2L_A_L2, /* probing signals; L2 until Tone B is heard */
+    P2L_A_TONE50,       /* Tone A 50 ms, its reversal, 10 ms more */
+    P2L_A_WAIT_REV2,    /* silent; waiting for the Tone B reversal */
+    P2L_A_PROBE_RX,     /* receiving L1 / L2 */
+    P2L_A_WAIT_INFO1D,  /* Tone A; waiting for INFO1d */
+    P2L_A_INFO1A        /* sending INFO1a */
 } p2call_state;
 
 enum { P2L_OK = 0,
@@ -91,6 +118,12 @@ typedef struct {
     int          md_len;            /* the answerer's MD, units of 35 ms */
     /* sample times of events as this end saw them (tests) */
     int32_t      t_rev1, t_rev2, t_rev3, t_tone_a2, t_info1a;
+    /* ---- V.90 (p2call_init_v90) ---- */
+    int          v90;
+    info0_t      info0d; int got0d;
+    info1d_t     info1d;            /* as received */
+    info1a_t     info1a_v90;        /* as sent (Table 10) */
+    int32_t      a_rev_line, tone_since, l2_from;
 } p2call_t;
 
 void    p2call_init(p2call_t *p, const p2call_cfg *cfg);
@@ -99,6 +132,11 @@ void    p2call_init(p2call_t *p, const p2call_cfg *cfg);
  * info0a is the answerer's INFO0a of the first Phase 2. */
 void    p2call_init_retrain(p2call_t *p, const p2call_cfg *cfg, const info0_t *info0a);
 int16_t p2call_tick(p2call_t *p, int16_t rx);
+/* V.90 Phase 2, analogue modem (9.2.2): INFO0a at once. In P2L_DONE the
+ * outcome is in sym_idx / sym_rate (the upstream symbol rate), tx_hi_carrier,
+ * tx_preemph, tx_pwr_red (what INFO1d asks of our transmitter at that rate),
+ * rtd (RTDEa), info0d, info1d and info1a_v90. */
+void    p2call_init_v90(p2call_t *p, const p2call_cfg *cfg);
 
 /* The INFO1c decision (Table 15) from snr[], rx_level[], sdr_db10 and the
  * answerer's INFO0a: fills info1c and band_snr[]. Run by p2call_tick when

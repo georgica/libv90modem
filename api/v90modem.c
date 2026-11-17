@@ -50,11 +50,12 @@ struct v90m {
 
 #define ORIGINATING(m) ((m)->cfg.role == V90M_ROLE_ORIGINATE)
 #define V90M_MOD_ALL  (V90M_MOD_V21 | V90M_MOD_V22 | V90M_MOD_V32BIS | V90M_MOD_V34 | V90M_MOD_V90 | V90M_MOD_V92)
-/* what the calling side can do: all but the digital side's V.90 / V.92 */
-#define V90M_MOD_ORIG (V90M_MOD_V21 | V90M_MOD_V22 | V90M_MOD_V32BIS | V90M_MOD_V34)
+/* what the calling side can do: all but V.92 (V.90 as its analogue modem) */
+#define V90M_MOD_ORIG (V90M_MOD_V21 | V90M_MOD_V22 | V90M_MOD_V32BIS | V90M_MOD_V34 | V90M_MOD_V90)
 
 typedef char v90m_check_orig[(SAME(ORIG_MOD_V21, ANS_MOD_V21) && SAME(ORIG_MOD_V22, ANS_MOD_V22) && SAME(ORIG_MOD_V22BIS, ANS_MOD_V22BIS)
-                              && SAME(ORIG_MOD_V32BIS, ANS_MOD_V32BIS) && SAME(ORIG_MOD_V34, ANS_MOD_V34)) ? 1 : -1];
+                              && SAME(ORIG_MOD_V32BIS, ANS_MOD_V32BIS) && SAME(ORIG_MOD_V34, ANS_MOD_V34)
+                              && SAME(ORIG_MOD_V90, ANS_MOD_V90) && SAME(ORIG_MODE_V90, ANS_MODE_V90)) ? 1 : -1];
 
 void v90m_cfg_default(v90m_cfg *cfg)
 {
@@ -108,7 +109,8 @@ int v90m_reset(v90m_t *m, const v90m_cfg *cfg)
         /* V.32bis: one rate both ways, the lower ceiling */
         oc.max_bps = cfg->max_down_bps;
         if (cfg->max_up_bps > 0 && (oc.max_bps <= 0 || cfg->max_up_bps < oc.max_bps)) oc.max_bps = cfg->max_up_bps;
-        /* V.34: max_down caps what we send, max_up what we receive (as answering) */
+        /* V.34: max_down caps what we send, max_up what we receive (as answering);
+         * V.90 likewise: max_down the V.34 upstream, max_up the PCM downstream */
         oc.max_tx_bps = cfg->max_down_bps; oc.max_rx_bps = cfg->max_up_bps;
         oc.echo_delay = cfg->echo_delay;
         /* V.34 sends codec values, as the answering side's does */

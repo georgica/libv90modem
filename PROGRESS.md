@@ -451,3 +451,233 @@ C5-1 verified independently (fresh build, not the agent's):
 - Open: cost (68-79 M ARM instructions per second of line, about twice the
   digital modem's data mode); the equaliser solve (0.87 M) runs within one
   tick; a band-edge loss at nonzero ppm.
+
+## C5-2: the V.90 analogue modem, V.8 to data mode (2026-11-17)
+
+- `modem/p2call`: a V.90 mode (`p2call_init_v90`, 9.2.2). The analogue
+  modem's Phase 2 is V.34's *answer* procedure with V.90's INFO sequences
+  (Tone A out, INFO0a, our L1 / L2 first, INFO1d in, INFO1a of Table 10
+  out), so it is a second set of states inside p2call sharing its helpers
+  (probe analysis, tone under probe, INFO0 builder); the V.34 call path is
+  untouched (its only change: `default:` in the switch). INFO1a: UINFO 90
+  (even: a robbed bit leaves its codeword alone), MD 22 x 35 ms, the
+  upstream symbol rate INFO1d projects most for (3000 / 3200), its carrier,
+  filter and power reduction for our transmitter. Recovery 9.2.2.2.1 to .3;
+  no INFO1d (9.2.2.2.4) ends Phase 2 instead of retraining.
+- `modem/v90dil`: the DIL we ask for (120 segments, Ucodes 0..119, 18
+  symbols each: UINFO + + + then 15 training symbols, SP + + + + - - + - +
+  + - - - + - + - +), its walk, the per-interval / per-Ucode accumulation,
+  the analysis and the CPt / CP design (header comment has the details).
+  The analysis snaps every mean to g x a Table 1 level (a pad or robbed bit
+  still leaves the far codec on some codeword): g from the codeword UINFO
+  arrives as (searched over a 15 dB range, least squares refined), only
+  where the codec's step is >= 32 units. Robbed intervals: those departing
+  from the median of the six at >= 16 of Ucodes 64..127. CP: Sr = 0, ld = 0,
+  one constellation per interval, points from the bottom at d = z sigma,
+  moduli where they cost least power, z raised to the power limit (Table 15
+  less 0.1 dB, 8.5.2's weighted power rounded up), the highest K whose
+  largest z reaches 12 (CPt: 20, K <= 16).
+- `modem/v90adec`: the data mode decoder (5.4 backwards: labels, R0,
+  signs for every Sr without the shaper's filter, see its header).
+- `modem/v90a`: the sequencer (Phases 3, 4, data; renegotiation begun by
+  the digital modem; cleardown both ways; time-outs of 9.3.2 / 9.4.2).
+  Upstream: the V.34 blocks of C4 (`v34mod`, `v34_tmod`, `v34_tx`).
+  Downstream: `v90arx` with the DIL as known symbols (their levels as
+  measured so far), Ri recognised at the 4th symbol of a DIL segment.
+- `modem/orig`: V.8 offers PCM (analogue) with `ORIG_MODE_V90`, JM's
+  V.90 selection starts `v90a` (phase `ORIG_V90`, modulation
+  `ORIG_MOD_V90` = `ANS_MOD_V90`), `bitrate` = our upstream, `rx_bitrate`
+  = the downstream, `orig_snr_db10` (downstream), `orig_rtd` (RTDEa),
+  `orig_cleardown`; `orig_retrain` gives -1. `v90a_t` is a member of its
+  own: `orig_t` is 100744 octets (68280 before), within `V90M_MEM_SIZE`
+  (102400; the API's compile-time check). A union with V.32bis / V.34 would
+  have renamed `orig_t.v32` / `.v34`, which existing tests read.
+- API: the calling role takes `V90M_MOD_V90` (V.92 still `V90M_ENOTSUP`).
+- `v90arx` (C5-1): an optional known-level callback; `v90arx_hold` zeroes
+  the timing loop's phase slew (it went on being applied each output while
+  the loop was held: the DIL's output ran away). Neither changes C5-1's
+  results (test_v90arx 488 checks as before, bench-v90a a3bf6729).
+- Tests: test_v90arx_robust, test_v90adec, test_v90dil, test_p2v90,
+  test_v90a (the sequencer against p2d + p34d, no V.8; time-outs),
+  test_orig_v90 (end to end), test_api (V.90 calling case); the harness
+  `test/v90link.h`. `make bench-v90c`, `make cost-v90c`
+  (tools/rec_v90c.c, rig/bench_v90c.c).
+
+v90arx against hostile line content (C5-1 code; the far end is not
+trusted): (1) the estimator divided by the decided levels' power, which a
+far end sending Ucode 0 alone decays to 0: floored at (L / 8)^2 (and L
+itself at 1); (2) the clock measured on Sd: a tone 20 Hz off 1333 Hz makes
+the tangent huge, the product overflowed int64 and the step came out wild
+or wrapped: the tangent is clamped to 1 and the step to 1000 ppm; (3) the
+timing loop integrated the step without bound: clamped to 1000 ppm, the
+slew to 500 ppm (step + slew > 0 always), and the interpolator makes at
+most 3 outputs per input sample. The other divisors (Cholesky pivots,
+bias, the DFT phase, AGC) were already bounded. Valid signals: test_v90arx
+488 checks as before, bench-v90a a3bf6729 unchanged. The changed lines no
+longer left-shift signed values (multiplied instead).
+
+Choices (where V.90 leaves them open): the echo canceller learns on MD,
+white noise at the transmit level for 770 ms while the digital modem is
+silent (L1 / L2 is a comb of 25 lines and would leave the canceller wrong
+between them); its ERLE at the end of MD is 62..73 dB. DIL as above, four
+passes (>= 8 measurements per interval and Ucode, about 1.1 s); the
+receiver is held through the first pass and learns on the measured levels
+after. CP's margin: d >= 12 sigma (2 Q(6) = 2e-9 for Gaussian noise), sigma^2
+taken as twice what TRN2d shows (data mode shows 2 to 4 dB more error than
+TRN2d with CPt's sparser points: with the TRN2d figure alone the A-law line
+ran at 48000 with about 7 bit errors a second). TRN 1024 T; SCR after
+Ri-bar for 4000 TRN2d symbols while the noise is measured; S, S-bar and CP
+for our cleardown; Rd recognised as two frames of each interval's largest
+point + + + - - - (or the inverse), delivery running two frames late so
+that Rd is never handed on as data.
+
+Seen failing first (against stubs, or the committed code):
+- test_v90arx_robust: part 1 died (SIGFPE, exit 136), part 2 11 of 18
+  (clock -30658 ppm; at 1351 Hz the overflow wrapped it to +21592), part 3
+  1 of 1 (followed a 1500 ppm clock to -1536 ppm). Now 21 checks, 0.
+- test_v90adec 204 of 398; test_v90dil 69 of 210 (391 checks now: a biased
+  measurement case added after the snapping); test_p2v90 47 of 69;
+  test_v90a 38 of 49 (50 now); test_orig_v90 34 of 104 with orig.c as
+  committed (it fell back to V.34); test_api 8 of 167 with the committed
+  api/v90modem.c (its V.90 block skipped), 187 checks now.
+
+`make check` (fresh build): against the baseline taken from HEAD before any
+change, the only differences are the six new lines and the API's:
+
+```
+> v90arx_robust: 21 checks, 0 failures
+> v90adec: 398 checks, 0 failures
+> v90dil: 391 checks, 0 failures
+> p2v90: 69 checks, 0 failures
+> v90a: 50 checks, 0 failures
+> orig_v90: 104 checks, 0 failures
+< api: 162 checks, 0 failures
+> api: 187 checks, 0 failures
+```
+
+bench-v90: transmit hash 8e3136e9, six of six. bench-v90a: a3bf6729, host
+and qemu-arm. bench-v90c: 5a5e5ca7, host and qemu-arm (data mode at the
+recorded sample).
+
+End to end (test_orig_v90; the library's caller with V.8 against the
+library's answerer; downstream through sim/dschan, hybrid echo -16 dB,
+upstream 6 dB loss and -70 dBm0 noise through the network codec; rows
+"Table 1 levels" take Table 1's levels instead of the DIL's, a test
+setting):
+
+```
+  line                                   data ms   down     up SNR dB   rtd  bits down  fail    bits up  fail  robbed
+  2 km,    0 ppm, -75 dBm0                 10225  52000  28800  56.4    46     519987     0     288000     0  000000
+  0 km, +100 ppm, -75 dBm0                 10527  33333  28800  38.5    47     333300     0     288000     0  000000
+  6 km, -100 ppm, -75 dBm0                 10524  46666  28800  51.3    46     466690     0     288000     0  000000
+  4 km,  +50 ppm, -65 dBm0                 10526  40000  28800  45.9    47     399960     0     288000     0  000000
+  2 km,  +30 ppm, 3 dB pad                 10226  44000  28800  51.5    47     439989     0     288000     0  000000
+    ... Table 1 levels                         0      0      0   0.0     0          0     0          0     0  000000
+  2 km,  -30 ppm, 6 dB pad                 10525  40000  28800  49.0    46     400020     0     288000     0  000000
+    ... Table 1 levels                     10225  30666  28800  37.2    46     306682     0     288000     0  000000
+  2 km,  +30 ppm, robbed bit               10526  46666  28800  49.6    47     466655     0     288000     0  000010
+    ... Table 1 levels                     10226  30666  28800  37.1    47     306659     0     288000     0  000001
+  2 km,  +30 ppm, 6 dB pad, robbed bit     10226  42666  28800  48.8    46     426624     0     288000     0  010000
+  2 km,  -50 ppm, A-law                    10224  45333  28800  50.6    46     453356     0     288000     0  000000
+ending a call
+  ours: caller ended 4 after 1223 ms (end 7), answerer phase 3, cleared 1
+  the answerer's: caller ended after 99 ms, end 6
+```
+
+"fail" counts failures of the self-synchronising check over 10 s (each
+wrong bit fails it three times): none anywhere. Without the DIL's levels
+the pads and the robbed bit cost 9..16 kbit/s (the noise TRN2d shows grows
+with the wrong levels and CP follows it), and the 3 dB pad does not
+connect at all; the robbed interval is found in every robbed row (with
+Table 1 levels the analysis still finds it, but the design ignores it).
+"data ms" counts from the start of the call (V.8 about 2 s, Phase 2 about
+2 s, Phase 3 3.8 s, Phase 4 1.4 s). The sequencer test (test_v90a, no V.8,
+2 km, +30 ppm, echo -10 dB): 45333 / 28800, 4 s without an error, the
+time-outs at 1500 ms from Ja (no Sd), 4500 ms from its end (no Jd), 15 s
+from INFO1a (no MP), loss in data mode after 593 ms; renegotiation by the
+digital modem followed (one break of the data stream: 27 check failures,
+none in the 2 s after), cleardown either way.
+
+ARM: every new test's output under qemu-arm is byte-identical to the
+host's (test_v90arx_robust, test_v90adec, test_v90dil, test_p2v90,
+test_v90a, test_orig_v90), and test_api passes under qemu.
+Cost (qemu instruction counts, bench_v90c replaying a recorded call into
+`orig_t` alone; 2 km, our V.34 upstream at 28800, echo -16 dB): data mode
+77.4 M ARM instructions per second of line at 0 ppm (52000 down), 79.8 M at
+100 ppm (46666 down): the C5-1 receiver's 68..79 M plus the V.34 upstream,
+which is small beside it. That is about 65 % of the box's CPU (V34-REPORT:
+39.5 M is 32 %); one call fits, nothing beside it. The longest ticks (the
+four slowest on the host at 100 ppm, each counted alone as the recording
+cut after it less the recording cut before it):
+
+| tick | what | ARM instructions |
+|---|---|---|
+| 8.825 s | end of the DIL: analysis (gain search, snapping) and CPt design | 9.03 M (11.92 M before Table 1 was kept in a local array) |
+| 9.552 s | CP design | 0.87 M (1.21 M before) |
+| 14.151 s | the receiver's equaliser computed again, data mode | 0.87 M |
+| 7.046 s | the receiver's first equaliser, end of TRN1d | 0.84 M |
+
+The DIL tick is 9 M instructions in one sample (about 70 ms of the box's
+CPU): mostly the gain search's 64-bit divisions (41 candidates x 576
+measurements), which ARMv5 does in software. To be spread over ticks (or
+the divisions turned into one reciprocal per candidate) before the box.
+
+Findings:
+- V.8 (C1, unchanged): with the hybrid echo at -10 dB, our own CM sits next
+  to JM, and v8orig demodulates channel 2 without a band-pass (the V.21
+  data path has one, `v21h_bpf.h`): on a 6 km loop and behind a 6 dB pad,
+  whether two identical JMs are decoded depends on how the round trip
+  aligns the echo with JM's bits (4 or more samples of extra upstream delay
+  flipped the 6 km line from pass to "no JM"). At -14 dB and below both
+  pass; the end-to-end test runs at -16 dB. A follow-up for v8orig.
+- The receiver's 16-bit input (v90arx's AGC puts Sd at 4096 RMS) overloads
+  on runs of Ucodes 122..127 (Ucode 127 arrived 9 % low): the DIL leaves
+  out 120..127. A data constellation at -12 dBm0 never wanted them here.
+- The DIL's repetitive patterns bias its means by up to 0.8 % (the
+  equaliser's residual interference with a constant neighbour), which in
+  data mode was 2 to 6 times the noise (rms error 26..69 units with the
+  raw means, 10 with Table 1 levels on a clean line): hence the snapping.
+- Holding the receiver through the whole DIL (1.1 s) lost 0 km / 100 ppm
+  lines (the band edge's alias turns): it learns again after one pass.
+- 0 km at 100 ppm stays C5-1's weak case: 33333, SNR 38 dB.
+- At 50 ppm the receiver's error cycles by about 5 dB over 5 s (the band
+  edge again); CP's 3 dB allowance covers it on the lines tried.
+- Once, with CP designed on TRN2d's noise alone, an A-law call that already
+  had a trickle of bit errors collapsed 14 s into data mode (the clock
+  estimate ran from -50 to -24 ppm); with the allowance it did not happen
+  again on that line, and it was not explained.
+- The test harness's own upstream FIFO (our clock to the network clock)
+  underflowed when it started empty: a dropped sample in our second S made
+  the digital modem miss it. It fills 8 samples before it is read now.
+
+Shortcuts and deviations:
+- No retrains (9.5): `v90a_retrain` refuses; a digital modem's retrain
+  (silence, Tone B) is taken as the downstream lost and ends the call.
+  Phase 2 recovery 9.2.2.2.4 (no INFO1d) ends the call. No INFOMARKSa.
+- No rate renegotiation of our own (9.6.2.1), nor its request for silence
+  (CPs); the digital modem's is followed with the CP of the start-up.
+- 4-point CP / E / SCR only (a Jd asking for 16 points is not honoured).
+- No spectral shaping asked for (Sr = 0, ld = 0); the decoder does all Sr.
+- The DIL is fixed (not adapted to what Phase 2 saw); the CP rms ratio
+  field is sent as 1.0; INFO0a's capabilities are V.34's of C4.
+- Bit 38 of INFO0d (power at the codec or the terminals) is not looked at:
+  8.5.2's power is always computed on Table 1 levels.
+- Echo delay: a fixed reference delay (`echo_delay`), not measured.
+- Tested only in simulation against this library's own answerer.
+
+Follow-ups: retrains (Phase 2 again from Tone A / Tone B); a band-pass in
+v8orig's JM receiver; spreading the receiver's DFE solve (one tick) and the
+DIL analysis / CP design (one tick each) over several ticks; renegotiation
+from our side; 16-point CP; shaping; a real modem.
+
+C5-2 verified independently (fresh build under /home, not the agent's):
+- make check: all 0 failures; against C4 the only differences are the new
+  lines (orig_v90 104, p2v90 69, v90a 50, v90adec 398, v90arx 488,
+  v90arx_robust 21, v90dil 391) and api 162 -> 187.
+- bench-v90: transmit hash 8e3136e9, six of six. bench-v90a (receiver,
+  after the robustness fixes): a3bf6729 as at C5-1.
+- New modem code: no float, no allocation, no mutable statics.
+- Open: worst single tick 9.03 M ARM instructions (end of the DIL, ~70 ms
+  of the box's CPU) must be spread before a real call; data mode ~65 % of
+  the box; no retrains; V.8 JM lost at -10 dB hybrid echo (C1 v8orig has no
+  channel-2 band-pass).

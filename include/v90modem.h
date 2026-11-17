@@ -54,9 +54,14 @@ typedef enum {
     V90M_ROLE_ANSWER = 0,       /* the called modem */
     V90M_ROLE_ORIGINATE = 1     /* the calling modem, from the moment the far end has answered
                                    (dialling and call progress are the owner's): V.21, V.22,
-                                   V.22bis, V.32bis and V.34 (after V.8, or V.32bis Annex A after
-                                   a pre-V.8 answer tone). V.90 / V.92 (the digital modem's) in
-                                   cfg.modulations give V90M_ENOTSUP */
+                                   V.22bis, V.32bis, V.34 and V.90 as its analogue modem (after
+                                   V.8, or V.32bis Annex A after a pre-V.8 answer tone). V.90's
+                                   analogue modem needs the received samples linear
+                                   (v90m_process_linear or _lin_rx: a G.711 decoder on our side
+                                   would bury the PCM downstream in its own quantising noise),
+                                   does no retrain (v90m_retrain gives V90M_ESTATE) and has been
+                                   tried against this library's answerer in simulation only.
+                                   V90M_MOD_V92 gives V90M_ENOTSUP */
 } v90m_role;
 
 /* modulations offered (v90m_cfg.modulations) */

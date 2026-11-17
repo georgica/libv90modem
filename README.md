@@ -22,7 +22,7 @@ recommendations, and has answered real modems there (see the table below).
 | V.22, V.22bis | yes | 1200 / 2400 bit/s, retrain, guard tone |
 | V.32, V.32bis | answering | 4800 to 14400 bit/s |
 | V.34 | answering | Phase 2 to data mode, retrains, rate renegotiation |
-| V.90 | digital (server) side | PCM downstream, V.34 upstream |
+| V.90 | digital (server) side; analogue (client) side: **simulation and own answerer only** | PCM downstream, V.34 upstream; the analogue side measures the DIL (pads, robbed bits), has no retrain |
 | V.92 | digital (server) side | PCM upstream, full start-up only |
 | V.14 | yes | start-stop characters on the synchronous bit pump |
 | V.42 | yes | LAPM, detection phase, start-stop fallback, breaks |
@@ -30,9 +30,10 @@ recommendations, and has answered real modems there (see the table below).
 
 Not implemented:
 
-- The calling (originating) role. `V90M_ROLE_ORIGINATE` is in the API and
-  returns `V90M_ENOTSUP` for now.
-- The analogue (client) side of V.90 and V.92.
+- V.92 in the calling (originating) role: `V90M_ROLE_ORIGINATE` with
+  `V90M_MOD_V92` returns `V90M_ENOTSUP`. (V.21, V.22bis, V.32bis, V.34 and the
+  V.90 analogue modem call; none has been tried against a real modem yet.)
+- The analogue (client) side of V.92; retrains on V.90's analogue side.
 - V.92 quick connect, short Phase 2 and modem on hold.
 - x2 and K56flex, the two 56k schemes from before V.90: not spoken. A modem
   that has nothing newer connects at V.34. (Neither was published; see
@@ -110,7 +111,9 @@ calling; the figures are downstream / upstream bit/s.
 | U.S. Robotics 5686 (56K FAX EXT, V.92) | 5.4.62 | 2026-11-16 | V.90 54666 / 26400; V.92 54666 / 40000 |
 | U.S. Robotics 56K FAX EXT of 1998 (x2, V.90 upgrade) | flash 5.1.4 | 2026-11-16 | V.90 54666 to 56000 / 28800; V.34 28800 when its V.90 start-up failed |
 
-Not tried: any other modem, and the calling side (not written yet).
+Not tried: any other modem, and the calling side against any real modem.
+The V.90 calling side (the analogue modem) has run in simulation only,
+against this library's own answerer (`test/test_orig_v90.c`).
 
 ## Reporting a bug
 

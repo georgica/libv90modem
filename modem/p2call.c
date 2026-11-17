@@ -351,10 +351,14 @@ static void reply_at(p2call_t *p, int32_t line, p2call_state s)
     go(p, s);
 }
 
+static int16_t p2call_tick_v90(p2call_t *p, int16_t x);
+
 int16_t p2call_tick(p2call_t *p, int16_t x)
 {
-    int ev = dpskrx_tick(&p->rx, x);
+    int ev;
     int32_t out;
+    if (p->v90) return p2call_tick_v90(p, x);
+    ev = dpskrx_tick(&p->rx, x);
 
     switch (p->state) {
     case P2L_INFO0:
@@ -513,6 +517,217 @@ int16_t p2call_tick(p2call_t *p, int16_t x)
 
     case P2L_DONE:
     case P2L_FAILED:
+    default:                    /* the V.90 states: p2call_tick_v90 */
+        break;
+    }
+
+    out = dpsktx_tick(&p->tx);
+    if (p->probing) out += probetx_tick(&p->ptx, p->probing == 1);
+    if (out > 32767) out = 32767;
+    if (out < -32768) out = -32768;
+    p->now++; p->t++;
+    return (int16_t)out;
+}
+
+/* ---- V.90 Phase 2, analogue modem (9.2.2) ---- */
+
+#define T_A_INFO0_MS  8000      /* INFO0d and Tone B (none given) */
+#define T_A_REV1_MS   2000      /* 9.2.2.2.2 */
+#define T_A_L2_MS      600      /* 9.2.2.2.3, plus a round trip, from the start of L2 */
+#define T_A_REV2_MS   3000      /* none given: the digital modem's L1 / L2 analysis is <= 660 ms */
+#define T_A_INFO1D_MS 2000      /* 9.2.2.2.4, plus two round trips */
+#define TONE_B_BIN       8      /* 1200 Hz in the probe analyser's 150 Hz bins */
+
+static void send_info0a_v90(p2call_t *p, int ack)
+{
+    send_info0c(p, ack);        /* Table 8/V.90 is Table 14/V.34 */
+    p->tone_since = -1;
+}
+
+void p2call_init_v90(p2call_t *p, const p2call_cfg *cfg)
+{
+    /* 9.2.2.1.1: INFO0a after the 75 ms of silence that end Phase 1, then
+     * Tone A; the digital modem's INFO0d and Tone B are listened for */
+    memset(p, 0, sizeof *p);
+    p->cfg = *cfg;
+    if (!p->cfg.sr_mask) p->cfg.sr_mask = P2N_SR_3000 | P2N_SR_3200;
+    p->v90 = 1;
+    p->state = P2L_A_INFO0; p->error = P2L_OK;
+    dpsktx_init(&p->tx, DPSK_FC_A, cfg->level, 1);
+    dpskrx_init(&p->rx, DPSK_FC_B);
+    dpskrx_expect(&p->rx, INFO_PAYLOAD(INFO0D_BITS));
+    probetx_init(&p->ptx, cfg->level);
+    proberx_init(&p->prx);
+    p->t_rev1 = p->t_rev2 = p->t_rev3 = p->t_tone_a2 = p->t_info1a = -1;
+    send_info0a_v90(p, 0);
+}
+
+/* INFO1d is in: the upstream symbol rate of INFO1a (3000 or 3200, the one
+ * INFO1d projects the higher rate for; 3200 on a tie), and what INFO1d asks
+ * of our transmitter at it. -1 when it offers nothing we can send. */
+static int take_info1d(p2call_t *p)
+{
+    const info1d_t *d = &p->info1d;
+    int k, best = -1;
+    for (k = 3; k <= 4; k++) {
+        if (!((p->cfg.sr_mask >> k) & 1) || d->sr[k].max_rate == 0) continue;
+        if (best < 0 || d->sr[k].max_rate >= d->sr[best].max_rate) best = k;
+    }
+    if (best < 0) return -1;
+    p->sym_idx = best; p->sym_rate = SR[best];
+    p->tx_hi_carrier = d->sr[best].hi_carrier;
+    p->tx_preemph = d->sr[best].preemph > 10 ? 0 : d->sr[best].preemph;
+    p->tx_pwr_red = d->min_pwr_red;
+    p->md_len = d->md_len;
+    memset(&p->info1a_v90, 0, sizeof p->info1a_v90);
+    p->info1a_v90.v90 = 1;
+    p->info1a_v90.md_len = (uint8_t)(p->cfg.md_len & 127);
+    p->info1a_v90.uinfo = (uint8_t)(p->cfg.uinfo & 127);
+    p->info1a_v90.up_sr = (uint8_t)best;
+    p->info1a_v90.down_sr = 6;
+    p->info1a_v90.freq_off = p->info1c.freq_off;
+    return 0;
+}
+
+static int16_t p2call_tick_v90(p2call_t *p, int16_t x)
+{
+    int ev = dpskrx_tick(&p->rx, x);
+    int32_t out;
+
+    switch (p->state) {
+    case P2L_A_INFO0:
+        if (ev & DPSK_EV_FRAME) {
+            int again = p->got0d;
+            info0d_parse(p->rx.frame, &p->info0d);
+            p->got0d = 1;
+            /* a repeated INFO0d without the acknowledge bit: ours was not heard */
+            p->resend = again && !p->info0d.ack;
+        }
+        if (!dpsktx_busy(&p->tx)) {
+            if (p->tone_since < 0) p->tone_since = p->now;
+            if (p->resend || (!p->got0d && p->rx.steady >= MS(50))) {
+                send_info0a_v90(p, p->got0d);           /* 9.2.2.2.1 */
+                p->resend = 0;
+            } else if (p->got0d && p->rx.steady >= TONE_SEEN && p->now - p->tone_since >= MS(50)) {
+                /* 9.2.2.1.3: Tone B, and Tone A for 50 ms: our reversal */
+                dpsktx_reverse(&p->tx);
+                p->a_rev_line = p->now + DPSK_TX_DELAY + p->cfg.io_delay / 2;
+                go(p, P2L_A_WAIT_REV1);
+            }
+        }
+        if (p->t > MS(T_A_INFO0_MS)) fail(p, p->got0d ? P2L_ERR_REV : P2L_ERR_INFO0);
+        break;
+
+    case P2L_A_WAIT_REV1:
+        if (ev & DPSK_EV_FRAME) {                       /* a repeated INFO0d (9.2.2.2.1) */
+            info0d_parse(p->rx.frame, &p->info0d);
+            p->resend = !p->info0d.ack;
+            p->tone_since = p->now;
+            go(p, P2L_A_INFO0);
+        } else if (ev & DPSK_EV_REVERSAL) {
+            /* 9.2.2.1.4, .5: RTDEa, and our reversal 40 ms after theirs at the line */
+            int32_t line = p->now - DPSK_RX_REV_DELAY - (p->cfg.io_delay - p->cfg.io_delay / 2);
+            p->t_rev1 = line;
+            p->rtd = line - p->a_rev_line - TURN;
+            if (p->rtd < 0) p->rtd = 0;
+            p->act_at = line + TURN - DPSK_TX_DELAY - p->cfg.io_delay / 2;
+            go(p, P2L_A_REPLY);
+        } else if (p->t > MS(T_A_REV1_MS)) {
+            /* 9.2.2.2.2: listen for Tone B again, then 9.2.2.1.3 */
+            if (p->restarts >= MAX_RESTARTS) { fail(p, P2L_ERR_REV); break; }
+            p->restarts++;
+            p->tone_since = p->now;
+            go(p, P2L_A_INFO0);
+        }
+        break;
+
+    case P2L_A_REPLY:
+        if (p->now == p->act_at || (p->t == 0 && p->now > p->act_at)) { dpsktx_reverse(&p->tx); p->act_at = p->now; }
+        if (p->t > 0 && p->now == p->act_at + TAIL) dpsktx_off(&p->tx);
+        if (p->t > 0 && p->now == p->act_at + TAIL + DPSK_TX_DELAY) {
+            probetx_init(&p->ptx, p->cfg.level);
+            proberx_init(&p->prx);
+            p->tone_blocks = 0;
+            p->probing = 1;
+            go(p, P2L_A_L1);
+        }
+        break;
+
+    case P2L_A_L1:
+        (void)tone_under_probe(p, x, TONE_B_BIN);
+        if (p->t >= MS(160) - 1) { p->probing = 2; p->tone_blocks = 0; p->l2_from = p->now; go(p, P2L_A_L2); }
+        break;
+
+    case P2L_A_L2:
+        if (tone_under_probe(p, x, TONE_B_BIN)) {
+            /* 9.2.2.1.6: Tone A 50 ms, its reversal, 10 ms more */
+            p->probing = 0;
+            dpsktx_on(&p->tx);
+            go(p, P2L_A_TONE50);
+        } else if (p->t > MS(T_A_L2_MS) + p->rtd) {
+            /* 9.2.2.2.3: Tone A, and 9.2.2.1.3 again */
+            p->probing = 0;
+            if (p->restarts >= MAX_RESTARTS) { fail(p, P2L_ERR_INFO1A); break; }
+            p->restarts++;
+            dpsktx_on(&p->tx);
+            p->tone_since = p->now;
+            go(p, P2L_A_INFO0);
+        }
+        break;
+
+    case P2L_A_TONE50:
+        if (p->t == MS(50) + DPSK_TX_DELAY) { dpsktx_reverse(&p->tx); p->act_at = p->now; }
+        if (p->t == MS(50) + DPSK_TX_DELAY + TAIL) { dpsktx_off(&p->tx); go(p, P2L_A_WAIT_REV2); }
+        break;
+
+    case P2L_A_WAIT_REV2:
+        if (ev & DPSK_EV_REVERSAL) {
+            /* 9.2.2.1.7, .8: L1 160 ms, then L2 (analysed, at most 500 ms) */
+            int32_t line = p->now - DPSK_RX_REV_DELAY;
+            p->t_rev2 = line;
+            p->probe_from = line + TAIL + MS(160) + MS(10);
+            proberx_init(&p->prx);
+            go(p, P2L_A_PROBE_RX);
+        } else if (p->t > MS(T_A_REV2_MS)) {
+            fail(p, P2L_ERR_REV);
+        }
+        break;
+
+    case P2L_A_PROBE_RX:
+        if (p->now >= p->probe_from) {
+            proberx_tick(&p->prx, x);
+            if (p->prx.nblk >= PROBE_BLOCKS) {
+                analyse(p);                             /* levels, SNRs, frequency offset */
+                dpskrx_expect(&p->rx, INFO_PAYLOAD(INFO1D_BITS));
+                dpsktx_on(&p->tx);                      /* Tone A; INFO1d comes */
+                go(p, P2L_A_WAIT_INFO1D);
+            }
+        } else if (p->t > MS(1000)) {
+            fail(p, P2L_ERR_REV);
+        }
+        break;
+
+    case P2L_A_WAIT_INFO1D:
+        if (ev & DPSK_EV_FRAME) {
+            uint8_t bits[INFO_MAX_BITS];
+            int n;
+            info1d_parse(p->rx.frame, &p->info1d);
+            if (take_info1d(p) != 0) { fail(p, P2L_ERR_NO_RATE); break; }
+            n = info1a_build(&p->info1a_v90, bits);
+            dpsktx_send(&p->tx, bits, n);
+            p->t_info1a = p->now;
+            go(p, P2L_A_INFO1A);
+        } else if (p->t > MS(T_A_INFO1D_MS) + 2 * p->rtd) {
+            fail(p, P2L_ERR_INFO1A);                    /* 9.2.2.2.4: a retrain is not done here */
+        }
+        break;
+
+    case P2L_A_INFO1A:
+        if (dpsktx_busy(&p->tx)) p->t = 0;
+        else if (p->t == TX_FLUSH) { dpsktx_off(&p->tx); p->info1c_end = p->now; go(p, P2L_DONE); }
+        break;
+
+    default:
         break;
     }
 

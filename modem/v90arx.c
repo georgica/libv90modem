@@ -11,6 +11,15 @@
 #define TBLK     64             /* symbols per timing measurement */
 #define ECLIP    (1 << 15)      /* error used for adaptation, Q YF */
 #define FASTN    8000           /* equaliser symbols with the larger steps (1 s) */
+/* The far end is not trusted: whatever the line carries, the clock ratio
+ * stays within this of one (Q32; 1000 ppm, ten times what V.90's clocks
+ * may be off), the phase slew within half of that, and the
+ * interpolator makes at most this many outputs per input sample. */
+#define STEP_MAX ((int64_t)4294967)
+#define SLEW_MAX (STEP_MAX / 2)
+#define PRODUCE_MAX 3
+
+static int64_t clamp64(int64_t v, int64_t lo, int64_t hi) { return v < lo ? lo : v > hi ? hi : v; }
 
 static int32_t asr64(int64_t v, int s) { return (int32_t)((v + ((int64_t)1 << (s - 1))) >> s); }
 
@@ -54,6 +63,7 @@ void v90arx_init(v90arx_t *r, const v90arx_cfg_t *cfg)
     r->gain = 4096;
     v92_p6_init(&r->sd);
     r->L = (int16_t)v90_ucode_linear(cfg->alaw, (unsigned)cfg->uinfo);
+    if (r->L < 1) r->L = 1;             /* mu-law Ucode 0: it divides */
     /* until told otherwise: the two points of UINFO (TRN1d, Jd, Jd') */
     for (i = 0; i < 6; i++) {
         r->cons.n[i] = 1; r->cons.u[i][0] = (uint8_t)cfg->uinfo;
@@ -63,7 +73,11 @@ void v90arx_init(v90arx_t *r, const v90arx_cfg_t *cfg)
 }
 
 void v90arx_ec(v90arx_t *r, int mu_shift) { r->ec_mu = mu_shift; }
-void v90arx_hold(v90arx_t *r, int on) { r->hold = on != 0; }
+void v90arx_hold(v90arx_t *r, int on)
+{
+    r->hold = on != 0;
+    if (r->hold) r->slew = 0;   /* the timing loop's phase correction is per block: none while it waits */
+}
 
 void v90arx_set_cons(v90arx_t *r, const v90arx_cons_t *c, int32_t m)
 {
@@ -92,7 +106,11 @@ static void estimate(v90arx_t *r, int32_t k, int64_t pd, int g)
     /* once converged, an error beyond 4 sigma is an impairment of one symbol
      * (a robbed bit in TRN1d): not learnt from */
     if (r->nest > 600 && (int64_t)e * e > 16 * r->res) { r->res += r->res >> 10; r->nest++; return; }
-    /* h += mu e s L / (NCH pd), h in Q16, applied as (es s) >> 8 */
+    /* h += mu e s L / (NCH pd), h in Q16, applied as (es s) >> 8. The
+     * decided levels' power can decay to nothing (a far end sending Ucode
+     * 0 alone): not below (L / 8)^2 */
+    if (pd < ((int64_t)r->L * r->L >> 6)) pd = (int64_t)r->L * r->L >> 6;
+    if (pd < 1) pd = 1;
     es = (((int64_t)e * r->L) << 24) / ((int64_t)V90ARX_NCH * pd) >> g;
     for (j = 0; j < V90ARX_NCH; j++)
         r->h[j] += (int32_t)((es * r->sb[(m0 - j) & 255]) >> 8);
@@ -317,8 +335,8 @@ static void timing(v90arx_t *r)
 {
     int64_t d = later_q16(r->h, r->href, V90ARX_NCH, 0);
     r->delta = (int32_t)d;
-    r->step += (d << 16) / (4096 * TBLK);
-    r->slew = (d << 16) / (32 * TBLK);
+    r->step = clamp64(r->step + d * 65536 / (4096 * TBLK), ONE32 - STEP_MAX, ONE32 + STEP_MAX);
+    r->slew = clamp64(d * 65536 / (32 * TBLK), -SLEW_MAX, SLEW_MAX);
 }
 
 /* ---- the equaliser ---------------------------------------------------------- */
@@ -347,6 +365,8 @@ static void equalise(v90arx_t *r, int32_t k, int16_t q)
     if (m < r->cfg.ntrain && m < r->mref) {
         lev = (int32_t)r->sb[m & 255] << V90ARX_YF;
         uc = r->cfg.uinfo; pos = lev >= 0; known = 1;
+    } else if (r->cfg.known_lv && r->cfg.known_lv(r->cfg.known_ctx, m, &uc, &pos, &lev)) {
+        known = 1;
     } else if (r->cfg.known && r->cfg.known(r->cfg.known_ctx, m, &uc, &pos)) {
         lev = v90_ucode_linear(r->cfg.alaw, (unsigned)uc) << V90ARX_YF;
         if (!pos) lev = -lev;
@@ -488,8 +508,11 @@ static void process(v90arx_t *r, int16_t q)
                 int64_t t = r->sd_yi, y = r->sd_yr;
                 while (t > ((int64_t)1 << 30) || t < -((int64_t)1 << 30)) { t >>= 1; y >>= 1; }
                 if (y > 0) {
-                    t = (t << 32) / y;                          /* tan, Q32 */
+                    /* tan, Q32; beyond 1 (a turn of 45 degrees, 7800 ppm)
+                     * it is no codec clock, and the product would overflow */
+                    t = clamp64(t * ONE32 / y, -ONE32, ONE32);
                     r->step = ONE32 - ((t * 683565276) >> 32) / V90ARX_SDLAG;  /* 1 / (2 pi), Q32 */
+                    r->step = clamp64(r->step, ONE32 - STEP_MAX, ONE32 + STEP_MAX);
                 }
             }
             /* Sd-bar is 48 symbols, then TRN1d */
@@ -563,12 +586,13 @@ static void produce(v90arx_t *r)
 int v90arx_tick(v90arx_t *r, int16_t rx, int16_t tx)
 {
     int16_t x = ec_tick(&r->ec, tx, rx, r->ec_mu);
+    int i;
     r->eout = x;
     r->nout = 0;
     r->ring[r->rpos] = x;
     r->rpos = (r->rpos + 1) & 63;
     r->tnext -= ONE32;
-    while (r->tnext <= 0) {
+    for (i = 0; r->tnext <= 0 && i < PRODUCE_MAX; i++) {
         produce(r);
         r->tnext += r->step + r->slew;
     }

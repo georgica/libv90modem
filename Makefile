@@ -8,6 +8,7 @@
 #   make bench-v90       record a simulated V.90 call, replay it on the host and
 #                        under qemu, through the internals and the public API
 #   make bench-v90a      the same for the V.90 analogue modem's downstream receiver
+#   make bench-v90c      the same for the whole V.90 calling modem (orig, v90a)
 #   make test-interop    against spandsp (SPANDSP=its install prefix), host only
 #
 # Cross-compiling: set CC (and BUILD to keep the objects apart), e.g.
@@ -71,7 +72,7 @@ SIM_OBJ  := $(patsubst %.c,$(BUILD)/obj/%.o,$(SIM_SRC))
 MODEM_SRC := modem/v21.c modem/ansam.c modem/v8msg.c modem/async.c modem/v8rx.c modem/v8ans.c \
              modem/scramble.c modem/v22tx.c modem/v22rx.c modem/v22bis.c modem/v14.c modem/answer.c \
              modem/info.c modem/dpsk.c modem/probe.c modem/p2d.c modem/qamrx.c modem/ec.c modem/v34train.c modem/p34d.c modem/pcmenc.c \
-             modem/v34mp.c modem/p2ans.c modem/v34mod.c modem/v34dx.c modem/v34ans.c modem/anstone.c modem/v8orig.c modem/orig.c modem/p2call.c modem/v34orig.c modem/v90arx.c \
+             modem/v34mp.c modem/p2ans.c modem/v34mod.c modem/v34dx.c modem/v34ans.c modem/anstone.c modem/v8orig.c modem/orig.c modem/p2call.c modem/v34orig.c modem/v90arx.c modem/v90adec.c modem/v90dil.c modem/v90a.c \
              $(wildcard v90/*.c) $(wildcard v34/*.c) $(wildcard v32/*.c) $(wildcard v92/*.c)
 T_SRC    := $(SIM_SRC) $(MODEM_SRC)
 HDRS     := $(wildcard modem/*.h sim/*.h test/*.h v90/*.h v34/*.h v92/*.h v90/test/v90_dec.h)
@@ -80,12 +81,12 @@ TESTS    := test_g711 test_noise test_filt test_resamp test_channel test_v21 tes
             test_v22tx test_v22rx test_v22bis test_v14 test_answer test_info test_dpsk test_probe test_p2 test_qamrx test_ec test_v34train test_sres test_answer_v90 test_p34 test_pcmenc \
             test_v34mp test_p2ans test_v34mod test_v34dx test_v34call test_answer_v34 test_answer_v32 test_answer_v90_v34 \
             test_p2_v92 test_v92call test_answer_v92 test_v92real test_answer_lin \
-            test_anstone test_v8orig test_orig test_orig_v32 test_p2call test_orig_v34 test_v90arx
+            test_anstone test_v8orig test_orig test_orig_v32 test_p2call test_orig_v34 test_v90arx test_v90arx_robust test_v90adec test_v90dil test_p2v90 test_v90a test_orig_v90
 # the public API, against the library as it is installed
 API_TESTS := test_api
 SUBS     := v34 v90 v92 v42 v32
 
-.PHONY: test-fixtures all lib dev install uninstall clean check check-arm test test-arm test-api test-interop examples bench-v90 bench-v34 bench-v90a replay
+.PHONY: test-fixtures all lib dev install uninstall clean check check-arm test test-arm test-api test-interop examples bench-v90 bench-v34 bench-v90a bench-v90c replay
 all: lib
 lib: $(STATIC) $(SHARED) $(PCFILE)
 dev: $(DEV)
@@ -291,3 +292,45 @@ $(BUILD)/bench_v90a.arm: rig/bench_v90a.c $(MODEM_SRC) $(HDRS)
 clean:
 	rm -rf $(BUILD)
 	@for d in $(SUBS); do $(MAKE) -s -C $$d BUILD=build clean; done
+
+# ---- V.90 analogue modem, the whole caller (modem/orig, modem/v90a): record
+# what its A/D receives in a simulated call against the library's answerer
+# (tools/rec_v90c: 2 km, +100 ppm, until 5 s after data mode), replay it on
+# the host and under qemu; the transmit hash must agree ----
+V90C_REC := $(BUILD)/v90c.rec
+bench-v90c: $(BUILD)/rec_v90c $(BUILD)/bench_v90c $(BUILD)/bench_v90c.arm
+	$(abspath $(BUILD))/rec_v90c 100 5 $(V90C_REC)
+	$(abspath $(BUILD))/bench_v90c $(V90C_REC)
+	$(QEMU) $(abspath $(BUILD))/bench_v90c.arm $(V90C_REC)
+# cost-v90c counts ARM instructions as cost-v90a does: per second of line in
+# data mode (seconds 2 to 3 after data mode began), at 0 and 100 ppm; then
+# each of the 4 ticks that took longest on the host (100 ppm), counted alone
+# (the recording cut just after it, less the recording cut just before it).
+# Slow: qemu logs every instruction.
+.PHONY: cost-v90c
+cost-v90c: $(BUILD)/rec_v90c $(BUILD)/bench_v90c $(BUILD)/bench_v90c.arm
+	@for p in 0 100; do \
+	   $(abspath $(BUILD))/rec_v90c $$p 4 $(BUILD)/v90c_$$p.rec > /dev/null; \
+	   d=$$(od -An -tu4 -j8 -N4 $(BUILD)/v90c_$$p.rec | tr -d ' '); \
+	   head -c $$((12 + 2 * (d + 16000))) $(BUILD)/v90c_$$p.rec > $(BUILD)/v90c_$$p.a; \
+	   head -c $$((12 + 2 * (d + 24000))) $(BUILD)/v90c_$$p.rec > $(BUILD)/v90c_$$p.b; \
+	   a=$$($(CNT) $(abspath $(BUILD))/bench_v90c.arm $(BUILD)/v90c_$$p.a 2>&1 | grep -c '^Trace'); \
+	   b=$$($(CNT) $(abspath $(BUILD))/bench_v90c.arm $(BUILD)/v90c_$$p.b 2>&1 | grep -c '^Trace'); \
+	   echo "V.90 caller, $$p ppm: data mode $$((b - a)) ARM instructions per second of line (seconds 2 to 3 of data mode)"; \
+	 done; \
+	 for t in $$($(abspath $(BUILD))/bench_v90c $(BUILD)/v90c_100.rec -w 4 | sed -n 's/^slow tick \([0-9]*\) .*/\1/p'); do \
+	   head -c $$((12 + 2 * t)) $(BUILD)/v90c_100.rec > $(BUILD)/v90c_t.a; \
+	   head -c $$((12 + 2 * (t + 1))) $(BUILD)/v90c_100.rec > $(BUILD)/v90c_t.b; \
+	   a=$$($(CNT) $(abspath $(BUILD))/bench_v90c.arm $(BUILD)/v90c_t.a 2>&1 | grep -c '^Trace'); \
+	   b=$$($(CNT) $(abspath $(BUILD))/bench_v90c.arm $(BUILD)/v90c_t.b 2>&1 | grep -c '^Trace'); \
+	   echo "V.90 caller, 100 ppm: tick $$t ($$((t / 8)) ms): $$((b - a)) ARM instructions"; \
+	 done
+$(BUILD)/rec_v90c: tools/rec_v90c.c test/v90link.h $(SIM_SRC) $(MODEM_SRC) $(HDRS)
+	@mkdir -p $(BUILD)
+	$(CC) $(T_CFLAGS) -Itest -o $@ tools/rec_v90c.c $(SIM_SRC) $(MODEM_SRC) $(LDLIBS)
+$(BUILD)/bench_v90c: rig/bench_v90c.c $(MODEM_SRC) $(HDRS)
+	@mkdir -p $(BUILD)
+	$(CC) $(T_CFLAGS) -o $@ rig/bench_v90c.c $(MODEM_SRC) $(LDLIBS)
+$(BUILD)/bench_v90c.arm: rig/bench_v90c.c $(MODEM_SRC) $(HDRS)
+	@mkdir -p $(BUILD)
+	$(ARM_CC) $(T_CFLAGS) -static -o $@ rig/bench_v90c.c $(MODEM_SRC) $(LDLIBS)

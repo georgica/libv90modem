@@ -17,6 +17,7 @@
 #define V21_CD_AMP       110   /* carrier detect, peak amplitude (about -43 dBm0) */
 #define V32_TOTAL_MS   60000   /* give up on a V.32bis start-up (its every wait has its own time-out too) */
 #define V34_TOTAL_MS   60000   /* the same for V.34, retrains in Phase 2 included */
+#define V90_TOTAL_MS   60000   /* the same for V.90 (its own limits come first) */
 /* V.32bis Annex A (see orig.h) */
 #define AA_AFTER_MS      600   /* AA once ANS has been heard 1 s: v8orig needed 400 ms or more of it to tell ANS */
 #define ANS_OFF_MS        40   /* ANS is over when away this long (the gaps of its phase reversals are shorter) */
@@ -60,6 +61,32 @@ static void start_v34(orig_t *o)
     c.getbit = o->cfg.getbit; c.putbit = o->cfg.putbit; c.user = o->cfg.user;
     v34orig_init(&o->v34, &c);
     o->phase = ORIG_V34; o->t = 0;
+}
+
+/* V.90 (9.2.2.1.1): INFO0a now, the 75 ms of silence after CJ being over */
+static void start_v90(orig_t *o)
+{
+    v90a_cfg c;
+    memset(&c, 0, sizeof c);
+    c.level = o->cfg.level;
+    c.law = o->cfg.law;
+    c.echo_delay = o->cfg.echo_delay > 0 ? o->cfg.echo_delay : 0;
+    c.max_tx_bps = o->cfg.max_tx_bps; c.max_rx_bps = o->cfg.max_rx_bps;
+    c.table1 = o->cfg.v90_table1;
+    c.getbit = o->cfg.getbit; c.putbit = o->cfg.putbit; c.user = o->cfg.user;
+    v90a_init(&o->v90, &c);
+    o->phase = ORIG_V90; o->t = 0;
+}
+
+/* why a V.90 call ended */
+static int v90_end(const orig_t *o)
+{
+    switch (o->v90.error) {
+    case V90A_ERR_CLEARDOWN: return ORIG_END_CLEARDOWN;
+    case V90A_ERR_HANGUP: return ORIG_END_HANGUP;
+    case V90A_ERR_RATE: return o->connected ? ORIG_END_LOST : ORIG_END_NO_COMMON;
+    default: return o->connected ? ORIG_END_LOST : ORIG_END_NO_CARRIER;
+    }
 }
 
 /* why a V.34 call ended */
@@ -148,6 +175,11 @@ void orig_init(orig_t *o, const orig_cfg *cfg)
     vc.local.n_mod_octets = 3;
     /* LAPM offered: the library has V.42 (V.8 6.4) */
     vc.local.has_prot = 1; vc.local.prot = V8_PROT_LAPM;
+    if (cfg->modes & ORIG_MODE_V90) {
+        /* V.90 9.1.1: the analogue modem, PCM in CM; V.34 is its upstream */
+        vc.local.has_pcm = 1; vc.local.pcm = V8_PCM_ANALOG;
+        vc.local.modes = (uint16_t)(vc.local.modes | V8_MOD_V34);
+    }
     vc.send_ci = cfg->send_ci;
     v8orig_init(&o->v8, &vc);
     o->phase = ORIG_V8;
@@ -222,7 +254,8 @@ int16_t orig_tick(orig_t *o, int16_t rx)
             break;
         case V8O_RES_OK:
             o->used_v8 = 1;
-            if (o->v8.selected == 1 && (o->cfg.modes & V8_MOD_V34)) start_v34(o);
+            if (o->v8.selected == V8_SEL_V90 && (o->cfg.modes & ORIG_MODE_V90)) start_v90(o);
+            else if (o->v8.selected == 1 && (o->cfg.modes & V8_MOD_V34)) start_v34(o);
             else if (o->v8.selected == 3 && (o->cfg.modes & V8_MOD_V32)) {
                 start_v32(o);
                 o->aa = 1;
@@ -327,6 +360,16 @@ int16_t orig_tick(orig_t *o, int16_t rx)
         } else if (!o->connected && o->t > MS(V34_TOTAL_MS)) fail(o, ORIG_END_NO_CARRIER);
         break;
 
+    case ORIG_V90:
+        tx = v90a_tick(&o->v90, rx);
+        if (o->v90.state == V90A_ENDED) { fail(o, v90_end(o)); tx = 0; break; }
+        if (o->v90.state == V90A_DATA) {
+            /* bitrate: what we send (V.34 upstream), rx_bitrate: the PCM downstream */
+            o->connected = 1; o->modulation = ORIG_MOD_V90;
+            o->bitrate = v90a_tx_rate(&o->v90); o->rx_bitrate = v90a_rx_rate(&o->v90);
+        } else if (!o->connected && o->t > MS(V90_TOTAL_MS)) fail(o, ORIG_END_NO_CARRIER);
+        break;
+
     case ORIG_FAILED:
         break;
     }
@@ -339,6 +382,7 @@ int orig_moving(const orig_t *o)
     if (o->phase == ORIG_V22) return !o->v22.retraining && o->v22.tx_ready && o->v22.rx_ready;
     if (o->phase == ORIG_V32) return !o->v32.retraining && o->v32.tx_ready && o->v32.rx_ready;
     if (o->phase == ORIG_V34) return o->v34.state == V34O_DATA;
+    if (o->phase == ORIG_V90) return o->v90.state == V90A_DATA;
     return 1;
 }
 
@@ -347,7 +391,7 @@ int orig_retraining(const orig_t *o)
     if (o->phase == ORIG_V22) return o->v22.retraining != 0;
     if (o->phase == ORIG_V32) return o->v32.retraining != 0;
     if (o->phase == ORIG_V34) return o->connected && o->v34.state != V34O_DATA && o->v34.state != V34O_RENEG;
-    return 0;
+    return 0;                   /* V.90: no retrains (a renegotiation is not one) */
 }
 
 int orig_retrains(const orig_t *o)
@@ -365,6 +409,7 @@ int orig_snr_db10(const orig_t *o)
     static const int v32_pw[V32_NRATES] = { 40, 40, 40, 42, 41 };
     int v;
     if (!o->connected) return -1;
+    if (o->phase == ORIG_V90) return v90a_snr_db10(&o->v90);     /* of the PCM downstream */
     if (o->phase == ORIG_V34) {
         /* as answer_snr_db10: |e|^2 / |d|^2 in Q16; in data mode only */
         if (o->v34.state != V34O_DATA) return -1;
@@ -387,6 +432,7 @@ int orig_snr_db10(const orig_t *o)
 int orig_retrain(orig_t *o)
 {
     if (o->phase == ORIG_V34) return o->connected ? v34orig_retrain(&o->v34) : -1;
+    if (o->phase == ORIG_V90) return v90a_retrain(&o->v90);      /* not done: -1 */
     if (o->phase == ORIG_V32) return o->connected ? v32_retrain(&o->v32) : -1;
     if (o->phase != ORIG_V22 || !o->connected || o->v22.bitrate != 2400) return -1;
     v22m_retrain(&o->v22);
@@ -396,6 +442,7 @@ int orig_retrain(orig_t *o)
 int orig_rtd(const orig_t *o)
 {
     if (o->phase == ORIG_V34) return o->connected ? o->v34.p2.rtd : -1;
+    if (o->phase == ORIG_V90) return o->connected ? o->v90.p2.rtd : -1;     /* RTDEa */
     if (o->phase != ORIG_V32 || !o->connected || o->v32.nt <= 0) return -1;
     return o->v32.nt - 64 * 10 / 3;
 }
@@ -407,6 +454,7 @@ int orig_renegotiate(orig_t *o, int max_rx_bps)
 
 int orig_cleardown(orig_t *o)
 {
+    if (o->phase == ORIG_V90) return o->connected ? v90a_cleardown(&o->v90) : -1;
     return o->phase == ORIG_V34 && o->connected ? v34orig_cleardown(&o->v34) : -1;
 }
 

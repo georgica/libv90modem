@@ -97,6 +97,10 @@ void v90arx_cons_mask(v90arx_cons_t *c, int alaw, int slot, const uint8_t mask[1
 /* A known symbol: return 1 and the Ucode and sign (1 = positive) of symbol
  * m, or 0 if m is not known. Its level is taken from Table 1. */
 typedef int (*v90arx_known_fn)(void *ctx, int32_t m, int *ucode, int *positive);
+/* The same with the level it arrives at (Table 1 units, V90ARX_YF fraction
+ * bits, signed): for known symbols whose level has been measured (a DIL
+ * through a pad or a robbed bit). Asked before `known`. */
+typedef int (*v90arx_known_lv_fn)(void *ctx, int32_t m, int *ucode, int *positive, int32_t *level);
 
 typedef struct {
     int alaw;
@@ -104,6 +108,7 @@ typedef struct {
     int ntrain;                 /* TRN1d symbols taken as known; 0: V90ARX_NTRAIN */
     v90arx_known_fn known;      /* optional: further known symbols */
     void *known_ctx;
+    v90arx_known_lv_fn known_lv;    /* optional: ... with their levels (same ctx) */
 } v90arx_cfg_t;
 
 /* one decision */
