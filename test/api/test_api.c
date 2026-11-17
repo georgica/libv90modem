@@ -260,6 +260,77 @@ static void test_ec(void)
     v90m_ec_destroy(o); v90m_ec_destroy(a);
 }
 
+/* ---- the calling role: an API caller and an API answerer back to back ---- */
+typedef struct { v90m_t *m; v90m_async_t *a; int ev[8]; int n_ev; } end_t;
+static void end_event(void *u, v90m_event ev) { end_t *e = u; if (e->n_ev < 8) e->ev[e->n_ev] = (int)ev; e->n_ev++; }
+static int end_get(void *u) { return v90m_async_getbit(((end_t *)u)->a); }
+static void end_put(void *u, int b) { v90m_async_putbit(((end_t *)u)->a, b); }
+
+static void end_init(end_t *e, v90m_role role, unsigned mods)
+{
+    v90m_cfg c; int err;
+    memset(e, 0, sizeof *e);
+    e->a = v90m_async_create(&err);
+    v90m_cfg_default(&c);
+    c.role = role; c.modulations = mods;
+    c.getbit = end_get; c.putbit = end_put; c.on_event = end_event; c.user = e;
+    e->m = v90m_create(&c, &err);
+    CHECK(e->m != NULL);
+}
+
+static void test_originate(void)
+{
+    static end_t cl, an;
+    v90m_cfg c; v90m_state sc, sa; int err, k;
+    int16_t c_rx = 0, a_rx = 0;
+    char got_c[64], got_a[64]; size_t nc = 0, na = 0;
+
+    /* what the calling side cannot do yet */
+    v90m_cfg_default(&c); c.role = V90M_ROLE_ORIGINATE;
+    CHECK(v90m_create(&c, &err) == NULL); CHECK_EQ_I(err, V90M_ENOTSUP);          /* V.90 among the defaults */
+    c.modulations = V90M_MOD_V34 | V90M_MOD_V22;
+    CHECK(v90m_create(&c, &err) == NULL); CHECK_EQ_I(err, V90M_ENOTSUP);
+    c.modulations = 0;
+    CHECK(v90m_create(&c, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
+
+    end_init(&cl, V90M_ROLE_ORIGINATE, V90M_MOD_V22 | V90M_MOD_V21);
+    end_init(&an, V90M_ROLE_ANSWER, V90M_MOD_V22 | V90M_MOD_V21);
+    for (k = 0; k < 8000 * 10; k++) {
+        int16_t c_tx, a_tx;
+        v90m_process_linear(cl.m, &c_rx, &c_tx, 1);
+        v90m_process_linear(an.m, &a_rx, &a_tx, 1);
+        a_rx = c_tx; c_rx = a_tx;                      /* a 4-wire line, one sample each way */
+        if (k == 8000 * 6) {
+            v90m_async_write(cl.a, (const uint8_t *)"from the caller", 15);
+            v90m_async_write(an.a, (const uint8_t *)"from the answerer", 17);
+        }
+        nc += v90m_async_read(cl.a, (uint8_t *)got_c + nc, sizeof got_c - 1 - nc);
+        na += v90m_async_read(an.a, (uint8_t *)got_a + na, sizeof got_a - 1 - na);
+    }
+    got_c[nc] = 0; got_a[na] = 0;
+    v90m_get_state(cl.m, &sc); v90m_get_state(an.m, &sa);
+    printf("  API caller to API answerer: caller %d %s %d bit/s (V.8 %d), answerer %d %s; caller got \"%s\", answerer got \"%s\"\n",
+           sc.connected, sc.modulation == V90M_CONN_V22BIS ? "V.22bis" : "?", sc.tx_bps, sc.used_v8,
+           sa.connected, sa.modulation == V90M_CONN_V22BIS ? "V.22bis" : "?", got_c, got_a);
+    CHECK_EQ_I(sc.connected, 1); CHECK_EQ_I(sc.modulation, V90M_CONN_V22BIS); CHECK_EQ_I(sc.tx_bps, 2400);
+    CHECK_EQ_I(sc.used_v8, 1); CHECK_EQ_I(sc.moving, 1);
+    CHECK_EQ_I(sa.connected, 1); CHECK_EQ_I(sa.modulation, V90M_CONN_V22BIS);
+    CHECK(strcmp(got_c, "from the answerer") == 0);
+    CHECK(strcmp(got_a, "from the caller") == 0);
+    CHECK_EQ_I(cl.ev[0], V90M_EV_CONNECTED);
+    CHECK_EQ_I(v90m_retrain(cl.m), V90M_OK);           /* V.22bis at 2400: the caller may retrain */
+    CHECK_EQ_I(v90m_cleardown(cl.m), V90M_ESTATE);     /* V.22bis has no cleardown */
+    v90m_destroy(cl.m); v90m_destroy(an.m); v90m_async_destroy(cl.a); v90m_async_destroy(an.a);
+
+    /* nobody answers with a tone */
+    end_init(&cl, V90M_ROLE_ORIGINATE, V90M_MOD_V22 | V90M_MOD_V21);
+    for (k = 0, c_rx = 0; k < 8000 * 11; k++) { int16_t t; v90m_process_linear(cl.m, &c_rx, &t, 1); }
+    v90m_get_state(cl.m, &sc);
+    CHECK_EQ_I(sc.end, V90M_END_NO_ANSWER_TONE);
+    CHECK_EQ_I(cl.n_ev, 1); CHECK_EQ_I(cl.ev[0], V90M_EV_ENDED);
+    v90m_destroy(cl.m); v90m_async_destroy(cl.a);
+}
+
 int main(void)
 {
     test_cfg();
@@ -267,5 +338,6 @@ int main(void)
     test_call();
     test_blocks();
     test_ec();
+    test_originate();
     T_REPORT("api");
 }

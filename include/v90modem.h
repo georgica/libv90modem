@@ -37,7 +37,7 @@ const char *v90m_version(void);
 /* error codes (negative returns) */
 #define V90M_OK        0
 #define V90M_EINVAL   -1    /* a configuration value out of range */
-#define V90M_ENOTSUP  -2    /* not implemented in this version (the originating role, for now) */
+#define V90M_ENOTSUP  -2    /* not implemented in this version (see v90m_role) */
 #define V90M_ENOMEM   -3    /* create could not allocate, or init was given too little memory */
 #define V90M_ESTATE   -4    /* not possible in the present state of the call */
 
@@ -52,7 +52,10 @@ typedef struct v90m v90m_t;
 
 typedef enum {
     V90M_ROLE_ANSWER = 0,       /* the called modem */
-    V90M_ROLE_ORIGINATE = 1     /* the calling modem: V90M_ENOTSUP in 0.x until it exists */
+    V90M_ROLE_ORIGINATE = 1     /* the calling modem, from the moment the far end has answered
+                                   (dialling and call progress are the owner's). So far V.21,
+                                   V.22 and V.22bis: other modulations in cfg.modulations give
+                                   V90M_ENOTSUP */
 } v90m_role;
 
 /* modulations offered (v90m_cfg.modulations) */
@@ -102,6 +105,7 @@ typedef struct {
     v90m_getbit_fn getbit;
     v90m_putbit_fn putbit;
     v90m_event_fn  on_event;        /* may be NULL: poll v90m_get_state() instead */
+    int            send_ci;         /* originating: send CI before the answer tone (V.8 7.1) */
     void          *user;
 } v90m_cfg;
 
@@ -152,7 +156,11 @@ typedef enum {
     V90M_END_FAILED,            /* no connection was made (start-up failed) */
     V90M_END_LOST,              /* the connection was lost */
     V90M_END_CLEARDOWN_FAR,     /* the far modem cleared down */
-    V90M_END_CLEARDOWN_OURS     /* after v90m_cleardown() */
+    V90M_END_CLEARDOWN_OURS,    /* after v90m_cleardown() */
+    /* originating */
+    V90M_END_NO_ANSWER_TONE,    /* no answer tone came */
+    V90M_END_NO_JM,             /* ANSam came, but no JM in answer to CM (V.8) */
+    V90M_END_NO_COMMON          /* the answerer has no modulation in common with us */
 } v90m_end;
 
 /* Cheap; fine to read after every sample. */

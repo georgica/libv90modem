@@ -157,3 +157,65 @@ V.22bis-only spandsp answered our V.34 offer with V.34.
 
 Not tried yet: a real modem answering (that needs a call to go on after V.8:
 C2).
+
+## C2: V.21, V.22 and V.22bis on the calling side (2026-11-17)
+
+- `modem/orig`: the calling modem's sequencer, the mirror of `modem/answer`:
+  V.8 (`v8orig`) -> JM item 4: V.22bis / V.22 (`v22m` as caller, as it
+  was), item 12: V.21 (channel 1 out, channel 2 in through a new band-pass,
+  `modem/v21h_bpf.h`: 980 Hz 56 dB down). After ANS (no V.8): the V.22bis
+  caller waits for the answerer's unscrambled ones; a steady channel 2 mark
+  for 300 ms instead is a V.21 answerer. Ends: no answer tone, no JM, no
+  common mode, start-up failed, carrier lost.
+- The V.22bis caller's carrier flag rises on a V.21 channel 2 mark; what
+  tells V.22bis is its caller leaving V22S_WAIT (155 ms of unscrambled
+  ones). Found with the V.21 test.
+- The public API takes `V90M_ROLE_ORIGINATE` with V.21 and V.22 / V.22bis;
+  any other modulation gives V90M_ENOTSUP. New ends: no answer tone, no
+  JM, no common mode; `cfg.send_ci`. The answering path is unchanged:
+  `make bench-v90` gives 8e3136e9 six ways.
+- Seen failing first: test_orig 39 of 40 checks against a stub.
+
+```
+V.8 then V.22bis, against the library's answerer
+  clean line: data at 4.74 s, 2400 bit/s, modulation 3, V.8 1
+    2400 bit/s: caller got 63 of 63 octets, answerer got 61 of 61
+    after a retrain started by the answerer: ours 1, theirs 1; moving 1
+    after the retrain: caller got 63 of 63 octets, answerer got 61 of 61
+    the answerer silent: phase 4, end 5
+  10 dB loss, echoes, noise, 1 Hz, 50 ppm: data at 4.64 s, 2400 bit/s
+    2400 bit/s: caller got 63 of 63 octets, answerer got 61 of 61
+V.8 then V.21
+  data at 3.03 s, 300 bit/s, modulation 1
+    300 bit/s: caller got 63 of 63 octets, answerer got 61 of 61
+pre-V.8 answerers: ANS, then
+  V.22bis: data at 5.11 s, 2400 bit/s, modulation 3, V.8 0
+    2400 bit/s: caller got 63 of 63 octets, answerer got 61 of 61
+  V.22 (1200 bit/s only): data at 5.56 s, 1200 bit/s, modulation 2
+    1200 bit/s: caller got 63 of 63 octets, answerer got 61 of 61
+  V.21: data at 3.74 s, modulation 1
+    caller got 63 of 63 octets, answerer 61 of 61
+no call
+  no answer tone: phase 4, end 1
+  nothing in common: phase 4, end 3
+orig: 40 checks, 0 failures
+  spandsp at 2400 bit/s, noise -50 dBFS, echo 0.20: up at 5.11 s, ours 2400 bit/s (modulation 3, V.8 0), spandsp 2400; errors spandsp->us 0 of 8000, us->spandsp 0 of 8000
+  spandsp at 1200 bit/s, noise -50 dBFS, echo 0.20: up at 5.45 s, ours 1200 bit/s (modulation 2, V.8 0), spandsp 1200; errors spandsp->us 0 of 7780, us->spandsp 0 of 7784
+  spandsp at 2400 bit/s, noise -44 dBFS, echo 0.35: up at 5.11 s, ours 2400 bit/s (modulation 3, V.8 0), spandsp 2400; errors spandsp->us 0 of 8000, us->spandsp 0 of 8000
+  finding, not checked:
+  spandsp at 2400 bit/s, noise -38 dBFS, echo 0.35: up at 5.53 s, ours 1200 bit/s (modulation 2, V.8 0), spandsp 1200; errors spandsp->us 0 of 7780, us->spandsp 3122 of 6303
+interop_orig_v22bis_spandsp: 21 checks, 0 failures
+```
+
+Finding, not explained: with noise 20 dB below the signal (-38 dBFS),
+spandsp's V.22bis answerer does not take our S1, falls back to 1200 bit/s and
+then decodes about half of our bits wrong, while we decode it without error.
+In the same channel the library's own V.22bis answerer trains on our caller at
+2400 bit/s down to -32 dBFS (S1 SNR 41 dB at -38 dBFS), and spandsp's caller
+trains with our answerer at -38 dBFS. Down to -44 dBFS spandsp's answerer and
+our caller agree at 2400 bit/s without an error. Not settled whether it is
+spandsp's answering receiver or something in our caller that only spandsp
+minds; a second spandsp instance as the caller would tell.
+
+Not tried yet: a real modem answering. v90d has a bench mode for it now
+(`v90d -o`: a modem told ATA on the port is called at once).

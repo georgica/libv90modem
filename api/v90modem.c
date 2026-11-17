@@ -45,10 +45,15 @@ struct v90m {
     /* what the last sample left, to report changes */
     int      was_connected, was_moving, was_ended, was_mod, was_tx, was_rx;
     unsigned renegotiations;
-    answer_t a;
+    union { answer_t a; orig_t o; } u;     /* by cfg.role */
 };
 
-#define V90M_MOD_ALL (V90M_MOD_V21 | V90M_MOD_V22 | V90M_MOD_V32BIS | V90M_MOD_V34 | V90M_MOD_V90 | V90M_MOD_V92)
+#define ORIGINATING(m) ((m)->cfg.role == V90M_ROLE_ORIGINATE)
+#define V90M_MOD_ALL  (V90M_MOD_V21 | V90M_MOD_V22 | V90M_MOD_V32BIS | V90M_MOD_V34 | V90M_MOD_V90 | V90M_MOD_V92)
+/* what the calling side can do so far */
+#define V90M_MOD_ORIG (V90M_MOD_V21 | V90M_MOD_V22)
+
+typedef char v90m_check_orig[(SAME(ORIG_MOD_V21, ANS_MOD_V21) && SAME(ORIG_MOD_V22, ANS_MOD_V22) && SAME(ORIG_MOD_V22BIS, ANS_MOD_V22BIS)) ? 1 : -1];
 
 void v90m_cfg_default(v90m_cfg *cfg)
 {
@@ -61,11 +66,14 @@ void v90m_cfg_default(v90m_cfg *cfg)
 
 static int check_cfg(const v90m_cfg *c)
 {
-    if (c->role == V90M_ROLE_ORIGINATE) return V90M_ENOTSUP;
-    if (c->role != V90M_ROLE_ANSWER) return V90M_EINVAL;
+    if (c->role != V90M_ROLE_ANSWER && c->role != V90M_ROLE_ORIGINATE) return V90M_EINVAL;
     if (c->modulations & ~V90M_MOD_ALL) return V90M_EINVAL;
     if (c->max_tx_code < 0 || c->max_tx_code > 31 || c->tx_level < 0 || c->max_down_bps < 0 || c->max_up_bps < 0 || c->echo_delay < -1)
         return V90M_EINVAL;
+    if (c->role == V90M_ROLE_ORIGINATE) {
+        if (!(c->modulations & V90M_MOD_ORIG)) return (c->modulations ? V90M_ENOTSUP : V90M_EINVAL);
+        if (c->modulations & ~V90M_MOD_ORIG) return V90M_ENOTSUP;
+    }
     return V90M_OK;
 }
 
@@ -83,7 +91,6 @@ static unsigned modes_of(unsigned mods)
 
 int v90m_reset(v90m_t *m, const v90m_cfg *cfg)
 {
-    answer_cfg ac;
     int r = check_cfg(cfg), owned;
     if (r != V90M_OK) return r;
     owned = m->owned;
@@ -91,22 +98,35 @@ int v90m_reset(v90m_t *m, const v90m_cfg *cfg)
     memset(m, 0, sizeof *m);
     m->owned = owned;
     m->cfg = *cfg;
-    memset(&ac, 0, sizeof ac);
-    ac.level = cfg->tx_level;
-    ac.modes = modes_of(cfg->modulations);
-    ac.getbit = cfg->getbit;
-    ac.putbit = cfg->putbit;
-    ac.user = cfg->user;
-    ac.rx_linear = cfg->codec_linear_rx != 0;
-    ac.max_tx_code = cfg->max_tx_code;
-    answer_init(&m->a, &ac);
-    if (cfg->alaw) {
-        /* the Phase 2 defaults with the law changed */
-        p2d_cfg pc = m->a.p2cfg;
-        pc.alaw = 1;
-        answer_v90_cfg(&m->a, &pc);
+    if (ORIGINATING(m)) {
+        orig_cfg oc;
+        memset(&oc, 0, sizeof oc);
+        oc.level = cfg->tx_level;
+        oc.modes = modes_of(cfg->modulations);
+        oc.send_ci = cfg->send_ci != 0;
+        oc.getbit = cfg->getbit;
+        oc.putbit = cfg->putbit;
+        oc.user = cfg->user;
+        orig_init(&m->u.o, &oc);
+    } else {
+        answer_cfg ac;
+        memset(&ac, 0, sizeof ac);
+        ac.level = cfg->tx_level;
+        ac.modes = modes_of(cfg->modulations);
+        ac.getbit = cfg->getbit;
+        ac.putbit = cfg->putbit;
+        ac.user = cfg->user;
+        ac.rx_linear = cfg->codec_linear_rx != 0;
+        ac.max_tx_code = cfg->max_tx_code;
+        answer_init(&m->u.a, &ac);
+        if (cfg->alaw) {
+            /* the Phase 2 defaults with the law changed */
+            p2d_cfg pc = m->u.a.p2cfg;
+            pc.alaw = 1;
+            answer_v90_cfg(&m->u.a, &pc);
+        }
+        answer_v90_line(&m->u.a, cfg->echo_delay, cfg->max_down_bps, cfg->max_up_bps);
     }
-    answer_v90_line(&m->a, cfg->echo_delay, cfg->max_down_bps, cfg->max_up_bps);
     return V90M_OK;
 }
 
@@ -139,12 +159,40 @@ v90m_t *v90m_create(const v90m_cfg *cfg, int *err)
 
 void v90m_destroy(v90m_t *m) { if (m && m->owned) free(m); }
 
-static v90m_end end_of(const answer_t *a)
+/* the modem's state, whichever side it is */
+static int failed_of(const v90m_t *m) { return ORIGINATING(m) ? m->u.o.phase == ORIG_FAILED : m->u.a.phase == ANS_FAILED; }
+static int connected_of(const v90m_t *m) { return ORIGINATING(m) ? m->u.o.connected : m->u.a.connected; }
+static int moving_of(const v90m_t *m) { return ORIGINATING(m) ? orig_moving(&m->u.o) : answer_moving(&m->u.a); }
+static int retraining_of(const v90m_t *m)
 {
-    if (a->phase != ANS_FAILED) return V90M_END_NONE;
-    if (a->cleared == 1) return V90M_END_CLEARDOWN_FAR;
-    if (a->cleared == 2) return V90M_END_CLEARDOWN_OURS;
-    return a->connected ? V90M_END_LOST : V90M_END_FAILED;
+    return ORIGINATING(m) ? m->u.o.phase == ORIG_V22 && m->u.o.v22.retraining : m->u.a.retraining;
+}
+static int mod_of(const v90m_t *m) { return ORIGINATING(m) ? m->u.o.modulation : m->u.a.modulation; }
+static int tx_of(const v90m_t *m) { return ORIGINATING(m) ? m->u.o.bitrate : m->u.a.bitrate; }
+static int rx_of(const v90m_t *m)
+{
+    if (ORIGINATING(m)) return m->u.o.bitrate;
+    return m->u.a.rx_bitrate > 0 ? m->u.a.rx_bitrate : m->u.a.bitrate;
+}
+
+static v90m_end end_of(const v90m_t *m)
+{
+    if (ORIGINATING(m)) {
+        switch (m->u.o.phase == ORIG_FAILED ? m->u.o.end : ORIG_END_NONE) {
+        case ORIG_END_NONE: return V90M_END_NONE;
+        case ORIG_END_NO_TONE: return V90M_END_NO_ANSWER_TONE;
+        case ORIG_END_NO_JM: return V90M_END_NO_JM;
+        case ORIG_END_NO_COMMON: return V90M_END_NO_COMMON;
+        case ORIG_END_LOST: return V90M_END_LOST;
+        default: return V90M_END_FAILED;
+        }
+    } else {
+        const answer_t *a = &m->u.a;
+        if (a->phase != ANS_FAILED) return V90M_END_NONE;
+        if (a->cleared == 1) return V90M_END_CLEARDOWN_FAR;
+        if (a->cleared == 2) return V90M_END_CLEARDOWN_OURS;
+        return a->connected ? V90M_END_LOST : V90M_END_FAILED;
+    }
 }
 
 static void event(v90m_t *m, v90m_event ev) { if (m->cfg.on_event) m->cfg.on_event(m->cfg.user, ev); }
@@ -152,26 +200,25 @@ static void event(v90m_t *m, v90m_event ev) { if (m->cfg.on_event) m->cfg.on_eve
 /* after each sample: only reads the modem */
 static void after(v90m_t *m)
 {
-    const answer_t *a = &m->a;
-    int moving, rx;
-    if (!a->connected && !m->was_connected && a->phase != ANS_FAILED) return;   /* start-up: nothing to report */
-    moving = answer_moving(a);
-    rx = a->rx_bitrate > 0 ? a->rx_bitrate : a->bitrate;
-    if (a->connected && !m->was_connected) {
+    int moving, rx, connected = connected_of(m), failed = failed_of(m);
+    if (!connected && !m->was_connected && !failed) return;   /* start-up: nothing to report */
+    moving = moving_of(m);
+    rx = rx_of(m);
+    if (connected && !m->was_connected) {
         m->was_connected = 1;
-        m->was_mod = a->modulation; m->was_tx = a->bitrate; m->was_rx = rx;
+        m->was_mod = mod_of(m); m->was_tx = tx_of(m); m->was_rx = rx;
         event(m, V90M_EV_CONNECTED);
-    } else if (m->was_connected && (a->modulation != m->was_mod || a->bitrate != m->was_tx || rx != m->was_rx)) {
-        m->was_mod = a->modulation; m->was_tx = a->bitrate; m->was_rx = rx;
+    } else if (m->was_connected && (mod_of(m) != m->was_mod || tx_of(m) != m->was_tx || rx != m->was_rx)) {
+        m->was_mod = mod_of(m); m->was_tx = tx_of(m); m->was_rx = rx;
         event(m, V90M_EV_RATES);
     }
     if (moving != m->was_moving) {
         /* a stop that is neither a retrain nor the end: a rate renegotiation */
-        if (!moving && a->connected && !a->retraining && a->phase != ANS_FAILED) m->renegotiations++;
+        if (!moving && connected && !retraining_of(m) && !failed) m->renegotiations++;
         m->was_moving = moving;
         event(m, moving ? V90M_EV_DATA_MOVING : V90M_EV_DATA_STOPPED);
     }
-    if (a->phase == ANS_FAILED && !m->was_ended) {
+    if (failed && !m->was_ended) {
         m->was_ended = 1;
         event(m, V90M_EV_ENDED);
     }
@@ -181,7 +228,15 @@ int v90m_process_g711(v90m_t *m, const uint8_t *rx, uint8_t *tx, size_t n)
 {
     size_t i;
     if (!m || (n && (!rx || !tx))) return V90M_EINVAL;
-    for (i = 0; i < n; i++) { tx[i] = answer_tick_pcm(&m->a, rx[i]); after(m); }
+    if (ORIGINATING(m)) {
+        int alaw = m->cfg.alaw != 0;
+        for (i = 0; i < n; i++) {
+            tx[i] = pcm_encode(alaw, orig_tick(&m->u.o, (int16_t)v90_octet_linear(alaw, rx[i])));
+            after(m);
+        }
+        return V90M_OK;
+    }
+    for (i = 0; i < n; i++) { tx[i] = answer_tick_pcm(&m->u.a, rx[i]); after(m); }
     return V90M_OK;
 }
 
@@ -189,7 +244,12 @@ int v90m_process_lin_rx(v90m_t *m, const int16_t *rx, uint8_t *tx, size_t n)
 {
     size_t i;
     if (!m || (n && (!rx || !tx))) return V90M_EINVAL;
-    for (i = 0; i < n; i++) { tx[i] = answer_tick_lin(&m->a, rx[i]); after(m); }
+    if (ORIGINATING(m)) {
+        int alaw = m->cfg.alaw != 0;
+        for (i = 0; i < n; i++) { tx[i] = pcm_encode(alaw, orig_tick(&m->u.o, rx[i])); after(m); }
+        return V90M_OK;
+    }
+    for (i = 0; i < n; i++) { tx[i] = answer_tick_lin(&m->u.a, rx[i]); after(m); }
     return V90M_OK;
 }
 
@@ -197,43 +257,64 @@ int v90m_process_linear(v90m_t *m, const int16_t *rx, int16_t *tx, size_t n)
 {
     size_t i;
     if (!m || (n && (!rx || !tx))) return V90M_EINVAL;
-    for (i = 0; i < n; i++) { tx[i] = answer_tick(&m->a, rx[i]); after(m); }
+    if (ORIGINATING(m)) {
+        for (i = 0; i < n; i++) { tx[i] = orig_tick(&m->u.o, rx[i]); after(m); }
+        return V90M_OK;
+    }
+    for (i = 0; i < n; i++) { tx[i] = answer_tick(&m->u.a, rx[i]); after(m); }
     return V90M_OK;
 }
 
-int v90m_retrain(v90m_t *m) { return answer_retrain(&m->a) == 0 ? V90M_OK : V90M_ESTATE; }
-int v90m_cleardown(v90m_t *m) { return answer_cleardown(&m->a) == 0 ? V90M_OK : V90M_ESTATE; }
+int v90m_retrain(v90m_t *m)
+{
+    if (ORIGINATING(m)) return orig_retrain(&m->u.o) == 0 ? V90M_OK : V90M_ESTATE;
+    return answer_retrain(&m->u.a) == 0 ? V90M_OK : V90M_ESTATE;
+}
+
+int v90m_cleardown(v90m_t *m)
+{
+    if (ORIGINATING(m)) return V90M_ESTATE;        /* V.21 and V.22bis have no cleardown */
+    return answer_cleardown(&m->u.a) == 0 ? V90M_OK : V90M_ESTATE;
+}
 
 void v90m_get_state(const v90m_t *m, v90m_state *st)
 {
-    const answer_t *a = &m->a;
-    st->connected = a->connected;
-    st->moving = answer_moving(a);
-    st->retraining = a->retraining;
-    st->modulation = (v90m_conn)a->modulation;
-    st->tx_bps = a->bitrate;
-    st->rx_bps = a->rx_bitrate > 0 ? a->rx_bitrate : a->bitrate;
-    st->used_v8 = a->used_v8;
-    st->odp_bypass = answer_odp_bypass(a);
-    st->end = end_of(a);
+    st->connected = connected_of(m);
+    st->moving = moving_of(m);
+    st->retraining = retraining_of(m);
+    st->modulation = (v90m_conn)mod_of(m);
+    st->tx_bps = tx_of(m);
+    st->rx_bps = rx_of(m);
+    st->used_v8 = ORIGINATING(m) ? m->u.o.used_v8 : m->u.a.used_v8;
+    st->odp_bypass = ORIGINATING(m) ? 0 : answer_odp_bypass(&m->u.a);
+    st->end = end_of(m);
 }
 
 void v90m_get_stats(const v90m_t *m, v90m_stats *st)
 {
-    const answer_t *a = &m->a;
-    st->modulation = (v90m_conn)a->modulation;
-    st->tx_bps = a->bitrate;
-    st->rx_bps = a->rx_bitrate > 0 ? a->rx_bitrate : a->bitrate;
-    st->snr_db10 = a->connected ? answer_snr_db10(a) : -1;
-    st->rtd = a->connected ? answer_rtd(a) : -1;
-    if (a->modulation == ANS_MOD_V92 || a->phase == ANS_P3X || a->phase == ANS_V92) st->echo_delay = a->u.v92.echo_delay;
-    else if (a->modulation == ANS_MOD_V90 || a->phase == ANS_P3 || a->phase == ANS_V90) st->echo_delay = a->p34.echo_delay;
-    else st->echo_delay = -1;
-    st->retrains = (unsigned)a->retrains;
+    st->modulation = (v90m_conn)mod_of(m);
+    st->tx_bps = tx_of(m);
+    st->rx_bps = rx_of(m);
     st->renegotiations = m->renegotiations;
+    if (ORIGINATING(m)) {
+        const orig_t *o = &m->u.o;
+        st->snr_db10 = orig_snr_db10(o);
+        st->rtd = -1;
+        st->echo_delay = -1;
+        st->retrains = o->phase == ORIG_V22 ? (unsigned)o->v22.retrains : 0;
+    } else {
+        const answer_t *a = &m->u.a;
+        st->snr_db10 = a->connected ? answer_snr_db10(a) : -1;
+        st->rtd = a->connected ? answer_rtd(a) : -1;
+        if (a->modulation == ANS_MOD_V92 || a->phase == ANS_P3X || a->phase == ANS_V92) st->echo_delay = a->u.v92.echo_delay;
+        else if (a->modulation == ANS_MOD_V90 || a->phase == ANS_P3 || a->phase == ANS_V90) st->echo_delay = a->p34.echo_delay;
+        else st->echo_delay = -1;
+        st->retrains = (unsigned)a->retrains;
+    }
 }
 
-answer_t *v90m__answer(v90m_t *m) { return &m->a; }
+answer_t *v90m__answer(v90m_t *m) { return &m->u.a; }
+orig_t   *v90m__orig(v90m_t *m) { return &m->u.o; }
 
 /* ------------------------------------------------------------ start-stop */
 struct v90m_async { int owned; v14_t v; };

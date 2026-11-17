@@ -5,9 +5,11 @@
 #define V90MODEM_PRIV_H
 #include "../include/v90modem.h"
 #include "../modem/answer.h"
+#include "../modem/orig.h"
 #include "../v42/v42.h"
 
 answer_t *v90m__answer(v90m_t *m);
+orig_t   *v90m__orig(v90m_t *m);
 v42ec_t  *v90m__ec(v90m_ec_t *e);
 
 #endif
