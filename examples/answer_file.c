@@ -27,7 +27,7 @@
 #include <string.h>
 #include "v90modem.h"
 
-static const char *const conn_name[] = { "none", "V.21", "V.22", "V.22bis", "V.90", "V.34", "V.32bis", "V.92" };
+static const char *const conn_name[] = { "none", "V.21", "V.22", "V.22bis", "V.90", "V.34", "V.32bis", "V.92", "Bell 103", "Bell 212A" };
 
 typedef struct { const uint8_t *d; long n, bs, txo; int lin; } rec_t;
 

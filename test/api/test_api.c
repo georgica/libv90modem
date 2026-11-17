@@ -1,6 +1,7 @@
 /* The public API (include/v90modem.h), from the outside: the answering modem
  * comes from libv90modem.a as it is installed (only v90m_* visible); the
  * simulated calling modem and V.14 terminal come from the dev archive. */
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
@@ -22,8 +23,8 @@ static void test_cfg(void)
     v90m_cfg c; v90m_t *m; int err = 99;
     static uint8_t buf[1 << 20] __attribute__((aligned(16)));
 
-    CHECK(strcmp(v90m_version(), "0.1.0") == 0);
-    CHECK_EQ_I(V90M_VERSION_MAJOR * 10000 + V90M_VERSION_MINOR * 100 + V90M_VERSION_PATCH, 100);
+    CHECK(strcmp(v90m_version(), "0.2.0") == 0);
+    CHECK_EQ_I(V90M_VERSION_MAJOR * 10000 + V90M_VERSION_MINOR * 100 + V90M_VERSION_PATCH, 200);
 
     v90m_cfg_default(&c);
     CHECK_EQ_I(c.role, V90M_ROLE_ANSWER);
@@ -37,6 +38,20 @@ static void test_cfg(void)
     CHECK(m != NULL); CHECK_EQ_I(err, V90M_OK);
     v90m_destroy(m);
     c.modulations |= V90M_MOD_V92;              /* V.92: answering only */
+    m = v90m_create(&c, &err);
+    CHECK(m == NULL); CHECK_EQ_I(err, V90M_ENOTSUP);
+    /* Bell 103 and Bell 212A: answering only, and not in the defaults */
+    v90m_cfg_default(&c);
+    CHECK(!(c.modulations & (V90M_MOD_BELL103 | V90M_MOD_BELL212A)));
+    CHECK_EQ_I(V90M_CONN_BELL103, 8); CHECK_EQ_I(V90M_CONN_BELL212A, 9);   /* appended: the others stay */
+    c.modulations |= V90M_MOD_BELL103 | V90M_MOD_BELL212A;
+    m = v90m_create(&c, &err);
+    CHECK(m != NULL); CHECK_EQ_I(err, V90M_OK);
+    v90m_destroy(m);
+    c.role = V90M_ROLE_ORIGINATE; c.modulations = V90M_MOD_V21 | V90M_MOD_BELL103;
+    m = v90m_create(&c, &err);
+    CHECK(m == NULL); CHECK_EQ_I(err, V90M_ENOTSUP);
+    c.modulations = V90M_MOD_V22 | V90M_MOD_BELL212A;
     m = v90m_create(&c, &err);
     CHECK(m == NULL); CHECK_EQ_I(err, V90M_ENOTSUP);
     c.role = V90M_ROLE_ANSWER; c.modulations = 0x8000;
@@ -552,6 +567,174 @@ static void test_originate(void)
     v90m_destroy(cl.m); v90m_async_destroy(cl.a);
 }
 
+/* ---- Bell 103 and Bell 212A callers: the library answers ----
+ * The callers are as plain as the real ones (the same as in test_answer),
+ * made of the dev archive's V.21 and V.22 parts. Our echo comes back at a
+ * fifth of what we send, 21 samples late. */
+typedef struct { v21mod_t mod; v21demod_t dem; arx_t uart; v14_t dte; int fbit, cd, on; int64_t thr; } b103_t;
+
+static void b103_init(b103_t *b)
+{
+    memset(b, 0, sizeof *b);
+    v21mod_init(&b->mod, BELL103_O_MARK, BELL103_O_SPACE, 8000, 300, 4243);
+    v21demod_init(&b->dem, BELL103_A_MARK, BELL103_A_SPACE, 8000, 300);
+    arx_init(&b->uart, 8000, 300);
+    v14_init(&b->dte);
+    b->thr = v21demod_energy_of(&b->dem, 1200); b->fbit = 1;
+}
+
+/* once it has heard 150 ms in its band (2025 / 2225 Hz), its mark and then
+ * start-stop characters */
+static int16_t b103_tick(b103_t *b, int16_t rx)
+{
+    int level = v21demod_tick(&b->dem, rx), heard = b->dem.energy >= b->thr, c, i, done;
+    int16_t out;
+    b->cd = heard ? b->cd + 1 : 0;
+    if (b->cd > 150 * 8) b->on = 1;
+    if (!b->on) return 0;
+    c = arx_tick(&b->uart, heard ? level : 1);
+    if (c >= 0) {
+        v14_putbit(&b->dte, 0);
+        for (i = 0; i < 8; i++) v14_putbit(&b->dte, (c >> i) & 1);
+        v14_putbit(&b->dte, 1);
+    }
+    out = v21mod_tick(&b->mod, b->fbit, &done);
+    if (done) b->fbit = v14_getbit(&b->dte) & 1;
+    return out;
+}
+
+/* nothing but 2225 Hz (three 100 ms blocks in a row) is an answering modem
+ * to it; then V.22 at 1200 bit/s as a caller */
+typedef struct { v22bis_t m; v14_t dte; int on, run, n; double re, im, pw; } b212_t;
+
+static int16_t b212_tick(b212_t *b, int16_t rx)
+{
+    if (!b->on) {
+        double w = 2.0 * 3.14159265358979323846 * 2225.0 * b->n / 8000.0;
+        b->re += rx * cos(w); b->im += rx * sin(w); b->pw += (double)rx * rx;
+        if (++b->n < 800) return 0;
+        b->run = (b->pw > 800.0 * 400 * 400 && (b->re * b->re + b->im * b->im) * 4 > b->pw * 800) ? b->run + 1 : 0;
+        b->n = 0; b->re = b->im = b->pw = 0;
+        if (b->run < 3) return 0;
+        v22m_init(&b->m, V22_CALLER, 0, 3000, v14_getbit, v14_putbit, &b->dte);
+        v22tx_set_mode(&b->m.tx, V22_TX_SB1_1200);
+        b->m.state = V22S_TRAIN;
+        b->on = 1;
+    }
+    return v22m_tick(&b->m, rx);
+}
+
+typedef struct {
+    v90m_t *m; v90m_async_t *a;
+    int bell212;                    /* which caller */
+    b103_t c103; b212_t c212;
+    int ev[8]; int n_ev;
+    int16_t echo[32]; int epos;
+    char got_a[64], got_c[64]; size_t na, nc;
+    double connected_s;
+} bell_t;
+
+static void bell_event(void *u, v90m_event ev) { bell_t *b = u; if (b->n_ev < 8) b->ev[b->n_ev] = (int)ev; b->n_ev++; }
+static int bell_get(void *u) { return v90m_async_getbit(((bell_t *)u)->a); }
+static void bell_put(void *u, int bit) { v90m_async_putbit(((bell_t *)u)->a, bit); }
+
+/* a call of `seconds` against the Bell 103 (bell212 = 0) or 212A caller;
+ * once connected each side sends a line */
+static int bell_call(bell_t *b, int bell212, unsigned mods, int seconds)
+{
+    static const char *msg_c = "caller says hello, 0123456789", *msg_a = "answerer replies: ~{}[] OK";
+    v90m_cfg c; int err, n, sent = 0, at = -1;
+    int16_t atx = 0, ctx = 0;
+    memset(b, 0, sizeof *b);
+    b->bell212 = bell212;
+    b->a = v90m_async_create(&err);
+    v90m_cfg_default(&c);
+    c.modulations = mods;
+    c.getbit = bell_get; c.putbit = bell_put; c.on_event = bell_event; c.user = b;
+    b->m = v90m_create(&c, &err);
+    CHECK(b->m != NULL);
+    if (!b->m) { v90m_async_destroy(b->a); return 0; }
+    b103_init(&b->c103); v14_init(&b->c212.dte);
+    for (n = 0; n < seconds * 8000; n++) {
+        v90m_state st;
+        int16_t rx = (int16_t)(ctx + b->echo[(b->epos + 32 - 21) & 31] / 5), heard = atx;
+        v90m_process_linear(b->m, &rx, &atx, 1);
+        b->echo[b->epos] = atx; b->epos = (b->epos + 1) & 31;
+        ctx = bell212 ? b212_tick(&b->c212, heard) : b103_tick(&b->c103, heard);
+        v90m_get_state(b->m, &st);
+        if (at < 0 && st.connected) { at = n; b->connected_s = n / 8000.0; }
+        if (at >= 0 && !sent && n > at + 4000) {
+            v14_write(bell212 ? &b->c212.dte : &b->c103.dte, (const uint8_t *)msg_c, (int)strlen(msg_c));
+            v90m_async_write(b->a, (const uint8_t *)msg_a, strlen(msg_a));
+            sent = 1;
+        }
+        if (sent) {
+            b->na += v90m_async_read(b->a, (uint8_t *)b->got_a + b->na, 63 - b->na);
+            b->nc += (size_t)v14_read(bell212 ? &b->c212.dte : &b->c103.dte, (uint8_t *)b->got_c + b->nc, (int)(63 - b->nc));
+        }
+    }    return 1;
+}
+
+static void bell_done(bell_t *b) { v90m_destroy(b->m); v90m_async_destroy(b->a); }
+
+static void test_bell(void)
+{
+    static bell_t b;
+    static const char *msg_c = "caller says hello, 0123456789", *msg_a = "answerer replies: ~{}[] OK";
+    const unsigned ours = V90M_MOD_V22 | V90M_MOD_V21 | V90M_MOD_BELL103 | V90M_MOD_BELL212A;
+    v90m_state st; v90m_stats sx;
+
+    /* Bell 103: we answer on 2225 / 2025 Hz, 300 bit/s, start-stop */
+    if (bell_call(&b, 0, ours, 12)) {
+        v90m_get_state(b.m, &st); v90m_get_stats(b.m, &sx);
+        printf("  Bell 103 through the API: connected at %.2f s, \"%s\" / \"%s\"\n", b.connected_s, b.got_a, b.got_c);
+        CHECK_EQ_I(st.connected, 1); CHECK_EQ_I(st.modulation, V90M_CONN_BELL103);
+        CHECK_EQ_I(st.tx_bps, 300); CHECK_EQ_I(st.rx_bps, 300);
+        CHECK_EQ_I(st.used_v8, 0); CHECK_EQ_I(st.moving, 1); CHECK_EQ_I(st.end, V90M_END_NONE);
+        CHECK_EQ_I(sx.modulation, V90M_CONN_BELL103); CHECK_EQ_I(sx.snr_db10, -1);
+        CHECK(b.n_ev >= 2); CHECK_EQ_I(b.ev[0], V90M_EV_CONNECTED); CHECK_EQ_I(b.ev[1], V90M_EV_DATA_MOVING);
+        CHECK(strcmp(b.got_a, msg_c) == 0); CHECK(strcmp(b.got_c, msg_a) == 0);
+        bell_done(&b);
+    }
+
+    /* the same without V.22: the wait is V.21's */
+    if (bell_call(&b, 0, V90M_MOD_V21 | V90M_MOD_BELL103, 12)) {
+        v90m_get_state(b.m, &st);
+        printf("  Bell 103 without V.22: connected at %.2f s\n", b.connected_s);
+        CHECK_EQ_I(st.connected, 1); CHECK_EQ_I(st.modulation, V90M_CONN_BELL103); CHECK_EQ_I(st.tx_bps, 300);
+        CHECK(strcmp(b.got_a, msg_c) == 0); CHECK(strcmp(b.got_c, msg_a) == 0);
+        bell_done(&b);
+    }
+
+    /* not offered: never Bell 103, and nothing from that caller */
+    if (bell_call(&b, 0, V90M_MOD_V22 | V90M_MOD_V21, 30)) {
+        v90m_get_state(b.m, &st);
+        CHECK(st.modulation != V90M_CONN_BELL103); CHECK_EQ_I((int)b.na, 0);
+        bell_done(&b);
+    }
+
+    /* Bell 212A: 2225 Hz after the V.22bis answer sequence went unanswered,
+     * then 1200 bit/s as V.22 */
+    if (bell_call(&b, 1, ours, 16)) {
+        v90m_get_state(b.m, &st); v90m_get_stats(b.m, &sx);
+        printf("  Bell 212A through the API: connected at %.2f s, \"%s\" / \"%s\"\n", b.connected_s, b.got_a, b.got_c);
+        CHECK_EQ_I(st.connected, 1); CHECK_EQ_I(st.modulation, V90M_CONN_BELL212A);
+        CHECK_EQ_I(st.tx_bps, 1200); CHECK_EQ_I(st.rx_bps, 1200);
+        CHECK_EQ_I(st.used_v8, 0); CHECK_EQ_I(st.moving, 1); CHECK_EQ_I(st.end, V90M_END_NONE);
+        CHECK_EQ_I(sx.modulation, V90M_CONN_BELL212A);
+        CHECK(b.n_ev >= 2); CHECK_EQ_I(b.ev[0], V90M_EV_CONNECTED); CHECK_EQ_I(b.ev[1], V90M_EV_DATA_MOVING);
+        CHECK(strcmp(b.got_a, msg_c) == 0); CHECK(strcmp(b.got_c, msg_a) == 0);
+        bell_done(&b);
+    }
+
+    /* not offered: that caller hears no 2225 Hz from us and stays silent */
+    if (bell_call(&b, 1, V90M_MOD_V22 | V90M_MOD_V21 | V90M_MOD_BELL103, 30)) {
+        v90m_get_state(b.m, &st);
+        CHECK_EQ_I(st.connected, 0); CHECK_EQ_I(st.modulation, V90M_CONN_NONE);
+        bell_done(&b);
+    }
+}
+
 int main(void)
 {
     test_cfg();
@@ -560,5 +743,6 @@ int main(void)
     test_blocks();
     test_ec();
     test_originate();
+    test_bell();
     T_REPORT("api");
 }

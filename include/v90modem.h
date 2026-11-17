@@ -1,5 +1,6 @@
 /* libv90modem: a software voice-band data modem (V.92, V.90, V.34, V.32bis,
- * V.22bis, V.22, V.21, V.8) with V.42 error control (LAPM, V.42bis, V.44).
+ * V.22bis, V.22, V.21, V.8; answering also Bell 212A and Bell 103) with V.42
+ * error control (LAPM, V.42bis, V.44).
  * SPDX-License-Identifier: GPL-2.0-only
  *
  * The API is NOT stable before version 1.0: any 0.x release may change it.
@@ -29,9 +30,9 @@ extern "C" {
 #endif
 
 #define V90M_VERSION_MAJOR 0
-#define V90M_VERSION_MINOR 1
+#define V90M_VERSION_MINOR 2
 #define V90M_VERSION_PATCH 0
-/* "0.1.0": the version of the library linked in (may differ from the header) */
+/* "0.2.0": the version of the library linked in (may differ from the header) */
 const char *v90m_version(void);
 
 /* error codes (negative returns) */
@@ -61,7 +62,8 @@ typedef enum {
                                    would bury the PCM downstream in its own quantising noise),
                                    does no retrain (v90m_retrain gives V90M_ESTATE) and has been
                                    tried against this library's answerer in simulation only.
-                                   V90M_MOD_V92 gives V90M_ENOTSUP */
+                                   V90M_MOD_V92, V90M_MOD_BELL103 and V90M_MOD_BELL212A
+                                   give V90M_ENOTSUP */
 } v90m_role;
 
 /* modulations offered (v90m_cfg.modulations) */
@@ -71,11 +73,22 @@ typedef enum {
 #define V90M_MOD_V34     0x0008u     /* (both roles) */
 #define V90M_MOD_V90     0x0010u     /* the digital (server) side: answering only */
 #define V90M_MOD_V92     0x0020u     /* with V90M_MOD_V90: PCM upstream on offer */
+/* answering only, and not in the defaults. Bell 103: a caller without V.8
+ * that sends 1270 Hz (the Bell 103 mark) gets 300 bit/s FSK on 2225 / 2025
+ * Hz, start-stop and no error control as in V.21. Bell 212A, with
+ * V90M_MOD_V22: when the V.22bis answer sequence has gone unanswered for 4 s
+ * by a caller without V.8, 2225 Hz (the Bell answer tone) in place of the
+ * unscrambled ones for 4 s; a caller that then starts as V.22 does is a
+ * Bell 212A call at 1200 bit/s. */
+#define V90M_MOD_BELL103  0x0040u
+#define V90M_MOD_BELL212A 0x0080u
 
 /* the modulation of a connection (v90m_state.modulation) */
 typedef enum {
     V90M_CONN_NONE = 0, V90M_CONN_V21, V90M_CONN_V22, V90M_CONN_V22BIS,
-    V90M_CONN_V90, V90M_CONN_V34, V90M_CONN_V32BIS, V90M_CONN_V92
+    V90M_CONN_V90, V90M_CONN_V34, V90M_CONN_V32BIS, V90M_CONN_V92,
+    V90M_CONN_BELL103,          /* appended: the values above stay as they were */
+    V90M_CONN_BELL212A          /* V.22 at 1200 bit/s begun after our 2225 Hz */
 } v90m_conn;
 
 typedef int  (*v90m_getbit_fn)(void *user);             /* next bit to send, 0 or 1 */
@@ -94,7 +107,7 @@ typedef void (*v90m_event_fn)(void *user, v90m_event ev);
 
 typedef struct {
     v90m_role      role;
-    unsigned       modulations;     /* V90M_MOD_*; default all but V.92 */
+    unsigned       modulations;     /* V90M_MOD_*; default all but V.92 and Bell */
     int            alaw;            /* the codec's law: 0 mu-law, 1 A-law */
     int            codec_linear_rx; /* 1: the codec receives in 16-bit linear, with no G.711
                                        quantiser on the receive path (V.92 then designs the

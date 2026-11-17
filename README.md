@@ -1,7 +1,7 @@
 # libv90modem
 
 A voice-band data modem in software: the answering side of V.92, V.90,
-V.34, V.32bis, V.22bis, V.22 and V.21, started by V.8, with V.42 error
+V.34, V.32bis, V.22bis, V.22, V.21, Bell 212A and Bell 103, started by V.8, with V.42 error
 control (LAPM) and V.42bis / V.44 compression. Portable C99, fixed-point in
 the signal path, no allocation after start, no global state. It works at a
 G.711 codec, 8000 samples per second: give it the samples it hears, it gives
@@ -11,7 +11,7 @@ It was written for v90d, a dial-up server that runs in a
 Grandstream HT802 analogue telephone adapter, from the ITU-T
 recommendations, and has answered real modems there (see the table below).
 
-**The API is not stable before version 1.0.** This is 0.1.0.
+**The API is not stable before version 1.0.** This is 0.2.0.
 
 ## Standards
 
@@ -20,6 +20,8 @@ recommendations, and has answered real modems there (see the table below).
 | V.8 | answering: ANSam, CM / JM / CJ | callers without V.8 are answered too (V.22bis sequence, V.32bis AA, V.21 after 8 s) |
 | V.21 | yes | 300 bit/s |
 | V.22, V.22bis | yes | 1200 / 2400 bit/s, retrain, guard tone |
+| Bell 103 | answering (`V90M_MOD_BELL103`, not in the defaults) | 300 bit/s; a caller without V.8 that sends 1270 Hz |
+| Bell 212A | answering (`V90M_MOD_BELL212A` with V.22, not in the defaults) | 1200 bit/s after 2225 Hz in the V.22bis answer sequence; simulation only |
 | V.32, V.32bis | answering | 4800 to 14400 bit/s |
 | V.34 | answering | Phase 2 to data mode, retrains, rate renegotiation |
 | V.90 | digital (server) side; analogue (client) side: **simulation and own answerer only** | PCM downstream, V.34 upstream; the analogue side measures the DIL (pads, robbed bits), has no retrain |
@@ -38,7 +40,9 @@ Not implemented:
 - x2 and K56flex, the two 56k schemes from before V.90: not spoken. A modem
   that has nothing newer connects at V.34. (Neither was published; see
   `DESIGN.md`, 4.2b.)
-- Bell 103 and Bell 212A.
+- Bell 103 and Bell 212A in the calling role (`V90M_ROLE_ORIGINATE` with
+  `V90M_MOD_BELL103` or `V90M_MOD_BELL212A` returns `V90M_ENOTSUP`): planned
+  after C6.
 - Fax (V.17, V.29, V.27ter), V.23, half-duplex V.34.
 
 ## Building
