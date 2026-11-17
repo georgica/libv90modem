@@ -142,6 +142,18 @@ tone-pair detector), and Tone A (the share of each 10 ms block's power at
 2400 Hz; the data signal leaves a few per cent there, Tone A with its guard
 tone 80 %).
 
+Two pieces are shared by the three engines that have a line echo to deal
+with (`p34d`, `v92/v92_p34d`, `v34dx`), each in one place:
+`modem/ecdly` keeps what was sent for the canceller's delayed reference and
+measures how late the echo comes back (on plain samples for V.34, on the
+change from sample to sample for V.90 and V.92, see above on the 5686), and
+`modem/tonedet` is the watch for the retrain tones (Tone A at 2400 Hz, Tone
+B at 1200 Hz). Each engine once had its own copy, and a correction had to
+be made three times. What the engines do with the result stays with
+them: the length of TRN2d, for one, differs on purpose (1200 data frames in
+V.90 for the 1998 U.S. Robotics, 400 in V.92, which that modem does not
+speak).
+
 - S starts a rate renegotiation: `sres` follows S to its S-bar with the
   carrier already locked (`sres_resume`), the 4-point sequence receiver takes
   the CP, the transmitter sends Rd (384 T from a data frame boundary), Rd-bar,

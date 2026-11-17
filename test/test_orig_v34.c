@@ -236,7 +236,7 @@ int main(void)
     start(&good, 0, 0, -1);
     CHECK_EQ_I(to_data(30000), 1);
     CHECK(O.bitrate >= 28800 && O.rx_bitrate >= 28800);
-    CHECK(O.v34.dx.echo_delay >= 0 && O.v34.dx.echo_delay <= 4);
+    CHECK(O.v34.dx.ecd.delay >= 0 && O.v34.dx.ecd.delay <= 4);
     data_ok(3);
     report("own echo delay found");
 

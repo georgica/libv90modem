@@ -120,7 +120,7 @@ typedef struct {
  * struct of the caller's (nothing allocated at all): upper bounds of
  * v90m_mem_size() and the others for this version, on every platform. They
  * change with the version; the init functions check the length given. */
-#define V90M_MEM_SIZE        (100u * 1024u)
+#define V90M_MEM_SIZE        (112u * 1024u)
 #define V90M_EC_MEM_SIZE     (50u * 1024u)
 #define V90M_ASYNC_MEM_SIZE  2048u
 /* alignment for that memory:  union { v90m_align a; uint8_t b[V90M_MEM_SIZE]; } mem; */
