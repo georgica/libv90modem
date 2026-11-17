@@ -681,3 +681,41 @@ C5-2 verified independently (fresh build under /home, not the agent's):
   of the box's CPU) must be spread before a real call; data mode ~65 % of
   the box; no retrains; V.8 JM lost at -10 dB hybrid echo (C1 v8orig has no
   channel-2 band-pass).
+
+## Sync with v90d 0.4.1 (2026-11-17)
+
+v90d main's modem changes since the split (819d38e..4799c4c: one copy of
+the echo delay measurement, `modem/ecdly`, and of the retrain tone watch,
+`modem/tonedet`, out of `p34d`, `v92/v92_p34d` and `v34dx`; `test_ecdly`;
+`test_p34`'s mid-call events timed from data mode), applied as they are:
+every file it touches is now octet for octet what main has. Here as well:
+both modules in `MODEM_SRC`, `test_ecdly` in `TESTS`; the echo delay is
+read from `ecd.delay` by the API's status, the replay tool's trace
+(`tools/trace.c`) and `test_orig_v34` (the calling code itself used none of
+what changed: `v34orig` and `orig` fill `v34dx_cfg.echo_delay`, which
+stays). `V90M_MEM_SIZE` 100 KiB -> 112 KiB: the history in `p34d` and
+`v92d` is 4096 samples now (2048), and `answer_t` is 106496 octets on the
+host (98288), 106208 on ARM; `orig_t` 100752.
+
+Checked against `calling` (0367bee), same PC:
+
+| | calling | this |
+|---|---|---|
+| `make check` | 98 programs, ALL HOST CHECKS PASS | the same 98 with the same counts, plus `ecdly: 1019 checks, 0 failures`; ALL HOST CHECKS PASS |
+| `make check-arm` | 98 programs, ALL ARM CHECKS PASS | the same, plus ecdly; ALL ARM CHECKS PASS |
+| `make bench-v90` | | transmit hash 8e3136e9 (internals and API; host, shared, qemu-arm) |
+
+The output of the calling side's tests (anstone, v8orig, orig, orig_v32,
+orig_v34, orig_v90, p2call, p2v90, v90a, v90adec, v90arx, v90arx_robust,
+v90dil, api) is identical line for line; the only lines of the whole run
+that differ are `test_p34`'s (main's change to the test: its events now
+start later in the call, so fewer bits, the same 372 checks) and timings.
+
+In v90d (its branch `libv90modem-split` with main merged, built against
+this): the 108 programs of main's `make check` with the same counts, the
+bench hash 8e3136e9 as main gives it, 106 recordings x 8 configurations
+replayed (1613 files) identical octet for octet; see v90d's PROGRESS.md.
+
+Not done: `modem/v90a` (the calling side's V.90) keeps its own history of
+what was sent for its fixed-delay canceller (`ecdl`, `V90A_ECDL`); it could
+use `ecdly_put/ref/next`, a change of its own to be proved on its own.
