@@ -334,3 +334,120 @@ Findings, not explained or not changed:
   (counted under qemu), once per Phase 2. On the box that is one late block.
 - The API counts the caller's V.34 renegotiations; it still does not count
   the answering side's own (as in Phase 1).
+
+## C5-1: the PCM downstream receiver of the analogue modem (2026-11-17)
+
+- `sim/dschan`: the downstream as the analogue modem's A/D sees it: octets
+  pulled from the digital modem on the network clock -> optional pad
+  (decode, scale, encode) -> optional robbed bit (LSB forced to 1 in one
+  sample of 6, at a phase of the test's choosing) -> G.711 levels -> one
+  pulse built in the frequency domain (two 8th order Chebyshev codec
+  filters at 3550 Hz, 150 Hz transformer, 50 Hz DAA coupling, 0..6 km of
+  0.4 mm cable, normalised at 1 kHz) -> noise in dBm0 -> sampled at
+  8000 (1 + ppm) Hz from any phase -> plus the hybrid echo of our own
+  transmit samples -> 16-bit A/D. Pulled per A/D sample, like the other
+  channel models.
+- `modem/v90arx`: the receiver, integer only. Echo canceller (`ec_t`),
+  interpolator on to the network clock (`v34_interp`), AGC from Sd, DFE
+  48 forward / 128 feedback taps, slicer per data frame interval with
+  caller-settable levels. Clock offset measured over Sd (its 1333 Hz line
+  turns by -2 pi offset per period); channel estimate (128 taps, NLMS) on
+  TRN1d; the MMSE DFE computed from it by fixed-point Cholesky (LMS alone
+  needed about 3 s to reach -45 dB); then decision directed: the estimate
+  goes on, the DFE is computed again every 2048 / 1024 / 512 symbols
+  (offset up to 30 / 61 / above ppm), timing loop on the estimate's phase,
+  adaptation gated on 4 sigma and on slots 9 dB worse than the best.
+- `test/test_v90arx.c` (488 checks), `tools/rec_v90a.c` + `rig/bench_v90a.c`
+  (`make bench-v90a`, `make cost-v90a`).
+
+Seen failing first against a stub: 287 checks, 80 failures (the channel's
+own checks passed). Now 488 checks, 0 failures, host and qemu-arm output
+byte-identical. Every other `make check` line identical; bench-v90
+8e3136e9 six times.
+
+Results (2 s of data per cell, 48000 bit/s = 64-point slots, Sr = 0,
+points spaced as widely as -12 dBm0 allows):
+
+```
+data: Ucode decision error rate (against what the digital modem sent), 16000 symbols each
+  channel \ bit/s                   28000    32000    36000    40000    44000    48000    52000    56000
+    dmin, mu-law (units)             1280      896      544      384      256      176      128       64
+  2 km, -75 dBm0,    0 ppm              0        0        0        0        0        0        0        0
+  0 km, -75 dBm0,  +80 ppm              0        0        0        0        0        0  2.6e-01  8.7e-01
+  6 km, -75 dBm0,  -80 ppm              0        0        0        0        0        0        0  7.8e-01
+  2 km, -65 dBm0,  +30 ppm              0        0        0        0        0        0  9.1e-01  9.5e-01
+  4 km, -60 dBm0,  -30 ppm              0        0        0        0  1.6e-03  7.9e-01  9.6e-01  9.6e-01
+  2 km, -75 dBm0,  +30 ppm              0        0        0        0        0        0        0  9.4e-01
+    as row 6, 3 dB pad                  0        0  2.5e-04  8.9e-01  9.3e-01  9.5e-01  9.5e-01  9.6e-01
+    ... levels given (DIL)              0        0        0        0        0  3.2e-02  1.6e-01  9.4e-01
+    as row 6, 6 dB pad                  0        0        0        0  8.8e-01  9.3e-01  9.5e-01  9.7e-01
+    ... levels given (DIL)              0        0        0        0        0        0        0  9.3e-01
+    as row 6, RBS                       0        0        0  7.2e-01  7.9e-01  9.2e-01  5.4e-02  2.9e-01
+    ... levels given (DIL)              0        0        0        0  2.3e-02  3.1e-02  5.6e-02  9.5e-01
+    as row 6, A-law                     0        0        0        0        0        0  2.6e-03  8.5e-01
+  mse (dB re UINFO^2) and rms error (units) at 28000 / 40000 bit/s; rms of |y| - |sent| at 36000
+  2 km, -75 dBm0,    0 ppm        -59.7 /  -60.5      6.88 /    6.29       5.88
+  0 km, -75 dBm0,  +80 ppm        -52.3 /  -50.8     16.10 /   19.25      14.59
+  6 km, -75 dBm0,  -80 ppm        -55.8 /  -55.2     10.73 /   11.52      10.40
+  2 km, -65 dBm0,  +30 ppm        -51.1 /  -52.0     18.46 /   16.62      17.54
+  4 km, -60 dBm0,  -30 ppm        -46.8 /  -47.1     30.27 /   29.44      29.82
+  2 km, -75 dBm0,  +30 ppm        -55.7 /  -56.4     10.85 /   10.01      11.18
+    as row 6, 3 dB pad            -40.7 /  -29.0     61.13 /  236.66      86.80
+    ... levels given (DIL)        -54.6 /  -54.5     12.36 /   12.56     109.84
+    as row 6, 6 dB pad            -44.6 /  -42.8     39.02 /   47.91      51.07
+    ... levels given (DIL)        -53.4 /  -53.5     14.29 /   14.10      39.92
+    as row 6, RBS                 -39.7 /  -25.9     68.92 /  336.12      60.06
+    ... levels given (DIL)        -55.4 /  -55.1     11.25 /   11.73      46.67
+    as row 6, A-law               -54.1 /  -56.6     13.32 /   10.02      10.45
+    as row 6, RBS: robbed slot 0; per slot at 36000: errors, mean and rms of |y| - |sent| (units)
+    [0] 0 -59.6 115.7 [1] 0 +1.6 50.0 [2] 0 +1.4 52.4 [3] 0 +1.1 24.9 [4] 0 +1.7 42.0 [5] 0 +1.0 25.2
+    ... levels given (DIL): robbed slot 0; per slot at 36000: errors, mean and rms of |y| - |sent| (units)
+    [0] 0 -60.7 111.5 [1] 0 -0.5 11.2 [2] 0 -0.3 11.2 [3] 0 -0.3 11.0 [4] 0 -0.4 11.3 [5] 0 -0.8 11.2
+```
+
+Clock offset found within 0.05 ppm from -100 to +100 ppm and any phase;
+MSE after TRN1d (4800 T) -60 dB at 0 ppm, -47..-54 dB at 100 ppm; the
+canceller (trained 0.5 s on wideband noise, then frozen) gives 69..80 dB
+ERLE with our V.34 upstream 8 and 18 dB above the downstream.
+
+Findings:
+- The A/D at 8 kHz, not locked to the network: what the line passes above
+  about 3.8 kHz aliases with a phase that turns with the offset, a slowly
+  changing channel at the band edge. -61 dB at 0 ppm, about -48 dB at 10 to
+  100 ppm with LMS tracking alone (an ideal 512-tap interpolator does no
+  better); recomputing the DFE often brings 100 ppm back to -51..-58 dB.
+  A codec clock locked to the recovered timing would remove it.
+- NLMS on a V.34 upstream trains the canceller slowly (34 dB in 0.75 s,
+  48 dB in 30 s): the band edges of the reference are weak. Wideband
+  training (Phase 2 probing) is assumed.
+- TRN1d's signs start far from white (lag-1 correlation 0.55 over the first
+  300 symbols): the channel estimate needs about 1000 symbols.
+- An odd UINFO is changed by a robbed bit in TRN1d and Sd; the tests use
+  UINFO 90 (even codewords already have LSB 1).
+- Without the levels, a robbed bit or pad propagates through the feedback
+  into the other slots; with the levels given (as the DIL will find them)
+  the other slots are clean and the limit is points moved to within dmin/2
+  of a neighbour (a CP for the slot avoids those).
+
+Cost (`make cost-v90a`, qemu instruction counts, 2 km, 48000 bit/s, our
+V.34 echo 8 dB over the downstream): data mode 68.3 M ARM instructions per
+second of line at 0 ppm, 78.5 M at 100 ppm (the difference, 11.7 more
+computations of the DFE a second, puts one at about 0.87 M); Sd and TRN1d
+(0.7 s) 38.6 M / 42.8 M. The digital modem's V.90 data mode is 39.5 M
+(V34-REPORT.md), 32 % of the box's CPU, so this receiver alone would take
+about 55 to 64 %, before the V.34 upstream transmitter and the rest of a
+call. It fits one call; it does not fit beside other work. Not yet tried:
+updating the taps every other symbol, a 16x16 multiply path, computing the
+DFE less often with an A/D clock locked to the network.
+
+C5-1 verified independently (fresh build, not the agent's):
+- make check: 92 count lines, all 0 failures; against C4's run the only
+  difference is the new line "v90arx: 488 checks, 0 failures".
+- make bench-v90: transmit hash 8e3136e9, six of six.
+- make bench-v90a: host and qemu-arm agree, hash a3bf6729, -56.4 dB, +100.00 ppm.
+- modem/v90arx: no float, no allocation, the only statics are const tables.
+- sizeof(v90arx_t) 12744 octets; orig_t is 68280 today, so it still fits
+  V90M_MEM_SIZE (102400) with the receiver inside it.
+- Open: cost (68-79 M ARM instructions per second of line, about twice the
+  digital modem's data mode); the equaliser solve (0.87 M) runs within one
+  tick; a band-edge loss at nonzero ppm.

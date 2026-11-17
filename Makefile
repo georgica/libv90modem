@@ -7,6 +7,7 @@
 #   make examples        examples/answer_file
 #   make bench-v90       record a simulated V.90 call, replay it on the host and
 #                        under qemu, through the internals and the public API
+#   make bench-v90a      the same for the V.90 analogue modem's downstream receiver
 #   make test-interop    against spandsp (SPANDSP=its install prefix), host only
 #
 # Cross-compiling: set CC (and BUILD to keep the objects apart), e.g.
@@ -65,12 +66,12 @@ DEV      := $(BUILD)/$(NAME)-dev.a
 
 # ---- the simulator and the test suite ----
 SIM_SRC  := sim/g711.c sim/noise.c sim/filt.c sim/resamp.c sim/channel.c sim/v8call.c sim/callpeer.c sim/p2a.c sim/qammod.c \
-            sim/p34a.c v90/test/v90_dec.c sim/p2c.c sim/v34peer.c sim/v32call.c sim/v32line.c sim/v92chan.c sim/v92a.c sim/v92call.c
+            sim/p34a.c v90/test/v90_dec.c sim/p2c.c sim/v34peer.c sim/v32call.c sim/v32line.c sim/v92chan.c sim/v92a.c sim/v92call.c sim/dschan.c
 SIM_OBJ  := $(patsubst %.c,$(BUILD)/obj/%.o,$(SIM_SRC))
 MODEM_SRC := modem/v21.c modem/ansam.c modem/v8msg.c modem/async.c modem/v8rx.c modem/v8ans.c \
              modem/scramble.c modem/v22tx.c modem/v22rx.c modem/v22bis.c modem/v14.c modem/answer.c \
              modem/info.c modem/dpsk.c modem/probe.c modem/p2d.c modem/qamrx.c modem/ec.c modem/v34train.c modem/p34d.c modem/pcmenc.c \
-             modem/v34mp.c modem/p2ans.c modem/v34mod.c modem/v34dx.c modem/v34ans.c modem/anstone.c modem/v8orig.c modem/orig.c modem/p2call.c modem/v34orig.c \
+             modem/v34mp.c modem/p2ans.c modem/v34mod.c modem/v34dx.c modem/v34ans.c modem/anstone.c modem/v8orig.c modem/orig.c modem/p2call.c modem/v34orig.c modem/v90arx.c \
              $(wildcard v90/*.c) $(wildcard v34/*.c) $(wildcard v32/*.c) $(wildcard v92/*.c)
 T_SRC    := $(SIM_SRC) $(MODEM_SRC)
 HDRS     := $(wildcard modem/*.h sim/*.h test/*.h v90/*.h v34/*.h v92/*.h v90/test/v90_dec.h)
@@ -79,12 +80,12 @@ TESTS    := test_g711 test_noise test_filt test_resamp test_channel test_v21 tes
             test_v22tx test_v22rx test_v22bis test_v14 test_answer test_info test_dpsk test_probe test_p2 test_qamrx test_ec test_v34train test_sres test_answer_v90 test_p34 test_pcmenc \
             test_v34mp test_p2ans test_v34mod test_v34dx test_v34call test_answer_v34 test_answer_v32 test_answer_v90_v34 \
             test_p2_v92 test_v92call test_answer_v92 test_v92real test_answer_lin \
-            test_anstone test_v8orig test_orig test_orig_v32 test_p2call test_orig_v34
+            test_anstone test_v8orig test_orig test_orig_v32 test_p2call test_orig_v34 test_v90arx
 # the public API, against the library as it is installed
 API_TESTS := test_api
 SUBS     := v34 v90 v92 v42 v32
 
-.PHONY: test-fixtures all lib dev install uninstall clean check check-arm test test-arm test-api test-interop examples bench-v90 bench-v34 replay
+.PHONY: test-fixtures all lib dev install uninstall clean check check-arm test test-arm test-api test-interop examples bench-v90 bench-v34 bench-v90a replay
 all: lib
 lib: $(STATIC) $(SHARED) $(PCFILE)
 dev: $(DEV)
@@ -250,6 +251,42 @@ $(BUILD)/bench_v34: rig/bench_v34.c rig/v34glue.h $(MODEM_SRC) $(HDRS)
 $(BUILD)/bench_v34.arm: rig/bench_v34.c rig/v34glue.h $(MODEM_SRC) $(HDRS)
 	@mkdir -p $(BUILD)
 	$(ARM_CC) $(T_CFLAGS) -static -o $@ rig/bench_v34.c $(MODEM_SRC) $(LDLIBS)
+
+# ---- V.90 analogue modem, the downstream receiver (modem/v90arx): record a
+# simulated downstream on the host (tools/rec_v90a: 2 km, +100 ppm, echo of
+# our V.34 upstream 8 dB over the downstream, 48000 bit/s), replay it on the
+# host and under qemu; the decision hash must agree ----
+V90A_REC := $(BUILD)/v90a.rec
+bench-v90a: $(BUILD)/rec_v90a $(BUILD)/bench_v90a $(BUILD)/bench_v90a.arm
+	$(abspath $(BUILD))/rec_v90a 100 48000 $(V90A_REC)
+	$(abspath $(BUILD))/bench_v90a $(V90A_REC)
+	$(QEMU) $(abspath $(BUILD))/bench_v90a.arm $(V90A_REC)
+# cost-v90a counts ARM instructions as cost-v34 does: per second of line in
+# data mode (seconds 3 to 4; data from 1.2 s), and over Sd and TRN1d
+# (0.55 to 1.25 s: the clock measured, the estimate, the first computation
+# of the equaliser), at 0 ppm (the equaliser computed again every 2048
+# symbols) and 100 ppm (every 512). Slow: qemu logs every instruction.
+.PHONY: cost-v90a
+cost-v90a: $(BUILD)/rec_v90a $(BUILD)/bench_v90a.arm
+	@for p in 0 100; do \
+	   $(abspath $(BUILD))/rec_v90a $$p 48000 $(BUILD)/v90a_$$p.rec > /dev/null; \
+	   for s in 4400 10000 24000 32000; do head -c $$((36 + 4 * s)) $(BUILD)/v90a_$$p.rec > $(BUILD)/v90a_$$p.$$s; done; \
+	   a=$$($(CNT) $(abspath $(BUILD))/bench_v90a.arm $(BUILD)/v90a_$$p.4400 2>&1 | grep -c '^Trace'); \
+	   b=$$($(CNT) $(abspath $(BUILD))/bench_v90a.arm $(BUILD)/v90a_$$p.10000 2>&1 | grep -c '^Trace'); \
+	   c=$$($(CNT) $(abspath $(BUILD))/bench_v90a.arm $(BUILD)/v90a_$$p.24000 2>&1 | grep -c '^Trace'); \
+	   d=$$($(CNT) $(abspath $(BUILD))/bench_v90a.arm $(BUILD)/v90a_$$p.32000 2>&1 | grep -c '^Trace'); \
+	   echo "V.90 downstream receiver, $$p ppm: data mode $$((d - c)) ARM instructions per second of line (second 3 to 4);" \
+	        "Sd and TRN1d (0.7 s) $$((b - a))"; \
+	 done
+$(BUILD)/rec_v90a: tools/rec_v90a.c $(SIM_SRC) $(MODEM_SRC) $(HDRS)
+	@mkdir -p $(BUILD)
+	$(CC) $(T_CFLAGS) -o $@ tools/rec_v90a.c $(SIM_SRC) $(MODEM_SRC) $(LDLIBS)
+$(BUILD)/bench_v90a: rig/bench_v90a.c $(MODEM_SRC) $(HDRS)
+	@mkdir -p $(BUILD)
+	$(CC) $(T_CFLAGS) -o $@ rig/bench_v90a.c $(MODEM_SRC) $(LDLIBS)
+$(BUILD)/bench_v90a.arm: rig/bench_v90a.c $(MODEM_SRC) $(HDRS)
+	@mkdir -p $(BUILD)
+	$(ARM_CC) $(T_CFLAGS) -static -o $@ rig/bench_v90a.c $(MODEM_SRC) $(LDLIBS)
 
 clean:
 	rm -rf $(BUILD)
