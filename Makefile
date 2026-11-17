@@ -32,11 +32,14 @@ CPPFLAGS_ALL := -D_POSIX_C_SOURCE=200809L $(EXTRA_CPPFLAGS)
 LDLIBS   ?= -lm
 BUILD    ?= build
 
-# binutils next to the compiler: arm-linux-gcc -> arm-linux-ar ...
+# binutils next to the compiler (arm-linux-gcc -> arm-linux-ar ...) when there
+# are any; musl-gcc, clang and cc use the host's
 CROSS    := $(if $(filter %-gcc,$(notdir $(CC))),$(patsubst %gcc,%,$(CC)),)
+CROSS    := $(if $(CROSS),$(if $(shell command -v $(CROSS)ld),$(CROSS)),)
 AR       := $(CROSS)ar
 LD       := $(CROSS)ld
 OBJCOPY  := $(CROSS)objcopy
+NM       := $(CROSS)nm
 
 PREFIX   ?= /usr/local
 LIBDIR   ?= $(PREFIX)/lib
@@ -101,11 +104,22 @@ $(BUILD)/pic/%.o: %.c $(LIB_HDR)
 	$(CC) $(CFLAGS) $(CPPFLAGS_ALL) -fvisibility=hidden -fPIC $(INC) -c -o $@ $<
 
 # Static: one relocatable object in which everything but the public API is
-# made local, so that the internals cannot clash with a program's symbols.
-$(STATIC): $(LIB_OBJ)
+# renamed v90m__i_* (tools/symmap.sh), so that the internals cannot clash
+# with a program's symbols. Renamed, not made local: some targets' code
+# cannot reach a local symbol the way it reaches a global one.
+$(STATIC): $(LIB_OBJ) tools/symmap.sh
 	$(LD) -r -o $(BUILD)/$(NAME).o $(LIB_OBJ)
-	$(OBJCOPY) --localize-hidden $(BUILD)/$(NAME).o
+	tools/symmap.sh $(NM) $(BUILD)/$(NAME).o > $(BUILD)/$(NAME).map
+	$(OBJCOPY) --redefine-syms=$(BUILD)/$(NAME).map $(BUILD)/$(NAME).o
 	rm -f $@ && $(AR) rcs $@ $(BUILD)/$(NAME).o
+# what the static library defines: the public API, its internals renamed,
+# and the compiler's own helpers; nothing else
+.PHONY: check-symbols
+check-symbols: $(STATIC)
+	@bad=$$($(NM) -g --defined-only $(STATIC) | awk 'NF >= 3 { print $$3 }' | sed 's/^_v90m_/v90m_/' \
+	      | grep -vE '^(v90m_|__|\.)' || true); \
+	 if [ -n "$$bad" ]; then echo "$(STATIC) defines symbols outside v90m_*:"; echo "$$bad" | head; exit 1; fi; \
+	 echo "symbols: $(STATIC) defines only v90m_* ($$($(NM) -g --defined-only $(STATIC) | grep -c ' _*v90m__i_') internal)"
 $(SHARED): $(PIC_OBJ)
 	$(CC) -shared -Wl,-soname,$(NAME).so.$(SOVER) -o $@ $(PIC_OBJ) $(LDLIBS)
 	ln -sf $(NAME).so.$(VERSION) $(BUILD)/$(NAME).so.$(SOVER)
@@ -149,7 +163,7 @@ API_INC := -Iinclude -Itest -Isim -Imodem -Iv90 -Iv92 -Iv34
 $(BUILD)/api_test_%: test/api/test_%.c $(STATIC) $(DEV) include/v90modem.h
 	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -o $@ $< $(STATIC) $(DEV) $(LDLIBS)
 $(BUILD)/arm/api_test_%: test/api/test_%.c include/v90modem.h
-	$(MAKE) -s BUILD=$(BUILD)/arm CC=$(ARM_CC) $(BUILD)/arm/$(NAME).a $(BUILD)/arm/$(NAME)-dev.a
+	$(MAKE) -s BUILD=$(BUILD)/arm CC=$(ARM_CC) $(BUILD)/arm/$(NAME).a $(BUILD)/arm/$(NAME)-dev.a check-symbols
 	$(ARM_CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -static -o $@ $< $(BUILD)/arm/$(NAME).a $(BUILD)/arm/$(NAME)-dev.a $(LDLIBS)
 
 test: $(addprefix $(BUILD)/,$(TESTS))
@@ -165,13 +179,15 @@ test-api: $(addprefix $(BUILD)/api_,$(API_TESTS))
 test-api-arm: $(addprefix $(BUILD)/arm/api_,$(API_TESTS))
 	@fail=0; for t in $(API_TESTS); do $(QEMU) $(abspath $(BUILD))/arm/api_$$t || fail=1; done; [ $$fail -eq 0 ]
 
-check: test test-api test-fixtures
+check: test test-api test-fixtures check-symbols
 	@for d in $(SUBS); do echo "== $$d =="; $(MAKE) -s -C $$d BUILD=build test || exit 1; done; echo "ALL HOST CHECKS PASS"
 # recordings of real calls (test/fixtures/fixtures.txt) through the replay tool
 test-fixtures: $(BUILD)/v90m-replay
 	@echo "== real-modem recordings =="; test/fixtures/check.sh $(abspath $(BUILD))/v90m-replay
+# the subdirectories build in their own build/ unless BUILD names another place
+SUB_BUILD = $(if $(filter build,$(BUILD)),build,$(abspath $(BUILD))/$$d)
 check-arm: test-arm test-api-arm
-	@for d in $(SUBS); do echo "== $$d (arm) =="; $(MAKE) -s -C $$d BUILD=build test-arm ARM_CC=$(ARM_CC) || exit 1; done; echo "ALL ARM CHECKS PASS"
+	@for d in $(SUBS); do echo "== $$d (arm) =="; $(MAKE) -s -C $$d BUILD=$(SUB_BUILD) test-arm ARM_CC=$(ARM_CC) QEMU="$(QEMU)" || exit 1; done; echo "ALL ARM CHECKS PASS"
 
 INTEROP := interop_v8_spandsp interop_v22bis_spandsp interop_v8orig_spandsp interop_orig_v22bis_spandsp
 $(BUILD)/interop_%: test/interop_%.c test/peer_spandsp.c $(T_SRC)

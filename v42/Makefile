@@ -30,7 +30,7 @@ $(BUILD)/test_%: test/test_%.c $(SRC) $(HDR) | $(BUILD)
 
 test: $(addprefix $(BUILD)/,$(TESTS))
 	@echo "== running v42 host tests =="
-	@fail=0; for t in $(TESTS); do ./$(BUILD)/$$t || fail=1; done; \
+	@fail=0; for t in $(TESTS); do $(abspath $(BUILD))/$$t || fail=1; done; \
 	 if [ $$fail -eq 0 ]; then echo "ALL TESTS PASS"; else echo "TESTS FAILED"; exit 1; fi
 
 $(BUILD)/arm_test_%: test/test_%.c $(SRC) $(HDR) | $(BUILD)
@@ -38,7 +38,7 @@ $(BUILD)/arm_test_%: test/test_%.c $(SRC) $(HDR) | $(BUILD)
 
 test-arm: $(addprefix $(BUILD)/arm_,$(TESTS))
 	@echo "== running v42 ARM tests under $(QEMU) =="
-	@fail=0; for t in $(TESTS); do echo "[arm] $$t"; $(QEMU) ./$(BUILD)/arm_$$t || fail=1; done; \
+	@fail=0; for t in $(TESTS); do echo "[arm] $$t"; $(QEMU) $(abspath $(BUILD))/arm_$$t || fail=1; done; \
 	 if [ $$fail -eq 0 ]; then echo "ALL ARM TESTS PASS"; else echo "ARM TESTS FAILED"; exit 1; fi
 
 # interop against spandsp (host only; the peer is never shipped). All spandsp
@@ -51,7 +51,7 @@ $(BUILD)/interop_%: test/interop_%.c test/peer_spandsp_v42.c test/peer_spandsp_v
 
 test-interop: $(addprefix $(BUILD)/,$(INTEROP))
 	@echo "== running v42 interop tests =="
-	@fail=0; for t in $(INTEROP); do ./$(BUILD)/$$t || fail=1; done; \
+	@fail=0; for t in $(INTEROP); do $(abspath $(BUILD))/$$t || fail=1; done; \
 	 if [ $$fail -eq 0 ]; then echo "ALL INTEROP TESTS PASS"; else echo "INTEROP TESTS FAILED"; exit 1; fi
 
 clean:

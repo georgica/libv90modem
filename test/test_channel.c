@@ -49,14 +49,13 @@ int main(void)
     /* 3. downstream AWGN gives the requested SNR */
     {
         channel_t ch; channel_cfg cfg = clean_cfg();
-        int i; double s2 = 0, n2 = 0; uint8_t sr;
+        int i; double n2 = 0; uint8_t sr;
         double level = (double)ulaw_to_linear(0x90);
         cfg.ds_noise_dbfs = -30.0;
         channel_init(&ch, &cfg);
         for (i = 0; i < 100000; i++) {
             double cr;
             channel_tick(&ch, 0x90, 0.0, &cr, &sr);
-            s2 += level * level;
             n2 += (cr - level) * (cr - level);
         }
         {

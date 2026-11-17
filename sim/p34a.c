@@ -255,8 +255,8 @@ static void train_bit(p34a_t *p, int bit)
 
 static void train_frame_done(p34a_t *p, const uint8_t *bits, int D)
 {
-    int k, zeros = 0, ones = 0;
-    for (k = 0; k < D; k++) { if (bits[k]) ones++; else zeros++; }
+    int k, zeros = 0;
+    for (k = 0; k < D; k++) if (!bits[k]) zeros++;
     if (!p->mp_seen && !p->mpack_seen && p->mbn == 0) {
         p->trn2d_frames++;
         if (zeros && p->mones < 17) p->trn2d_bad++;

@@ -31,7 +31,7 @@ $(BUILD)/test_%: test/test_%.c $(LIB_SRC) $(LIB_HDR) $(SIM_SRC) $(SIM_HDR) | $(B
 
 test: $(addprefix $(BUILD)/,$(TESTS))
 	@echo "== running host tests =="
-	@fail=0; for t in $(TESTS); do ./$(BUILD)/$$t || fail=1; done; \
+	@fail=0; for t in $(TESTS); do $(abspath $(BUILD))/$$t || fail=1; done; \
 	 if [ $$fail -eq 0 ]; then echo "ALL TESTS PASS"; else echo "TESTS FAILED"; exit 1; fi
 
 # cross-build the same tests for the ARM926 target and run under qemu
@@ -41,7 +41,7 @@ $(BUILD)/arm_test_%: test/test_%.c $(LIB_SRC) $(LIB_HDR) $(SIM_SRC) $(SIM_HDR) |
 
 test-arm: $(addprefix $(BUILD)/arm_,$(TESTS))
 	@echo "== running ARM tests under $(QEMU) =="
-	@fail=0; for t in $(TESTS); do echo "[arm] $$t"; $(QEMU) ./$(BUILD)/arm_$$t || fail=1; done; \
+	@fail=0; for t in $(TESTS); do echo "[arm] $$t"; $(QEMU) $(abspath $(BUILD))/arm_$$t || fail=1; done; \
 	 if [ $$fail -eq 0 ]; then echo "ALL ARM TESTS PASS"; else echo "ARM TESTS FAILED"; exit 1; fi
 
 # the modem alone must not use floating point or the allocator: no such
@@ -63,7 +63,7 @@ $(BUILD)/test_bench: test/test_bench.c $(LIB_SRC) $(LIB_HDR) $(SIM_SRC) $(SIM_HD
 $(BUILD)/arm_test_bench: test/test_bench.c $(LIB_SRC) $(LIB_HDR) | $(BUILD)
 	$(ARM_CC) $(CFLAGS) $(INC) -static -o $@ $< $(LIB_SRC)
 
-COUNT    = $(QEMU) -one-insn-per-tb -d exec,nochain ./$(BUILD)/arm_test_bench
+COUNT    = $(QEMU) -one-insn-per-tb -d exec,nochain $(abspath $(BUILD))/arm_test_bench
 NINSN    = 2>&1 | grep -c '^Trace'
 BOX_KMAC ?= 25400
 cost-arm: $(BUILD)/test_bench $(BUILD)/arm_test_bench
@@ -72,8 +72,8 @@ cost-arm: $(BUILD)/test_bench $(BUILD)/arm_test_bench
 	 mac100=$$(( (f2 - f1) * 100 / (512 * 128) )); \
 	 echo "  reference FIR: $$(( mac100 / 100 )).$$(printf %02d $$(( mac100 % 100 ))) instructions per MAC"; \
 	 for rate in 4 0; do \
-	  eval $$(./$(BUILD)/test_bench record $$rate $(BUILD)/bench$$rate.raw) || exit 1; \
-	  $(QEMU) ./$(BUILD)/arm_test_bench check $(BUILD)/bench$$rate.raw || exit 1; \
+	  eval $$($(abspath $(BUILD))/test_bench record $$rate $(BUILD)/bench$$rate.raw) || exit 1; \
+	  $(QEMU) $(abspath $(BUILD))/arm_test_bench check $(BUILD)/bench$$rate.raw || exit 1; \
 	  for w in "TRN1 (echo canceller training):$$TRN:300:1000" "receiver training (caller's TRN):$$RXT:300:1000" "data, both ways:$$DATA:2000:4000"; do \
 	   name=$${w%%:*}; r=$${w#*:}; base=$${r%%:*}; r=$${r#*:}; off=$${r%%:*}; len=$${r#*:}; \
 	   if [ $$rate -eq 0 ] && [ "$$name" != "data, both ways" ]; then continue; fi; \

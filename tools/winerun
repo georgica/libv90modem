@@ -1,0 +1,4 @@
+#!/bin/sh
+# run a mingw test under wine (the compiler added .exe to its name)
+p=$1; shift
+WINEDEBUG=-all exec wine "$p.exe" "$@"

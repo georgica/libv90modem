@@ -29,7 +29,7 @@ $(BUILD)/test_%: test/test_%.c $(LIB_SRC) $(LIB_HDR) $(SUP_HDR) | $(BUILD)
 
 test: $(addprefix $(BUILD)/,$(TESTS))
 	@echo "== running host tests =="
-	@fail=0; for t in $(TESTS); do ./$(BUILD)/$$t || fail=1; done; \
+	@fail=0; for t in $(TESTS); do $(abspath $(BUILD))/$$t || fail=1; done; \
 	 if [ $$fail -eq 0 ]; then echo "ALL TESTS PASS"; else echo "TESTS FAILED"; exit 1; fi
 
 # cross-build the same tests for the ARM926 target and run under qemu
@@ -39,7 +39,7 @@ $(BUILD)/arm_test_%: test/test_%.c $(LIB_SRC) $(LIB_HDR) $(SUP_HDR) | $(BUILD)
 
 test-arm: $(addprefix $(BUILD)/arm_,$(TESTS))
 	@echo "== running ARM tests under $(QEMU) =="
-	@fail=0; for t in $(TESTS); do echo "[arm] $$t"; $(QEMU) ./$(BUILD)/arm_$$t || fail=1; done; \
+	@fail=0; for t in $(TESTS); do echo "[arm] $$t"; $(QEMU) $(abspath $(BUILD))/arm_$$t || fail=1; done; \
 	 if [ $$fail -eq 0 ]; then echo "ALL ARM TESTS PASS"; else echo "ARM TESTS FAILED"; exit 1; fi
 
 # Exact ARM instruction counts per 2D symbol: qemu logs one line per executed
@@ -49,7 +49,7 @@ test-arm: $(addprefix $(BUILD)/arm_,$(TESTS))
 # was timed on the real box (25.4 MMAC/s, in units of 1000 MAC/s below).
 # Fails if the 16-state decoder exceeds COST_LIMIT instructions per symbol.
 # Slow (several minutes), so not part of test-arm.
-COUNT      = $(QEMU) -one-insn-per-tb -d exec,nochain ./$(BUILD)/arm_test_bench count
+COUNT      = $(QEMU) -one-insn-per-tb -d exec,nochain $(abspath $(BUILD))/arm_test_bench count
 NINSN      = 2>&1 | grep -c '^Trace'
 BOX_KMAC   ?= 25400
 COST_LIMIT ?= 3000

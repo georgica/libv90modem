@@ -29,7 +29,7 @@ $(BUILD)/test_%: test/test_%.c $(LIB_SRC) $(LIB_HDR) $(SUP_SRC) $(SUP_HDR) | $(B
 
 test: $(addprefix $(BUILD)/,$(TESTS))
 	@echo "== running host tests =="
-	@fail=0; for t in $(TESTS); do ./$(BUILD)/$$t || fail=1; done; \
+	@fail=0; for t in $(TESTS); do $(abspath $(BUILD))/$$t || fail=1; done; \
 	 if [ $$fail -eq 0 ]; then echo "ALL TESTS PASS"; else echo "TESTS FAILED"; exit 1; fi
 
 # cross-build the same tests for the ARM926 target and run under qemu
@@ -38,7 +38,7 @@ $(BUILD)/arm_test_%: test/test_%.c $(LIB_SRC) $(LIB_HDR) $(SUP_SRC) $(SUP_HDR) |
 
 test-arm: $(addprefix $(BUILD)/arm_,$(TESTS))
 	@echo "== running ARM tests under $(QEMU) =="
-	@fail=0; for t in $(TESTS); do echo "[arm] $$t"; $(QEMU) ./$(BUILD)/arm_$$t || fail=1; done; \
+	@fail=0; for t in $(TESTS); do echo "[arm] $$t"; $(QEMU) $(abspath $(BUILD))/arm_$$t || fail=1; done; \
 	 if [ $$fail -eq 0 ]; then echo "ALL ARM TESTS PASS"; else echo "ARM TESTS FAILED"; exit 1; fi
 
 clean:

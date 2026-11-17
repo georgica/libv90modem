@@ -39,7 +39,7 @@ $(BUILD)/test_%: test/test_%.c $(ALL_SRC) $(ALL_HDR) | $(BUILD)
 
 test: $(addprefix $(BUILD)/,$(TESTS))
 	@echo "== running host tests =="
-	@fail=0; for t in $(TESTS); do ./$(BUILD)/$$t || fail=1; done; \
+	@fail=0; for t in $(TESTS); do $(abspath $(BUILD))/$$t || fail=1; done; \
 	 if [ $$fail -eq 0 ]; then echo "ALL TESTS PASS"; else echo "TESTS FAILED"; exit 1; fi
 
 # cross-build the same tests for the ARM926 target and run under qemu
@@ -49,14 +49,14 @@ $(BUILD)/arm_test_%: test/test_%.c $(ALL_SRC) $(ALL_HDR) | $(BUILD)
 
 test-arm: $(addprefix $(BUILD)/arm_,$(TESTS))
 	@echo "== running ARM tests under $(QEMU) =="
-	@fail=0; for t in $(TESTS); do echo "[arm] $$t"; $(QEMU) ./$(BUILD)/arm_$$t || fail=1; done; \
+	@fail=0; for t in $(TESTS); do echo "[arm] $$t"; $(QEMU) $(abspath $(BUILD))/arm_$$t || fail=1; done; \
 	 if [ $$fail -eq 0 ]; then echo "ALL ARM TESTS PASS"; else echo "ARM TESTS FAILED"; exit 1; fi
 
 # Exact ARM instruction counts per upstream symbol for the decoder: qemu logs
 # one line per executed instruction; the count is the difference between two
 # run lengths (start-up cancels) of "encoder + decoder" minus "encoder only".
 # Slow (a minute or two), so not part of test-arm.
-COUNT = $(QEMU) -one-insn-per-tb -d exec,nochain ./$(BUILD)/arm_test_e2e count
+COUNT = $(QEMU) -one-insn-per-tb -d exec,nochain $(abspath $(BUILD))/arm_test_e2e count
 NINSN = 2>&1 | grep -c '^Trace'
 cost-arm: $(BUILD)/arm_test_e2e
 	@echo "== ARM instructions per upstream symbol (qemu -one-insn-per-tb) =="
