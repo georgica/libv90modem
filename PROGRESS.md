@@ -219,3 +219,56 @@ minds; a second spandsp instance as the caller would tell.
 
 Not tried yet: a real modem answering. v90d has a bench mode for it now
 (`v90d -o`: a modem told ATA on the port is called at once).
+
+## C3: V.32bis on the calling side (2026-11-17)
+
+- `v32/v32_call.c`: the calling modem of V.32bis 6.1, chosen with
+  `v32_init_call` (`v32_init` stays the answerer, its code moved, not
+  changed): AA; the answerer's AC and its reversal, found on the part of the
+  received signal that changes sign every symbol (our own AA / CC echo has
+  none of it); CC 64 T after that reversal at the line (63.3 T measured);
+  the second reversal stops the round-trip count (NT within 0.3 T of the
+  line's); the answerer's S / S-bar / TRN and R1; S for NT, S 256, S-bar,
+  TRN (the canceller's training, extended while it gains); R2 (our rates
+  within R1, cut to what the receiver's error on R1 allows; cleardown when
+  none); R3 -> E, B1, data. Retrain from either end (7.1); the answering
+  side of rate renegotiation (8.2, tested against a test-only initiator:
+  the library's answerer has no clause 8); carrier loss also when the
+  signal falls 12 dB below its level at the start of data.
+- `modem/orig.c`: JM item 3 -> V.32bis; after ANS, Annex A: AA once ANS has
+  been heard about 1 s; AC -> V.32bis, the V.22bis answerer's tone -> V.22bis,
+  a V.21 mark -> V.21; the 3.1 s wait of A.2.1.2.
+- The API takes V90M_MOD_V32BIS for the calling role.
+- Written by a subagent from the Recommendation, with `sim/v32call.c` as a
+  behaviour reference; reviewed here; the counts below rerun here.
+
+Seen failing first against stubs: test_acdet 44 of 75, test_caller 30 of 45
+(and 24 renegotiation checks), test_orig_v32 53 of 90, test_api 1. Now (my
+run, fresh build): orig_v32 95 checks, test_acdet 75, test_caller 247, api
+124 (98 before: the V.32bis calling block added), 0 failures; every other
+line of `make check` identical to C2; bench-v90 8e3136e9 six times;
+test_orig_v32 on qemu-arm byte-identical to the host.
+
+Results: clean line 14400, error-free, SNR 43.2 dB; retrains from either end
+error-free after about 5.9 s; the impaired line of the C2 tests (about 20 dB
+SNR) connects at 9600 (14400 needs about 25 dB; with -60 dBm0 noise and no
+carrier shift it connects at 14400); rate ceilings 9600 and 4800 held;
+Annex A cases (V.32bis, short ANS, V.22bis, V.21, the 3.1 s wait, an
+automode answerer) pass; renegotiation about 213 ms then error-free at 9600.
+
+No independent V.32bis answerer exists to test against (spandsp has no
+V.32bis): the caller is checked against the library's answerer only, which
+was itself checked against the independent `sim/v32call`.
+
+Found in the answerer, not changed (each would change what it sends):
+- its TRN1 can run 8230 symbols, over the 8192 of 5.2.3 (the extension is
+  checked every 256 symbols from a minimum that is no multiple of 256);
+- with no echo on the line its TRN1 always runs to the maximum (about 3.4 s):
+  "less than 1 dB gained" never holds when there is nothing to cancel;
+- with a carrier frequency shift neither end's frozen canceller removes the
+  shifted far echo (about 17 dB of echo reduction on the impaired line).
+
+Shortcuts: after the 3.1 s wait the V.22bis caller keeps its 456 ms of
+silence before S1; AA starts 600 ms after ANS was recognised; R2 is judged
+from the receiver's error on R1; the canceller freezes after TRN, as in the
+answerer.

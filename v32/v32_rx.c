@@ -73,6 +73,8 @@ void v32rx_init(v32rx_t *r, int answer, v32_putbit_fn putbit, void *user)
     r->c4 = 0; r->sq = 0; r->s_run = 0;
     r->zr = r->zi = 0;
     r->putbit = putbit; r->user = user;
+    r->ac_p = r->ac_m = 0; r->ac_run = r->ac_pure = 0;
+    r->ac_rev = 0; r->ac_rev_t = 0; r->ac_hold = 0;
     v32_vit_init(&r->vit, 1);
     reset_train(r);
 }
@@ -293,6 +295,43 @@ static void timing(v32rx_t *r, int p)
     }
 }
 
+/* ---------------- calling modem: the answerer's AC (6.1, 7.1) ----------------
+ * AC (A C A C ..) at baseband changes sign every symbol: the lines at 600 and
+ * 3000 Hz. Half the difference of T/2 samples a symbol apart keeps all of it
+ * and none of an 1800 Hz tone (our own AA / CC echo, the canceller not trained
+ * yet). Two neighbouring T/2 samples of it taken together do not depend on
+ * the sampling phase: for AC their product with the pair a symbol back is
+ * -|a|^2, with the pair two symbols back +|a|^2, and a reversal makes the
+ * latter negative. A tone near 1800 Hz (V.21 at 1650, ANS at 2100) turns
+ * little in a symbol, so its product a symbol back is positive; data gives
+ * about none. S has these lines too, but never alone (ac_pure). */
+#define AC_MIN (CD_MIN / 4)       /* -43 dBm0: the lines are 6 dB down through the two shaping filters */
+#define DIF(v, k) (((v)[(r->ypos - (k)) & 7] - (v)[(r->ypos - (k) - 2) & 7]) >> 1)
+static void ac_detect(v32rx_t *r)
+{
+    int32_t a0r = DIF(r->yr, 0), a0i = DIF(r->yi, 0), a1r = DIF(r->yr, 1), a1i = DIF(r->yi, 1);
+    int32_t b0r = DIF(r->yr, 2), b0i = DIF(r->yi, 2), b1r = DIF(r->yr, 3), b1i = DIF(r->yi, 3);
+    int32_t c0r = DIF(r->yr, 4), c0i = DIF(r->yi, 4), c1r = DIF(r->yr, 5), c1i = DIF(r->yi, 5);
+    int64_t pw = ((int64_t)a0r * a0r + (int64_t)a0i * a0i + (int64_t)a1r * a1r + (int64_t)a1i * a1i) >> 1;
+    int64_t m1 = ((int64_t)a0r * b0r + (int64_t)a0i * b0i + (int64_t)a1r * b1r + (int64_t)a1i * b1i) >> 1;
+    int64_t m2 = ((int64_t)a0r * c0r + (int64_t)a0i * c0i + (int64_t)a1r * c1r + (int64_t)a1i * c1i) >> 1;
+    int ok;
+    if (r->ac_hold > 0) { r->ac_hold--; return; }
+    if (r->ac_run >= 32 && m2 < -(r->ac_p >> 2)) {
+        /* turned over: the newest pair is past the reversal */
+        r->ac_rev++; r->ac_rev_t = r->nsamp; r->ac_hold = 10;
+        return;
+    }
+    r->ac_p += (pw - r->ac_p) >> 3;
+    r->ac_m += (m1 - r->ac_m) >> 3;
+    ok = r->ac_p > AC_MIN && -r->ac_m * 4 > r->ac_p * 3;
+    /* (not straight to zero: a reversal half way through the pair can spoil
+     * the product a sample before the one two symbols back turns over) */
+    if (ok) { if (r->ac_run < 1000000) r->ac_run++; } else r->ac_run = r->ac_run > 8 ? r->ac_run - 8 : 0;
+    if (ok && r->ac_p * 4 > r->pw_raw * 3) { if (r->ac_pure < 1000000) r->ac_pure++; } else r->ac_pure = 0;
+}
+#undef DIF
+
 /* ---------------- one T/2 sample (raw, 4 fractional bits) ---------------- */
 static void half_symbol(v32rx_t *r, int32_t yr, int32_t yi, int p)
 {
@@ -337,6 +376,7 @@ static void half_symbol(v32rx_t *r, int32_t yr, int32_t yi, int p)
     if (r->pw_raw > CD_MIN && r->c4 * 5 > r->pw_raw * 3 && r->sq * 4 > r->pw_raw && r->sq * 10 < r->pw_raw * 9) {
         if (r->s_run < 1000000) r->s_run++;
     } else r->s_run = 0;
+    if (!r->answer) ac_detect(r);
 
     if (r->mode == V32_RX_TONE) { r->half ^= 1; return; }
 

@@ -1,7 +1,7 @@
-# v32: V.32bis / V.32 answering modem
+# v32: V.32bis / V.32 answering and calling modem
 
 A duplex, echo-cancelling 2400 symbol/s data modem for the answering side of
-v90d, written from scratch from ITU-T Recommendation V.32bis (02/91,
+v90d, and since stage C3 for the calling side (`v32_init_call`), written from scratch from ITU-T Recommendation V.32bis (02/91,
 `../refs/itu/T-REC-V.32bis-199102-I.txt` and `.pdf`). No other modem
 implementation was read or copied. The signal path is C99, integer only, has
 no allocation, and runs one 8000 Hz 16-bit sample in, one out per call, like
@@ -27,11 +27,18 @@ verified").
 | echo cancellation (near and far, bulk delay from MT) | `v32_ec.c` | 96 + 96 taps at 8 kHz, joint NLMS, far window up to 2 s back |
 | receiver | `v32_rx.c` | fractional-delay band-pass filter bank, band-edge timing recovery, T/2 32-tap adaptive equaliser, carrier loop, 8-state Viterbi decoder (`v32_viterbi.c`) |
 | 7.2 retrain, either end | `v32.c` | `v32_retrain()`, the caller's AA in data mode, and by itself when reception stays poor |
+| 6.1 call mode start-up | `v32_call.c` | AA; AC and its first reversal; CC 64 +- 2 T after it at the line; second reversal: NT, silence; receiver trained on S, S-bar, TRN; R1; S for NT, S 256 T, S-bar, TRN (echo canceller, extended while it gains); R2 within R1, our rates and what our receiver took R1 at (cleardown when none); on R3 E, B1 until 128 T after the answerer's E; data |
+| 7.1 retrain, call mode | `v32_call.c` | `v32_retrain()`, the answerer's AC for more than 128 T in data mode, and by itself when reception stays poor |
+| 8.2 rate renegotiation, responding (call mode) | `v32_call.c` | the answerer's preamble (AC 56 T, CA 8 T) clamps 104; R4; AA 56 T, CC 8 T, R5 (scrambler from zero) for 64 T, E naming the highest rate common to R4 and R5, ones 24 T, data; the far E unclamps 104 after 24 T; nothing in common: E for 64 T, then cleardown. Initiating (8.1) is not implemented, at either end, and the answering mode does not respond to it |
+| AC / CA detector (call mode) | `v32_rx.c` (`ac_detect`) | the alternating part of the T/2 samples, in which any 1800 Hz (our own AA / CC echo) cancels; reversals with their latency `V32_AC_LAT` |
 | Table 5 cleardown | `v32.c` | no common rate: R3 without a rate for 64 T, then silence |
 | A.2.2 answering automode: AA during the answer tone | `v32_rx.c` (`v32_aadet_*`) | detector only; the sequencing belongs to `modem/answer.c` (see below) |
 
-The calling side exists only as the test peer `../sim/v32call.c` (double
-precision, not for the target).
+The calling mode is new and has been tested only against this directory's
+own answering mode (`test/test_caller.c`, `../test/test_orig_v32.c`): there is
+no independent V.32bis answerer to test it against (`../sim/v32call.c` is a
+caller; spandsp has no V.32bis). The answering mode is what was checked
+against the independent caller `../sim/v32call.c`.
 
 ## Files
 
@@ -43,10 +50,11 @@ precision, not for the target).
     v32_ec.c         echo canceller
     v32_rx.c         receiver, tone / S detectors, AA detector
     v32.c            answer-mode state machine
+    v32_call.c       call-mode state machine (6.1, 7.1, 8.2)
     v32_tabs.c       generated: constellations, pulse shapes, receive filter bank
     tools/gen_tabs.py  generator (constellations are read out of the PDF's figures)
     test/            test_code test_viterbi test_tx test_ec test_rx test_startup
-                     test_call test_v8 test_bench, calltest.h
+                     test_call test_v8 test_acdet test_caller test_bench, calltest.h
     ../sim/v32spec.h   Tables 1, 2, 4 and the constellation rows, typed in by hand
     ../sim/v32call.*   calling modem test peer (double)
     ../sim/v32line.*   2-wire line between the two: hybrids, echoes, delay,
@@ -158,6 +166,8 @@ the calls above and, for callers without V.8, `v32_aadet_init/tick`.
 | `test_startup` | whole calls against the test peer with every segment's length asserted: AC >= 128 T and even, the 64 +- 2 T turn-round at the line (both ends), MT and NT against the line's true round trip, 16 T of silence, S 256 T, S-bar 16 T, TRN within 1280..8192, silence >= MT after the caller's S, second S / S-bar / TRN, R3 in whole sequences, E 8 T, B1 128 T, the contents of R1 R2 R3 E; one-way delays of 8, 53 and 303 ms; restricted rate sets at either end |
 | `test_call` | end-to-end bit error counts, both directions, each rate: clean line, G.711 mu-law (through `sim/channel`), hybrid echo, -30 dBm0, +-100 ppm clock offset, +2 / -7 Hz carrier offset, white noise from 32 down to 9 dB SNR; retrain from each end; retrain by itself when the line turns noisy; driver buffering; carrier loss; no common rate |
 | `test_v8` | V.8 (`modem/v8ans` against `sim/v8call`) handing over to V.32bis; the AA detector; a caller without V.8 |
+| `test_acdet` | call mode's AC / CA detector alone, under our own AA echo: the reversal latency over all sampling phases (`V32_AC_LAT`), weak AC, and what is not AC (our echo alone, tones from 1200 to 3300 Hz, S, data, noise) |
+| `test_caller` | call mode (`v32_init_call`) against the answering mode over `sim/v32line`: the 64 +- 2 T turn-round at both ends, NT against the line's round trip, every segment the caller sends, R1 R2 R3 E; data both ways at the agreed rate on clean, impaired and long-delay lines; rate sets of the caller; retrain from each end; the answerer going silent; no rate in common; R3 calling for a cleardown; no answerer; rate renegotiation asked for by the answering end (by a test-only initiator built from its transmitter and receiver) |
 | `test_bench` | not a test: records a call for `make cost-arm` and proves the ARM build produces the host's transmit samples bit for bit |
 
 In `test_call` and `test_v8`, "c->a" is caller to answerer (this modem's

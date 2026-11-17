@@ -1,4 +1,4 @@
-# v90d/v32 - V.32bis answering modem: host tests and ARM cross tests under qemu.
+# v90d/v32 - V.32bis answering and calling modem: host tests and ARM cross tests under qemu.
 
 CC      ?= cc
 CFLAGS  ?= -std=c99 -O2 -Wall -Wextra -Werror -D_POSIX_C_SOURCE=200809L
@@ -9,7 +9,7 @@ ARM_CC  ?= $(wildcard $(CURDIR)/../toolchain/*/bin/arm-linux-gcc)
 QEMU    ?= qemu-arm-static
 
 INC     := -I. -I../test -I../sim -I../modem
-LIB_SRC := v32_tabs.c v32_code.c v32_viterbi.c v32_tx.c v32_ec.c v32_rx.c v32.c
+LIB_SRC := v32_tabs.c v32_code.c v32_viterbi.c v32_tx.c v32_ec.c v32_rx.c v32.c v32_call.c
 LIB_HDR := v32.h v32_priv.h
 # test side (double allowed): the calling peer, the line, and what they need
 SIM_SRC := ../sim/v32call.c ../sim/v32line.c ../sim/g711.c ../sim/noise.c ../sim/filt.c \
@@ -18,7 +18,7 @@ SIM_HDR := ../sim/v32call.h ../sim/v32line.h ../sim/v32spec.h ../test/test.h tes
 # V.8 hand-over test: the project's own V.8 answerer and calling V.8 peer
 V8_SRC  := ../modem/v21.c ../modem/ansam.c ../modem/v8msg.c ../modem/async.c ../modem/v8rx.c \
            ../modem/v8ans.c ../sim/v8call.c
-TESTS   := test_code test_viterbi test_tx test_ec test_rx test_startup test_call test_v8
+TESTS   := test_code test_viterbi test_tx test_ec test_rx test_startup test_call test_v8 test_acdet test_caller
 
 .PHONY: all test test-arm cost-arm tables clean
 all: test

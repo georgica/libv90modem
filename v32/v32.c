@@ -1,4 +1,5 @@
-/* V.32bis answering modem: start-up (6.2), data, retrain (7.2).
+/* V.32bis answering modem: start-up (6.2), data, retrain (7.2). The calling
+ * modem is v32_call.c; v32_init / v32_init_call choose.
  *
  *   AC  ->  CA  ->  AC  -> 16 T silence -> S, S-bar, TRN -> R1 ...     (we send)
  *   AA      ->  CC   -> (silent)                              S ..     (the caller)
@@ -13,35 +14,21 @@
  */
 #include "v32_priv.h"
 
-#define MS(ms) ((uint32_t)(ms) * 8)
-/* samples per symbol = 10/3 */
-#define SYM2SAMP(n) ((int32_t)(n) * 10 / 3)
-
 /* samples from a reversed symbol's pulse centre arriving at the line to the
  * tone detector firing: filter bank centre 16, two symbols of averaging, and
  * "three of the four newest T/2 samples" (measured: test_startup) */
 #define RX_REV_LAT 19
 
-#define TRN1_MIN   1280          /* 5.2.3: at least 1280 symbols */
-#define TRN1_MAX   8192          /* 5.2.3: at most 8192 symbols */
 #define TRN2_LEN   1280
 #define T_NO_TONE  MS(20000)     /* AC with no AA in reply */
-#define T_REVERSAL MS(4000)      /* CA / second AC unanswered */
-#define T_TRAIN    MS(10000)     /* no S / R2 / E */
 
 /* mean-square error, 4096 per signal-space unit squared, below which a rate
  * is taken (see README: decisions 2.8 standard deviations from a boundary) */
-static const int32_t rate_mse[V32_NRATES] = { 0x7fffffff, 4177, 2088, 1044, 522 };
+const int32_t v32_rate_mse[V32_NRATES] = { 0x7fffffff, 4177, 2088, 1044, 522 };
 /* ... and where a rate in use is given up: set by trial a little short of
  * where each rate's errors begin in test_call's noise runs (about 21, 18,
  * 15, 12 and 10 dB of SNR) */
-static const int32_t retrain_mse[V32_NRATES] = { 12000, 7500, 4200, 2400, 850 };
-#define RT_BAD_MS  2000
-#define RT_MAX     3
-#define CD_LOSS_MS 400
-/* three times |y|^2 of the receive filter output is compared with the
- * tone detectors' -43 dBm0 threshold of v32_rx.c (2512^2): 4.8 dB below it */
-#define CD_OFF     ((int64_t)2512 * 2512)
+const int32_t v32_retrain_mse[V32_NRATES] = { 12000, 7500, 4200, 2400, 850 };
 
 static void go(v32_t *m, v32_state s)
 {
@@ -70,15 +57,15 @@ static void start(v32_t *m)
     m->tone_data_run = 0; m->bad_run = 0; m->lost_run = 0; m->carrier = 0;
 }
 
-void v32_init(v32_t *m, const v32_cfg *cfg)
+static void init(v32_t *m, const v32_cfg *cfg, int call)
 {
     int i;
     m->cfg = *cfg;
     if (!(m->cfg.rates & V32_RALL)) m->cfg.rates = V32_RALL;
-    v32tx_init(&m->tx, 1, cfg->level, cfg->getbit, cfg->user);
+    v32tx_init(&m->tx, !call, cfg->level, cfg->getbit, cfg->user);
     v32ec_init(&m->ec);
     v32ec_set_near_delay(&m->ec, cfg->echo_delay);
-    v32rx_init(&m->rx, 1, cfg->putbit, cfg->user);
+    v32rx_init(&m->rx, !call, cfg->putbit, cfg->user);
     m->error = V32_ERR_NONE;
     m->nsamp = 0;
     m->t_ca = m->t_ac2 = 0; m->mt = 0;
@@ -87,21 +74,28 @@ void v32_init(v32_t *m, const v32_cfg *cfg)
     m->r2_rates = 0; m->rate = -1; m->v32_only = 0;
     m->connected = 0; m->bitrate = 0; m->retrains = 0; m->retraining = 0;
     m->auto_rt = 0; m->good_run = 0;
-    for (i = 0; i <= V32S_FAILED; i++) m->seg_len[i] = 0;
-    start(m);
+    m->call = call;
+    m->t_rev1 = m->t_cc = m->t_rev2 = 0; m->nt = 0; m->snt_len = 0; m->pw_data = 0;
+    m->r1_word = m->r2_word = m->r3_word = 0;
+    m->rn = 0; m->renegotiations = 0; m->r4_word = m->r5_word = 0; m->rn_rate = -1; m->mse_data = 0;
+    for (i = 0; i < V32S_NSTATES; i++) m->seg_len[i] = 0;
+    if (call) v32c_start(m); else start(m);
 }
+
+void v32_init(v32_t *m, const v32_cfg *cfg) { init(m, cfg, 0); }
+void v32_init_call(v32_t *m, const v32_cfg *cfg) { init(m, cfg, 1); }
 
 int v32_retrain(v32_t *m)
 {
     if (m->state != V32S_DATA) return -1;
     m->retrains++; m->retraining = 1;
     m->seg_len[m->state] = m->seg;
-    start(m);
+    if (m->call) v32c_start(m); else start(m);
     return 0;
 }
 
 /* 10 log10(a / b) in tenths of a dB, for the record */
-static int32_t db10(int64_t a, int64_t b)
+int32_t v32_db10(int64_t a, int64_t b)
 {
     int32_t d = 0;
     if (b < 1) b = 1;
@@ -111,13 +105,13 @@ static int32_t db10(int64_t a, int64_t b)
     return d;
 }
 
-static int pick_rate(const v32_t *m, unsigned common)
+int v32_pick_rate(const v32_t *m, unsigned common)
 {
     int k, rate = -1, low = -1;
     for (k = 0; k < V32_NRATES; k++)
         if (common & (1u << k)) {
             if (low < 0) low = k;
-            if (m->rx.mse <= rate_mse[k]) rate = k;
+            if (m->rx.mse <= v32_rate_mse[k]) rate = k;
         }
     return rate >= 0 ? rate : low;
 }
@@ -173,7 +167,7 @@ static void tx_control(v32_t *m)
             if (!done && m->ec_block && out * 5 > m->ec_best * 4) done = 1;  /* less than 1 dB gained */
             m->ec_best = out; m->ec_block++;
             if (done) {
-                m->erle_db10 = db10(m->ec.pw_in, m->ec.pw_out);
+                m->erle_db10 = v32_db10(m->ec.pw_in, m->ec.pw_out);
                 m->ec_mu = -1;
                 go(m, V32S_R1);
                 t->rword = v32_rate_word(m->cfg.rates);
@@ -194,7 +188,7 @@ static void tx_control(v32_t *m)
              * now includes what is left of our own echo */
             unsigned common = m->cfg.rates & m->r2_rates;
             if (m->v32_only) common &= V32_R4800;
-            m->rate = common ? pick_rate(m, common) : -1;
+            m->rate = common ? v32_pick_rate(m, common) : -1;
             t->rword = v32_rate_word(m->rate >= 0 ? 1u << m->rate : 0);
             v32tx_set_mode(t, V32_TX_RATE);
             go(m, m->rate >= 0 ? V32S_R3 : V32S_CLEAR);
@@ -323,7 +317,7 @@ static void rx_control(v32_t *m)
          * will name a rate the line can carry. Each good minute forgives one;
          * a fourth in a row gives the line up. */
         if (m->cfg.no_auto_retrain) break;
-        if (r->mse > retrain_mse[m->rate]) {
+        if (r->mse > v32_retrain_mse[m->rate]) {
             if (++m->bad_run > (int32_t)MS(RT_BAD_MS)) {
                 if (m->auto_rt >= RT_MAX) { fail(m, V32_ERR_CARRIER); break; }
                 m->auto_rt++; m->good_run = 0;
@@ -350,10 +344,10 @@ int16_t v32_tick(v32_t *m, int16_t rx)
     int32_t e;
     if (m->state == V32S_FAILED) return 0;
     m->nsamp++; m->t_state++;
-    if (v32tx_symbol_due(&m->tx)) tx_control(m);
+    if (v32tx_symbol_due(&m->tx)) { if (m->call) v32c_tx_control(m); else tx_control(m); }
     tx = v32tx_tick(&m->tx);
     e = v32ec_tick(&m->ec, m->tx.ref, rx, m->ec_mu);
     v32rx_tick(&m->rx, e);
-    rx_control(m);
+    if (m->call) v32c_rx_control(m); else rx_control(m);
     return tx;
 }

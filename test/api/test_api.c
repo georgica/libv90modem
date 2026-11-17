@@ -278,6 +278,8 @@ static void end_init(end_t *e, v90m_role role, unsigned mods)
     CHECK(e->m != NULL);
 }
 
+#define V90M_MOD_ALL_DEFAULT (V90M_MOD_V21 | V90M_MOD_V22 | V90M_MOD_V32BIS | V90M_MOD_V34 | V90M_MOD_V90)
+
 static void test_originate(void)
 {
     static end_t cl, an;
@@ -320,6 +322,71 @@ static void test_originate(void)
     CHECK_EQ_I(cl.ev[0], V90M_EV_CONNECTED);
     CHECK_EQ_I(v90m_retrain(cl.m), V90M_OK);           /* V.22bis at 2400: the caller may retrain */
     CHECK_EQ_I(v90m_cleardown(cl.m), V90M_ESTATE);     /* V.22bis has no cleardown */
+    v90m_destroy(cl.m); v90m_destroy(an.m); v90m_async_destroy(cl.a); v90m_async_destroy(an.a);
+
+    /* V.32bis: an API caller and an API answerer (its default modulations) back to back */
+    v90m_cfg_default(&c); c.role = V90M_ROLE_ORIGINATE;
+    c.modulations = V90M_MOD_V90 | V90M_MOD_V32BIS;
+    CHECK(v90m_create(&c, &err) == NULL); CHECK_EQ_I(err, V90M_ENOTSUP);
+    c.modulations = V90M_MOD_V34 | V90M_MOD_V32BIS;
+    CHECK(v90m_create(&c, &err) == NULL); CHECK_EQ_I(err, V90M_ENOTSUP);
+    end_init(&cl, V90M_ROLE_ORIGINATE, V90M_MOD_V32BIS | V90M_MOD_V22);
+    end_init(&an, V90M_ROLE_ANSWER, V90M_MOD_ALL_DEFAULT);
+    nc = na = 0;
+    if (cl.m && an.m) {
+        int stopped = 0, moving_again = 0, k_rt = -1;
+        v90m_stats st;
+        for (k = 0; k < 8000 * 30; k++) {
+            int16_t c_tx, a_tx;
+            v90m_process_linear(cl.m, &c_rx, &c_tx, 1);
+            v90m_process_linear(an.m, &a_rx, &a_tx, 1);
+            a_rx = c_tx; c_rx = a_tx;
+            v90m_get_state(cl.m, &sc);
+            if (k_rt < 0 && sc.connected && sc.moving && k % 8000 == 0) {
+                v90m_async_write(cl.a, (const uint8_t *)"from the caller", 15);
+                v90m_async_write(an.a, (const uint8_t *)"from the answerer", 17);
+                k_rt = k + 8000 * 2;
+            }
+            if (k == k_rt) {
+                got_c[nc] = 0; got_a[na] = 0;
+                v90m_get_state(an.m, &sa);
+                v90m_get_stats(cl.m, &st);
+                printf("  V.32bis: caller %d %s %d/%d bit/s (V.8 %d), answerer %d %s; SNR %.1f dB, round trip %d samples; caller got \"%s\", answerer got \"%s\"\n",
+                       sc.connected, sc.modulation == V90M_CONN_V32BIS ? "V.32bis" : "?", sc.tx_bps, sc.rx_bps, sc.used_v8,
+                       sa.connected, sa.modulation == V90M_CONN_V32BIS ? "V.32bis" : "?", st.snr_db10 / 10.0, st.rtd, got_c, got_a);
+                CHECK_EQ_I(sc.modulation, V90M_CONN_V32BIS); CHECK_EQ_I(sc.tx_bps, 14400); CHECK_EQ_I(sc.rx_bps, 14400);
+                CHECK_EQ_I(sc.used_v8, 1); CHECK_EQ_I(sc.moving, 1);
+                CHECK_EQ_I(sa.connected, 1); CHECK_EQ_I(sa.modulation, V90M_CONN_V32BIS);
+                CHECK(strcmp(got_c, "from the answerer") == 0);
+                CHECK(strcmp(got_a, "from the caller") == 0);
+                CHECK(st.snr_db10 > 300); CHECK(st.rtd >= 0 && st.rtd < 40); CHECK_EQ_I(st.retrains, 0);
+                CHECK_EQ_I(cl.ev[0], V90M_EV_CONNECTED);
+                CHECK_EQ_I(v90m_cleardown(cl.m), V90M_ESTATE);     /* V.32bis has no cleardown in data mode */
+                CHECK_EQ_I(v90m_retrain(cl.m), V90M_OK);            /* 7.1 */
+                nc = na = 0;
+            }
+            if (k > k_rt && k_rt >= 0) {
+                if (!sc.moving && sc.retraining) stopped = 1;
+                if (stopped && sc.moving && !moving_again) {
+                    /* (before it knew our AA for a retrain, 128 T of it,
+                     * the answerer's receiver took it for data: 7.2 has
+                     * nothing quicker; what it made of it is dropped) */
+                    moving_again = 1; na = 0;
+                    while (v90m_async_read(an.a, (uint8_t *)got_a, sizeof got_a) > 0) ;
+                    v90m_async_write(cl.a, (const uint8_t *)"again", 5);
+                }
+            }
+            nc += v90m_async_read(cl.a, (uint8_t *)got_c + nc, sizeof got_c - 1 - nc);
+            na += v90m_async_read(an.a, (uint8_t *)got_a + na, sizeof got_a - 1 - na);
+        }
+        got_a[na] = 0;
+        v90m_get_stats(cl.m, &st);
+        v90m_get_state(cl.m, &sc);
+        printf("  V.32bis retrain asked for by the caller: stopped %d, moving again %d, retrains %u; answerer got \"%s\"\n",
+               stopped, moving_again, st.retrains, got_a);
+        CHECK(stopped); CHECK(moving_again); CHECK_EQ_I(st.retrains, 1); CHECK_EQ_I(sc.connected, 1);
+        CHECK(strcmp(got_a, "again") == 0);
+    }
     v90m_destroy(cl.m); v90m_destroy(an.m); v90m_async_destroy(cl.a); v90m_async_destroy(an.a);
 
     /* nobody answers with a tone */

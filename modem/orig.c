@@ -3,6 +3,7 @@
 #include "orig.h"
 #include "v21h_bpf.h"
 #include "probe.h"
+#include "sintab.h"
 
 #define FS 8000
 #define MS(ms) ((int32_t)(ms) * 8)
@@ -14,6 +15,13 @@
 #define V21_MARK_MS      300   /* after ANS: a steady channel 2 mark this long is a V.21 answerer */
 #define CD_LOSS_MS       400
 #define V21_CD_AMP       110   /* carrier detect, peak amplitude (about -43 dBm0) */
+#define V32_TOTAL_MS   60000   /* give up on a V.32bis start-up (its every wait has its own time-out too) */
+/* V.32bis Annex A (see orig.h) */
+#define AA_AFTER_MS      600   /* AA once ANS has been heard 1 s: v8orig needed 400 ms or more of it to tell ANS */
+#define ANS_OFF_MS        40   /* ANS is over when away this long (the gaps of its phase reversals are shorter) */
+#define AA_GIVEUP_MS    1500   /* after ANS, nothing but perhaps V.21: AA stops (V.21 on offer) */
+#define ANS_LONG_MS      800   /* A.2.1.3 */
+#define TC_MS           3100   /* A.2.1.2: Tc, more than 3100 ms */
 
 static void fail(orig_t *o, int why) { o->phase = ORIG_FAILED; o->connected = 0; o->end = why; o->t = 0; }
 
@@ -22,6 +30,62 @@ static void start_v22(orig_t *o)
     v22m_init(&o->v22, V22_CALLER, 1, o->cfg.level, o->cfg.getbit, o->cfg.putbit, o->cfg.user);
     o->cd_run = 0;
     o->phase = ORIG_V22; o->t = 0;
+}
+
+/* V.32bis (6.1): the calling modem, sending AA from now on. One rate both
+ * ways: the ceiling of our configuration. */
+static void start_v32(orig_t *o)
+{
+    static const int rate[V32_NRATES] = { 4800, 7200, 9600, 12000, 14400 };
+    v32_cfg c;
+    int i;
+    memset(&c, 0, sizeof c);
+    c.level = o->cfg.level;
+    c.rates = V32_R4800;
+    for (i = 1; i < V32_NRATES; i++) if (o->cfg.max_bps <= 0 || rate[i] <= o->cfg.max_bps) c.rates |= 1u << i;
+    c.getbit = o->cfg.getbit; c.putbit = o->cfg.putbit; c.user = o->cfg.user;
+    v32_init_call(&o->v32, &c);
+}
+
+/* why a V.32bis call ended */
+static int v32_end(const orig_t *o)
+{
+    if (o->v32.error == V32_ERR_NO_RATE)
+        /* our R2 asked for the cleardown (nothing in common), or the answerer's R3 / E did */
+        return o->v32.r2_word && !v32_word_rates(o->v32.r2_word) ? ORIG_END_NO_COMMON : ORIG_END_CLEARDOWN;
+    return o->connected ? ORIG_END_LOST : ORIG_END_NO_CARRIER;
+}
+
+/* Annex A: ANS (2100 Hz, -43 dBm0 or more: as v32_aadet's 1800 Hz) and AA */
+static void annex_a(orig_t *o, int16_t rx)
+{
+    int32_t c, s;
+    int64_t pw;
+    o->at_ph += (uint32_t)(((uint64_t)2100 << 32) / FS);
+    s = sintab[(o->at_ph >> 22) & SIN_MASK];
+    c = sintab[((o->at_ph >> 22) + SIN_N / 4) & SIN_MASK];
+    /* to 0 Hz, two one-pole low-passes of about 20 Hz: our own AA, 300 Hz
+     * away, is more than 40 dB down */
+    o->at_i1 += (((rx * c) >> 7) - o->at_i1) >> 6;
+    o->at_q1 += (((rx * s) >> 7) - o->at_q1) >> 6;
+    o->at_i2 += (o->at_i1 - o->at_i2) >> 6;
+    o->at_q2 += (o->at_q1 - o->at_q2) >> 6;
+    pw = (int64_t)o->at_i2 * o->at_i2 + (int64_t)o->at_q2 * o->at_q2;
+    if (pw > ((int64_t)157 * 157 / 4) << 16) { if (o->at_on < MS(60000)) o->at_on++; o->at_off = 0; }
+    else if (o->at_off < MS(60000)) o->at_off++;
+    if (o->t_aa >= 0 && o->t_aa < MS(60000)) o->t_aa++;
+    if (o->t_quiet < 0) {
+        if (o->at_off >= MS(ANS_OFF_MS)) {
+            /* A.2.1.3: the timer of the rest of ANS stops at its end */
+            o->t_quiet = o->at_off;
+            if (o->t_aa >= 0) o->ans_rest = o->t_aa - o->at_off;
+        }
+    } else if (o->t_quiet < MS(60000)) o->t_quiet++;
+    /* A.2.1.3: AA once ANS has been there for 1 s */
+    if (o->t_aa < 0 && o->t_quiet < 0 && o->at_on >= MS(AA_AFTER_MS)) { o->aa = 1; o->t_aa = 0; }
+    /* neither AC nor V.22bis after ANS: a V.21 answerer's mark is in
+     * channel 2, where AA's 1800 Hz would drown it */
+    if (o->aa && (o->cfg.modes & V8_MOD_V21) && o->tc < 0 && o->t_quiet >= MS(AA_GIVEUP_MS)) o->aa = 0;
 }
 
 /* V.21 receiver on channel 2: what the answerer sends */
@@ -118,11 +182,23 @@ int16_t orig_tick(orig_t *o, int16_t rx)
             if (o->cfg.modes & V8_MOD_V22) v22m_init(&o->v22, V22_CALLER, 1, o->cfg.level, o->cfg.getbit, o->cfg.putbit, o->cfg.user);
             v21_rx_init(o);
             o->mark_run = 0;
+            if (o->cfg.modes & V8_MOD_V32) {
+                /* Annex A: the V.32bis caller listens for AC from now on;
+                 * what it sends goes out once AA is due */
+                start_v32(o);
+                o->aa = 0; o->t_aa = -1; o->ans_rest = -1; o->t_quiet = -1; o->tc = -1;
+                o->at_on = o->at_off = 0;
+            }
             o->phase = ORIG_LEGACY; o->t = 0;
             break;
         case V8O_RES_OK:
             o->used_v8 = 1;
-            if (o->v8.selected == 4 && (o->cfg.modes & V8_MOD_V22)) start_v22(o);
+            if (o->v8.selected == 3 && (o->cfg.modes & V8_MOD_V32)) {
+                start_v32(o);
+                o->aa = 1;
+                o->phase = ORIG_V32; o->t = 0;
+            }
+            else if (o->v8.selected == 4 && (o->cfg.modes & V8_MOD_V22)) start_v22(o);
             else if (o->v8.selected == 12 && (o->cfg.modes & V8_MOD_V21)) start_v21(o);
             else fail(o, ORIG_END_NO_COMMON);      /* a modulation not built yet */
             break;
@@ -135,20 +211,47 @@ int16_t orig_tick(orig_t *o, int16_t rx)
     case ORIG_LEGACY: {
         /* V.22bis: its caller is silent until the answerer's unscrambled
          * binary 1 (6.3.1.1), so it runs as it is; V.21: a steady mark on
-         * channel 2 while there is no V.22bis carrier */
-        int carrier, level = v21_rx(o, rx, &carrier);
+         * channel 2 while there is no V.22bis carrier. With V.32bis: Annex A
+         * (orig.h) */
+        int carrier, level = v21_rx(o, rx, &carrier), v32 = (o->cfg.modes & V8_MOD_V32) != 0;
+        if (v32) {
+            int16_t t32 = v32_tick(&o->v32, rx);
+            annex_a(o, rx);
+            /* A.2.1.1, A.2.1.3: AC (64 T of it), or already its reversal */
+            if (o->v32.state != V32S_FAILED && (o->v32.rx.ac_run >= 2 * 64 || o->v32.state != V32S_C_AA)) {
+                o->aa = 1;
+                o->phase = ORIG_V32; o->t = 0;
+                tx = t32;
+                break;
+            }
+            if (o->aa) tx = t32;
+            if (o->tc >= 0 && o->tc < MS(60000)) o->tc++;
+        }
         if (o->cfg.modes & V8_MOD_V22) {
-            tx = v22m_tick(&o->v22, rx);
+            /* A.2.1.2: during Tc the V.22bis caller waits; then it hears
+             * the unscrambled binary 1 for 155 ms once more */
+            if (v32 && o->tc == MS(TC_MS - 155)) v22m_init(&o->v22, V22_CALLER, 1, o->cfg.level, o->cfg.getbit, o->cfg.putbit, o->cfg.user);
+            if (!v32 || o->tc < 0 || o->tc >= MS(TC_MS - 155)) tx += v22m_tick(&o->v22, rx);
             /* it is V.22bis once its caller has heard 155 ms of the
              * unscrambled binary 1 and left V22S_WAIT (its carrier flag
              * alone also rises on a V.21 channel 2 mark) */
             if (o->v22.state != V22S_WAIT) {
-                o->cd_run = 0;
-                o->phase = ORIG_V22;                                  /* the start-up goes on */
-                break;
+                if (v32 && o->tc < 0 && !(o->t_aa >= 0 && (o->ans_rest < 0 || o->ans_rest > MS(ANS_LONG_MS)))) {
+                    /* A.2.1.3 with ANS no longer than 800 ms from the
+                     * start of AA, or no AA at all: A.2.1.2, Tc (the
+                     * V.22bis caller waits again, held) */
+                    o->tc = 0;
+                    v22m_init(&o->v22, V22_CALLER, 1, o->cfg.level, o->cfg.getbit, o->cfg.putbit, o->cfg.user);
+                } else {
+                    /* AA stops (the V.32bis caller is left), 456 ms of
+                     * silence, S1 (v22m) */
+                    o->cd_run = 0;
+                    o->phase = ORIG_V22;                              /* the start-up goes on */
+                    break;
+                }
             }
         }
-        if (carrier && level == 1) o->mark_run++; else o->mark_run = 0;
+        if (carrier && level == 1 && !(v32 && o->aa)) o->mark_run++; else o->mark_run = 0;
         if ((o->cfg.modes & V8_MOD_V21) && o->mark_run >= MS(V21_MARK_MS)) { start_v21(o); break; }
         if (o->t > MS(LEGACY_MS)) fail(o, ORIG_END_NO_CARRIER);
         break;
@@ -175,6 +278,15 @@ int16_t orig_tick(orig_t *o, int16_t rx)
         tx = tick_v21(o, rx);
         break;
 
+    case ORIG_V32:
+        tx = v32_tick(&o->v32, rx);
+        if (o->v32.state == V32S_FAILED) { fail(o, v32_end(o)); tx = 0; break; }   /* carrier loss included */
+        if (o->v32.connected) {
+            o->connected = 1; o->modulation = ORIG_MOD_V32BIS;
+            o->bitrate = o->v32.bitrate;          /* may change at a retrain */
+        } else if (o->t > MS(V32_TOTAL_MS)) fail(o, ORIG_END_NO_CARRIER);
+        break;
+
     case ORIG_FAILED:
         break;
     }
@@ -185,13 +297,24 @@ int orig_moving(const orig_t *o)
 {
     if (!o->connected) return 0;
     if (o->phase == ORIG_V22) return !o->v22.retraining && o->v22.tx_ready && o->v22.rx_ready;
+    if (o->phase == ORIG_V32) return !o->v32.retraining && o->v32.tx_ready && o->v32.rx_ready;
     return 1;
 }
 
 int orig_snr_db10(const orig_t *o)
 {
+    /* V.32bis: mean power of the points of each rate, signal space units
+     * squared (v32/test/test_code) */
+    static const int v32_pw[V32_NRATES] = { 40, 40, 40, 42, 41 };
     int v;
-    if (!o->connected || o->phase != ORIG_V22) return -1;
+    if (!o->connected) return -1;
+    if (o->phase == ORIG_V32) {
+        if (o->v32.rate < 0 || o->v32.retraining) return -1;
+        /* 4096 = one unit squared, as v32rx_t.mse */
+        v = probe_db10((int64_t)v32_pw[o->v32.rate] * 4096, o->v32.rx.mse > 0 ? o->v32.rx.mse : 1);
+        return v < 0 ? 0 : v > 600 ? 600 : v;
+    }
+    if (o->phase != ORIG_V22) return -1;
     /* as answer_snr_db10: 4096 = one unit squared, the points have a mean
      * power of 10 */
     v = probe_db10(10 * 4096, o->v22.rx.mse > 0 ? o->v22.rx.mse : 1);
@@ -200,7 +323,14 @@ int orig_snr_db10(const orig_t *o)
 
 int orig_retrain(orig_t *o)
 {
+    if (o->phase == ORIG_V32) return o->connected ? v32_retrain(&o->v32) : -1;
     if (o->phase != ORIG_V22 || !o->connected || o->v22.bitrate != 2400) return -1;
     v22m_retrain(&o->v22);
     return 0;
+}
+
+int orig_rtd(const orig_t *o)
+{
+    if (o->phase != ORIG_V32 || !o->connected || o->v32.nt <= 0) return -1;
+    return o->v32.nt - 64 * 10 / 3;
 }

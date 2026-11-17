@@ -54,14 +54,15 @@ typedef enum {
     V90M_ROLE_ANSWER = 0,       /* the called modem */
     V90M_ROLE_ORIGINATE = 1     /* the calling modem, from the moment the far end has answered
                                    (dialling and call progress are the owner's). So far V.21,
-                                   V.22 and V.22bis: other modulations in cfg.modulations give
-                                   V90M_ENOTSUP */
+                                   V.22, V.22bis and V.32bis (after V.8, or V.32bis Annex A after
+                                   a pre-V.8 answer tone): other modulations in cfg.modulations
+                                   give V90M_ENOTSUP */
 } v90m_role;
 
 /* modulations offered (v90m_cfg.modulations) */
 #define V90M_MOD_V21     0x0001u
 #define V90M_MOD_V22     0x0002u     /* V.22 and V.22bis */
-#define V90M_MOD_V32BIS  0x0004u     /* V.32bis and V.32 */
+#define V90M_MOD_V32BIS  0x0004u     /* V.32bis and V.32 (both roles) */
 #define V90M_MOD_V34     0x0008u
 #define V90M_MOD_V90     0x0010u     /* the digital (server) side: answering only */
 #define V90M_MOD_V92     0x0020u     /* with V90M_MOD_V90: PCM upstream on offer */
@@ -99,7 +100,8 @@ typedef struct {
     int            max_tx_code;     /* power ceiling: the most downstream power the caller may ask for,
                                        -0.5 dBm0 less 0.5 dB per step, 1..31; 0 = 23 (-12 dBm0) */
     int            max_down_bps;    /* rate ceilings, bit/s; 0 = none. V.34: max_down caps what we */
-    int            max_up_bps;      /* send, max_up what we receive. V.92 PCM up to 48000; 33600 holds it at 33333 */
+    int            max_up_bps;      /* send, max_up what we receive. V.92 PCM up to 48000; 33600 holds it at 33333.
+                                       V.32bis (either role): one rate both ways, under the lower of the two */
     int            echo_delay;      /* samples from a sample leaving to its echo starting back (the
                                        driver's buffering); -1 = measure it in every start-up */
     v90m_getbit_fn getbit;
@@ -144,7 +146,8 @@ int      v90m_process_g711(v90m_t *m, const uint8_t *rx, uint8_t *tx, size_t n);
 int      v90m_process_lin_rx(v90m_t *m, const int16_t *rx, uint8_t *tx, size_t n);
 int      v90m_process_linear(v90m_t *m, const int16_t *rx, int16_t *tx, size_t n);
 
-/* Ask for a retrain (V.92, V.90, V.34 data mode). V90M_OK or V90M_ESTATE. */
+/* Ask for a retrain (data mode of V.92, V.90, V.34, V.32bis; originating:
+ * V.22bis at 2400 bit/s, V.32bis). V90M_OK or V90M_ESTATE. */
 int      v90m_retrain(v90m_t *m);
 /* Hang up, telling the far modem where the modulation has a way to (V.90
  * 9.7, V.92 9.11): V90M_OK when that has begun (V90M_EV_ENDED follows within

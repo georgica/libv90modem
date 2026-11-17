@@ -1,8 +1,9 @@
 /* V.32bis / V.32 duplex modem, 2400 symbols/s on an 1800 Hz carrier, echo
  * cancelled: 14400, 12000, 9600 and 7200 bit/s trellis coded, 4800 bit/s
- * uncoded. Written from Recommendation V.32bis (02/91). Answer mode.
- * Fixed-point, sample-driven (8000 Hz, 16-bit linear), no allocation: all
- * state lives in the caller's v32_t. See README.md. */
+ * uncoded. Written from Recommendation V.32bis (02/91). Answer mode (v32_init)
+ * and call mode (v32_init_call). Fixed-point, sample-driven (8000 Hz, 16-bit
+ * linear), no allocation: all state lives in the caller's v32_t. See
+ * README.md. */
 #ifndef V90D_V32_H
 #define V90D_V32_H
 #include <stdint.h>
@@ -195,7 +196,18 @@ typedef struct {
     uint32_t   ndata;             /* data symbols received */
     uint32_t   clamp;             /* decoded symbols still to discard (circuit 104 clamped) */
     v32_putbit_fn putbit; void *user;
+    /* calling modem only (answer = 0): the answerer's AC / CA, 600 and 3000
+     * Hz (6.1, 7.1). Its alternating part, half the difference of samples a
+     * symbol apart, in which any 1800 Hz (our own AA / CC echo) cancels */
+    int64_t    ac_p, ac_m;        /* smoothed power of it, and its product with itself a symbol back */
+    int        ac_run;            /* half symbols AC has been there */
+    int        ac_pure;           /* ... and has been all there is on the line */
+    int        ac_rev; uint32_t ac_rev_t; int ac_hold;   /* AC <-> CA reversals seen, time of the last */
 } v32rx_t;
+
+/* samples from the pulse centre of the first reversed AC / CA symbol arriving
+ * to ac_rev counting it (measured: test_acdet) */
+#define V32_AC_LAT 20
 
 void v32rx_init(v32rx_t *r, int answer, v32_putbit_fn putbit, void *user);
 void v32rx_tick(v32rx_t *r, int32_t sample);
@@ -203,7 +215,7 @@ void v32rx_set_mode(v32rx_t *r, v32_rxmode mode);
 /* received line level, RMS in 16-bit sample units */
 int  v32rx_level(const v32rx_t *r);
 
-/* ---------------- the modem: start-up (6.2), data, retrain (7.2) ---------------- */
+/* ---------------- the modem: start-up (6.1, 6.2), data, retrain (7) ---------------- */
 typedef enum {
     V32S_AC1,        /* sending AC, waiting for the caller's 1800 Hz tone */
     V32S_CA,         /* sending CA, timing the round trip */
@@ -219,13 +231,30 @@ typedef enum {
     V32S_B1,         /* 128 symbols of scrambled ones */
     V32S_DATA,
     V32S_CLEAR,      /* R3 calling for a cleardown, then V32S_FAILED */
-    V32S_FAILED
+    V32S_FAILED,
+    /* call mode (v32_init_call); data mode is V32S_DATA, the end V32S_FAILED */
+    V32S_C_AA,       /* sending AA, waiting for AC and its first phase reversal */
+    V32S_C_AA64,     /* reversal seen: AA for 64 T more */
+    V32S_C_CC,       /* sending CC, timing the round trip (NT) until the second reversal */
+    V32S_C_LISTEN,   /* silent: the answerer's S, S-bar, TRN train the receiver; R1 */
+    V32S_C_SNT,      /* S for NT */
+    V32S_C_S, V32S_C_SBAR, V32S_C_TRN,   /* receiver conditioning signal: echo canceller training */
+    V32S_C_R2,       /* rate signal R2 until R3 (the receiver trains on the second S, S-bar, TRN) */
+    V32S_C_E,        /* our E */
+    V32S_C_B1,       /* scrambled ones until 128 T after the answerer's E */
+    /* rate renegotiation (8.2), started by the answerer's preamble; back to V32S_DATA */
+    V32S_C_RN_R4,    /* preamble heard (104 clamped): waiting for its R4 */
+    V32S_C_RN_AA, V32S_C_RN_CC,   /* our preamble: AA 56 T, CC 8 T */
+    V32S_C_RN_R5,    /* R5 for 64 T */
+    V32S_C_RN_E,     /* E (repeated for 64 T and a cleardown when there is no rate in common) */
+    V32S_C_RN_B1,    /* scrambled ones for 24 T */
+    V32S_NSTATES
 } v32_state;
 
 #define V32_ERR_NONE     0
-#define V32_ERR_NO_TONE  1     /* the caller's AA never came (or never reversed) */
-#define V32_ERR_TRAIN    2     /* no S / no R2 / no E in time */
-#define V32_ERR_NO_RATE  3     /* nothing in common, or the caller asked for a cleardown */
+#define V32_ERR_NO_TONE  1     /* the caller's AA (the answerer's AC) never came, or never reversed */
+#define V32_ERR_TRAIN    2     /* no S / no rate signal / no E in time */
+#define V32_ERR_NO_RATE  3     /* nothing in common, or the far end asked for a cleardown */
 #define V32_ERR_CARRIER  4     /* signal lost in data mode */
 
 typedef struct {
@@ -240,6 +269,7 @@ typedef struct {
 
 typedef struct {
     v32_cfg   cfg;
+    int       call;            /* 1: call mode (v32_init_call) */
     int       retraining;      /* a retrain is running: connected stays 1, no data moves */
     v32tx_t   tx;
     v32ec_t   ec;
@@ -272,13 +302,32 @@ typedef struct {
     int32_t   lost_run;        /* data mode: samples without it */
     int       auto_rt;         /* retrains we began for poor reception, lately */
     int32_t   good_run;
+    /* call mode */
+    uint32_t  t_rev1;          /* the answerer's AC-CA reversal at our input (pulse centre) */
+    uint32_t  t_cc;            /* our AA-CC transition leaving (pulse centre) */
+    uint32_t  t_rev2;          /* the CA-AC reversal at our input */
+    int32_t   nt;              /* round trip as measured, samples (includes the answerer's 64 T) */
+    int32_t   snt_len;         /* symbols of S for NT */
+    int64_t   pw_data;         /* data mode: received power (v32rx_t.pw_raw), slowly followed */
+    uint16_t  r1_word, r2_word, r3_word;   /* rate signals received, sent, received */
+    /* rate renegotiation (8.2, call mode: responding) */
+    int       rn;              /* one is under way (data mode until the far E's 24 T are over) */
+    int       renegotiations;  /* begun by the far end */
+    uint16_t  r4_word, r5_word;
+    int       rn_rate;         /* the highest rate common to R4 and R5 (-1: none) */
+    int32_t   mse_data;        /* the receiver's error in data mode before the preamble came */
     /* timing record for tests: symbols sent in each state the last time through */
-    uint32_t  seg_len[V32S_FAILED + 1];
+    uint32_t  seg_len[V32S_NSTATES];
 } v32_t;
 
+/* answer mode (6.2): AC first */
 void    v32_init(v32_t *m, const v32_cfg *cfg);
+/* call mode (6.1): AA first. Annex A: the owner may hold the output back
+ * (send silence instead) while AA is sent; nothing else depends on it. */
+void    v32_init_call(v32_t *m, const v32_cfg *cfg);
 int16_t v32_tick(v32_t *m, int16_t rx);
-/* data mode: start a retrain (7.2). Returns 0, or -1 when not in data mode. */
+/* data mode: start a retrain (7.2 answering, 7.1 calling). Returns 0, or -1
+ * when not in data mode. */
 int     v32_retrain(v32_t *m);
 
 /* ---------------- AA detector for the V.25 / V.8 answer sequence ----------------

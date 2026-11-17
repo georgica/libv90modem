@@ -51,9 +51,10 @@ struct v90m {
 #define ORIGINATING(m) ((m)->cfg.role == V90M_ROLE_ORIGINATE)
 #define V90M_MOD_ALL  (V90M_MOD_V21 | V90M_MOD_V22 | V90M_MOD_V32BIS | V90M_MOD_V34 | V90M_MOD_V90 | V90M_MOD_V92)
 /* what the calling side can do so far */
-#define V90M_MOD_ORIG (V90M_MOD_V21 | V90M_MOD_V22)
+#define V90M_MOD_ORIG (V90M_MOD_V21 | V90M_MOD_V22 | V90M_MOD_V32BIS)
 
-typedef char v90m_check_orig[(SAME(ORIG_MOD_V21, ANS_MOD_V21) && SAME(ORIG_MOD_V22, ANS_MOD_V22) && SAME(ORIG_MOD_V22BIS, ANS_MOD_V22BIS)) ? 1 : -1];
+typedef char v90m_check_orig[(SAME(ORIG_MOD_V21, ANS_MOD_V21) && SAME(ORIG_MOD_V22, ANS_MOD_V22) && SAME(ORIG_MOD_V22BIS, ANS_MOD_V22BIS)
+                              && SAME(ORIG_MOD_V32BIS, ANS_MOD_V32BIS)) ? 1 : -1];
 
 void v90m_cfg_default(v90m_cfg *cfg)
 {
@@ -104,6 +105,9 @@ int v90m_reset(v90m_t *m, const v90m_cfg *cfg)
         oc.level = cfg->tx_level;
         oc.modes = modes_of(cfg->modulations);
         oc.send_ci = cfg->send_ci != 0;
+        /* V.32bis: one rate both ways, the lower ceiling */
+        oc.max_bps = cfg->max_down_bps;
+        if (cfg->max_up_bps > 0 && (oc.max_bps <= 0 || cfg->max_up_bps < oc.max_bps)) oc.max_bps = cfg->max_up_bps;
         oc.getbit = cfg->getbit;
         oc.putbit = cfg->putbit;
         oc.user = cfg->user;
@@ -165,7 +169,9 @@ static int connected_of(const v90m_t *m) { return ORIGINATING(m) ? m->u.o.connec
 static int moving_of(const v90m_t *m) { return ORIGINATING(m) ? orig_moving(&m->u.o) : answer_moving(&m->u.a); }
 static int retraining_of(const v90m_t *m)
 {
-    return ORIGINATING(m) ? m->u.o.phase == ORIG_V22 && m->u.o.v22.retraining : m->u.a.retraining;
+    if (ORIGINATING(m))
+        return (m->u.o.phase == ORIG_V22 && m->u.o.v22.retraining) || (m->u.o.phase == ORIG_V32 && m->u.o.v32.retraining);
+    return m->u.a.retraining;
 }
 static int mod_of(const v90m_t *m) { return ORIGINATING(m) ? m->u.o.modulation : m->u.a.modulation; }
 static int tx_of(const v90m_t *m) { return ORIGINATING(m) ? m->u.o.bitrate : m->u.a.bitrate; }
@@ -184,6 +190,7 @@ static v90m_end end_of(const v90m_t *m)
         case ORIG_END_NO_JM: return V90M_END_NO_JM;
         case ORIG_END_NO_COMMON: return V90M_END_NO_COMMON;
         case ORIG_END_LOST: return V90M_END_LOST;
+        case ORIG_END_CLEARDOWN: return V90M_END_CLEARDOWN_FAR;
         default: return V90M_END_FAILED;
         }
     } else {
@@ -273,7 +280,7 @@ int v90m_retrain(v90m_t *m)
 
 int v90m_cleardown(v90m_t *m)
 {
-    if (ORIGINATING(m)) return V90M_ESTATE;        /* V.21 and V.22bis have no cleardown */
+    if (ORIGINATING(m)) return V90M_ESTATE;        /* V.21, V.22bis and V.32bis have none in data mode */
     return answer_cleardown(&m->u.a) == 0 ? V90M_OK : V90M_ESTATE;
 }
 
@@ -299,9 +306,9 @@ void v90m_get_stats(const v90m_t *m, v90m_stats *st)
     if (ORIGINATING(m)) {
         const orig_t *o = &m->u.o;
         st->snr_db10 = orig_snr_db10(o);
-        st->rtd = -1;
+        st->rtd = orig_rtd(o);
         st->echo_delay = -1;
-        st->retrains = o->phase == ORIG_V22 ? (unsigned)o->v22.retrains : 0;
+        st->retrains = o->phase == ORIG_V22 ? (unsigned)o->v22.retrains : o->phase == ORIG_V32 ? (unsigned)o->v32.retrains : 0;
     } else {
         const answer_t *a = &m->u.a;
         st->snr_db10 = a->connected ? answer_snr_db10(a) : -1;
