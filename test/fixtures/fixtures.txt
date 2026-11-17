@@ -3,9 +3,11 @@
 # settings the call was made with), the expected "modulation ..." line of
 # the replay up to the SNR, the modem, the date of the call.
 #
-# The transmit matches the recording up to data mode, where the recording
-# modem's data begin (its PPP session); the line that counts differences
-# shows where that is.
+# Each recording ends 10 to 20 ms after the modem connected: the handshake
+# only, no user data. The transmit matches the recording up to the start of
+# data mode (the recording modem's own data bits), except x2b: recorded
+# before the fixes of 2026-11-16 for that modem, it is answered differently
+# from 18.4 s on, and goes on to connect at V.34 as the modem does today.
 cxa.raw.xz   -9 -u 33600   modulation 7, 50666 bit/s down, 25333 up   Conexant CX93001 (USB), AT+PIG=0          2026-11-16
 v34a.raw.xz                modulation 5, 31200 bit/s down, 28800 up   Conexant CX93001 (USB), V.34 forced       2026-11-15
 v21a.raw.xz                modulation 1, 300 bit/s down, 300 up       Conexant CX93001 (USB), V.21 forced       2026-11-15
