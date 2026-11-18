@@ -51,6 +51,12 @@ typedef struct {
     v21demod_t dem;
     v8rx_t     rx;
     int64_t    squelch;
+    /* the answer tone under the JM receiver (V8O_CM): 2100 Hz in blocks of
+     * 5 ms, as modem/anstone; while it lasts the receiver reads idle mark */
+    uint32_t   g_ph;
+    int32_t    g_i, g_q;
+    int64_t    g_pow;
+    int        g_n, g_hold;
     uint8_t    bits[V8O_MAXBITS];   /* the sequence being sent: CI or CM, then CJ */
     int        nbits, pos;
     int        ci_on, ci_seqs;      /* CI: in an ON period, sequences sent in it */

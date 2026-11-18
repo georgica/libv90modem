@@ -1545,3 +1545,62 @@ No file of the library changed (tools, test/, the Makefile).
   Short Phase 2, quick connect and modem-on-hold of V.92: none used them.
 - Rate renegotiations and retrains begun by the caller are in a few calls
   only (v34a, x2r4, usr7's V.90 retrain); not compared here.
+
+## realcheck-v8: the two V.8 fixes, held back (2026-11-18)
+
+On branch `realcheck-v8`, over `realcheck`. Not to be merged as it is:
+it turns three of the caller's simulation tests red, by the receiver fault
+of "realcheck", Found 3 (below).
+
+### The fixes, each test first
+
+- CM: `modem/orig.c` adds the PSTN access category (access0 = 0, 0x0d)
+  whenever the PCM category is sent (V.8 6.3, 7.3). Test: test_realcheck's
+  "ours CM" against the 5686's CM: before, `m.has_access == 0, want 1`
+  and no 0x0d (2 failures); after, `c1 65 13 90 2a 27 0d`, realcheck: 666
+  checks, 0 failures.
+- JM after ANSam: `modem/v8orig.c` holds the JM receiver in idle mark while
+  2100 Hz is heard (5 ms blocks, the anstone test, two blocks of hold).
+  Test: test_v8orig "CJ after the second JM, whatever the delay": the
+  clean line at one-way delays 0 to 30 ms in 1 ms steps. Before: 21 of 31
+  waited for a third JM, CJ up to 0.766 s after JM reached the caller;
+  after: 0 of 31, at most 0.533 s. v8orig: 54 checks, 0 failures.
+- Against spandsp's V.8 (an implementation not ours): `make
+  test-interop` all pass with both fixes (interop_v8orig_spandsp 26, the
+  V.90 digital answerer case with our CM's access octet included).
+- Our caller's recorded calls read again with v90m-fields: CM `c1 65 13
+  90 2a 27 0d`, every sequence rebuilt the same; the CJ now ends 0.707 s
+  after the start of a 5-octet JM on line34 (two JMs; 20 ms each way
+  included; was 0.94) and 0.807 s after a 7-octet one, the Conexant's
+  0.673 and 0.807 s.
+
+### What turns red, and why
+
+Both fixes end V.8 at another moment (the CM is 33 ms longer, so the
+answerer's JM starts 67 ms later; the JM fix saves a JM, 233 ms, on some
+delays), and every simulated call after V.8 then meets other noise and
+clock phases:
+
+| program | ports-2 | realcheck-v8 |
+|---|---|---|
+| orig_v90 | 104, 0 failures | 2 failures: 0 km +100 ppm 41333 bit/s with 1626 bit errors in 10 s; "Table 1 levels" (2 km +30 ppm, robbed bit) at 33333, SNR 17.4 dB, 161670 errors |
+| orig_v92 | 109, 0 | 1: "2 km +30 ppm, 3 dB pad" under its floor |
+| orig_v32 | 95, 0 | 1: the realistic row (10 dB loss, 20 ms, 100 ppm) at 7200 bit/s, SNR 21.1 dB (ports-2: 9600 at 19.2 dB); floor 9600 |
+
+The V.90 failures are the fault described in "realcheck", Found 3: on
+ports-2 unchanged a shift of Te alone gives them (10 of 22 calls bad on 0 km
++100 ppm, 1 of 13 on 2 km +30 ppm). The V.32bis row sits at the edge of
+9600 at that SNR; a Te shift alone on ports-2 did not move it (95, 0) at
+the one shift tried. These want their own work (the V.90 receiver first);
+then these fixes can go in with the tests green.
+
+### Unchanged
+
+| | ports-2 | realcheck-v8 |
+|---|---|---|
+| `make check` (host), answering side | 106 count lines | the same lines but v8orig 53 -> 54, orig_v32 / orig_v90 / orig_v92 as above, realcheck 666 added; the 45 subdirectory lines identical (run apart: `check` stops at `test`); fixtures all pass; api 303; symbols 551 internal |
+| `make bench-v90` | 8e3136e9 x6 | 8e3136e9 x6 |
+| `make bench-bell` | 48f22641, fc125ef2 | the same |
+| `make bench-v92c` (the caller) | cd66ac82 | 66686c34, host and qemu-arm agree: the caller's own V.8 changed |
+| `check-arm` (armv5, qemu; run once, on this tree) | the ARM count lines of sync-build/proof/afterports/check-arm.log | the same lines but v8orig 54, realcheck 666, and orig_v32 / orig_v90 / orig_v92 with the host's failures; v34, v90, v92, v42, v32 all pass, identical |
+| v90d-split's live/replay, 106 recordings x 8 configs | 1613 files (sync-build/proof/afterports) | manifest identical, all 1613 (a copy of v90d-split d707463 built against this tree, uncommitted fixes in; rc-scripts/replayproof.sh) |

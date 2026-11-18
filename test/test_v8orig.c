@@ -23,6 +23,8 @@ static long peer_n;
 static double peer_amp;
 static long peer_lead;                 /* samples of silence before the far end's tone */
 static long lead_ms = 300;             /* the far end starts this long after answering */
+static long jm_at;                     /* peer sample at which the answerer began JM */
+static long delay_set = -1;            /* the line's one-way delay, when a test sets it */
 
 static int16_t clip(double x) { long q = lrint(x); return (int16_t)(q > 32767 ? 32767 : q < -32768 ? -32768 : q); }
 
@@ -33,7 +35,7 @@ static double peer(void *u, double rx)
     peer_n++;
     if (peer_n <= peer_lead) return 0;
     switch (peer_kind) {
-    case P_V8ANS: v8ans_tick(&A, clip(rx), &tx); return tx;
+    case P_V8ANS: if (v8ans_tick(&A, clip(rx), &tx) == V8A_JM && !jm_at) jm_at = peer_n; return tx;
     case P_ANSAM_ONLY: ansam_run(&G, &tx, 1); return tx;
     case P_ANS: {      /* V.25 ANS: 2100 Hz with reversals every 450 ms, no modulation */
         double t = (double)(peer_n - peer_lead) / FS, ph = TWO_PI * 2100 * t;
@@ -54,6 +56,7 @@ static void line(v32line_cfg *lc, int realistic)
     lc->mulaw = 1; lc->seed = 7;
     lc->noise_a_dbm0 = lc->noise_c_dbm0 = -300; lc->near_db = lc->far_db = lc->c_near_db = lc->c_far_db = 300;
     lc->delay = 40;
+    if (delay_set >= 0) lc->delay = (int)delay_set;
     if (realistic) {
         lc->loss_db = 10; lc->delay = 160;
         lc->near_db = 10;          /* our own CM comes back 10 dB down into our JM receiver */
@@ -82,7 +85,7 @@ static int call(int kind, int realistic, const v8_menu_t *cm, const v8_menu_t *a
     peer_kind = kind; peer_n = 0; peer_lead = MS(lead_ms); peer_amp = 4243;
     if (kind == P_V8ANS) v8ans_init(&A, FS, 4243, ans_local);
     if (kind == P_ANSAM_ONLY) ansam_init(&G, FS, 4243, 1);
-    tx_energy_before_tone = 0;
+    tx_energy_before_tone = 0; jm_at = 0;
     for (n = 0; n < max_samples; n++) {
         if (v8orig_tick(&O, rx, &tx) == V8O_DONE) break;
         if (O.answer_tone == ANST_NONE && !send_ci) tx_energy_before_tone += (long)tx * tx / 1000;
@@ -137,6 +140,33 @@ int main(void)
     lead_ms = 2500;
     the_call("the same with CI, the tone 2.5 s late", 1, 1);
     lead_ms = 300;
+
+    /* JM comes straight after ANSam, and the V.21(H) receiver reads 2100 Hz
+     * as characters: one still in progress when JM begins takes the ten ONEs
+     * before JM's sync, and that JM goes unseen. Real callers send CJ after
+     * the second JM (tools/v90m-fields on the recordings of PROGRESS.md,
+     * "realcheck": the Conexant CX93001 ends CJ 0.673 s after the start of
+     * a 5-octet JM, 0.807 s after a 7-octet one), so the first one must
+     * count, whatever the line's delay. */
+    printf("CJ after the second JM, whatever the delay (8.1.2)\n");
+    {
+        long d, worst = 0, late = 0;
+        menu_cm(&cm, V8_MOD_V34 | V8_MOD_V32 | V8_MOD_V22 | V8_MOD_V21);
+        menu_cm(&al, V8_MOD_V32 | V8_MOD_V22 | V8_MOD_V21);
+        for (d = 0; d <= 240; d += 8) {
+            long after;
+            delay_set = d;
+            r = call(P_V8ANS, 0, &cm, &al, 0, MS(12000));
+            /* JM here: 5 octets, 70 bits, 233 ms. Two of them, the 8 ONEs
+             * that end the second, the CM octet under way, a little more */
+            after = O.at_cj - (jm_at + d);
+            if (after > worst) worst = after;
+            if (r != V8O_RES_OK || after > MS(2 * 233 + 27 + 34 + 15)) late++;
+        }
+        delay_set = -1;
+        printf("  delays 0 to 30 ms: CJ at most %.3f s after JM reached us; %ld of 31 waited for a third JM\n", worst / (double)FS, late);
+        CHECK_EQ_I(late, 0);
+    }
 
     printf("PCM: a V.90 / V.92 analogue caller to a digital answerer\n");
     menu_cm(&cm, V8_MOD_V34 | V8_MOD_V32 | V8_MOD_V22 | V8_MOD_V21);

@@ -1,6 +1,7 @@
 /* See v8orig.h. */
 #include <string.h>
 #include "v8orig.h"
+#include "sintab.h"
 
 #define FS 8000
 #define MS(ms) ((int32_t)((int64_t)(ms) * FS / 1000))
@@ -15,6 +16,34 @@
 #define PREAMBLE    10      /* the ten ONEs before the sync character */
 
 static void go(v8orig_t *v, v8o_state s) { v->state = s; v->t = 0; }
+
+/* JM follows ANSam with no gap (8.2.2, 8.2.3), and the V.21(H) receiver
+ * reads 2100 Hz as characters: one in progress when JM begins takes the ten
+ * ONEs before JM's sync, and that JM is not seen as one (a third JM was
+ * then needed). So while the 2100 Hz tone is heard the receiver is held in
+ * idle mark. A 5 ms block is the tone when its 2100 Hz component holds half
+ * of its power and is above -43 dBm0 (modem/anstone's test); the hold lasts
+ * two blocks more, over a phase reversal and the block where JM begins.
+ * 1 while the receiver is to be held. */
+#define G_BLOCK 40
+#define G_HOLD  2
+static int ansam_gate(v8orig_t *v, int16_t x)
+{
+    v->g_i += ((int32_t)x * sintab[((v->g_ph + 0x40000000u) >> 22) & SIN_MASK]) >> 15;
+    v->g_q += ((int32_t)x * sintab[(v->g_ph >> 22) & SIN_MASK]) >> 15;
+    v->g_pow += (int32_t)x * x;
+    v->g_ph += (uint32_t)(((uint64_t)2100 << 32) / FS);
+    if (++v->g_n == G_BLOCK) {
+        int64_t a2 = (int64_t)v->g_i * v->g_i + (int64_t)v->g_q * v->g_q;
+        /* -43 dBm0 (RMS 112): a block amplitude of 112 * sqrt(2) * 40 / 2,
+         * three quarters of it */
+        int64_t min_a = (int64_t)112 * 1414 * G_BLOCK * 3 / (2 * 4 * 1000);
+        if (a2 >= min_a * min_a && 4 * a2 >= (int64_t)G_BLOCK * v->g_pow) v->g_hold = G_HOLD + 1;
+        else if (v->g_hold > 0) v->g_hold--;
+        v->g_i = v->g_q = 0; v->g_pow = 0; v->g_n = 0;
+    }
+    return v->g_hold > 0;
+}
 
 void v8orig_init(v8orig_t *v, const v8orig_cfg *cfg)
 {
@@ -107,8 +136,8 @@ v8o_state v8orig_tick(v8orig_t *v, int16_t rx, int16_t *tx)
         if (++v->t >= MS(v->cfg.te_ms)) start_cm(v);
         break;
     case V8O_CM: {
-        int level = v21demod_tick(&v->dem, rx), ev;
-        if (v->dem.energy < v->squelch) level = 1;
+        int level = v21demod_tick(&v->dem, rx), held = ansam_gate(v, rx), ev;
+        if (v->dem.energy < v->squelch || held) level = 1;
         ev = v8rx_tick(&v->rx, level);
         if ((ev & V8RX_MENU) && !v->jm_seen && v8_decode(v->rx.msg, v->rx.nmsg, &v->jm) == 0) v->jm_seen = 1;
         *tx = v21mod_tick(&v->mod, v->bits[v->pos], &done);

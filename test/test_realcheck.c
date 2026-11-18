@@ -12,7 +12,7 @@
  *     v92/v92_seq.c, modem/v34mp.c, modem/v8msg.c), given those fields,
  *     gives the same bits as the real modem, CRC included, except where a
  *     modem departs from the tables (named below);
- *   - where the caller chooses the content (INFO0a), what it sends has
+ *   - where the caller chooses the content (CM, INFO0a), what it sends has
  *     what the real modems' have and the tables require.
  *
  * See PROGRESS.md, "realcheck". */
@@ -22,6 +22,7 @@
 #include "../modem/info.h"
 #include "../modem/v8msg.h"
 #include "../modem/v34mp.h"
+#include "../modem/orig.h"
 #include "../modem/p2call.h"
 #include "../v90/v90_seq.h"
 #include "../v92/v92_seq.h"
@@ -308,6 +309,41 @@ static void info1c_check(void)
 
 /* ---- what our caller chooses to send ---- */
 
+/* the CM of orig with V.90 and V.92 offered: V.8 7.3 and 6.3, "If the PCM
+ * modem availability category is present, the PSTN access category shall
+ * also be present". All 93 calls of the two V.92 / V.90 makers have it,
+ * 0x0d (analogue network, no cellular). */
+static void our_cm(void)
+{
+    static orig_t o;
+    orig_cfg c;
+    uint8_t oct[V8_MAX_OCTETS], real[V8_MAX_OCTETS];
+    v8_menu_t m;
+    const fx_t *x = get("usr7", "CM", 0);
+    int n, k, nr;
+    memset(&c, 0, sizeof c);
+    c.level = 3000;
+    c.modes = V8_MOD_V34 | V8_MOD_V32 | V8_MOD_V22 | V8_MOD_V21 | ORIG_MODE_V90 | ORIG_MODE_V92;
+    orig_init(&o, &c);
+    n = v8_encode(&o.v8.cfg.local, oct, V8_MAX_OCTETS);
+    CHECK_EQ_I(v8_decode(oct, n, &m), 0);
+    printf("  ours      CM");
+    for (k = 0; k < n; k++) printf(" %02x", oct[k]);
+    printf("\n");
+    CHECK_EQ_I(m.has_pcm, 1); CHECK_EQ_I(m.pcm, V8_PCM_ANALOG);
+    CHECK(m.modes & V8_MOD_V34);
+    CHECK(oct[1] & 0x20);                           /* modn0 b5: PCM category present */
+    CHECK_EQ_I(m.has_access, 1);
+    CHECK_EQ_I(m.access, 0);
+    /* the octets the real ones have: call function, modn0, PCM, access */
+    if (!x) { CHECK(0); return; }
+    nr = octets(x, real);
+    CHECK(nr >= 6);
+    CHECK_EQ_I(oct[0], real[0]); CHECK_EQ_I(oct[1], real[1]);
+    CHECK(has_octet(oct, n, 0x27)); CHECK(has_octet(oct, n, 0x0d));
+    CHECK(has_octet(real, nr, 0x27)); CHECK(has_octet(real, nr, 0x0d));
+}
+
 /* INFO0a as our caller sends it in V.90 / V.92 (modem/p2call, the first
  * one, after the 75 ms of silence): Table 14 as the real ones fill it but
  * for the symbol rates we do not do, bit 26 with V.92, the same CRC */
@@ -346,6 +382,7 @@ int main(void)
     cm_check("usr7", 0x001a, V8_PCM_ANALOG, -1, 0);
     cm_check("x2r2", 0x001a, V8_PCM_ANALOG, -1, 0);
     cm_check("v34a", 0x141a, -1, V8_PROT_LAPM, -1);
+    our_cm();
 
     printf("Phase 2: INFO0a / INFO0c (Table 14/V.34, 16/V.92), INFO1a (10/V.90, 18/V.92), INFO1c (15/V.34)\n");
     info0_check("cxa", "INFO0a", 1, 1);

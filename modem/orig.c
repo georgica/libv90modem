@@ -241,6 +241,10 @@ void orig_init(orig_t *o, const orig_cfg *cfg)
         /* V.90 9.1.1: the analogue modem, PCM in CM; V.34 is its upstream */
         vc.local.has_pcm = 1; vc.local.pcm = V8_PCM_ANALOG;
         vc.local.modes = (uint16_t)(vc.local.modes | V8_MOD_V34);
+        /* V.8 6.3 and 7.3: with the PCM category the PSTN access category
+         * "shall also be present": an analogue connection, not cellular
+         * (0x0d, as the real V.90 / V.92 callers send it) */
+        vc.local.has_access = 1; vc.local.access = 0;
     }
     /* CI says "a V.8 modem calls": not when only Bell is on offer */
     vc.send_ci = cfg->send_ci && (cfg->modes & (0xFFFFu | ORIG_MODE_V90));
