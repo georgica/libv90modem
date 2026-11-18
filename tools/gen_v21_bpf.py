@@ -12,8 +12,12 @@ import math, sys
 FS = 8000.0
 N = 81
 HIGH = "--high" in sys.argv
-BELL = "bell103" in sys.argv
-if BELL:
+BELLH = "bell103h" in sys.argv
+BELL = "bell103" in sys.argv and not BELLH
+if BELLH:
+    LO, HI, CENTRE = 1805.0, 2445.0, 2125.0
+    NAME, WHAT, SHOW = "bell103h_bpf", "Bell 103 answer-channel", (1070, 1270, 1650, 2025, 2100, 2225, 2250)
+elif BELL:
     LO, HI, CENTRE = 850.0, 1490.0, 1170.0                 # -6 dB points
     NAME, WHAT, SHOW = "bell103_bpf", "Bell 103 originate-channel", (1070, 1270, 2025, 2100, 2225)
 elif HIGH:

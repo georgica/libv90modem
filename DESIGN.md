@@ -24,7 +24,7 @@ measured and when is in v90d's `PROGRESS.md`, where this code grew.
 | | what |
 |---|---|
 | `api/` | the public API over everything below: configuration, the block calls, events found by reading the modem's state after each sample, stats; start-stop (V.14) and V.42 objects |
-| `modem/` | answering modem: V.8, V.21 and Bell 103, V.22bis/V.22 and Bell 212A, V.14, V.90 Phase 2 (`p2d`), Phases 3/4 and data (`p34d`), upstream receiver (`qamrx`, `ec`, `v34train`); V.34 answering (`p2ans`, `v34mp`, `v34mod`, `v34dx`, `v34ans`); the sequencer `answer`. Calling modem: V.8 (`v8orig`), V.34 (`p2call`, `v34orig`), the V.90 / V.92 analogue modem (`v90a` with `v90arx`, `v90dil`, `v90adec`; for V.92 `pcmtx`, `v92aseq` and `v92/v92_enc`); the sequencer `orig` |
+| `modem/` | answering modem: V.8, V.21 and Bell 103, V.22bis/V.22 and Bell 212A, V.14, V.90 Phase 2 (`p2d`), Phases 3/4 and data (`p34d`), upstream receiver (`qamrx`, `ec`, `v34train`); V.34 answering (`p2ans`, `v34mp`, `v34mod`, `v34dx`, `v34ans`); the sequencer `answer`. Calling modem: V.8 (`v8orig`), V.34 (`p2call`, `v34orig`), the V.90 / V.92 analogue modem (`v90a` with `v90arx`, `v90dil`, `v90adec`; for V.92 `pcmtx`, `v92aseq` and `v92/v92_enc`); Bell 212A and 103 (`belltone`, the 2225 Hz answer tone); the sequencer `orig` |
 | `v32/` | V.32bis / V.32 (4800 to 14400 bit/s), answer side |
 | `v34/` | V.34 coding: training point sequences, data encoder and decoder (trellis, shell mapping, non-linear encoder) |
 | `v90/` | V.90 digital transmitter from Phase 3 on (PCM signals, Jd, DIL, MP, data encoder), CP codec |
@@ -257,6 +257,37 @@ CPd dictates, at LU = the configured level.
   drn = 0). No retrain, no renegotiation of our own, no quick connect, no
   modem-on-hold. Tried in simulation and against this library's own
   answerer only.
+
+### 4.2d Bell 103 and Bell 212A, calling side
+V.8 cannot offer them (`ORIG_MODE_BELL103` / `ORIG_MODE_BELL212A`,
+`V90M_MOD_BELL103` / `V90M_MOD_BELL212A` calling; off by default), so they
+are what a caller does when no V.8 comes about. The Bell answer tone is
+2225 Hz within some 10 Hz (`modem/belltone`: 40 ms blocks, in which 2250 Hz,
+a V.22 answerer's unscrambled ones, turns once and sums to nothing; 2100 Hz
+is far off). The order, `modem/orig.h` in full:
+1. ANSam and a V.8 mode on offer: V.8, as ever (the answerer chooses).
+2. 2225 Hz before any 2100 Hz tone is told (a pre-V.8 Bell answerer), or
+   after ANS while the legacy answerer is awaited: Bell 212A if offered,
+   else Bell 103.
+3. Only Bell on offer: no CM after ANSam (and no CI); silent, listening:
+   2225 Hz -> 212A (else 103); with 103 alone, 150 ms of a carrier in the
+   Bell 103 answer channel that is not 2100 Hz (a V.22 answerer's
+   unscrambled ones are one, as for the plain modems of the time) -> 103;
+   with 212A as well, 6 s of it without 2225 Hz -> 103 (this library's
+   answerer plays 2225 Hz after 4 s of its unscrambled ones when 212A is
+   on).
+4. A 212A start answered by no 1200 bit/s within 3 s -> 103, if offered.
+
+Bell 212A is the V.22 caller at 1200 bit/s, its scrambled ones from the
+moment the tone is told (there are no unscrambled ones to time V.22's 456 ms
+from), data 765 ms after the answerer's scrambled ones; no 2400, no
+retrain. Bell 103 is the V.21 path on 1270 / 1070 Hz out and 2225 / 2025
+Hz in, behind `bell103h_bpf.h` (`tools/gen_v21_bpf.py bell103h`: our own
+tones 57 dB down). The Bell 212A handshake document was not to hand: the
+timing follows V.22 and what this library's answerer (and the 5686 that
+called it) accepts. Tried in simulation and against this library's own
+answerer only; a V.21-only answerer with Bell 103 on is not reached (its
+1650 Hz mark is 57 dB down in our Bell receiver).
 
 ### 4.2b Not done, maybe later: K56flex and x2
 The two 56k schemes from before V.90 are not spoken; a modem that has

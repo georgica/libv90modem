@@ -44,7 +44,7 @@ static void test_cfg(void)
     c.modulations = V90M_MOD_V92 | V90M_MOD_V34;  /* ... but not without it: V.92 is V.90's start-up */
     m = v90m_create(&c, &err);
     CHECK(m == NULL); CHECK_EQ_I(err, V90M_ENOTSUP);
-    /* Bell 103 and Bell 212A: answering only, and not in the defaults */
+    /* Bell 103 and Bell 212A: both roles, and not in the defaults */
     v90m_cfg_default(&c);
     CHECK(!(c.modulations & (V90M_MOD_BELL103 | V90M_MOD_BELL212A)));
     CHECK_EQ_I(V90M_CONN_BELL103, 8); CHECK_EQ_I(V90M_CONN_BELL212A, 9);   /* appended: the others stay */
@@ -54,10 +54,22 @@ static void test_cfg(void)
     v90m_destroy(m);
     c.role = V90M_ROLE_ORIGINATE; c.modulations = V90M_MOD_V21 | V90M_MOD_BELL103;
     m = v90m_create(&c, &err);
-    CHECK(m == NULL); CHECK_EQ_I(err, V90M_ENOTSUP);
+    CHECK(m != NULL); CHECK_EQ_I(err, V90M_OK);            /* Bell calls too */
+    v90m_destroy(m);
     c.modulations = V90M_MOD_V22 | V90M_MOD_BELL212A;
     m = v90m_create(&c, &err);
-    CHECK(m == NULL); CHECK_EQ_I(err, V90M_ENOTSUP);
+    CHECK(m != NULL); CHECK_EQ_I(err, V90M_OK);
+    v90m_destroy(m);
+    c.modulations = V90M_MOD_BELL103;                       /* Bell alone: no V.8 */
+    m = v90m_create(&c, &err);
+    CHECK(m != NULL); CHECK_EQ_I(err, V90M_OK);
+    v90m_destroy(m);
+    c.modulations = V90M_MOD_BELL212A;
+    m = v90m_create(&c, &err);
+    CHECK(m != NULL); CHECK_EQ_I(err, V90M_OK);
+    v90m_destroy(m);
+    v90m_cfg_default(&c); c.role = V90M_ROLE_ORIGINATE;     /* not in the calling defaults either */
+    CHECK(!(c.modulations & (V90M_MOD_BELL103 | V90M_MOD_BELL212A)));
     c.role = V90M_ROLE_ANSWER; c.modulations = 0x8000;
     m = v90m_create(&c, &err);
     CHECK(m == NULL); CHECK_EQ_I(err, V90M_EINVAL);
@@ -795,6 +807,79 @@ static void test_bell(void)
     }
 }
 
+/* ---- Bell calls from the API: an API caller and an API answerer back to back ---- */
+static int bell_orig(unsigned ours, unsigned theirs, int seconds, v90m_state *sc, v90m_state *sa, char *got_c, char *got_a)
+{
+    static end_t cl, an;
+    int16_t c_rx = 0, a_rx = 0;
+    size_t nc = 0, na = 0;
+    int k, k_wr = -1;
+    end_init(&cl, V90M_ROLE_ORIGINATE, ours);
+    end_init(&an, V90M_ROLE_ANSWER, theirs);
+    if (!cl.m || !an.m) return 0;
+    for (k = 0; k < 8000 * seconds; k++) {
+        int16_t c_tx, a_tx;
+        v90m_process_linear(cl.m, &c_rx, &c_tx, 1);
+        v90m_process_linear(an.m, &a_rx, &a_tx, 1);
+        a_rx = (int16_t)(c_tx + a_tx / 5); c_rx = (int16_t)(a_tx + c_tx / 5);     /* and a fifth of each one's own signal */
+        v90m_get_state(cl.m, sc); v90m_get_state(an.m, sa);
+        if (k_wr < 0 && sc->moving && sa->moving) {
+            k_wr = k + 4000;
+        }
+        if (k == k_wr) {
+            v90m_async_write(cl.a, (const uint8_t *)"from the caller", 15);
+            v90m_async_write(an.a, (const uint8_t *)"from the answerer", 17);
+        }
+        nc += v90m_async_read(cl.a, (uint8_t *)got_c + nc, 63 - nc);
+        na += v90m_async_read(an.a, (uint8_t *)got_a + na, 63 - na);
+    }
+    got_c[nc] = 0; got_a[na] = 0;
+    v90m_get_state(cl.m, sc); v90m_get_state(an.m, sa);
+    {
+        v90m_stats st;
+        v90m_get_stats(cl.m, &st);
+        if (sc->connected) {
+            CHECK_EQ_I(st.modulation, sc->modulation);
+            if (sc->modulation == V90M_CONN_BELL103) CHECK_EQ_I(st.snr_db10, -1);
+            if (sc->modulation == V90M_CONN_BELL103 || sc->modulation == V90M_CONN_BELL212A) {
+                CHECK_EQ_I(v90m_retrain(cl.m), V90M_ESTATE);      /* neither has a retrain */
+                CHECK_EQ_I(v90m_cleardown(cl.m), V90M_ESTATE);
+            }
+        }
+    }
+    v90m_destroy(cl.m); v90m_destroy(an.m); v90m_async_destroy(cl.a); v90m_async_destroy(an.a);
+    return 1;
+}
+
+static void test_bell_originate(void)
+{
+    const unsigned theirs = V90M_MOD_V22 | V90M_MOD_V21 | V90M_MOD_BELL103 | V90M_MOD_BELL212A;
+    v90m_state sc, sa; char got_c[64], got_a[64];
+
+    if (bell_orig(V90M_MOD_BELL103, theirs, 14, &sc, &sa, got_c, got_a)) {
+        printf("  API Bell 103 caller: %d mod %d %d/%d bit/s (V.8 %d), answerer mod %d; caller got \"%s\", answerer got \"%s\"\n",
+               sc.connected, sc.modulation, sc.tx_bps, sc.rx_bps, sc.used_v8, sa.modulation, got_c, got_a);
+        CHECK_EQ_I(sc.connected, 1); CHECK_EQ_I(sc.modulation, V90M_CONN_BELL103);
+        CHECK_EQ_I(sc.tx_bps, 300); CHECK_EQ_I(sc.rx_bps, 300); CHECK_EQ_I(sc.used_v8, 0); CHECK_EQ_I(sc.moving, 1);
+        CHECK_EQ_I(sa.modulation, V90M_CONN_BELL103);
+        CHECK(strcmp(got_c, "from the answerer") == 0); CHECK(strcmp(got_a, "from the caller") == 0);
+    }
+    if (bell_orig(V90M_MOD_BELL212A | V90M_MOD_BELL103, theirs, 18, &sc, &sa, got_c, got_a)) {
+        printf("  API Bell 212A caller: %d mod %d %d/%d bit/s (V.8 %d), answerer mod %d; caller got \"%s\", answerer got \"%s\"\n",
+               sc.connected, sc.modulation, sc.tx_bps, sc.rx_bps, sc.used_v8, sa.modulation, got_c, got_a);
+        CHECK_EQ_I(sc.connected, 1); CHECK_EQ_I(sc.modulation, V90M_CONN_BELL212A);
+        CHECK_EQ_I(sc.tx_bps, 1200); CHECK_EQ_I(sc.rx_bps, 1200); CHECK_EQ_I(sc.used_v8, 0); CHECK_EQ_I(sc.moving, 1);
+        CHECK_EQ_I(sa.modulation, V90M_CONN_BELL212A);
+        CHECK(strcmp(got_c, "from the answerer") == 0); CHECK(strcmp(got_a, "from the caller") == 0);
+    }
+    /* Bell and V.22 offered, the answerer speaks V.8: V.8 decides */
+    if (bell_orig(V90M_MOD_V22 | V90M_MOD_V21 | V90M_MOD_BELL212A | V90M_MOD_BELL103, theirs, 10, &sc, &sa, got_c, got_a)) {
+        printf("  API caller with V.22 and Bell: mod %d %d bit/s (V.8 %d)\n", sc.modulation, sc.tx_bps, sc.used_v8);
+        CHECK_EQ_I(sc.modulation, V90M_CONN_V22BIS); CHECK_EQ_I(sc.used_v8, 1);
+        CHECK(strcmp(got_c, "from the answerer") == 0); CHECK(strcmp(got_a, "from the caller") == 0);
+    }
+}
+
 int main(void)
 {
     test_cfg();
@@ -804,5 +889,6 @@ int main(void)
     test_ec();
     test_originate();
     test_bell();
+    test_bell_originate();
     T_REPORT("api");
 }

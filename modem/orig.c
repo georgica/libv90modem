@@ -2,6 +2,7 @@
 #include <string.h>
 #include "orig.h"
 #include "v21h_bpf.h"
+#include "bell103h_bpf.h"
 #include "probe.h"
 #include "sintab.h"
 
@@ -24,6 +25,15 @@
 #define AA_GIVEUP_MS    1500   /* after ANS, nothing but perhaps V.21: AA stops (V.21 on offer) */
 #define ANS_LONG_MS      800   /* A.2.1.3 */
 #define TC_MS           3100   /* A.2.1.2: Tc, more than 3100 ms */
+/* Bell (see orig.h) */
+#define BELL_WAIT_MS   30000   /* ORIG_BELL: give up */
+#define BELL103_CD_MS    150   /* only 103 offered: a carrier this long in its answer channel */
+#define BELL103_LATE_MS 6000   /* 212A offered too: the same carrier this long without 2225 Hz */
+#define B212_WAIT_MS    3000   /* Bell 212A started: no 1200 bit/s answer by then -> Bell 103 */
+#define BELL_2100 ((uint32_t)(((uint64_t)2100 << 32) / FS))
+#if V21H_BPF_N != BELL103H_BPF_N
+#error "the two FSK receive band-passes share one loop"
+#endif
 
 static void fail(orig_t *o, int why) { o->phase = ORIG_FAILED; o->connected = 0; o->end = why; o->t = 0; }
 
@@ -152,7 +162,17 @@ static void v21_rx_init(orig_t *o)
     arx_init(&o->uart, FS, 300);
     o->cd_thresh = v21demod_energy_of(&o->fdem, V21_CD_AMP);
     for (o->bpos = 0; o->bpos < 128; o->bpos++) o->bpf[o->bpos] = 0;
-    o->bpos = 0;
+    o->bpos = 0; o->bpf_taps = v21h_bpf;
+}
+
+/* the Bell 103 receiver on the answer channel, 2225 / 2025 Hz */
+static void bell_rx_init(orig_t *o)
+{
+    v21demod_init(&o->fdem, BELL103_A_MARK, BELL103_A_SPACE, FS, 300);
+    arx_init(&o->uart, FS, 300);
+    o->cd_thresh = v21demod_energy_of(&o->fdem, V21_CD_AMP);
+    for (o->bpos = 0; o->bpos < 128; o->bpos++) o->bpf[o->bpos] = 0;
+    o->bpos = 0; o->bpf_taps = bell103h_bpf;
 }
 
 static void start_v21(orig_t *o)
@@ -160,8 +180,49 @@ static void start_v21(orig_t *o)
     /* peak amplitude of a sine with the configured RMS */
     v21mod_init(&o->fmod, V21L_MARK, V21L_SPACE, FS, 300, (int16_t)(o->cfg.level * 181 / 128));
     if (o->phase != ORIG_LEGACY) v21_rx_init(o);     /* in ORIG_LEGACY it has been listening already */
-    o->fbit = 1; o->cd_run = 0;
+    o->fbit = 1; o->cd_run = 0; o->fsk_mod = ORIG_MOD_V21;
     o->phase = ORIG_V21; o->t = 0;
+}
+
+/* Bell 103 (orig.h): our mark, 1270 Hz, from now on */
+static void start_b103(orig_t *o)
+{
+    v21mod_init(&o->fmod, BELL103_O_MARK, BELL103_O_SPACE, FS, 300, (int16_t)(o->cfg.level * 181 / 128));
+    if (o->phase != ORIG_BELL) bell_rx_init(o);     /* in ORIG_BELL it has been listening already */
+    o->fbit = 1; o->cd_run = 0; o->fsk_mod = ORIG_MOD_BELL103;
+    o->connected = 0;
+    o->phase = ORIG_V21; o->t = 0;
+}
+
+/* Bell 212A (orig.h): the V.22 caller at 1200 bit/s, its scrambled ones now */
+static void start_b212(orig_t *o)
+{
+    v22m_init(&o->v22, V22_CALLER, 0, o->cfg.level, o->cfg.getbit, o->cfg.putbit, o->cfg.user);
+    v22tx_set_mode(&o->v22.tx, V22_TX_SB1_1200);
+    o->v22.state = V22S_TRAIN;
+    o->via_bell = 1;
+    o->cd_run = 0;
+    o->phase = ORIG_V22; o->t = 0;
+}
+
+/* the Bell answer tone has been heard: 212A if offered (and not tried), else 103 */
+static void bell_on_tone(orig_t *o)
+{
+    if ((o->cfg.modes & ORIG_MODE_BELL212A) && !o->b212_failed) start_b212(o);
+    else start_b103(o);
+}
+
+#define BELL_MODES (ORIG_MODE_BELL103 | ORIG_MODE_BELL212A)
+/* something V.8 can offer (CM): a V.8 modulation mode, or PCM */
+static int v8_offer(const orig_t *o) { return (o->cfg.modes & (0xFFFFu | ORIG_MODE_V90)) != 0; }
+
+/* only Bell offered, and a 2100 Hz answer tone heard: wait for a Bell answerer */
+static void start_bell_wait(orig_t *o)
+{
+    bell_rx_init(o);
+    tonedet_init(&o->t2100, BELL_2100);
+    o->bell_run = 0;
+    o->phase = ORIG_BELL; o->t = 0;
 }
 
 void orig_init(orig_t *o, const orig_cfg *cfg)
@@ -181,19 +242,23 @@ void orig_init(orig_t *o, const orig_cfg *cfg)
         vc.local.has_pcm = 1; vc.local.pcm = V8_PCM_ANALOG;
         vc.local.modes = (uint16_t)(vc.local.modes | V8_MOD_V34);
     }
-    vc.send_ci = cfg->send_ci;
+    /* CI says "a V.8 modem calls": not when only Bell is on offer */
+    vc.send_ci = cfg->send_ci && (cfg->modes & (0xFFFFu | ORIG_MODE_V90));
     v8orig_init(&o->v8, &vc);
+    if (cfg->modes & BELL_MODES) belltone_init(&o->btone, 0);
     o->phase = ORIG_V8;
 }
 
 /* Keep the echo of our own channel 1 (980 / 1180 Hz) out of the channel 2
- * receiver (modem/v21h_bpf.h: 1650 / 1850 Hz pass, 980 Hz 56 dB down). */
+ * receiver (modem/v21h_bpf.h: 1650 / 1850 Hz pass, 980 Hz 56 dB down); in
+ * Bell 103 our 1070 / 1270 Hz out of the 2025 / 2225 Hz receiver
+ * (modem/bell103h_bpf.h, 57 dB down). */
 static int16_t v21_bandpass(orig_t *o, int16_t x)
 {
     int32_t acc = 0;
     int k;
     o->bpf[o->bpos] = x;
-    for (k = 0; k < V21H_BPF_N; k++) acc += (int32_t)o->bpf[(o->bpos - k) & 127] * v21h_bpf[k] >> 4;
+    for (k = 0; k < V21H_BPF_N; k++) acc += (int32_t)o->bpf[(o->bpos - k) & 127] * o->bpf_taps[k] >> 4;
     o->bpos = (o->bpos + 1) & 127;
     acc >>= 11;
     return (int16_t)(acc > 32767 ? 32767 : acc < -32768 ? -32768 : acc);
@@ -217,7 +282,7 @@ static int16_t tick_v21(orig_t *o, int16_t rx)
     } else {
         if (o->cd_run < 0) o->cd_run = 0;
         if (o->cd_run < MS(V21_CD_ON_MS)) o->cd_run++;
-        else if (!o->connected) { o->connected = 1; o->modulation = ORIG_MOD_V21; o->bitrate = 300; }
+        else if (!o->connected) { o->connected = 1; o->modulation = o->fsk_mod; o->bitrate = 300; }
     }
     c = arx_tick(&o->uart, level);
     if (c >= 0 && o->connected) {            /* hand the character on as start-stop bits */
@@ -237,9 +302,20 @@ int16_t orig_tick(orig_t *o, int16_t rx)
     o->t++;
     switch (o->phase) {
     case ORIG_V8:
-        if (v8orig_tick(&o->v8, rx, &tx) != V8O_DONE) break;
+        /* Bell offered: 2225 Hz before a 2100 Hz tone was told is a pre-V.8
+         * Bell answerer */
+        if ((o->cfg.modes & BELL_MODES) && o->v8.state == V8O_LISTEN && belltone_tick(&o->btone, rx)) {
+            bell_on_tone(o);
+            break;
+        }
+        if (v8orig_tick(&o->v8, rx, &tx) != V8O_DONE) {
+            /* ANSam, but nothing to offer in CM: no V.8 (orig.h, 3.) */
+            if (o->v8.state == V8O_TE && !v8_offer(o)) { start_bell_wait(o); tx = 0; }
+            break;
+        }
         switch (o->v8.result) {
         case V8O_RES_ANS:
+            if (!v8_offer(o)) { start_bell_wait(o); break; }
             /* a pre-V.8 answerer: listen for which modulation it starts */
             if (o->cfg.modes & V8_MOD_V22) v22m_init(&o->v22, V22_CALLER, 1, o->cfg.level, o->cfg.getbit, o->cfg.putbit, o->cfg.user);
             v21_rx_init(o);
@@ -278,6 +354,7 @@ int16_t orig_tick(orig_t *o, int16_t rx)
          * channel 2 while there is no V.22bis carrier. With V.32bis: Annex A
          * (orig.h) */
         int carrier, level = v21_rx(o, rx, &carrier), v32 = (o->cfg.modes & V8_MOD_V32) != 0;
+        if ((o->cfg.modes & BELL_MODES) && belltone_tick(&o->btone, rx)) { bell_on_tone(o); break; }
         if (v32) {
             int16_t t32 = v32_tick(&o->v32, rx);
             annex_a(o, rx);
@@ -326,8 +403,14 @@ int16_t orig_tick(orig_t *o, int16_t rx)
         if (!o->connected) {
             if (o->v22.tx_ready && o->v22.rx_ready) {
                 o->connected = 1; o->bitrate = o->v22.bitrate;
-                o->modulation = o->bitrate == 2400 ? ORIG_MOD_V22BIS : ORIG_MOD_V22;
+                o->modulation = o->bitrate == 2400 ? ORIG_MOD_V22BIS : o->via_bell ? ORIG_MOD_BELL212A : ORIG_MOD_V22;
                 o->cd_run = 0;
+            } else if (o->via_bell && (o->cfg.modes & ORIG_MODE_BELL103) && o->v22.state == V22S_TRAIN
+                       && o->t > MS(B212_WAIT_MS)) {
+                /* no 1200 bit/s answer to our scrambled ones: a Bell 103 answerer */
+                o->b212_failed = 1;
+                start_b103(o);
+                tx = 0;
             } else if (o->t > MS(V22_TOTAL_MS) || o->v22.state == V22S_FAILED) {
                 fail(o, ORIG_END_NO_CARRIER);
             }
@@ -370,6 +453,23 @@ int16_t orig_tick(orig_t *o, int16_t rx)
             o->bitrate = v90a_tx_rate(&o->v90); o->rx_bitrate = v90a_rx_rate(&o->v90);
         } else if (!o->connected && o->t > MS(V90_TOTAL_MS)) fail(o, ORIG_END_NO_CARRIER);
         break;
+
+    case ORIG_BELL: {
+        /* orig.h, 3.: silent; the Bell answer tone, or (Bell 103) a carrier
+         * in its answer channel that is not the 2100 Hz tone */
+        int carrier, tone = belltone_tick(&o->btone, rx), b212 = (o->cfg.modes & ORIG_MODE_BELL212A) && !o->b212_failed;
+        (void)v21_rx(o, rx, &carrier);
+        (void)tonedet_tick(&o->t2100, rx);
+        if (carrier && o->t2100.blocks == 0) { if (o->bell_run < MS(60000)) o->bell_run++; }
+        else o->bell_run = 0;
+        if (tone && (b212 || (o->cfg.modes & ORIG_MODE_BELL103))) { bell_on_tone(o); break; }
+        if ((o->cfg.modes & ORIG_MODE_BELL103) && o->bell_run >= MS(b212 ? BELL103_LATE_MS : BELL103_CD_MS)) {
+            start_b103(o);
+            break;
+        }
+        if (o->t > MS(BELL_WAIT_MS)) fail(o, ORIG_END_NO_CARRIER);
+        break;
+    }
 
     case ORIG_FAILED:
         break;

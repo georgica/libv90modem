@@ -55,13 +55,15 @@ struct v90m {
 /* the defaults: all but V.92 and Bell (which would change what a caller
  * without V.8 hears from us after 4 s) */
 #define V90M_MOD_DEFAULT (V90M_MOD_ALL & ~(V90M_MOD_V92 | V90M_MOD_BELL103 | V90M_MOD_BELL212A))
-/* what the calling side can do: all but Bell (V.90 and V.92 as their analogue modem) */
-#define V90M_MOD_ORIG (V90M_MOD_V21 | V90M_MOD_V22 | V90M_MOD_V32BIS | V90M_MOD_V34 | V90M_MOD_V90 | V90M_MOD_V92)
+/* what the calling side can do: all of it (V.90 and V.92 as their analogue modem) */
+#define V90M_MOD_ORIG V90M_MOD_ALL
 
 typedef char v90m_check_orig[(SAME(ORIG_MOD_V21, ANS_MOD_V21) && SAME(ORIG_MOD_V22, ANS_MOD_V22) && SAME(ORIG_MOD_V22BIS, ANS_MOD_V22BIS)
                               && SAME(ORIG_MOD_V32BIS, ANS_MOD_V32BIS) && SAME(ORIG_MOD_V34, ANS_MOD_V34)
                               && SAME(ORIG_MOD_V90, ANS_MOD_V90) && SAME(ORIG_MODE_V90, ANS_MODE_V90)
-                              && SAME(ORIG_MOD_V92, ANS_MOD_V92) && SAME(ORIG_MODE_V92, ANS_MODE_V92)) ? 1 : -1];
+                              && SAME(ORIG_MOD_V92, ANS_MOD_V92) && SAME(ORIG_MODE_V92, ANS_MODE_V92)
+                              && SAME(ORIG_MOD_BELL103, ANS_MOD_BELL103) && SAME(ORIG_MODE_BELL103, ANS_MODE_BELL103)
+                              && SAME(ORIG_MOD_BELL212A, ANS_MOD_BELL212A) && SAME(ORIG_MODE_BELL212A, ANS_MODE_BELL212A)) ? 1 : -1];
 
 void v90m_cfg_default(v90m_cfg *cfg)
 {

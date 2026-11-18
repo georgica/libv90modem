@@ -66,8 +66,9 @@ typedef enum {
                                    answerer offers it in Phase 2, V.90 otherwise; full start-up,
                                    no quick connect, no modem-on-hold, no retrain; tried in
                                    simulation and against this library's own answerer only.
-                                   V90M_MOD_V92 without V90M_MOD_V90, V90M_MOD_BELL103 and
-                                   V90M_MOD_BELL212A give V90M_ENOTSUP */
+                                   V90M_MOD_V92 without V90M_MOD_V90 gives V90M_ENOTSUP.
+                                   V90M_MOD_BELL103 / V90M_MOD_BELL212A: see below; tried in
+                                   simulation and against this library's own answerer only */
 } v90m_role;
 
 /* modulations offered (v90m_cfg.modulations) */
@@ -79,13 +80,27 @@ typedef enum {
                                         (client) side */
 #define V90M_MOD_V92     0x0020u     /* with V90M_MOD_V90: PCM upstream on offer (answering), or
                                         asked for (calling; simulation and own answerer only) */
-/* answering only, and not in the defaults. Bell 103: a caller without V.8
+/* Not in the defaults, either role. Answering: Bell 103: a caller without V.8
  * that sends 1270 Hz (the Bell 103 mark) gets 300 bit/s FSK on 2225 / 2025
  * Hz, start-stop and no error control as in V.21. Bell 212A, with
  * V90M_MOD_V22: when the V.22bis answer sequence has gone unanswered for 4 s
  * by a caller without V.8, 2225 Hz (the Bell answer tone) in place of the
  * unscrambled ones for 4 s; a caller that then starts as V.22 does is a
  * Bell 212A call at 1200 bit/s. */
+/* Calling (tried in simulation and against this library's own answerer
+ * only): V.8 cannot offer Bell, so it is what the caller does when no V.8
+ * comes about. In this order: ANSam with a V.8 modulation also on offer ->
+ * V.8 as ever. 2225 Hz (the Bell answer tone, within some 10 Hz) before any
+ * 2100 Hz tone, or after ANS (V.25) -> Bell 212A if offered, else Bell 103.
+ * Only Bell on offer: after ANSam or ANS we stay silent and listen; 2225 Hz
+ * -> Bell 212A (else 103); with 103 alone, 150 ms of a carrier in the Bell
+ * answer channel (2025..2250 Hz, a V.22 answerer's unscrambled ones
+ * included, 2100 Hz not) -> Bell 103; with 212A too, 6 s of that carrier
+ * without 2225 Hz -> Bell 103. A Bell 212A start that gets no 1200 bit/s
+ * answer in 3 s -> Bell 103, if offered. Bell 212A is V.22 at 1200 bit/s
+ * (no retrain); Bell 103 is 300 bit/s FSK (mark 1270 / space 1070 Hz out,
+ * 2225 / 2025 Hz in), start-stop and no error control as in V.21. Neither
+ * has a cleardown signal. */
 #define V90M_MOD_BELL103  0x0040u
 #define V90M_MOD_BELL212A 0x0080u
 
@@ -94,7 +109,7 @@ typedef enum {
     V90M_CONN_NONE = 0, V90M_CONN_V21, V90M_CONN_V22, V90M_CONN_V22BIS,
     V90M_CONN_V90, V90M_CONN_V34, V90M_CONN_V32BIS, V90M_CONN_V92,
     V90M_CONN_BELL103,          /* appended: the values above stay as they were */
-    V90M_CONN_BELL212A          /* V.22 at 1200 bit/s begun after our 2225 Hz */
+    V90M_CONN_BELL212A          /* V.22 at 1200 bit/s begun on the 2225 Hz Bell answer tone */
 } v90m_conn;
 
 typedef int  (*v90m_getbit_fn)(void *user);             /* next bit to send, 0 or 1 */

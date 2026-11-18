@@ -1019,3 +1019,152 @@ Open:
   12 ms channel estimate by -46 dB, which its design does not budget for.
 - Tried in simulation and against this library's own answerer only: a
   reading of V.92 common to both sides passes every test.
+
+## C7: Bell 103 and Bell 212A on the calling side (2026-11-18)
+
+Branch `calling-bell` from `calling-v92` (c20c4ce). The calling modem
+(`modem/orig`) calls in Bell 103 and Bell 212A when asked to
+(`ORIG_MODE_BELL103` / `ORIG_MODE_BELL212A`, the numbers of the answering
+side's `ANS_MODE_BELL*`; API: `V90M_MOD_BELL103` / `V90M_MOD_BELL212A` in
+the calling role, still not in the defaults). Reported as
+`ORIG_MOD_BELL103` / `ORIG_MOD_BELL212A` = `V90M_CONN_BELL103` /
+`V90M_CONN_BELL212A`, as the answerer does.
+
+- `modem/belltone`: the Bell answer tone, 2225 Hz within some 11 Hz, fixed
+  point. 40 ms blocks brought down from 2225 Hz; a block is tone when that
+  sum holds more than half its power and it is above -43 dBm0; 4 blocks in
+  a row decide (160 ms). 2250 Hz (a V.22 answerer's unscrambled ones) turns
+  once in a block and sums to nothing, 2100 Hz is far off.
+- `modem/bell103h_bpf.h` (`tools/gen_v21_bpf.py bell103h`): the Bell 103
+  answer channel for the caller, 2025 / 2225 / 2250 Hz flat, our 1070 / 1270
+  Hz 57 dB down (and 1650 Hz too). The other three tables regenerate octet
+  for octet.
+- `modem/orig`: the order (orig.h has it in full, DESIGN.md 4.2d):
+  1. ANSam and a V.8 mode on offer: V.8 as before (Bell is not in CM).
+  2. 2225 Hz before any 2100 Hz tone is told (a pre-V.8 Bell answerer), or
+     after ANS while a legacy answerer is awaited: 212A if offered, else 103.
+  3. Only Bell on offer: no CI, no CM after ANSam / ANS; silent and
+     listening (`ORIG_BELL`, new): 2225 Hz -> 212A (else 103); 103 alone:
+     150 ms of a carrier in the Bell 103 answer channel that is not 2100 Hz
+     -> 103 (a V.22 answerer's unscrambled ones are such a carrier, as for
+     the plain modems the answering side was made for); 212A and 103: 6 s of
+     that carrier without 2225 Hz -> 103 (our answerer plays 2225 Hz after 4
+     s of unscrambled ones when 212A is on, so 212A wins where it is there).
+  4. A 212A start without a 1200 bit/s answer in 3 s -> 103, if offered.
+  Bell 212A: `v22m` as the caller at 1200 bit/s, scrambled ones from the
+  moment the tone is told, data 765 ms after the answerer's (V.22's
+  6.3.1.2.1 c, as the 212A caller in test_answer); no 2400, no retrain.
+  Bell 103: the V.21 path on 1270 / 1070 Hz out, 2225 / 2025 Hz in. Off,
+  nothing changes: the Bell code runs only with a Bell bit in the modes.
+- Spec: the Bell 212A handshake document was not to hand. What was checked:
+  2225 Hz answer tone for 212A and 103 and 1200 Hz originate carrier (TDK
+  73K222BL and Conexant data sheets), V.22-compatible DPSK and scrambler,
+  and the library's own answerer (V22_BELL_MS, its 1270 Hz watch) and its
+  212A test caller. The 3 s and 6 s fallbacks are ours.
+- `orig_t` 109504 -> 109616 octets on the host; `V90M_MEM_SIZE` stays
+  112 KiB. `answer_t` and every answering-side file unchanged.
+
+Seen failing first: test_belltone 27 checks, 8 failures (stub detector);
+test_orig_bell 43 checks, 25 failures (the constants only: no Bell call,
+only the V.8 fallback and the no-call cases passed); test_api 273 checks,
+11 failures (Bell calling refused with V90M_ENOTSUP). Now 27 / 211 / 303
+checks, 0 failures.
+
+End to end (`test/test_orig_bell.c`: our caller, sim/v32line, pseudo-random
+octets both ways through V.14 for 10.5 s, every data bit compared; "bits"
+are data bits, 8 per octet; peers: the library's answerer with V.22, V.21,
+Bell 103 and Bell 212A, or as said; two pre-V.8 answerers written in the
+test that play nothing but 2225 Hz until answered, a 212A one that takes
+103 callers too and a 103 one):
+
+```
+Bell calls, 10.5 s of data each way (bits: data bits compared)
+  Bell 103, to our answerer                    clean                                          up  5.76 s, mod 8 / 8,  300 bit/s; up 2512 bits 0 errors, down 2512 bits 0 errors
+  Bell 103, to our answerer                    10 dB, echoes, -45 dBm0 noise, 1 Hz, 50 ppm    up  5.80 s, mod 8 / 8,  300 bit/s; up 2512 bits 0 errors, down 2504 bits 0 errors
+  Bell 103, to our answerer                    20 dB, -52 dBm0 noise, -3 Hz, -100 ppm         up  5.83 s, mod 8 / 8,  300 bit/s; up 2504 bits 0 errors, down 2504 bits 0 errors
+  Bell 103, to our answerer                    6 dB, loud echoes (6 dB), 7 Hz, 100 ppm        up  5.78 s, mod 8 / 8,  300 bit/s; up 2512 bits 0 errors, down 2512 bits 0 errors
+  Bell 212A (and 103), to our answerer         clean                                          up 10.82 s, mod 9 / 9, 1200 bit/s; up 10056 bits 0 errors, down 10056 bits 0 errors
+  Bell 212A (and 103), to our answerer         10 dB, echoes, -45 dBm0 noise, 1 Hz, 50 ppm    up 10.91 s, mod 9 / 9, 1200 bit/s; up 10032 bits 0 errors, down 10040 bits 0 errors
+  Bell 212A (and 103), to our answerer         20 dB, -52 dBm0 noise, -3 Hz, -100 ppm         up 10.93 s, mod 9 / 9, 1200 bit/s; up 10016 bits 0 errors, down 10016 bits 0 errors
+  Bell 212A (and 103), to our answerer         6 dB, loud echoes (6 dB), 7 Hz, 100 ppm        up 11.07 s, mod 9 / 9, 1200 bit/s; up 10048 bits 0 errors, down 10048 bits 0 errors
+  Bell 212A only, to our answerer              clean                                          up 10.82 s, mod 9 / 9, 1200 bit/s; up 10056 bits 0 errors, down 10056 bits 0 errors
+  Bell 212A only, to our answerer              10 dB, echoes, -45 dBm0 noise, 1 Hz, 50 ppm    up 10.91 s, mod 9 / 9, 1200 bit/s; up 10032 bits 0 errors, down 10040 bits 0 errors
+  Bell 212A only, to our answerer              20 dB, -52 dBm0 noise, -3 Hz, -100 ppm         up 10.93 s, mod 9 / 9, 1200 bit/s; up 10016 bits 0 errors, down 10016 bits 0 errors
+  Bell 212A only, to our answerer              6 dB, loud echoes (6 dB), 7 Hz, 100 ppm        up 11.07 s, mod 9 / 9, 1200 bit/s; up 10048 bits 0 errors, down 10048 bits 0 errors
+fallbacks
+  212A and 103, answerer 103 only              clean                                          up 11.61 s, mod 8 / 8,  300 bit/s; up 2512 bits 0 errors, down 2512 bits 0 errors
+  212A and 103, answerer 103 only              10 dB, echoes, -45 dBm0 noise, 1 Hz, 50 ppm    up 11.65 s, mod 8 / 8,  300 bit/s; up 2512 bits 0 errors, down 2512 bits 0 errors
+  V.22, V.21 and Bell, answerer with V.8       clean                                          up  4.74 s, mod 3 / 3, 2400 bit/s; up 20088 bits 0 errors, down 20080 bits 0 errors
+  V.22, V.21 and Bell, answerer with V.8       10 dB, echoes, -45 dBm0 noise, 1 Hz, 50 ppm    up  4.64 s, mod 3 / 3, 2400 bit/s, V.8 1
+  212A and 103, 2225 Hz-only 212A answerer     clean                                          up  1.54 s, mod 9 / 9, 1200 bit/s; up 10056 bits 0 errors, down 10056 bits 0 errors
+  212A and 103, 2225 Hz-only 212A answerer     10 dB, echoes, -45 dBm0 noise, 1 Hz, 50 ppm    up  1.63 s, mod 9 / 9, 1200 bit/s; up 10040 bits 0 errors, down 10040 bits 0 errors
+  V.22 and Bell, 2225 Hz-only 212A answerer    clean                                          up  1.54 s, mod 9 / 9, 1200 bit/s; up 10056 bits 0 errors, down 10056 bits 0 errors
+  V.22 and Bell, 2225 Hz-only 212A answerer    10 dB, echoes, -45 dBm0 noise, 1 Hz, 50 ppm    up  1.63 s, mod 9 / 9, 1200 bit/s; up 10040 bits 0 errors, down 10040 bits 0 errors
+  103 only, 2225 Hz-only 212A answerer         clean                                          up  0.47 s, mod 8 / 8,  300 bit/s; up 2512 bits 0 errors, down 2512 bits 0 errors
+  103 only, 2225 Hz-only 212A answerer         10 dB, echoes, -45 dBm0 noise, 1 Hz, 50 ppm    up  0.53 s, mod 8 / 8,  300 bit/s; up 2512 bits 0 errors, down 2504 bits 0 errors
+  212A and 103, 2225 Hz-only 103 answerer      clean                                          up  3.47 s, mod 8 / 8,  300 bit/s; up 2512 bits 0 errors, down 2512 bits 0 errors
+  212A and 103, 2225 Hz-only 103 answerer      10 dB, echoes, -45 dBm0 noise, 1 Hz, 50 ppm    up  3.53 s, mod 8 / 8,  300 bit/s; up 2512 bits 0 errors, down 2504 bits 0 errors
+  V.22 and Bell, 2225 Hz-only 103 answerer     clean                                          up  3.47 s, mod 8 / 8,  300 bit/s; up 2512 bits 0 errors, down 2512 bits 0 errors
+  V.22 and Bell, 2225 Hz-only 103 answerer     10 dB, echoes, -45 dBm0 noise, 1 Hz, 50 ppm    up  3.53 s, mod 8 / 8,  300 bit/s; up 2512 bits 0 errors, down 2504 bits 0 errors
+no call
+  212A only, answerer 103 only: phase 4, end 4; answerer phase 3, modulation 0
+  no Bell offered, 2225 Hz-only answerer: phase 4, end 1
+  Bell offered, nobody answers: phase 4, end 1
+orig_bell: 211 checks, 0 failures
+```
+
+Every call above reached its modulation, with no bit error either way in
+10.5 s of data: Bell 103 and Bell 212A on four lines each (clean; 10 dB,
+echoes, -45 dBm0 noise, 1 Hz, 50 ppm; 20 dB, -52 dBm0, -3 Hz, -100 ppm; 6 dB
+with echoes 6 to 8 dB down, 7 Hz, 100 ppm), the fallbacks on two. Bell 212A
+against our answerer takes 10.8 to 11.1 s (its 5 s of ANSam, then 4 s of
+unscrambled ones before the 2225 Hz); 212A and 103 offered to an answerer
+with only 103 takes 11.6 s (the 6 s wait). test_api adds an API caller to
+an API answerer (echo of a fifth each way): Bell 103, Bell 212A (both
+`moving`, text both ways, retrain and cleardown refused), and V.22 + Bell
+offered going V.8 / V.22bis.
+
+Checked against calling-v92 (c20c4ce), same PC, both run afresh (the host
+baseline equals ~/c52v/c6v/check.log count for count):
+
+| | calling-v92 | this |
+|---|---|---|
+| `make check` | 104 programs, ALL HOST CHECKS PASS | the same 104 with the same counts but `api` 262 -> 303, plus `belltone` 27 and `orig_bell` 211; ALL HOST CHECKS PASS |
+| `make check-arm` | 104 programs, ALL ARM CHECKS PASS | the same changes; ALL ARM CHECKS PASS |
+| `make bench-v90` | 8e3136e9 | 8e3136e9 (internals and API; host, shared, qemu-arm) |
+| `make bench-v92c` | cd66ac82 | cd66ac82 (host and qemu-arm) |
+
+Sorted output of each pair, compile lines and timings left out, by diff: the
+only baseline line that is not in the new run is `api: 262 checks`; every
+other difference is a new line (belltone, orig_bell, the API's Bell calls).
+test_orig_bell under qemu-arm prints what the host prints but for one
+connect time (5.84 s against 5.83 s on the 20 dB line: the line simulator
+is in double; the modem code is fixed point, bench-bell's hashes agree).
+
+ARM cost (`make cost-bell`, one qemu run per call, the trace split where it
+enters `bench_bell_mark`; the caller alone replaying `rec_bell`'s recording
+of a call against our answerer on the 10 dB line; `make bench-bell`: hashes
+48f22641 (103) and fc125ef2 (212A), host and qemu-arm the same):
+
+| call | to data mode | first second of data mode | the second after |
+|---|---|---|---|
+| Bell 103 (data at 5.56 s) | 52.05 M | 9.85 M | 9.86 M |
+| Bell 212A (data at 10.91 s) | 98.67 M | 4.43 M | 4.44 M |
+
+So about 9 to 10 M ARM instructions per second of line while waiting and in
+Bell 103 (the 81-tap band-pass runs every sample, as in V.21), 4.4 M in
+Bell 212A: some 8 % of the box (V34-REPORT: 39.5 M is 32 %).
+
+Open:
+- Tried in simulation and against this library's own answerer (and two
+  answerers written in the test) only; no real modem has been called.
+- The Bell 212A handshake document was not to hand: no wait between the
+  tone and our scrambled ones, and the 3 s / 6 s fallbacks, are our choices,
+  checked against our own answerer only. A strict 212A answerer might want
+  some silence first.
+- An answerer with V.21 and Bell 103 but no V.22 plays 1650 Hz after ANSam;
+  our Bell receiver has it 57 dB down, so a Bell-only caller waits there
+  until it gives up (30 s). Not tested.
+- JM with nothing in common does not fall back to Bell (it cannot: the
+  answerer has gone V.8); ANSam with a V.8 mode on offer never tries Bell.
+- A 212A start that fails without 103 on offer waits the V.22 30 s.

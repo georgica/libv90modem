@@ -20,8 +20,8 @@ recommendations, and has answered real modems there (see the table below).
 | V.8 | answering: ANSam, CM / JM / CJ | callers without V.8 are answered too (V.22bis sequence, V.32bis AA, V.21 after 8 s) |
 | V.21 | yes | 300 bit/s |
 | V.22, V.22bis | yes | 1200 / 2400 bit/s, retrain, guard tone |
-| Bell 103 | answering (`V90M_MOD_BELL103`, not in the defaults) | 300 bit/s; a caller without V.8 that sends 1270 Hz |
-| Bell 212A | answering (`V90M_MOD_BELL212A` with V.22, not in the defaults) | 1200 bit/s after 2225 Hz in the V.22bis answer sequence; simulation only |
+| Bell 103 | answering (`V90M_MOD_BELL103`, not in the defaults); calling: **tried in simulation and against this library's own answerer only** | 300 bit/s; answering a caller without V.8 that sends 1270 Hz; calling on the 2225 Hz Bell answer tone or a carrier in its answer channel |
+| Bell 212A | answering (`V90M_MOD_BELL212A` with V.22, not in the defaults); calling: **tried in simulation and against this library's own answerer only** | 1200 bit/s after 2225 Hz in the V.22bis answer sequence (answering) or on hearing it (calling; falls back to Bell 103 when offered); simulation only |
 | V.32, V.32bis | answering | 4800 to 14400 bit/s |
 | V.34 | answering | Phase 2 to data mode, retrains, rate renegotiation |
 | V.90 | digital (server) side; analogue (client) side: **simulation and own answerer only** | PCM downstream, V.34 upstream; the analogue side measures the DIL (pads, robbed bits), has no retrain |
@@ -33,7 +33,7 @@ recommendations, and has answered real modems there (see the table below).
 Not implemented:
 
 - Retrains on the analogue (client) side of V.90 and V.92. (V.21, V.22bis,
-  V.32bis, V.34 and the V.90 and V.92 analogue modems call; none has been
+  V.32bis, V.34, Bell 103, Bell 212A and the V.90 and V.92 analogue modems call; none has been
   tried against a real modem yet.)
 - V.92 quick connect, short Phase 2 and modem on hold; on the analogue side
   also a rate renegotiation of its own (one begun by the answerer is
@@ -41,9 +41,6 @@ Not implemented:
 - x2 and K56flex, the two 56k schemes from before V.90: not spoken. A modem
   that has nothing newer connects at V.34. (Neither was published; see
   `DESIGN.md`, 4.2b.)
-- Bell 103 and Bell 212A in the calling role (`V90M_ROLE_ORIGINATE` with
-  `V90M_MOD_BELL103` or `V90M_MOD_BELL212A` returns `V90M_ENOTSUP`): planned
-  after C6.
 - Fax (V.17, V.29, V.27ter), V.23, half-duplex V.34.
 
 ## Building

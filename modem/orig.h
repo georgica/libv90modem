@@ -28,6 +28,37 @@
  *     otherwise:
  *       its unscrambled binary 1 at 2400 Hz -> V.22bis 6.3.1.1
  *       a steady mark on V.21 channel 2     -> V.21
+ *     Bell on offer: the Bell answer tone (below) as well
+ *
+ * Bell 103 and Bell 212A (ORIG_MODE_BELL103 / ORIG_MODE_BELL212A, off unless
+ * asked for): V.8 has no way to offer them, so they are what a caller does
+ * when no V.8 comes about. The Bell answer tone is 2225 Hz within some 10 Hz
+ * (modem/belltone); the order:
+ *   1. ANSam, and a V.8 mode offered          -> V.8, as above (Bell is not
+ *                                                 in CM; the answerer chooses)
+ *   2. 2225 Hz before any 2100 Hz tone was told (a pre-V.8 Bell answerer),
+ *      or after ANS (V.25) while waiting for a legacy answerer:
+ *        212A offered                         -> Bell 212A
+ *        otherwise                            -> Bell 103
+ *   3. only Bell offered: ANSam or ANS is no tone to answer with CM (nor is CI
+ *      sent before it); silent (ORIG_BELL) after it, listening:
+ *        2225 Hz, 212A offered                -> Bell 212A
+ *        2225 Hz, only 103                    -> Bell 103
+ *        only 103: a carrier in the Bell 103 answer channel (2025..2250 Hz,
+ *          not 2100 Hz) for 150 ms            -> Bell 103 (as the plain
+ *          modems of the time: a V.22 answerer's unscrambled ones, 2250 Hz,
+ *          are such a carrier)
+ *        212A and 103: that carrier for 6 s without 2225 Hz -> Bell 103 (an
+ *          answerer that offers 212A plays 2225 Hz after 4 s of it; the
+ *          library's does)
+ *   4. Bell 212A started and no 1200 bit/s answer within 3 s, 103 offered
+ *                                             -> Bell 103
+ * Bell 212A: V.22 at 1200 bit/s as the calling modem (the low channel, 1200 Hz
+ * carrier, the V.22 scrambler), its scrambled ones from the moment the tone is
+ * told (no unscrambled ones are heard, so V.22's 456 ms wait has nothing to
+ * time from), data 765 ms after the answerer's scrambled ones (6.3.1.2.1 c);
+ * no 2400 bit/s, no retrain. Bell 103: 300 bit/s FSK, mark 1270 / space 1070
+ * Hz out, 2225 / 2025 Hz in, start-stop as V.21.
  *
  * Data: a bit pump, as in modem/answer.h. V.21 carries start-stop characters
  * (handed on as start, 8 data, stop bits); V.22bis, V.32bis and V.34 a
@@ -40,6 +71,8 @@
 #include "async.h"
 #include "v34orig.h"
 #include "v90a.h"
+#include "belltone.h"
+#include "tonedet.h"
 #include "../v32/v32.h"
 
 typedef enum {
@@ -50,7 +83,8 @@ typedef enum {
     ORIG_FAILED,
     ORIG_V32,         /* V.32bis / V.32, start-up and data */
     ORIG_V34,         /* V.34, Phase 2 to data mode, its retrains included */
-    ORIG_V90          /* V.90 analogue modem, Phase 2 to data mode */
+    ORIG_V90,         /* V.90 analogue modem, Phase 2 to data mode */
+    ORIG_BELL         /* only Bell offered, ANSam or ANS heard: silent, waiting for a Bell answerer */
 } orig_phase;
 
 /* the modulation of a connection: the numbers of ANS_MOD_* (modem/answer.h) */
@@ -62,6 +96,8 @@ typedef enum {
 #define ORIG_MOD_V32BIS 6
 #define ORIG_MOD_V90    4     /* PCM downstream (received), V.34 upstream (sent) */
 #define ORIG_MOD_V92    7     /* PCM both ways (V.92 with PCM upstream) */
+#define ORIG_MOD_BELL103  8   /* 300 bit/s FSK on Bell 103's tones, in ORIG_V21 */
+#define ORIG_MOD_BELL212A 9   /* 1200 bit/s, in ORIG_V22: V.22 begun on the Bell answer tone */
 
 /* orig_cfg.modes: V.90 as the analogue modem, next to the V8_MOD_* bits
  * (the number of ANS_MODE_V90) */
@@ -69,6 +105,10 @@ typedef enum {
 /* ... and V.92 next to it (PCM upstream when the answerer offers it; the
  * number of ANS_MODE_V92) */
 #define ORIG_MODE_V92 0x20000u
+/* ... and the Bell modes, which V.8 cannot offer (the numbers of
+ * ANS_MODE_BELL103 and ANS_MODE_BELL212A): see the header */
+#define ORIG_MODE_BELL103  0x40000u
+#define ORIG_MODE_BELL212A 0x80000u
 
 /* why a call ended (orig_t.end) */
 #define ORIG_END_NONE       0
@@ -119,6 +159,14 @@ typedef struct {
     int32_t    ans_rest;     /* ANS heard from the start of AA to its end (-1: not ended) */
     int32_t    t_quiet;      /* samples since ANS ended (-1: not ended) */
     int32_t    tc;           /* A.2.1.2: samples since the unscrambled binary 1 was first heard (-1: not) */
+    /* Bell */
+    belltone_t btone;        /* the Bell answer tone, 2225 Hz */
+    tonedet_t  t2100;        /* ORIG_BELL: 2100 Hz (ANSam, ANS), which is no Bell 103 carrier */
+    int32_t    bell_run;     /* ORIG_BELL: samples of a carrier in the Bell 103 answer channel that is not 2100 Hz */
+    int        fsk_mod;      /* ORIG_V21: ORIG_MOD_V21 or ORIG_MOD_BELL103 */
+    int        via_bell;     /* ORIG_V22: begun on the Bell answer tone (Bell 212A) */
+    int        b212_failed;  /* a Bell 212A start got no answer: Bell 103 from now on */
+    const int16_t *bpf_taps; /* the FSK receive band-pass: v21h_bpf or bell103h_bpf */
     int        connected, modulation, bitrate;
     int        rx_bitrate;   /* what we receive, where it may differ (V.34); 0 = as bitrate */
     int        end;          /* ORIG_END_* once phase is ORIG_FAILED */

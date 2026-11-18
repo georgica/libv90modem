@@ -10,6 +10,7 @@
 #   make bench-v90a      the same for the V.90 analogue modem's downstream receiver
 #   make bench-v90c      the same for the whole V.90 calling modem (orig, v90a)
 #   make bench-v92c      ... and for it in V.92 (PCM upstream); cost-v92c counts
+#   make bench-bell      the calling modem in Bell 103 and Bell 212A; cost-bell counts
 #   make test-interop    against spandsp (SPANDSP=its install prefix), host only
 #
 # Cross-compiling: set CC (and BUILD to keep the objects apart), e.g.
@@ -73,7 +74,7 @@ SIM_OBJ  := $(patsubst %.c,$(BUILD)/obj/%.o,$(SIM_SRC))
 MODEM_SRC := modem/v21.c modem/ansam.c modem/v8msg.c modem/async.c modem/v8rx.c modem/v8ans.c \
              modem/scramble.c modem/v22tx.c modem/v22rx.c modem/v22bis.c modem/v14.c modem/answer.c \
              modem/info.c modem/dpsk.c modem/probe.c modem/p2d.c modem/qamrx.c modem/ec.c modem/ecdly.c modem/tonedet.c modem/v34train.c modem/p34d.c modem/pcmenc.c \
-             modem/v34mp.c modem/p2ans.c modem/v34mod.c modem/v34dx.c modem/v34ans.c modem/anstone.c modem/v8orig.c modem/orig.c modem/p2call.c modem/v34orig.c modem/v90arx.c modem/v90adec.c modem/v90dil.c modem/v90a.c modem/pcmtx.c modem/v92aseq.c \
+             modem/v34mp.c modem/p2ans.c modem/v34mod.c modem/v34dx.c modem/v34ans.c modem/anstone.c modem/v8orig.c modem/orig.c modem/p2call.c modem/v34orig.c modem/v90arx.c modem/v90adec.c modem/v90dil.c modem/v90a.c modem/pcmtx.c modem/v92aseq.c modem/belltone.c \
              $(wildcard v90/*.c) $(wildcard v34/*.c) $(wildcard v32/*.c) $(wildcard v92/*.c)
 T_SRC    := $(SIM_SRC) $(MODEM_SRC)
 HDRS     := $(wildcard modem/*.h sim/*.h test/*.h v90/*.h v34/*.h v92/*.h v90/test/v90_dec.h)
@@ -82,7 +83,7 @@ TESTS    := test_g711 test_noise test_filt test_resamp test_channel test_v21 tes
             test_v22tx test_v22rx test_v22bis test_v14 test_answer test_info test_dpsk test_probe test_p2 test_qamrx test_ec test_ecdly test_v34train test_sres test_answer_v90 test_p34 test_pcmenc \
             test_v34mp test_p2ans test_v34mod test_v34dx test_v34call test_answer_v34 test_answer_v32 test_answer_v90_v34 \
             test_p2_v92 test_v92call test_answer_v92 test_v92real test_answer_lin \
-            test_anstone test_v8orig test_orig test_orig_v32 test_p2call test_orig_v34 test_v90arx test_v90arx_robust test_v90adec test_v90dil test_p2v90 test_v90a test_orig_v90 test_pcmtx test_v92aseq test_p2v92a test_v92a test_orig_v92
+            test_anstone test_v8orig test_orig test_orig_v32 test_p2call test_orig_v34 test_v90arx test_v90arx_robust test_v90adec test_v90dil test_p2v90 test_v90a test_orig_v90 test_pcmtx test_v92aseq test_p2v92a test_v92a test_orig_v92 test_belltone test_orig_bell
 # the public API, against the library as it is installed
 API_TESTS := test_api
 SUBS     := v34 v90 v92 v42 v32
@@ -352,6 +353,35 @@ cost-v92c: $(BUILD)/rec_v90c $(BUILD)/bench_v90c $(BUILD)/bench_v90c.arm
 	   b=$$($(CNT) $(abspath $(BUILD))/bench_v90c.arm $(BUILD)/v92c_t.b 2>&1 | grep -c '^Trace'); \
 	   echo "V.92 caller, 100 ppm: tick $$t ($$((t / 8)) ms): $$((b - a)) ARM instructions"; \
 	 done
+# ---- the caller in Bell 103 and Bell 212A: rec_bell records a call against
+# the library's answerer, bench_bell replays it into the caller alone (hash on
+# the host and under qemu); cost-bell counts the ARM instructions of the
+# first second of data mode, one qemu run per call (split where the trace
+# enters bench_bell_mark) ----
+.PHONY: bench-bell cost-bell
+bench-bell: $(BUILD)/rec_bell $(BUILD)/bench_bell $(BUILD)/bench_bell.arm
+	@for m in 103 212; do \
+	   $(abspath $(BUILD))/rec_bell $$m 3 $(BUILD)/bell_$$m.rec; \
+	   $(abspath $(BUILD))/bench_bell $(BUILD)/bell_$$m.rec; \
+	   $(QEMU) $(abspath $(BUILD))/bench_bell.arm $(BUILD)/bell_$$m.rec; \
+	 done
+cost-bell: $(BUILD)/rec_bell $(BUILD)/bench_bell.arm
+	@for m in 103 212; do \
+	   $(abspath $(BUILD))/rec_bell $$m 2 $(BUILD)/bell_$$m.rec > /dev/null; \
+	   pc=$$(nm $(BUILD)/bench_bell.arm | sed -n 's/^\([0-9a-f]*\) T bench_bell_mark$$/\1/p'); \
+	   $(CNT) $(abspath $(BUILD))/bench_bell.arm $(BUILD)/bell_$$m.rec 2>&1 >/dev/null \
+	   | awk -v m=$$m -v pc="/00000000$$pc/" 'BEGIN { k = 0 } /^Trace/ { if (index($$0, pc)) k++; n[k]++ } END { \
+	       printf "Bell %s caller: %d ARM instructions to data mode, %d in its first second, %d after\n", m == 212 ? "212A" : "103", n[0], n[1], n[2] }'; \
+	 done
+$(BUILD)/rec_bell: tools/rec_bell.c $(SIM_SRC) $(MODEM_SRC) $(HDRS)
+	@mkdir -p $(BUILD)
+	$(CC) $(T_CFLAGS) -o $@ tools/rec_bell.c $(SIM_SRC) $(MODEM_SRC) $(LDLIBS)
+$(BUILD)/bench_bell: rig/bench_bell.c $(MODEM_SRC) $(HDRS)
+	@mkdir -p $(BUILD)
+	$(CC) $(T_CFLAGS) -o $@ rig/bench_bell.c $(MODEM_SRC) $(LDLIBS)
+$(BUILD)/bench_bell.arm: rig/bench_bell.c $(MODEM_SRC) $(HDRS)
+	@mkdir -p $(BUILD)
+	$(ARM_CC) $(T_CFLAGS) -static -o $@ rig/bench_bell.c $(MODEM_SRC) $(LDLIBS)
 $(BUILD)/rec_v90c: tools/rec_v90c.c test/v90link.h $(SIM_SRC) $(MODEM_SRC) $(HDRS)
 	@mkdir -p $(BUILD)
 	$(CC) $(T_CFLAGS) -Itest -o $@ tools/rec_v90c.c $(SIM_SRC) $(MODEM_SRC) $(LDLIBS)
