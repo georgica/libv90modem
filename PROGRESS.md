@@ -1256,3 +1256,117 @@ TMPDIR to OUT/tmp.
   point: built for i686, its 78 objects contain no x87 instruction. So
   32-bit x86 builds the suite with SSE2 doubles, which round as binary64
   does everywhere else.
+
+### Found after 4f4059d (the matrix and MemorySanitizer)
+
+4. test_p2call compared INFO1d and INFO1c parsed from the same bits with
+   `memcmp`, the padding octet before `freq_off` included, which neither
+   parser writes: the check depended on stack garbage (clang
+   `-fsanitize=memory` over the host suite: this was its only report).
+   Both structs are cleared first now.
+5. win32: test_v90arx_robust's watchdog used SIGALRM and alarm(), which
+   Windows does not have, so the root tests did not even build there. The
+   watchdog is there only `#ifdef SIGALRM` now.
+6. v34 test_bench asserts at most 5000 ns of wall time per symbol; under
+   qemu it failed on riscv64, mipsel and ppc (and was left out on ARM
+   only). With `TEST_EMULATED=1`, which check-ports.sh gives its qemu
+   targets, the check still counts but cannot fail.
+7. test_v44 prints the encoder's and decoder's sizes: one more line that
+   measures the host's ABI, left out of the comparison like `sizeof`.
+8. Not a fix, a consequence of 1.: gcc for ARM evaluates arguments left to
+   right, as clang does on x86, so calling-bell's `make check-arm` printed
+   clang's numbers for test_viterbi (4 lines: "7200 bit/s ... plain
+   decisions 613 symbol errors ..."). With the draws in a fixed order, ARM
+   prints what the host prints. Same counts.
+
+### m68k: qemu-m68k cannot be trusted with this code
+
+On m68k-uclibc (68040, qemu-m68k 10.1.5) twelve programs fail: every one
+built on the V.34 receiver core, `modem/qamrx` (qamrx itself: training mse
++0.6 dB, 6607 symbol errors at 3000 symbols/s). The emulator, not the code:
+
+- the same binary, run with `-one-insn-per-tb`, fails differently (3200
+  symbols/s, which passes in a normal run, fails too) - a deterministic
+  program whose result depends on how qemu cuts it into blocks;
+- qamrx.c alone at -O1, the rest at -O2: passes; the whole suite at -O1:
+  fails at 3200 as well; -mcpu=68060 run as m68060: passes;
+- clang's UBSan and MSan over the host suite report nothing in qamrx, and
+  the other 15 targets (five big-endian, seven 32-bit, the other uClibc)
+  print what the host prints.
+No m68k hardware here to settle it; m68k ran QUICK (11 slow programs left
+out), 83 of the 95 that ran identical to the host (5 lines with uClibc's
+rounding), the 12 qamrx users failing as above.
+
+### The matrix (commit 4f4059d, the three programs changed since rerun on
+### every target from this commit; win32 run whole from this commit)
+
+`PAR=7 JOBS=1 tools/check-ports.sh` over ~/ports2-m2, then
+`COMPARE_ONLY=1`. Every target built with -Werror. "Identical": the
+program's output byte for byte, but for the timing / size lines.
+
+| target | tests run | identical to host gcc | notes |
+|---|---|---|---|
+| host gcc | all 106 | (reference) | |
+| host clang | all 106 | 106 | |
+| x86_64 musl | all 106 | 106 | |
+| i686 musl | all 106 | 106 | SSE2 doubles |
+| armv5 uClibc | all 106 (TEST_FULL) | 106 | 6 lines with uClibc's rounding |
+| armv7hf musl | all 106 (TEST_FULL) | 106 | |
+| aarch64 musl | all 106 | 106 | |
+| aarch64be musl | all 106 | 106 | big-endian |
+| mips musl | all 106 | 106 | big-endian |
+| mipsel musl | all 106 | 106 | v34 bench's wall-time check failed first (6.) |
+| ppc musl | all 106 | 106 | big-endian; as mipsel |
+| ppc64 musl | all 106 | 106 | big-endian |
+| riscv64 musl | all 106 | 106 | as mipsel |
+| s390x glibc | all 106 | 106 | big-endian |
+| m68k uClibc | 95 (QUICK) | 83 | 12 fail: qemu-m68k, above |
+| win32 mingw | all 106 (wine) | 106 | SSE2 doubles |
+
+106 programs: the 60 tests of the top level, the API test against the
+static library (check-symbols on every target: only `v90m_*` defined), and
+the 45 of v34, v90, v92, v42, v32.
+
+### Host and ARMv5 unchanged
+
+| | calling-bell (632a820) | ports-2 |
+|---|---|---|
+| `make check` (host) | 106 count lines = ~/c52v/bellv/check.log | the same 106 lines, by diff; every other line the same (sorted, compile lines out) |
+| `make check-arm` (armv5, qemu) | 106 count lines | the same 106 lines, by diff; output the same but test_viterbi's 4 lines (8.) |
+| `make bench-v90` | 8e3136e9 x6 | 8e3136e9 x6 |
+| `make bench-v92c` | cd66ac82 (host, qemu-arm) | cd66ac82 (host, qemu-arm) |
+| `make bench-bell` | 48f22641 (103), fc125ef2 (212A), host and qemu-arm | the same |
+
+### v90d re-proved on top of it
+
+v90d-split d707463 built against this tree (`LIBV90M=~/ports2-wt`
+at 4f4059d, the way libv90m.mk takes it; script
+~/sync-build/proof/afterports.sh, after050.sh with that one
+change), against the 0.5.0 sync's proof (libv90modem 629ae89):
+
+| | 0.5.0 sync | ports-2 |
+|---|---|---|
+| `make check` | 126 programs, 2,839,306 checks | 133: the same 126 lines but `api` 237 -> 303, plus pcmtx, v92aseq, p2v92a, v92a, orig_v92, belltone, orig_bell (the calling side's C6, C7): 2,842,879 checks, 0 failures |
+| `make check-arm` | 125 programs | 132, the same differences |
+| `make bench-v90` | 8e3136e9 | 8e3136e9 x6 |
+| replay, 106 recordings x 8 configs | 1613 files | manifest identical, all 1613 |
+| `make -C fw release`, `test-release` | pass | pass, the same lines but timings |
+
+So bringing in C6, C7 and the port changes changes nothing for v90d's
+answering use; v90d-split needed no change.
+
+### Open
+
+- m68k: needs real hardware (or another emulator) to say more.
+- The two 32-bit products that wrap (v22rx derotation before the gain has
+  settled, v90arx's forward update with a wild error) are now defined but
+  still wrap: 64 bits would be the right arithmetic, but would change the
+  modem's behaviour in those moments, maybe hashes. The owner's call.
+- UBSan and MSan saw what the host suite, the fixtures and the benches
+  run; code no test reaches is not covered.
+- The benches' recordings (`rec_v90a`, `rec_v34`, v32's test_bench record
+  mode) are written in host byte order; replaying one recorded on x86 on
+  a big-endian target would read it wrongly. Not used across byte orders
+  today.
+- On 32-bit x86 the suite runs with SSE2 doubles; an x87-only build of the
+  test harness prints other numbers (its line simulation), as described.

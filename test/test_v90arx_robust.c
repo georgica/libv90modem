@@ -11,7 +11,8 @@
  *   3. a downstream whose clock runs 1500 ppm off: the timing loop followed
  *      it without bound.
  *
- * A watchdog (SIGALRM) turns a hang into a failure line and an exit. */
+ * A watchdog (SIGALRM, where there is one: not on Windows) turns a hang
+ * into a failure line and an exit. */
 #include <stdio.h>
 #include <string.h>
 #include <signal.h>
@@ -25,6 +26,7 @@
 #include "dschan.h"
 #include "noise.h"
 
+#ifdef SIGALRM
 static void on_alarm(int s)
 {
     static const char msg[] = "  FAIL: hung (watchdog)\n";
@@ -32,6 +34,7 @@ static void on_alarm(int s)
     if (write(1, msg, sizeof msg - 1) < 0) { /* nothing to do */ }
     _exit(2);
 }
+#endif
 
 typedef struct {
     v90tx_t tx; rng_t rng;
@@ -185,8 +188,10 @@ int main(int argc, char **argv)
 {
     int only = argc > 1 ? argv[1][0] - '0' : 0;     /* run one part (for its failing-first evidence) */
     setvbuf(stdout, NULL, _IONBF, 0);
+#ifdef SIGALRM
     signal(SIGALRM, on_alarm);
     alarm(120);
+#endif
     if (!only || only == 1) zeros();
     if (!only || only == 2) tones();
     if (!only || only == 3) fast_clock();

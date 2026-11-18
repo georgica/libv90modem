@@ -13,6 +13,12 @@
 #if defined(__arm__) && !defined(TEST_FULL)
 #define TEST_SHORT 1
 #endif
+/* TEST_EMULATED=1: the program runs under an emulator (tools/check-ports.sh
+ * says so for its qemu targets), where wall-clock time measures the
+ * emulator; a check on it still counts, but cannot fail */
+#ifndef TEST_EMULATED
+#define TEST_EMULATED 0
+#endif
 
 static int t_checks = 0, t_fails = 0;
 

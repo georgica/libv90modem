@@ -92,7 +92,7 @@ static void bench(unsigned S, unsigned R, int trellis, const int16_t h[3][2], do
     /* the decoder did decode: all but the B1 frame and the decoding delay */
     CHECK(nsunk >= (NSYM / 8 - p.map.P - V34_VIT_DEPTH / 4 - 2) * (p.map.b - 1u));
 #ifndef TEST_SHORT
-    CHECK(t_rx < 5000);
+    CHECK(t_rx < 5000 || TEST_EMULATED);    /* wall time: an emulator's own is no measure */
 #endif
 }
 

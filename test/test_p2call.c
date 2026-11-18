@@ -207,9 +207,13 @@ int main(void)
         for (k = 0; k < 6; k++) { CHECK_EQ_I(o.sr[k].hi_carrier, k & 1); CHECK_EQ_I(o.sr[k].preemph, k + 3); CHECK_EQ_I(o.sr[k].max_rate, 14 - k); }
         /* the answer modem reads it as before */
         {
-            info1d_t d;
+            /* both cleared first: memcmp also compares the padding (one
+             * octet before freq_off), which the parsers do not write */
+            info1d_t d, c;
+            memset(&d, 0, sizeof d); memset(&c, 0, sizeof c);
             info1d_parse(bits + INFO_HDR_BITS, &d);
-            CHECK(memcmp(&d, &o, sizeof d) == 0);
+            info1c_parse(bits + INFO_HDR_BITS, &c);
+            CHECK(memcmp(&d, &c, sizeof d) == 0);
         }
     }
 

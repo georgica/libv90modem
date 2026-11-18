@@ -37,8 +37,9 @@ JOBS=${JOBS:-2}
 QUICK=${QUICK:-}
 SUBS=$(sed -n 's/^SUBS *:= *//p' "$ROOT/Makefile")
 # lines that measure the host, not the modem: CPU and wall time, and the
-# size of structures in memory (pointer width, alignment)
-TIMING='of CPU here|% of real time| ns +[0-9]+ ns +[0-9]+ ns$|^  speed on |^  sizeof\(|^  decoder state: sizeof\('
+# size of structures in memory (pointer width, alignment: v90tx_t, v34_rx_t,
+# V.44's encoder and decoder)
+TIMING='of CPU here|% of real time| ns +[0-9]+ ns +[0-9]+ ns$|^  speed on |^  sizeof\(|^  decoder state: sizeof\(|^  sizes: encoder [0-9]+ octets, decoder [0-9]+ octets$'
 
 tc() { set -- "$TC"/$1/bin/$2; [ -x "$1" ] && echo "$1" || echo "$TC/missing/$2"; }
 
@@ -73,7 +74,8 @@ if [ "${1:-}" = --one ]; then
     if ! command -v "$cc" >/dev/null 2>&1; then echo "skip: no compiler $cc" > "$OUT/$name.status"; exit 0; fi
     r=${run%%:*}
     if [ "$run" != - ] && ! command -v "$r" >/dev/null 2>&1; then echo "skip: no runner $r" > "$OUT/$name.status"; exit 0; fi
-    # -DTEST_FULL: the whole tests on 32-bit ARM too (test/test.h). On
+    # -DTEST_FULL: the whole tests on 32-bit ARM too (test/test.h);
+    # -DTEST_EMULATED=1 under qemu: no wall-clock limit (test/test.h). On
     # 32-bit x86 the test harness's doubles (the simulated line, sim/) are
     # computed in SSE2, not in the x87's 80 bits, which round differently
     # and so feed the modem a different line; the modem itself is integer
@@ -81,6 +83,7 @@ if [ "${1:-}" = --one ]; then
     extra="-DTEST_FULL"
     case "$cc" in *mingw*) extra="$extra -D__USE_MINGW_ANSI_STDIO=1" ;; esac
     case "$name" in i686-*|win32-*) extra="$extra -msse2 -mfpmath=sse" ;; esac
+    case "$run" in qemu-*) extra="$extra -DTEST_EMULATED=1" ;; esac
     rm -rf "$B/out"; mkdir -p "$B/out"
     Q="$ROOT/tools/portrun $B $B/out $skip $run"
     set -- -j"$JOBS" BUILD="$B" ARM_CC="$cc" QEMU="$Q" CFLAGS="-std=c99 -O2 -Wall -Wextra -Werror $extra"
