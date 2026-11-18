@@ -761,3 +761,68 @@ main's 108 host and 107 ARM programs with the same counts (but `tel`, the
 branch's own), bench hash 8e3136e9 as main, 106 recordings x 8
 configurations replayed (1613 files) identical octet for octet, release
 image built and `test-release` passes; see v90d's PROGRESS.md.
+
+## C6-1: the PCM upstream transmitter's pieces (2026-11-17)
+
+The analogue modem's V.92 upstream (6.2/V.92: 8000 symbol/s "derived from
+the digital network") on our own D/A clock, and the receiver for what the
+digital modem sends in Phase 4. Branch `calling-v92` from sync-0.5.0.
+
+- `modem/pcmtx`: the transmit clock and interpolator. The symbols are made
+  on the network clock as the downstream receiver (`v90arx`) knows it: the
+  same accumulator as its interpolator, with the same increments (`step +
+  slew`), so one symbol goes out for every network sample the receiver
+  makes and every correction of its timing loop moves the transmitter too;
+  the round trip between them is a constant. The symbols reach our clock
+  through modem/v34_tabs.h's bank (the receiver's, used the other way
+  round), 33 samples late. `pcmtx_slip()` delays the symbols that follow by
+  a fraction of a symbol (the half symbol of the first Su-bar, Jp's
+  fraction). Before the receiver has measured the clock (Ru, the first
+  TRN1u, Ja) the step is our own sample.
+- `modem/v92aseq`: SUVd, CPd and Ed out of the TRN2d descrambler, a data
+  frame at a time. CPd may be about 20000 bits; every field after its frame
+  sync is a start bit and 16 bits, so it is taken word by word into the
+  `v92_cpd_t` with the CRC running along and no bit kept (v92_cpd_parse()
+  would want a 20 kbyte array, more than `V90M_MEM_SIZE` has left). Ed is the
+  first data frame of zeros straight after a sequence's fill (a fill that is
+  a whole frame, when the CRC ends one, is passed over).
+
+Seen failing first, against stubs: test_pcmtx 27 checks, 18 failures;
+test_v92aseq 3020 checks, 1677 failures. Now:
+
+```
+same clock: 0 of 3967 samples differ from the symbols 33 samples earlier
+    +0 ppm: 80000 symbols in 80000 samples (80000.0 expected), at most 1 in one sample
+  +100 ppm: 79992 symbols in 80000 samples (79992.0 expected), at most 1 in one sample
+  -100 ppm: 80008 symbols in 80000 samples (80008.0 expected), at most 2 in one sample
+ +1000 ppm: 79920 symbols in 80000 samples (79920.1 expected), at most 1 in one sample
+ -1000 ppm: 80080 symbols in 80000 samples (80080.1 expected), at most 2 in one sample
+round trip through the test line's resampler, 3.4 kHz band limit:
+     +0 ppm: fitted on 0.1..2.5 s, error over 2.5..7.5 s -283.3 dB, group delay -1.000
+    +30 ppm: fitted on 0.1..2.5 s, error over 2.5..7.5 s -71.5 dB, group delay -1.000
+   +100 ppm: fitted on 0.1..2.5 s, error over 2.5..7.5 s -71.7 dB, group delay -1.000
+   -100 ppm: fitted on 0.1..2.5 s, error over 2.5..7.5 s -71.7 dB, group delay -1.000
+   +300 ppm: fitted on 0.1..2.5 s, error over 2.5..7.5 s -70.8 dB, group delay -1.000
+  slip 0.5000 at   +0 ppm: delay +0.5000 symbols, errors -298.4 / -70.3 dB
+  slip 0.2500 at +100 ppm: delay +0.2500 symbols, errors -71.5 / -70.2 dB
+  slip 0.7500 at -100 ppm: delay +0.7501 symbols, errors -71.6 / -70.4 dB
+  slip 0.0044 at   +0 ppm: delay +0.0045 symbols, errors -298.4 / -80.2 dB
+constant 32767: last output 32765, 0 outputs off
+constant -32768: last output -32766, 0 outputs off
+pcmtx: 27 checks, 0 failures
+335 streams (D = 6..72, CPd of 2 to 1170 words), 15 with a whole frame of fill after the CRC
+a bit wrong in the first of two CPd: 1 taken, 1 bad
+ones, zeros, random: events 0x0
+v92aseq: 3021 checks, 0 failures
+```
+
+"One fixed response": what the network codec gets is the symbols through a
+response that does not change as the two clocks turn against each other
+(fitted on 2.5 s, it predicts the next 5 s, two turns at 100 ppm, to -70 dB).
+That needs the codec's band limit: without it, the band edge, where both
+interpolators are poor, changes with the phase between the clocks. A real
+line has that limit (G.712); the test line of C5 has none upstream, so C6-2
+gives it one.
+
+Both tests' output is byte-identical under qemu-arm. No answering-side
+file is touched (two new modules, two new tests, the Makefile lists).
