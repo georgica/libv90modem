@@ -16,6 +16,7 @@
  * may be off), the phase slew within half of that, and the
  * interpolator makes at most this many outputs per input sample. */
 #define STEP_MAX ((int64_t)4294967)
+#define CLK_TRUST ((int64_t)21475)  /* 5 ppm: Sd overrules a clock set with v90arx_clock() */
 #define SLEW_MAX (STEP_MAX / 2)
 #define PRODUCE_MAX 3
 
@@ -472,7 +473,9 @@ static void process(v90arx_t *r, int16_t q)
     int32_t n = r->n++, k;
 
     if (r->state == V90ARX_WAIT) {
-        int st = v92_p6_tick(&r->sd, q, SD_FLOOR);
+        int st;
+        if (r->deaf) return;
+        st = v92_p6_tick(&r->sd, q, SD_FLOOR);
         if (st == V92_P6_ON) {
             /* the 1333 Hz line of each period of 6 */
             static const int16_t C6[6] = { 32767, 16384, -16384, -32767, -16384, 16384 };
@@ -511,7 +514,11 @@ static void process(v90arx_t *r, int16_t q)
                     /* tan, Q32; beyond 1 (a turn of 45 degrees, 7800 ppm)
                      * it is no codec clock, and the product would overflow */
                     t = clamp64(t * ONE32 / y, -ONE32, ONE32);
-                    r->step = ONE32 - ((t * 683565276) >> 32) / V90ARX_SDLAG;  /* 1 / (2 pi), Q32 */
+                    /* (relative to the step Sd came through: one sample, or
+                     * what v90arx_clock() set; that one, from a longer
+                     * measurement, stands unless Sd finds it 5 ppm off) */
+                    int64_t corr = ((t * 683565276) >> 32) / V90ARX_SDLAG;  /* 1 / (2 pi), Q32 */
+                    if (!r->clk_set || corr > CLK_TRUST || corr < -CLK_TRUST) r->step = r->step - corr;
                     r->step = clamp64(r->step, ONE32 - STEP_MAX, ONE32 + STEP_MAX);
                 }
             }
@@ -581,6 +588,20 @@ static void produce(v90arx_t *r)
     }
     v = acc0 + (((acc1 - acc0) * a) >> 15);     /* Q14 */
     process(r, sat16((v * r->gain) >> 26));
+}
+
+void v90arx_clock(v90arx_t *r, int32_t ppm_q8)
+{
+    r->step = clamp64(ONE32 + (int64_t)ppm_q8 * ONE32 / 256000000, ONE32 - STEP_MAX, ONE32 + STEP_MAX);
+    r->clk_set = 1;
+}
+
+void v90arx_deaf(v90arx_t *r, int on)
+{
+    r->deaf = on != 0;
+    v92_p6_init(&r->sd);
+    r->sd_pow = 0; r->sd_cnt = 0;
+    r->sd_br = r->sd_bi = 0; r->sd_i = 0; r->sd_np = 0; r->sd_yr = r->sd_yi = 0;
 }
 
 int v90arx_tick(v90arx_t *r, int16_t rx, int16_t tx)

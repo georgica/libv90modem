@@ -38,6 +38,21 @@ typedef struct {
 void sresamp_init(sresamp_t *r, double ratio);
 int  sresamp_push(sresamp_t *r, double x, double *out, int maxout);
 
+/* The same with a window of LRESAMP_TAPS: for a PCM upstream (V.92), whose
+ * signal reaches to the band edge, where the 48 taps above make the line
+ * change with the phase between the two clocks (C6-2, PROGRESS.md). */
+#define LRESAMP_TAPS  320
+#define LRESAMP_DELAY (LRESAMP_TAPS / 2)
+typedef struct {
+    double inv, t;
+    long   idx;
+    double h[LRESAMP_TAPS];
+    int    pos;
+} lresamp_t;
+
+void lresamp_init(lresamp_t *r, double ratio);
+int  lresamp_push(lresamp_t *r, double x, double *out, int maxout);
+
 /* Convenience for ppm offset. */
 static inline double ppm_ratio(double ppm) { return 1.0 + ppm * 1e-6; }
 

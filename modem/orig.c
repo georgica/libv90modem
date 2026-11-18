@@ -73,6 +73,7 @@ static void start_v90(orig_t *o)
     c.echo_delay = o->cfg.echo_delay > 0 ? o->cfg.echo_delay : 0;
     c.max_tx_bps = o->cfg.max_tx_bps; c.max_rx_bps = o->cfg.max_rx_bps;
     c.table1 = o->cfg.v90_table1;
+    c.v92 = (o->cfg.modes & ORIG_MODE_V92) != 0;    /* PCM upstream if the answerer offers it */
     c.getbit = o->cfg.getbit; c.putbit = o->cfg.putbit; c.user = o->cfg.user;
     v90a_init(&o->v90, &c);
     o->phase = ORIG_V90; o->t = 0;
@@ -364,8 +365,8 @@ int16_t orig_tick(orig_t *o, int16_t rx)
         tx = v90a_tick(&o->v90, rx);
         if (o->v90.state == V90A_ENDED) { fail(o, v90_end(o)); tx = 0; break; }
         if (o->v90.state == V90A_DATA) {
-            /* bitrate: what we send (V.34 upstream), rx_bitrate: the PCM downstream */
-            o->connected = 1; o->modulation = ORIG_MOD_V90;
+            /* bitrate: what we send (V.34 or PCM upstream), rx_bitrate: the PCM downstream */
+            o->connected = 1; o->modulation = o->v90.pcm ? ORIG_MOD_V92 : ORIG_MOD_V90;
             o->bitrate = v90a_tx_rate(&o->v90); o->rx_bitrate = v90a_rx_rate(&o->v90);
         } else if (!o->connected && o->t > MS(V90_TOTAL_MS)) fail(o, ORIG_END_NO_CARRIER);
         break;

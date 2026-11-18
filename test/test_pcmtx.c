@@ -1,7 +1,8 @@
 /* modem/pcmtx: the PCM upstream carried from the network clock on to ours.
  *
- * 1. With our clock equal to the network's, a symbol put at a sample
- *    boundary comes out PCMTX_DELAY samples later, exactly.
+ * 1. With our clock equal to the network's and the low-pass off
+ *    (pcmtx_wide: the full band bank), a symbol put at a sample boundary
+ *    comes out PCMTX_DELAY samples later, exactly.
  * 2. One symbol per network sample: over 10 s the symbols taken match the
  *    clock ratio within one.
  * 3. The round trip of the test line (test/v90link.h): our samples resampled
@@ -155,6 +156,7 @@ int main(void)
         int k, bad = 0, due = 0;
         rng_seed(&g, 3);
         pcmtx_init(&t);
+        pcmtx_wide(&t, 1);
         for (k = 0; k < 4000; k++) {
             pcmtx_clock(&t);
             due += pcmtx_due(&t) != 1;

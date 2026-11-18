@@ -9,9 +9,21 @@
  *     -> the digital modem.
  *
  * The digital modem is either the whole answerer (answer_t: V.8 and all) or
- * its V.90 parts alone (p2d, then p34d as answer.c starts it), for tests of
- * the analogue modem's own sequencer that leave V.8 out. The analogue modem
- * is orig_t or v90a_t. Data both ways is a 2^23 - 1 sequence (O.151), checked
+ * its V.90 parts alone (p2d, then p34d as answer.c starts it, or with V.92
+ * offered v92/v92_p34d when INFO1a selects PCM upstream), for tests of the
+ * analogue modem's own sequencer that leave V.8 out. The analogue modem is
+ * orig_t or v90a_t.
+ *
+ * up_line: the upstream also passes a line and codec response (sampled on
+ * the network clock): the band limit a PCM upstream needs at the far codec
+ * (G.712), which the V.34 upstream of C5 did without. 1: the one the
+ * answerer's own V.92 tests use (sim/v92chan: codec filters, transformer,
+ * the short line or the long one); 2: the downstream's loop and codec
+ * filters (sim/dschan), whose low frequency tail outlasts the digital
+ * modem's 12 ms channel estimate (PROGRESS.md, C6-2). And our clock is carried on to the network's
+ * by a 320-tap resampler (sim/resamp's lresamp): the 48 taps of C5 change
+ * the line near 4 kHz with the phase between the clocks, where a PCM
+ * upstream has its share of power. Off, the upstream is as in C5. Data both ways is a 2^23 - 1 sequence (O.151), checked
  * by the self-synchronising rule b(n) = b(n - 18) XOR b(n - 23), so that a
  * check needs no alignment: each wrong bit fails it three times.
  * Host only. */
@@ -24,9 +36,11 @@
 #include "../modem/v90a.h"
 #include "../modem/p2d.h"
 #include "../modem/p34d.h"
+#include "../v92/v92_p34d.h"
 #include "../modem/pcmenc.h"
 #include "../v90/v90_pcm.h"
 #include "../sim/dschan.h"
+#include "../sim/v92chan.h"
 #include "../sim/resamp.h"
 #include "../sim/noise.h"
 
@@ -54,27 +68,36 @@ typedef struct {
     int rbs, rbs_phase, alaw;
     /* upstream */
     double up_loss_db, up_noise_dbm0;
+    int up_line;                    /* 1: the answerer's own V.92 upstream line (sim/v92chan's pulse,
+                                       the short line to 2 km, the long one beyond); 2: the loop and
+                                       codec filters of the downstream (see above) */
     /* the digital modem */
     int full;                       /* 1: answer_t, 0: p2d + p34d */
     int max_down, max_up;           /* its ceilings */
+    int v92;                        /* it offers V.92 (PCM upstream) */
     /* the analogue modem */
     int caller_orig;                /* 1: orig_t, 0: v90a_t */
     int caller_level;
+    int caller_v92;                 /* it offers V.92 */
     uint32_t seed;
 } vl_cfg;
 
 #define VL_FIFO 64
+#define VL_UPN  DSCH_LEN            /* the upstream line's taps */
 #define VL_PREFILL 8                /* samples in the FIFO before it is read: the two clocks may slip apart */
 
 typedef struct {
     vl_cfg cfg;
     dschan_t ch;
     sresamp_t rs;
+    lresamp_t lrs;                  /* (up_line: the long window, see sim/resamp.h) */
     double fifo[VL_FIFO]; int fh, ft, primed;
+    double uph[VL_UPN], uplh[VL_UPN]; int upos;  /* up_line: taps, history */
     rng_t rng;
     /* digital */
     answer_t ans;
-    p2d_t p2; p34d_t p34; int dstate;  /* 0 Phase 2, 1 p34d, 2 dead */
+    p2d_t p2; p34d_t p34; int dstate;  /* 0 Phase 2, 1 p34d, 2 dead, 3 v92d */
+    v92d_t v92d;
     int dmute;                      /* the digital modem's output silenced (a test's doing) */
     /* analogue */
     orig_t org;
@@ -112,6 +135,31 @@ static void vl_start_p34(vl_t *l)
     if (p34d_init(&l->p34, &c) != 0) l->dstate = 2; else l->dstate = 1;
 }
 
+/* ... or v92d (answer.c's start_v92) */
+static void vl_start_v92(vl_t *l)
+{
+    v92d_cfg c;
+    const info1a_t *i = &l->p2.info1a;
+    int k; uint32_t r = 15770;
+    memset(&c, 0, sizeof c);
+    c.alaw = l->cfg.alaw;
+    c.uinfo = i->uinfo; c.md_len = i->md_len; c.rtd = l->p2.rtd;
+    c.sections = i->sections;
+    c.ltot = 192 + 64 * i->ltot_code; c.lmax = 128 + 64 * i->lmax_code;
+    c.echo_delay = -1;
+    c.max_up_rate = l->cfg.max_up;
+    if (l->cfg.max_down > 0) {
+        uint32_t m = 0;
+        for (k = 0; k < V90_NUM_RATES; k++) if ((int32_t)(k + 21) * 8000 / 6 <= l->cfg.max_down) m |= 1u << k;
+        c.down_rates = m ? m : 1;
+    }
+    for (k = 0; k <= ANS_MAX_TX_CODE; k++) r = r * 967 / 1024;
+    c.down_rms = (int)r;
+    c.dsn_pace = 2;
+    c.getbit = vl_get_down; c.putbit = vl_put_up; c.user = l;
+    l->dstate = v92d_init(&l->v92d, &c) != 0 ? 2 : 3;
+}
+
 /* one network sample: the upstream as the network codec has it, in; the
  * digital modem's octet, out */
 static uint8_t vl_src(void *ctx)
@@ -122,6 +170,14 @@ static uint8_t vl_src(void *ctx)
     int alaw = l->cfg.alaw;
     if (!l->primed && (l->fh - l->ft + VL_FIFO) % VL_FIFO >= VL_PREFILL) l->primed = 1;
     if (l->primed && l->fh != l->ft) { up = l->fifo[l->ft]; l->ft = (l->ft + 1) % VL_FIFO; }
+    if (l->cfg.up_line) {
+        double a = 0;
+        int k;
+        l->uplh[l->upos] = up;
+        for (k = 0; k < VL_UPN; k++) a += l->uph[k] * l->uplh[(l->upos - k + VL_UPN) % VL_UPN];
+        l->upos = (l->upos + 1) % VL_UPN;
+        up = a;
+    }
     up = up * l->up_gain + l->up_nrms * rng_gauss(&l->rng);
     in = pcm_encode(alaw, (int16_t)(up > 32767 ? 32767 : up < -32768 ? -32768 : floor(up + 0.5)));
     l->n++;
@@ -130,9 +186,10 @@ static uint8_t vl_src(void *ctx)
         int16_t x = (int16_t)v90_octet_linear(alaw, in);
         if (l->dstate == 0) {
             out = pcm_encode(alaw, p2d_tick(&l->p2, x));
-            if (l->p2.state == P2D_DONE) vl_start_p34(l);
+            if (l->p2.state == P2D_DONE) { if (l->p2.mode == P2D_MODE_V92) vl_start_v92(l); else vl_start_p34(l); }
             else if (l->p2.state == P2D_FAILED) l->dstate = 2;
         } else if (l->dstate == 1) out = p34d_tick(&l->p34, x);
+        else if (l->dstate == 3) out = v92d_tick(&l->v92d, x);
         else out = v90_pcm_octet(alaw, 0, 1);
     }
     if (l->dmute) out = v90_pcm_octet(alaw, 0, 1);
@@ -152,15 +209,35 @@ static void vl_init(vl_t *l, const vl_cfg *c)
     dc.loop_km = c->loop_km; dc.level_db = -6; dc.noise_dbm0 = c->noise_dbm0; dc.ppm = c->ppm;
     dc.phase = c->phase; dc.echo_db = c->echo_db; dc.seed = c->seed;
     dschan_init(&l->ch, &dc, vl_src, l);
+    if (c->up_line) {
+        /* the response on the network clock, unit gain at 1 kHz */
+        static v92chan_t vc;
+        double re = 0, im = 0, g;
+        int k;
+        if (c->up_line == 1) {
+            v92chan_cfg cc;
+            memset(&cc, 0, sizeof cc);
+            cc.shape = c->loop_km > 2 ? 1 : 0; cc.level = 1000; cc.seed = 1;
+            v92chan_init(&vc, &cc);
+        }
+        for (k = 0; k < VL_UPN; k++) {
+            l->uph[k] = c->up_line == 1 ? v92chan_pulse(&vc, k + 0.37) : dschan_pulse(&l->ch, k - DSCH_PRE + 0.37);
+            re += l->uph[k] * cos(2 * 3.14159265358979323846 * k / 8.0);
+            im -= l->uph[k] * sin(2 * 3.14159265358979323846 * k / 8.0);
+        }
+        g = sqrt(re * re + im * im);
+        for (k = 0; k < VL_UPN; k++) l->uph[k] /= g;
+    }
     /* our samples, on the network clock: out / in = 1 / (1 + ppm) */
     sresamp_init(&l->rs, 1.0 / (1.0 + c->ppm * 1e-6));
+    lresamp_init(&l->lrs, 1.0 / (1.0 + c->ppm * 1e-6));
     l->up_gain = pow(10, -c->up_loss_db / 20);
     l->up_nrms = 15770.0 * pow(10, c->up_noise_dbm0 / 20);
     if (c->full) {
         answer_cfg ac;
         p2d_cfg pc;
         memset(&ac, 0, sizeof ac);
-        ac.level = 3000; ac.modes = V8_MOD_V34 | V8_MOD_V32 | V8_MOD_V22 | V8_MOD_V21 | ANS_MODE_V90;
+        ac.level = 3000; ac.modes = V8_MOD_V34 | V8_MOD_V32 | V8_MOD_V22 | V8_MOD_V21 | ANS_MODE_V90 | (c->v92 ? ANS_MODE_V92 : 0);
         ac.getbit = vl_get_down; ac.putbit = vl_put_up; ac.user = l;
         answer_init(&l->ans, &ac);
         pc = l->ans.p2cfg; pc.alaw = c->alaw;
@@ -171,12 +248,13 @@ static void vl_init(vl_t *l, const vl_cfg *c)
         memset(&pc, 0, sizeof pc);
         pc.tx_dbm0 = -12; pc.max_tx_code = ANS_MAX_TX_CODE; pc.alaw = c->alaw; pc.up_sr_mask = (1 << 3) | (1 << 4);
         p2d_init(&l->p2, &pc);
+        if (c->v92) p2d_offer_v92(&l->p2, 1);
     }
     if (c->caller_orig) {
         orig_cfg oc;
         memset(&oc, 0, sizeof oc);
         oc.level = c->caller_level ? c->caller_level : 3000;
-        oc.modes = V8_MOD_V34 | V8_MOD_V22 | V8_MOD_V21 | ORIG_MODE_V90;
+        oc.modes = V8_MOD_V34 | V8_MOD_V22 | V8_MOD_V21 | ORIG_MODE_V90 | (c->caller_v92 ? ORIG_MODE_V92 : 0);
         oc.echo_delay = 0; oc.law = 0;
         oc.getbit = vl_get_up; oc.putbit = vl_put_down; oc.user = l;
         orig_init(&l->org, &oc);
@@ -184,6 +262,7 @@ static void vl_init(vl_t *l, const vl_cfg *c)
         v90a_cfg vc;
         memset(&vc, 0, sizeof vc);
         vc.level = c->caller_level ? c->caller_level : 3000;
+        vc.v92 = c->caller_v92;
         vc.getbit = vl_get_up; vc.putbit = vl_put_down; vc.user = l;
         v90a_init(&l->va, &vc);
     }
@@ -197,7 +276,7 @@ static void vl_tick(vl_t *l)
     int i, n;
     l->last_rx = rx;
     tx = l->cfg.caller_orig ? orig_tick(&l->org, rx) : v90a_tick(&l->va, rx);
-    n = sresamp_push(&l->rs, tx, o, 4);
+    n = l->cfg.up_line ? lresamp_push(&l->lrs, tx, o, 4) : sresamp_push(&l->rs, tx, o, 4);
     for (i = 0; i < n; i++) {
         int h = (l->fh + 1) % VL_FIFO;
         if (h != l->ft) { l->fifo[l->fh] = o[i]; l->fh = h; }

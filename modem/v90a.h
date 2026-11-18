@@ -40,6 +40,11 @@
 #include "../v90/v90_enc.h"
 #include "../v90/v90_scr.h"
 #include "../v90/v90_tx.h"           /* v90_pack_bits */
+#include "../v92/v92_seq.h"
+#include "../v92/v92_sig.h"
+#include "../v92/v92_enc.h"
+#include "pcmtx.h"
+#include "v92aseq.h"
 
 #define V90A_ECDL 512               /* echo canceller reference delay line */
 
@@ -58,6 +63,7 @@ typedef struct {
     int z_q4;                       /* CP: least distance between points / noise sigma, Q4;
                                        0 = 12 (V90A_Z_CP) */
     int table1;                     /* tests only: take Table 1's levels, not the DIL's */
+    int v92;                        /* V.92: PCM upstream when the digital modem offers it (see top) */
     v90a_getbit_fn getbit;          /* data to send */
     v90a_putbit_fn putbit;          /* data received */
     void *user;
@@ -89,7 +95,9 @@ enum {
     V90A_ERR_RATE,                  /* no downstream rate fits (we cleared down), or no upstream rate */
     V90A_ERR_CLEARDOWN,             /* the digital modem cleared down (MP with drn = 0) */
     V90A_ERR_HANGUP,                /* we cleared down (v90a_cleardown) */
-    V90A_ERR_CARRIER                /* the downstream went away (or the digital modem retrained) */
+    V90A_ERR_CARRIER,               /* the downstream went away (or the digital modem retrained) */
+    V90A_ERR_JP,                    /* V.92: no Jp after our Su, or no Jp' after our second Su-bar */
+    V90A_ERR_CPD                    /* V.92: a CPd our transmitter cannot use */
 };
 
 typedef struct {
@@ -142,7 +150,8 @@ typedef struct {
     int        us; int32_t un;      /* upstream sub-state, symbols in it */
     int        n_trn, n_md;         /* TRN and MD, symbols */
     uint32_t   md_rng; int md_on; int32_t md_samples, md_total;
-    uint8_t    fr[(V90_DIL_MAX_BITS + 7) / 8]; int frn, frpos, fr_ack;   /* the sequence being sent, packed */
+    uint8_t    fr[(V92_JA_MAX_BITS + 7) / 8]; int frn, frpos, fr_ack;   /* the sequence being sent, packed
+                                       (Ja is the longest: V.90's DIL descriptor, CPt, CPu fit) */
     int        cp_ack_sent, cps_sent;
     int        ribar_seen, cp_ready, clearing;
     v34_params_t vpar; v34_tx_t vtx; int32_t tx_dg;
@@ -155,6 +164,28 @@ typedef struct {
     int        erle_db10;           /* the canceller at the end of MD */
     int64_t    erle_rx, erle_res;
     int        renegs;              /* renegotiations completed */
+    /* ---- V.92, PCM upstream (v92 on and INFO1a of Table 18) ---- */
+    int        pcm;                 /* 1: this call's upstream is PCM */
+    pcmtx_t    ptx;                 /* the symbols on to our clock */
+    int32_t    lu;                  /* LU: the level of TRN1u (3.8/V.92), linear */
+    int32_t    ec_n, ec_len;        /* the canceller learns on TRN1u: samples so far, of */
+    v92_sgn_t  sgn;                 /* two-point signals (GPA) */
+    v92_ml_t   ml;                  /* the TRN2u modulation */
+    int        sbit;                /* the line bit (sign) of the last symbol sent */
+    v92_jd_t   jd92;
+    v92_jp_t   jp; int jp_ok;
+    v92_cpu_t  cpt92;               /* CPt, Table 23 type 0 */
+    int        cpt_ready, ri_seen, ru_due, ja_stop, in_reneg;
+    uint32_t   slip;                /* a slip to make once the symbol being made is out, Q16; 0 none */
+    uint32_t   up92_rates;          /* Ja: upstream rates, bit r = (r + 18) * 8000 / 6 */
+    v92aseq_t  aseq;                /* SUVd, CPd, Ed */
+    v92_cpd_t  cpd;                 /* the CPd in use */
+    int        got_suvd, got_ack, got_cpd;
+    int        cpu_sent, ack_sent, seq_ack, cpus_left;
+    int32_t    since_cpu;
+    v92_enc_t  enc;
+    int32_t    b1_bits;
+    int32_t    t_su, t_jp, t_cpt, t_suvd;
 } v90a_t;
 
 void    v90a_init(v90a_t *a, const v90a_cfg *cfg);

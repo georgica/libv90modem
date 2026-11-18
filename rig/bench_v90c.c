@@ -1,7 +1,8 @@
 /* The calling modem in V.90 (modem/orig with modem/v90a) on the target:
  * replays what tools/rec_v90c recorded and prints a hash of everything it
  * sent (integer only, so it must equal the host's), when it reached data
- * mode, its rates, and the bits it received.
+ * mode, its rates, and the bits it received. A recording of a V.92 call
+ * ("V92C0001") is replayed with V.92 on as well (PCM upstream).
  *
  *   bench_v90c RECORDING [-w N]
  *
@@ -51,7 +52,7 @@ int main(int argc, char **argv)
 
     if (argc < 2) { fprintf(stderr, "usage: bench_v90c RECORDING [-w N]\n"); return 2; }
     f = fopen(argv[1], "rb");
-    if (!f || fread(hdr, 1, 12, f) != 12 || memcmp(hdr, "V90C0001", 8) != 0) {
+    if (!f || fread(hdr, 1, 12, f) != 12 || (memcmp(hdr, "V90C0001", 8) != 0 && memcmp(hdr, "V92C0001", 8) != 0)) {
         fprintf(stderr, "bench_v90c: not a recording of rec_v90c\n");
         return 1;
     }
@@ -61,6 +62,7 @@ int main(int argc, char **argv)
     memset(&s, 0, sizeof s); s.gen = (0x4321u + 5u) | 1u;
     memset(&c, 0, sizeof c);
     c.level = 3000; c.modes = V8_MOD_V34 | V8_MOD_V22 | V8_MOD_V21 | ORIG_MODE_V90;
+    if (memcmp(hdr, "V92C0001", 8) == 0) c.modes |= ORIG_MODE_V92;
     c.echo_delay = 0; c.law = 0;
     c.getbit = get; c.putbit = put; c.user = &s;
     orig_init(&o, &c);
@@ -84,9 +86,9 @@ int main(int argc, char **argv)
     }
     t = now() - t0;
     fclose(f);
-    printf("bench_v90c: %" PRId64 " samples (%.2f s of line), data mode at sample %" PRId64 " (recorded %" PRIu32 "), "
+    printf("bench_v90c: %" PRId64 " samples (%.2f s of line), %sdata mode at sample %" PRId64 " (recorded %" PRIu32 "), "
            "%d / %d bit/s, %" PRId64 " bits received, hash %08" PRIx32 "\n",
-           k, (double)k / 8000.0, t_data, t_rec, o.rx_bitrate, o.bitrate, s.got, hash);
+           k, (double)k / 8000.0, o.modulation == ORIG_MOD_V92 ? "V.92, " : "", t_data, t_rec, o.rx_bitrate, o.bitrate, s.got, hash);
     if (!nw) fprintf(stderr, "bench_v90c: %.3f s of CPU here (%.1f %% of real time)\n", t, 100.0 * t / ((double)k / 8000.0 + 1e-9));
     for (i = 0; i < nw; i++) if (wk[i] >= 0) printf("slow tick %" PRId64 " (%.3f s): %.1f us here\n", wk[i], (double)wk[i] / 8000.0, wt[i] * 1e6);
     return 0;

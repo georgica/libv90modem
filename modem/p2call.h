@@ -47,7 +47,10 @@ typedef struct {
     int max_rate;       /* ceiling for the projected answer -> call rate, bit/s; 0 = none */
     /* V.90 (p2call_init_v90) only */
     int uinfo;          /* INFO1a bits 25:31 */
-    int md_len;         /* INFO1a bits 18:24: the MD we send in Phase 3, units of 35 ms */
+    int md_len;         /* INFO1a bits 18:24: the MD we send in Phase 3, units of 35 ms
+                           (with PCM upstream: units of 276 symbols, Table 18/V.92) */
+    int v92;            /* V.92 (9.3/V.92): INFO0a bit 26; INFO1a of Table 18 (PCM upstream)
+                           when INFO0d bit 27 and INFO1d bit 70 allow it */
 } p2call_cfg;
 
 typedef enum {
@@ -122,7 +125,11 @@ typedef struct {
     int          v90;
     info0_t      info0d; int got0d;
     info1d_t     info1d;            /* as received */
-    info1a_t     info1a_v90;        /* as sent (Table 10) */
+    info1a_t     info1a_v90;        /* as sent (Table 10, or Table 18 of V.92) */
+    int          pcm_up;            /* INFO1a selected PCM upstream (Table 18/V.92) */
+    int32_t      clk_ppm_q8;        /* our clock against the network's, 1/256 ppm, from the digital
+                                       modem's L2 (each tone turns, from block to block, by its
+                                       frequency times the offset); 0 when not measured */
     int32_t      a_rev_line, tone_since, l2_from;
 } p2call_t;
 

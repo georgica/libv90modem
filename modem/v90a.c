@@ -24,10 +24,21 @@
 #define T_RI_MS      3000           /* Ri after our S-bar */
 #define T_P4_MS      15000          /* 9.4.2: B1d within 15 s (+ 5 round trips) of INFO1a */
 #define T_RENEG_MS   6000           /* 9.6.2: Ed within 5000 ms (+ 2 round trips) */
+/* V.92 */
+#define TRN1U_SYMS   6000           /* the first TRN1u (>= 2040 T): the canceller learns on it */
+#define TRN1U2_MIN   2040           /* the second, before CPt (9.5.2.1.9) */
+#define TRN2U_SYMS   12000          /* TRN2u when no SUVd has come (9.6.2.1.1) */
+#define TRN2U_RENEG  2400           /* ... in a rate renegotiation (9.8.2.1.2) */
+#define T_JP_MS      3000           /* Jp after our Su, Jp' after our second Su-bar */
+#define T_P4_92_MS   20000          /* 9.6.2.2.1: B1d within 20 s (+ 6 round trips) of INFO1a */
+#define T_RENEG92_MS 12000          /* the digital modem designs CPd again: several seconds */
 
 enum { U_SIL, U_S1, U_SB1, U_MD, U_S2, U_SB2, U_PP, U_TRN, U_JA, U_QUIET, U_SJ, U_SBJ, U_DILQ, U_S4, U_SB4,
        U_CPT, U_SCR, U_CP, U_E, U_DATA, U_RS, U_RSB, U_OFF };
 enum { D_SD, D_JD, D_DIL, D_DILEND, D_RI, D_TRAIN, D_B1D, D_DATA, D_RD };
+/* the V.92 upstream (the same `us`) */
+enum { P_SIL = 64, P_RU, P_RUB, P_TRN1, P_JA, P_QUIET, P_SU1, P_SUB1, P_SU2, P_SUB2, P_TRN1B, P_CPT, P_E1U,
+       P_TRN2U, P_SEQ, P_E2U, P_DATA, P_RRU, P_RRUB };
 
 static void end(v90a_t *a, int err)
 {
@@ -113,18 +124,25 @@ void v90a_init(v90a_t *a, const v90a_cfg *cfg)
     pc.level = a->cfg.level; pc.io_delay = a->cfg.echo_delay;
     pc.uinfo = a->cfg.uinfo; pc.md_len = a->cfg.md_len;
     pc.max_rate = a->cfg.max_rx_bps;
+    pc.v92 = a->cfg.v92;
     p2call_init_v90(&a->p2, &pc);
     a->state = V90A_P2;
     a->t_info1a = a->t_ja = a->t_ja_end = a->t_sd = a->t_jd = a->t_jdp = a->t_dil_end = -1;
     a->t_ri = a->t_ribar = a->t_mp = a->t_ed = a->t_data = -1;
     a->dil_m0 = a->dil_end = a->ri_m0 = a->ribar_m0 = a->m_trn2d = a->m_b1d = -1;
+    a->t_su = a->t_jp = a->t_cpt = a->t_suvd = -1;
 }
+
+static void start_p3_v92(v90a_t *a);
+static void jd92_bit(v90a_t *a, const v90arx_dec_t *d);
+static void train92(v90a_t *a, const uint8_t *bits, int D, int32_t m0);
 
 /* Phase 2 is over: INFO1a has gone (9.3.2.1) */
 static void start_p3(v90a_t *a)
 {
     v90arx_cfg_t rc;
     int num, den, k, sr = a->p2.sym_rate;
+    if (a->p2.pcm_up) { start_p3_v92(a); return; }
     a->alaw = a->p2.info0d.alaw != 0;
     a->t_info1a = a->now;
     v34_carrier(a->p2.sym_idx, a->p2.tx_hi_carrier, &num, &den);
@@ -369,6 +387,20 @@ static void jd_bit(v90a_t *a, const v90arx_dec_t *d)
     if (++a->jbn >= V90_JD_BITS) a->jbn = 0;
 }
 
+/* a CP of V.90 as the CPt / CPu of V.92 (Table 23: the same fields) */
+static void cp_to_cpu(const v90_cp_t *cp, int type, v92_cpu_t *u)
+{
+    memset(u, 0, sizeof *u);
+    u->type = (uint8_t)type;
+    u->drn = cp->drn; u->sr = cp->sr; u->ack = cp->ack; u->alaw = cp->alaw; u->ld = cp->ld;
+    u->rms_ratio = cp->rms_ratio;
+    u->a1 = cp->a1; u->a2 = cp->a2; u->b1 = cp->b1; u->b2 = cp->b2;
+    memcpy(u->idx, cp->idx, sizeof u->idx);
+    u->codec_differs = cp->codec_differs;
+    memcpy(u->mask, cp->mask, sizeof u->mask);
+    memcpy(u->codec_mask, cp->codec_mask, sizeof u->codec_mask);
+}
+
 /* enough of the DIL: what it says, CPt, and S, S-bar to end it (9.3.2.10) */
 static void dil_finish(v90a_t *a)
 {
@@ -397,6 +429,7 @@ static void dil_finish(v90a_t *a)
     if (v90dil_design_cp(&a->res, &q, &a->cpt, &a->cpt_ch) == 0 || v90_map_from_cp(&a->tmap, &a->cpt) != 0) {
         end(a, V90A_ERR_RATE); return;
     }
+    if (a->pcm) { cp_to_cpu(&a->cpt, V92_UP_CPT, &a->cpt92); a->cpt_ready = 1; }   /* V.92: CPt goes out next */
     a->t_dil_end = a->now;
     a->ds = D_DILEND;
 }
@@ -424,7 +457,7 @@ static void ri_dec(v90a_t *a, const v90arx_dec_t *d)
     if (a->hold_until >= 0 && m >= a->hold_until) { v90arx_hold(&a->rx, 0); a->hold_until = -1; }
     if ((m - a->ri_m0) % 6 != 5 || m < a->ri_m0 + 11) return;   /* the first unit had a DIL symbol fed back */
     for (k = 0; k < 6; k++) r += a->rsg[(m - 5 + k) & 63] == (k < 3);
-    if (r >= 5) { a->ri_units++; return; }
+    if (r >= 5) { if (++a->ri_units >= 2 && a->pcm) a->ri_seen = 1; return; }
     if (r <= 1 && a->ri_units >= 2) {
         /* Ri-bar, 24 T; TRN2d after it with CPt's constellations (8.6.5) */
         a->ribar_m0 = m - 5; a->m_trn2d = a->ribar_m0 + 24; a->t_ribar = a->now;
@@ -434,6 +467,9 @@ static void ri_dec(v90a_t *a, const v90arx_dec_t *d)
         v90_scr_init(&a->dscr);
         a->mbn = a->mones = 0; a->got_mp = a->got_mpa = a->after_mpa = a->got_ed = 0;
         a->trn2d_syms = 0;
+        if (a->pcm) {
+            v92aseq_init(&a->aseq); a->got_suvd = a->got_cpd = a->got_ack = 0;
+        }
         a->ds = D_TRAIN;
     }
 }
@@ -454,8 +490,8 @@ static void design_cp(v90a_t *a)
     }
     q.rates = a->jd.rates; q.max_bps = a->cfg.max_rx_bps; q.up_rates = a->up_rates;
     if (v90dil_design_cp(&a->res, &q, &a->cp, &a->cp_ch) == 0 || v90_map_from_cp(&a->dmap, &a->cp) != 0) {
-        /* nothing fits: CP with drn = 0 is the cleardown (8.5.2) */
-        a->clearing = 1; a->error = V90A_ERR_RATE;
+        /* nothing fits: CP with drn = 0 is the cleardown (8.5.2; V.92: CPu, 9.11) */
+        a->clearing = 1; a->error = V90A_ERR_RATE; a->cpus_left = CLEAR_CPS;
     }
     a->cp_ready = 1;
 }
@@ -501,6 +537,7 @@ static void frame(v90a_t *a, int32_t m0)
     for (i = 0; i < D; i++) { bits[i] = (uint8_t)v90_descramble_gpc(&a->dscr, bits[i]); ones += bits[i]; }
     switch (a->ds) {
     case D_TRAIN:
+        if (a->pcm && a->after_mpa != 3) { train92(a, bits, D, m0); break; }
         if (a->after_mpa == 2) {
             if (ones == 0) {
                 /* Ed (8.6.2): two frames of zeros after MP'; B1d after them */
@@ -552,11 +589,12 @@ static void frame(v90a_t *a, int32_t m0)
         if (pol && (a->rd_frames == 0 || pol == a->rd_pol)) { a->rd_pol = pol; a->rd_frames++; }
         else a->rd_frames = 0;
         if (a->rd_frames >= 2) {
-            /* 9.6.2.2: the digital modem renegotiates; S, S-bar, CP from us */
+            /* 9.6.2.2: the digital modem renegotiates; S, S-bar, CP from us.
+             * V.92 (9.8.2.2): our Ru waits for its Rd-bar */
             a->rx_ready = 0; a->tx_ready = 0;
             a->rd_units = 2;
-            a->state = V90A_RENEG; a->t = 0;
-            ugo(a, U_RS);
+            if (!a->pcm) { a->state = V90A_RENEG; a->t = 0; ugo(a, U_RS); }
+            else if (a->state != V90A_RENEG) { a->state = V90A_RENEG; a->t = 0; }
             a->ds = D_RD;
             return;
         }
@@ -608,6 +646,11 @@ static void rd_dec(v90a_t *a, const v90arx_dec_t *d)
         v90_scr_init(&a->dscr);
         a->mbn = a->mones = 0; a->got_mp = a->got_mpa = a->after_mpa = a->got_ed = 0;
         a->trn2d_syms = TRN2D_MEAS;     /* CP stays as it was */
+        if (a->pcm) {
+            /* 9.8.2.2.2: Ru on our next data frame boundary */
+            v92aseq_init(&a->aseq); a->got_suvd = a->got_cpd = a->got_ack = 0;
+            if (a->us == P_DATA) a->ru_due = 1;
+        }
         a->ds = D_TRAIN;
     }
 }
@@ -616,7 +659,7 @@ static void on_dec(v90a_t *a, const v90arx_dec_t *d)
 {
     a->ry[d->m & 63] = d->y; a->rsg[d->m & 63] = d->sign;
     switch (a->ds) {
-    case D_JD: jd_bit(a, d); break;
+    case D_JD: if (a->pcm) jd92_bit(a, d); else jd_bit(a, d); break;
     case D_DIL: case D_DILEND: dil_dec(a, d); break;
     case D_RI: ri_dec(a, d); break;
     case D_TRAIN: case D_B1D: case D_DATA: frame_dec(a, d); break;
@@ -634,24 +677,368 @@ static void watch(v90a_t *a)
             /* 9.3.2.4: Sd-bar ends Ja */
             a->t_sd = a->now;
             if (a->us == U_JA) { ugo(a, U_QUIET); a->t_ja_end = a->now; }
+            if (a->us == P_JA) a->ja_stop = 1;          /* V.92 9.5.2.1.3: at the next 12 bit boundary */
             v90_scr_init(&a->jscr); a->jprev = 0; a->jbn = 0; a->jones = 0;
             a->ds = D_JD;
         } else if (a->t_ja >= 0 && a->now - a->t_ja > MS(T_SD_MS)) { end(a, V90A_ERR_SD); return; }
     }
     if (a->rx.state == V90ARX_FAIL) { end(a, V90A_ERR_TRAIN); return; }
     if (a->ds == D_JD && !a->jd_ok && a->t_ja_end >= 0 && a->now - a->t_ja_end > MS(T_JD_MS)) { end(a, V90A_ERR_JD); return; }
-    if (a->ds == D_JD && a->jd_ok && a->now - a->t_jd > MS(T_JDP_MS)) { end(a, V90A_ERR_JDP); return; }
+    if (a->ds == D_JD && a->jd_ok && !a->pcm && a->now - a->t_jd > MS(T_JDP_MS)) { end(a, V90A_ERR_JDP); return; }
+    if (a->pcm && a->ds == D_JD && a->t_su >= 0 && !a->jp_ok && a->now - a->t_su > MS(T_JP_MS)) { end(a, V90A_ERR_JP); return; }
+    if (a->pcm && a->ds == D_JD && a->jp_ok && a->us == P_TRN1B && a->now - a->t_jp > MS(T_JP_MS) + MS(100)) { end(a, V90A_ERR_JP); return; }
     if (a->ds == D_DIL && a->now - a->t_jdp > MS(T_DIL_MS)) {
         if (v90dil_acc_min(&a->acc) >= 2) dil_finish(a); else end(a, V90A_ERR_DIL);
         if (a->state == V90A_ENDED) return;
     }
     if (a->ds == D_DILEND && a->now - a->t_dil_end > MS(T_RI_MS)) { end(a, V90A_ERR_RI); return; }
-    if ((a->state == V90A_P3 || a->state == V90A_P4) && a->now - a->t_info1a > MS(T_P4_MS) + 5 * rtd) { end(a, V90A_ERR_PHASE4); return; }
-    if (a->state == V90A_RENEG && a->t > MS(T_RENEG_MS) + 2 * rtd) { end(a, V90A_ERR_CARRIER); return; }
+    if ((a->state == V90A_P3 || a->state == V90A_P4)
+        && a->now - a->t_info1a > (a->pcm ? MS(T_P4_92_MS) + 6 * rtd : MS(T_P4_MS) + 5 * rtd)) { end(a, V90A_ERR_PHASE4); return; }
+    if (a->state == V90A_RENEG && a->t > (a->pcm ? MS(T_RENEG92_MS) : MS(T_RENEG_MS)) + 2 * rtd) { end(a, V90A_ERR_CARRIER); return; }
     if ((a->state == V90A_P4 || a->state == V90A_RENEG) && a->rx_ready && a->tx_ready && !a->clearing) {
         if (a->state == V90A_RENEG) a->renegs++;
         a->state = V90A_DATA; a->t = 0;
         if (a->t_data < 0) a->t_data = a->now;
+    }
+}
+
+/* ==== V.92: PCM upstream ==================================================
+ *
+ * Phase 3 (9.5.2): silence 70 ms, Ru 384 T, Ru-bar 24 T, TRN1u (the echo
+ * canceller learns on it: the digital modem is silent, and TRN1u is our
+ * widest signal), Ja (24 ones, the DIL descriptor with our upstream rates)
+ * until Sd-bar is heard, to the next 12 bit boundary; silence; the
+ * downstream receiver learns on Sd and TRN1d; Jd; Su 144 T, Su-bar 24.5 T,
+ * Su until Jp, Su-bar (24 + Jp's fraction) T; TRN1u again (the data frame
+ * count begins) while the DIL is measured; CPt (24 ones first) until Ri,
+ * E1u.
+ * Phase 4 (9.6.2): TRN2u until SUVd (or 12000 T), SUVu; one CPu after the
+ * first SUVd (CP of V.90's design, from the DIL and TRN2d's noise), SUVu
+ * again, the acknowledge bit once CPd is in; E2u once an acknowledged
+ * sequence has gone out and SUVd' / CPd' or Ed has come in; B1u and data
+ * through modem/v92_enc with what CPd dictates (precoder, prefilter, gain,
+ * moduli, constellations), every symbol on the network clock (pcmtx).
+ * Downstream as V.90 but for Jd / Jp / Jp' (8.6.2 to 8.6.4) and SUVd / CPd /
+ * Ed in TRN2d (modem/v92aseq).
+ * Rate renegotiation begun by the digital modem (9.8.2.2): after its Rd-bar,
+ * Ru on our next data frame boundary, Ru-bar, TRN2u (2400 T or until SUVd),
+ * then as Phase 4. Cleardown (9.11): the same with a CPu of drn = 0. */
+
+static void start_p3_v92(v90a_t *a)
+{
+    v90arx_cfg_t rc;
+    int r;
+    a->pcm = 1;
+    a->alaw = a->p2.info0d.alaw != 0;
+    a->t_info1a = a->now;
+    a->lu = a->cfg.level > 0 ? a->cfg.level : 3000;
+    memset(&rc, 0, sizeof rc);
+    rc.alaw = a->alaw; rc.uinfo = a->cfg.uinfo;
+    rc.known_lv = dil_known; rc.known_ctx = a;
+    v90arx_init(&a->rx, &rc);
+    v90arx_deaf(&a->rx, 1);             /* until Ja: our own Ru has Sd's period */
+    v90arx_clock(&a->rx, a->p2.clk_ppm_q8);     /* the symbol clock from the start (6.2/V.92) */
+    a->rx_on = 1;
+    v90dil_design(&a->dil, a->cfg.uinfo);
+    a->up92_rates = 0;
+    for (r = 0; r < V92_UP_NUM_RATES; r++)
+        if (a->cfg.max_tx_bps <= 0 || V92_UP_BPS(r + 1) <= a->cfg.max_tx_bps) a->up92_rates |= 1u << r;
+    if (!a->up92_rates) a->up92_rates = 1;          /* 24000 bit/s is the least there is */
+    pcmtx_init(&a->ptx);
+    pcmtx_wide(&a->ptx, 1);             /* the canceller learns on the whole band (pcmtx.h) */
+    v92_sgn_init(&a->sgn, 0);
+    a->ds = D_SD;
+    ugo(a, P_SIL);
+    a->state = V90A_P3; a->t = 0;
+}
+
+/* Jd (Table 21) repeated, then Jp (Table 22) repeated, then Jp' (12 zeros):
+ * the sign of UINFO, differentially, through the GPC descrambler that has run
+ * since TRN1d began, as in V.90 */
+static void jd92_bit(v90a_t *a, const v90arx_dec_t *d)
+{
+    int c = d->sign ^ a->jprev, bit, kind;
+    a->jprev = d->sign;
+    bit = v90_descramble_gpc(&a->jscr, c);
+    if (!a->jd_ok) {
+        if (a->jbn > 0) {
+            a->jb[a->jbn++] = (uint8_t)bit;
+            if (a->jbn == V92_J_BITS) {
+                if (v92_j_kind(a->jb, V92_J_BITS) == V92_J_JD && v92_jd_parse(a->jb, V92_J_BITS, &a->jd92) == V92_J_BITS) {
+                    a->jd_ok = 1; a->t_jd = a->now; a->jdp_zeros = 0;
+                    a->jd.rates = a->jd92.rates;
+                    if (a->us == P_QUIET) { ugo(a, P_SU1); a->t_su = a->now; }    /* 9.5.2.1.6 */
+                }
+                a->jbn = 0; a->jones = 0;
+            }
+            return;
+        }
+        if (bit) { a->jones++; return; }
+        if (a->jones >= 17) { memset(a->jb, 1, 17); a->jb[17] = 0; a->jbn = 18; }
+        a->jones = 0;
+        return;
+    }
+    /* in step with the sequences: more Jd, Jp, and after a Jp maybe Jp' */
+    if (a->jbn == 0 && !bit && a->jp_ok) {
+        a->jdp_m = d->m; a->jdp_zeros = 1;
+        a->dil_m0 = d->m + 12; a->dil_mnext = a->dil_m0; a->dil_end = -1;
+        v90dil_cur_init(&a->dcur);
+        v90arx_hold(&a->rx, 1);
+    } else if (a->jdp_zeros > 0) {
+        if (bit) { a->jdp_zeros = 0; a->dil_m0 = -1; v90arx_hold(&a->rx, 0); }
+        else if (++a->jdp_zeros == 12) {
+            int s;
+            a->t_jdp = a->now;
+            for (s = 0; s < 6; s++) a->sig_jd[s] = (uint32_t)v90arx_mse_slot(&a->rx, s);
+            v90dil_acc_init(&a->acc);
+            a->acc_on = 1;
+            a->ds = D_DIL;
+            return;
+        }
+    }
+    a->jb[a->jbn] = (uint8_t)bit;
+    if (++a->jbn < V92_J_BITS) return;
+    a->jbn = 0;
+    kind = v92_j_kind(a->jb, V92_J_BITS);
+    if (kind == V92_J_JP && !a->jp_ok && v92_jp_parse(a->jb, V92_J_BITS, &a->jp) == V92_J_BITS) {
+        a->jp_ok = 1; a->t_jp = a->now;             /* 9.5.2.1.8: Su-bar with the fraction */
+    }
+}
+
+/* a data frame of TRN2d (SUVd, CPd, Ed in it) */
+static void train92(v90a_t *a, const uint8_t *bits, int D, int32_t m0)
+{
+    v92_suvd_t sv;
+    int ev, i, ones = 0;
+    if (!a->got_suvd && !a->got_cpd && !a->aseq.in) {
+        for (i = 0; i < D; i++) ones += bits[i];
+        a->trn2d_frames++;
+        if (ones != D) a->trn2d_bad++;
+    }
+    ev = v92aseq_frame(&a->aseq, bits, D, &sv, &a->cpd);
+    if (ev & V92AS_SUVD) {
+        a->got_suvd = 1;
+        if (sv.ack) a->got_ack = 1;
+        if (a->t_suvd < 0) a->t_suvd = a->now;
+    }
+    if (ev & V92AS_CPD) {
+        a->got_cpd = 1;
+        if (a->cpd.ack) a->got_ack = 1;
+        if (a->t_mp < 0) a->t_mp = a->now;
+        if (a->cpd.drn == 0) { end(a, a->clearing ? V90A_ERR_HANGUP : V90A_ERR_CLEARDOWN); return; }    /* 9.11 */
+    }
+    if ((ev & V92AS_ED) && (a->got_suvd || a->got_cpd)) {
+        /* Ed (8.8.2): this frame and the next; B1d after them, with our CPu */
+        a->got_ed = 1; a->t_ed = a->now;
+        a->m_b1d = m0 + 12;
+        set_cons(a, &a->cp, a->m_b1d);
+        a->after_mpa = 3;
+    }
+}
+
+/* ---- the upstream symbols ---- */
+
+static int16_t two(v90a_t *a, int sbit)
+{
+    a->sbit = sbit;
+    return (int16_t)(sbit ? -a->lu : a->lu);
+}
+
+static void start_trn2u(v90a_t *a, int reneg)
+{
+    v92_ml_init(&a->ml, reneg ? a->jp.pt8_reneg : a->jp.pt8_train, a->sbit);
+    a->in_reneg = reneg;
+    a->cpu_sent = a->ack_sent = a->seq_ack = 0;
+    ugo(a, P_TRN2U);
+}
+
+static int enc_get(void *user)
+{
+    v90a_t *a = (v90a_t *)user;
+    if (a->b1_bits > 0) { if (--a->b1_bits == 0) a->tx_ready = 1; return 1; }    /* B1u: ones (8.7.1) */
+    return a->cfg.getbit ? a->cfg.getbit(a->cfg.user) & 1 : 1;
+}
+
+/* E2u is over: B1u and data with CPd's parameters (8.7.1) */
+static void start_b1u(v90a_t *a)
+{
+    const v92_cpd_t *c = &a->cpd;
+    if (!a->got_cpd || c->drn < 1 || c->drn > V92_UP_NUM_RATES || !((a->up92_rates >> (c->drn - 1)) & 1)
+        || !c->has_mod || !c->has_filt || !c->has_const
+        || v92_enc_init(&a->enc, &a->cpd.map, &a->cpd.filt, enc_get, a) != 0) { end(a, V90A_ERR_CPD); return; }
+    a->b1_bits = (int32_t)V92_B1U_FRAMES * c->map.K;
+    a->up_rate = V92_UP_BPS(c->drn);
+    a->tx_ready = 0;
+    ugo(a, P_DATA);
+}
+
+/* the next sequence in the TRN2u modulation (9.6.2.1.2 to .4, 9.11) */
+static void seq_next(v90a_t *a)
+{
+    uint8_t bits[V92_CPU_MAX_BITS];
+    int unit = a->ml.nbits * 12, n;
+    if (a->seq_ack) a->ack_sent = 1;
+    a->seq_ack = 0;
+    if (a->clearing) {
+        /* CPu with drn = 0, CLEAR_CPS of them, then silence */
+        v92_cpu_t u;
+        if (a->cpus_left-- <= 0) { end(a, V90A_ERR_HANGUP); return; }
+        cp_to_cpu(&a->cp, V92_UP_CPU, &u);
+        u.drn = 0; u.ack = 0;
+        load_bits(a, bits, v92_cpu_build(&u, unit, bits));
+        return;
+    }
+    if (a->ack_sent && (a->got_ack || a->got_ed)) { ugo(a, P_E2U); return; }
+    if (a->got_suvd && a->cp_ready && (!a->cpu_sent || (!a->got_ack && a->since_cpu > MS(100) + a->p2.rtd + 600))) {
+        v92_cpu_t u;
+        cp_to_cpu(&a->cp, V92_UP_CPU, &u);
+        u.ack = (uint8_t)(a->got_cpd != 0);
+        n = v92_cpu_build(&u, unit, bits);
+        load_bits(a, bits, n);
+        a->cpu_sent = 1; a->since_cpu = -(n / a->ml.nbits);    /* counted from its end */
+        a->seq_ack = u.ack;
+        return;
+    }
+    {
+        v92_suvu_t v;
+        v.wait_cpu = 0; v.level = V92_SUVU_NO_LEVEL; v.silence = 0; v.ack = (uint8_t)(a->got_cpd != 0);
+        load_bits(a, bits, v92_suvu_build(&v, unit, bits));
+        a->seq_ack = v.ack;
+    }
+}
+
+static int16_t ml_sym(v90a_t *a, const uint8_t *b)
+{
+    int lvl = v92_ml_tx(&a->ml, b);
+    return (int16_t)v92_trn2u_level(lvl, a->ml.nbits == 3, a->lu);
+}
+
+/* the next symbol; linear */
+static int16_t up92_symbol(v90a_t *a)
+{
+    int32_t n = a->un++;
+    int16_t v;
+    switch (a->us) {
+    case P_SIL:
+        if (a->un >= MS(70)) ugo(a, P_RU);                  /* 9.5.2.1.1 */
+        return 0;
+    case P_RU: case P_RRU:
+        v = two(a, v92_ru_sbit((unsigned)n, 0));
+        if (a->un >= 384) ugo(a, a->us == P_RU ? P_RUB : P_RRUB);
+        return v;
+    case P_RUB: case P_RRUB:
+        v = two(a, v92_ru_sbit((unsigned)n, 1));
+        if (a->un >= 24) {
+            if (a->us == P_RRUB) start_trn2u(a, 1);
+            else {
+                v92_sgn_init(&a->sgn, 0);
+                a->ec_n = 0; a->ec_len = TRN1U_SYMS;         /* the canceller learns (v90a_tick) */
+                a->erle_rx = a->erle_res = 0;
+                ugo(a, P_TRN1);
+            }
+        }
+        return v;
+    case P_TRN1:
+        v = two(a, v92_sgn_tx_trn(&a->sgn));
+        if (a->un >= TRN1U_SYMS) {
+            uint8_t bits[V92_JA_MAX_BITS];
+            v92_ja_t ja;
+            ja.dil = a->dil; ja.rates = a->up92_rates;
+            load_bits(a, bits, v92_ja_build(&ja, bits));
+            a->t_ja = a->now; a->ja_stop = 0;
+            v90arx_deaf(&a->rx, 0);     /* Sd may come now (9.5.2.1.3) */
+            ugo(a, P_JA);
+        }
+        return v;
+    case P_JA: {
+        int bit = 1;
+        if (n >= V92_JA_PREAMBLE) {
+            if (a->frpos >= a->frn) a->frpos = 0;
+            bit = (int)fr_bit(a, a->frpos++);
+        }
+        v = two(a, v92_sgn_tx_bit(&a->sgn, bit));
+        if (a->ja_stop && a->un % 12 == 0) {
+            ugo(a, P_QUIET); a->t_ja_end = a->now;
+            pcmtx_wide(&a->ptx, 0);     /* silence: the low-pass from here on */
+        }
+        return v;
+    }
+    case P_QUIET:
+        return 0;
+    case P_SU1: case P_SU2:
+        v = (int16_t)v92_su_level((unsigned)n, 0, a->lu);
+        if (a->us == P_SU1 ? a->un >= 144 : a->jp_ok && a->un % 12 == 0) ugo(a, a->us == P_SU1 ? P_SUB1 : P_SUB2);
+        return v;
+    case P_SUB1: case P_SUB2:
+        v = (int16_t)v92_su_level((unsigned)n, 1, a->lu);
+        if (a->un >= 24) {
+            if (a->us == P_SUB1) { a->slip = 0x8000; ugo(a, P_SU2); }      /* 24.5 T (9.5.2.1.7) */
+            else {
+                a->slip = a->jp.frac;                               /* (24 + fraction) T (9.5.2.1.8) */
+                v92_sgn_init(&a->sgn, 0);
+                ugo(a, P_TRN1B);
+            }
+        }
+        return v;
+    case P_TRN1B:
+        v = two(a, v92_sgn_tx_trn(&a->sgn));
+        if (a->un % 12 == 0 && a->un >= TRN1U2_MIN && a->cpt_ready) {
+            uint8_t bits[V92_CPU_MAX_BITS];
+            load_bits(a, bits, v92_cpu_build(&a->cpt92, 12, bits));
+            a->t_cpt = a->now;
+            ugo(a, P_CPT);
+        }
+        return v;
+    case P_CPT: {
+        int bit = 1;
+        if (n >= 24) bit = (int)fr_bit(a, a->frpos++);       /* 8.5.1: 24 ones first */
+        v = two(a, v92_sgn_tx_bit(&a->sgn, bit));
+        if (n >= 24 && a->frpos >= a->frn) {
+            if (a->ri_seen) ugo(a, P_E1U);                  /* 9.5.2.1.11: complete the current one */
+            else a->frpos = 0;
+        }
+        return v;
+    }
+    case P_E1U:
+        v = two(a, v92_sgn_tx_bit(&a->sgn, 0));
+        if (a->un >= V92_E1U_BITS) { start_trn2u(a, 0); a->state = V90A_P4; }     /* Phase 4 (9.6.2) */
+        return v;
+    case P_TRN2U:
+        v = ml_sym(a, NULL);
+        if (a->un % 12 == 0 && (a->un >= (a->in_reneg ? TRN2U_RENEG : TRN2U_SYMS) || a->got_suvd)) {
+            seq_next(a);
+            if (a->state != V90A_ENDED && a->us == P_TRN2U) ugo(a, P_SEQ);
+        }
+        return v;
+    case P_SEQ: {
+        uint8_t b[3];
+        int k;
+        for (k = 0; k < a->ml.nbits; k++) b[k] = (uint8_t)(a->frpos < a->frn ? fr_bit(a, a->frpos++) : 0);
+        v = ml_sym(a, b);
+        a->since_cpu++;
+        if (a->frpos >= a->frn) seq_next(a);
+        return v;
+    }
+    case P_E2U: {
+        static const uint8_t z[3] = { 0, 0, 0 };
+        v = ml_sym(a, z);
+        if (a->un >= 12 + (a->cpd.e2u_extend ? 1 : 0)) start_b1u(a);
+        return v;
+    }
+    case P_DATA: {
+        int64_t x;
+        if (a->ru_due && a->enc.i == 0) {                   /* 9.8.2.1.1: on a data frame boundary */
+            a->ru_due = 0;
+            a->tx_ready = 0;
+            ugo(a, P_RRU);
+            return up92_symbol(a);
+        }
+        x = (int64_t)v92_enc_symbol(&a->enc, NULL) * a->lu;   /* G v(n), Q14: 1.0 is LU (reading 35) */
+        x = (x + 8192) >> 14;
+        return (int16_t)(x > 32767 ? 32767 : x < -32768 ? -32768 : x);
+    }
+    default:
+        return 0;
     }
 }
 
@@ -668,13 +1055,36 @@ int16_t v90a_tick(v90a_t *a, int16_t rx)
         else if (a->p2.state == P2L_FAILED) end(a, V90A_ERR_PHASE2);
         return o;
     }
-    if (v34mod_due(&a->mod)) {
-        int32_t re, im;
-        up_symbol(a, &re, &im);
-        v34mod_put(&a->mod, re, im);
-        if (a->state == V90A_ENDED) return 0;
+    if (a->pcm) {
+        /* V.92: the symbols on the network clock as the receiver keeps it */
+        pcmtx_clock(&a->ptx);
+        while (pcmtx_due(&a->ptx)) {
+            int16_t sy = up92_symbol(a);
+            if (a->state == V90A_ENDED) return 0;
+            pcmtx_put(&a->ptx, sy, a->rx.step + a->rx.slew);
+            if (a->slip) { pcmtx_slip(&a->ptx, a->slip); a->slip = 0; }
+        }
+        y = pcmtx_out(&a->ptx);
+        if (a->ec_len > 0) {
+            /* the canceller learns on TRN1u: full step for a quarter of it,
+             * then 2^-2, then 2^-4, frozen at its end */
+            int32_t q = a->ec_len / 4;
+            if (a->ec_n == 0 || a->ec_n == q || a->ec_n == 2 * q) v90arx_ec(&a->rx, a->ec_n == 0 ? 0 : a->ec_n == q ? 2 : 4);
+            if (++a->ec_n >= a->ec_len) {
+                v90arx_ec(&a->rx, -1);
+                a->erle_db10 = probe_db10(a->erle_rx + 1, a->erle_res + 1);
+                a->ec_len = 0;
+            }
+        }
+    } else {
+        if (v34mod_due(&a->mod)) {
+            int32_t re, im;
+            up_symbol(a, &re, &im);
+            v34mod_put(&a->mod, re, im);
+            if (a->state == V90A_ENDED) return 0;
+        }
+        y = v34mod_tick(&a->mod);
     }
-    y = v34mod_tick(&a->mod);
     if (a->md_on) {
         /* MD: uniform white noise at the transmit level (RMS of a uniform
          * variable is its peak over sqrt 3); the canceller at full step for
@@ -694,7 +1104,7 @@ int16_t v90a_tick(v90a_t *a, int16_t rx)
     ref = a->ecdl[(a->ecpos - a->cfg.echo_delay) & (V90A_ECDL - 1)];
     a->ecpos = (a->ecpos + 1) & (V90A_ECDL - 1);
     nd = v90arx_tick(&a->rx, rx, ref);
-    if (a->md_on && a->md_samples > a->md_total * 3 / 4) {
+    if ((a->md_on && a->md_samples > a->md_total * 3 / 4) || (a->ec_len > 0 && a->ec_n > a->ec_len * 3 / 4)) {
         a->erle_rx += (int64_t)rx * rx;
         a->erle_res += (int64_t)a->rx.eout * a->rx.eout;
     }
@@ -729,7 +1139,8 @@ int v90a_cleardown(v90a_t *a)
     a->clearing = 1;
     a->rx_ready = a->tx_ready = 0;
     a->state = V90A_RENEG; a->t = 0;
-    ugo(a, U_RS);
+    if (a->pcm) { a->ru_due = 1; a->cpus_left = CLEAR_CPS; }    /* 9.11: a renegotiation, CPu with drn = 0 */
+    else ugo(a, U_RS);
     return 0;
 }
 

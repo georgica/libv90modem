@@ -4,8 +4,11 @@
  * network" (6.2/V.92): the far codec samples our signal on the network
  * clock, and each of its samples must find one of our symbols. Our D/A runs
  * on our own clock, so the symbols, made on the network clock, are carried
- * over to ours by a fractional-delay interpolator (modem/v34_tabs.h's bank,
- * the one the downstream receiver interpolates with the other way round).
+ * over to ours by a fractional-delay interpolator (modem/pcmtx_tab.h, made
+ * by tools/gen_pcmtx_tab.py): 64 taps and a low-pass at 3700 Hz, so that
+ * what reaches the far codec is one fixed response of the symbols, to -78
+ * dB, however the two clocks stand (a PCM upstream reaches to the band edge,
+ * where no interpolator of reasonable length is right).
  *
  * The network clock as we know it is the downstream receiver's
  * (modem/v90arx): its interpolator makes one network sample every
@@ -32,7 +35,7 @@
 #define V90D_MODEM_PCMTX_H
 #include <stdint.h>
 
-#define PCMTX_RING   128        /* symbols kept (>= the bank's 64 taps + 1) */
+#define PCMTX_RING   128        /* symbols kept (>= the bank's 64 taps + 2) */
 #define PCMTX_DELAY  33         /* samples from a symbol's instant to its centre in the output */
 
 typedef struct {
@@ -41,6 +44,7 @@ typedef struct {
     int64_t tt;                 /* time to the next symbol instant, Q32 of our samples */
     int64_t since;              /* time since the newest symbol's instant, Q32 */
     uint32_t nsym;              /* symbols put */
+    int     wide;               /* see pcmtx_wide() */
 } pcmtx_t;
 
 void    pcmtx_init(pcmtx_t *t);
@@ -53,6 +57,13 @@ int     pcmtx_due(const pcmtx_t *t);
 void    pcmtx_put(pcmtx_t *t, int16_t sym, int64_t step);
 /* The D/A sample for the sample that began with pcmtx_clock(). */
 int16_t pcmtx_out(const pcmtx_t *t);
+/* on: the whole band, without the low-pass (modem/v34_tabs.h's bank, of the
+ * same length and delay), for an echo canceller that learns on it: the band
+ * edge, where the low-pass is half way down, is where a hybrid's echo is
+ * strongest, and NLMS learns slowly what little is sent there. What that
+ * bank gets wrong near 4 kHz changes with the clocks' phase, which does not
+ * matter for training signals of two levels. off: the low-pass bank. */
+void    pcmtx_wide(pcmtx_t *t, int on);
 /* Delay the symbols from the next one on by frac / 65536 of a symbol. */
 void    pcmtx_slip(pcmtx_t *t, uint32_t frac_q16);
 

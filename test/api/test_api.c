@@ -37,7 +37,11 @@ static void test_cfg(void)
     m = v90m_create(&c, &err);
     CHECK(m != NULL); CHECK_EQ_I(err, V90M_OK);
     v90m_destroy(m);
-    c.modulations |= V90M_MOD_V92;              /* V.92: answering only */
+    c.modulations |= V90M_MOD_V92;              /* V.92 calls too (C6), with V.90 */
+    m = v90m_create(&c, &err);
+    CHECK(m != NULL); CHECK_EQ_I(err, V90M_OK);
+    v90m_destroy(m);
+    c.modulations = V90M_MOD_V92 | V90M_MOD_V34;  /* ... but not without it: V.92 is V.90's start-up */
     m = v90m_create(&c, &err);
     CHECK(m == NULL); CHECK_EQ_I(err, V90M_ENOTSUP);
     /* Bell 103 and Bell 212A: answering only, and not in the defaults */
@@ -66,6 +70,8 @@ static void test_cfg(void)
     c.role = V90M_ROLE_ORIGINATE;
     CHECK_EQ_I(v90m_reset(m, &c), V90M_OK);
     c.modulations |= V90M_MOD_V92;
+    CHECK_EQ_I(v90m_reset(m, &c), V90M_OK);
+    c.modulations = V90M_MOD_V92 | V90M_MOD_V22;
     CHECK_EQ_I(v90m_reset(m, &c), V90M_ENOTSUP);
     v90m_destroy(m);
 
@@ -308,7 +314,7 @@ static void test_originate(void)
     int16_t c_rx = 0, a_rx = 0;
     char got_c[64], got_a[64]; size_t nc = 0, na = 0;
 
-    /* what the calling side cannot do: V.92 */
+    /* what the calling side can do: V.92 with V.90 */
     v90m_cfg_default(&c); c.role = V90M_ROLE_ORIGINATE;
     {
         v90m_t *m = v90m_create(&c, &err);                                      /* V.90 among the defaults calls now */
@@ -328,7 +334,11 @@ static void test_originate(void)
         v90m_destroy(m);
     }
     c.modulations = V90M_MOD_V34 | V90M_MOD_V90 | V90M_MOD_V92;
-    CHECK(v90m_create(&c, &err) == NULL); CHECK_EQ_I(err, V90M_ENOTSUP);
+    {
+        v90m_t *m = v90m_create(&c, &err);                                      /* V.92 calls now */
+        CHECK(m != NULL); CHECK_EQ_I(err, V90M_OK);
+        v90m_destroy(m);
+    }
     c.modulations = 0;
     CHECK(v90m_create(&c, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
 
@@ -553,6 +563,56 @@ static void test_originate(void)
         CHECK(k_cd >= 0);
         v90m_get_state(cl.m, &sc); v90m_get_state(an.m, &sa);
         printf("  V.90 cleardown by the caller: caller end %d, answerer end %d\n", sc.end, sa.end);
+        CHECK_EQ_I(sc.end, V90M_END_CLEARDOWN_OURS); CHECK_EQ_I(sc.connected, 0);
+        CHECK_EQ_I(sa.end, V90M_END_CLEARDOWN_FAR);
+    }
+    v90m_destroy(cl.m); v90m_destroy(an.m); v90m_async_destroy(cl.a); v90m_async_destroy(an.a);
+
+    /* V.92: an API caller offering V.92, V.90, V.34 and V.22 to an API
+     * answerer with V.92 on, back to back as above; data both ways, PCM
+     * upstream, a refused retrain, a cleardown from the caller */
+    end_init(&cl, V90M_ROLE_ORIGINATE, V90M_MOD_V92 | V90M_MOD_V90 | V90M_MOD_V34 | V90M_MOD_V22);
+    end_init(&an, V90M_ROLE_ANSWER, V90M_MOD_ALL_DEFAULT | V90M_MOD_V92);
+    nc = na = 0; c_rx = a_rx = 0;
+    if (cl.m && an.m) {
+        int k_wr = -1, k_cd = -1;
+        v90m_stats st;
+        for (k = 0; k < 8000 * 50; k++) {
+            int16_t c_tx, a_tx;
+            v90m_process_linear(cl.m, &c_rx, &c_tx, 1);
+            v90m_process_linear(an.m, &a_rx, &a_tx, 1);
+            a_rx = c_tx; c_rx = a_tx;
+            v90m_get_state(cl.m, &sc); v90m_get_state(an.m, &sa);
+            if (k_wr < 0 && sc.moving && sa.moving) {
+                v90m_async_write(cl.a, (const uint8_t *)"from the caller", 15);
+                v90m_async_write(an.a, (const uint8_t *)"from the answerer", 17);
+                k_wr = k; k_cd = k + 8000 * 2;
+            }
+            if (k == k_cd) {
+                got_c[nc] = 0; got_a[na] = 0;
+                v90m_get_stats(cl.m, &st);
+                printf("  V.92: caller %d %s %d/%d bit/s (V.8 %d), answerer %d %s %d/%d; SNR %.1f dB, round trip %d samples; caller got \"%s\", answerer got \"%s\"\n",
+                       sc.connected, sc.modulation == V90M_CONN_V92 ? "V.92" : "?", sc.tx_bps, sc.rx_bps, sc.used_v8,
+                       sa.connected, sa.modulation == V90M_CONN_V92 ? "V.92" : "?", sa.tx_bps, sa.rx_bps,
+                       st.snr_db10 / 10.0, st.rtd, got_c, got_a);
+                CHECK_EQ_I(sc.modulation, V90M_CONN_V92); CHECK_EQ_I(sc.used_v8, 1); CHECK_EQ_I(sc.moving, 1);
+                CHECK(sc.rx_bps >= 40000); CHECK(sc.tx_bps >= 24000);
+                CHECK_EQ_I(sa.modulation, V90M_CONN_V92);
+                CHECK_EQ_I(sa.tx_bps, sc.rx_bps); CHECK_EQ_I(sa.rx_bps, sc.tx_bps);
+                CHECK_EQ_I(st.tx_bps, sc.tx_bps); CHECK_EQ_I(st.rx_bps, sc.rx_bps);
+                CHECK(strcmp(got_c, "from the answerer") == 0);
+                CHECK(strcmp(got_a, "from the caller") == 0);
+                CHECK(st.snr_db10 > 300); CHECK(st.rtd >= 0 && st.rtd < 80);
+                CHECK_EQ_I(v90m_retrain(cl.m), V90M_ESTATE);        /* not done */
+                CHECK_EQ_I(v90m_cleardown(cl.m), V90M_OK);          /* 9.11/V.92 */
+            }
+            if (k_cd >= 0 && k > k_cd + 8000 * 3) break;
+            nc += v90m_async_read(cl.a, (uint8_t *)got_c + nc, sizeof got_c - 1 - nc);
+            na += v90m_async_read(an.a, (uint8_t *)got_a + na, sizeof got_a - 1 - na);
+        }
+        CHECK(k_cd >= 0);
+        v90m_get_state(cl.m, &sc); v90m_get_state(an.m, &sa);
+        printf("  V.92 cleardown by the caller: caller end %d, answerer end %d\n", sc.end, sa.end);
         CHECK_EQ_I(sc.end, V90M_END_CLEARDOWN_OURS); CHECK_EQ_I(sc.connected, 0);
         CHECK_EQ_I(sa.end, V90M_END_CLEARDOWN_FAR);
     }

@@ -25,18 +25,19 @@ recommendations, and has answered real modems there (see the table below).
 | V.32, V.32bis | answering | 4800 to 14400 bit/s |
 | V.34 | answering | Phase 2 to data mode, retrains, rate renegotiation |
 | V.90 | digital (server) side; analogue (client) side: **simulation and own answerer only** | PCM downstream, V.34 upstream; the analogue side measures the DIL (pads, robbed bits), has no retrain |
-| V.92 | digital (server) side | PCM upstream, full start-up only |
+| V.92 | digital (server) side; analogue (client) side: **tried in simulation and against this library's own answerer only** | PCM upstream, full start-up only; the analogue side falls back to V.90 when the answerer does not offer PCM upstream, has no retrain |
 | V.14 | yes | start-stop characters on the synchronous bit pump |
 | V.42 | yes | LAPM, detection phase, start-stop fallback, breaks |
 | V.42bis, V.44 | yes | V.44 preferred when both ends have it |
 
 Not implemented:
 
-- V.92 in the calling (originating) role: `V90M_ROLE_ORIGINATE` with
-  `V90M_MOD_V92` returns `V90M_ENOTSUP`. (V.21, V.22bis, V.32bis, V.34 and the
-  V.90 analogue modem call; none has been tried against a real modem yet.)
-- The analogue (client) side of V.92; retrains on V.90's analogue side.
-- V.92 quick connect, short Phase 2 and modem on hold.
+- Retrains on the analogue (client) side of V.90 and V.92. (V.21, V.22bis,
+  V.32bis, V.34 and the V.90 and V.92 analogue modems call; none has been
+  tried against a real modem yet.)
+- V.92 quick connect, short Phase 2 and modem on hold; on the analogue side
+  also a rate renegotiation of its own (one begun by the answerer is
+  followed).
 - x2 and K56flex, the two 56k schemes from before V.90: not spoken. A modem
   that has nothing newer connects at V.34. (Neither was published; see
   `DESIGN.md`, 4.2b.)
@@ -116,8 +117,10 @@ calling; the figures are downstream / upstream bit/s.
 | U.S. Robotics 56K FAX EXT of 1998 (x2, V.90 upgrade) | flash 5.1.4 | 2026-11-16 | V.90 54666 to 56000 / 28800; V.34 28800 when its V.90 start-up failed |
 
 Not tried: any other modem, and the calling side against any real modem.
-The V.90 calling side (the analogue modem) has run in simulation only,
-against this library's own answerer (`test/test_orig_v90.c`).
+The V.90 and V.92 calling sides (the analogue modem) have run in simulation
+only, against this library's own answerer (`test/test_orig_v90.c`,
+`test/test_orig_v92.c`): V.92 tried in simulation and against this
+library's own answerer only.
 
 ## Reporting a bug
 

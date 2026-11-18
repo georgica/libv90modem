@@ -170,6 +170,8 @@ typedef struct {
     int32_t delta;              /* last measured shift, Q16 samples */
     /* constellations: active, and one waiting for its first symbol */
     v90arx_cons_t cons, next; int32_t next_m; int have_next;
+    int deaf;                   /* 1: Sd is not looked for (v90arx_deaf) */
+    int clk_set;                /* 1: the clock was given (v90arx_clock) */
     /* the decisions of the last tick */
     v90arx_dec_t out[2]; int nout;
 } v90arx_t;
@@ -186,6 +188,18 @@ void v90arx_ec(v90arx_t *r, int mu_shift);
 
 /* The constellation that applies from symbol m on (the active one until then). */
 void v90arx_set_cons(v90arx_t *r, const v90arx_cons_t *c, int32_t m);
+
+/* Before Sd: the clock offset as known from elsewhere (1/256 ppm, as
+ * v90arx_ppm_q8). A V.92 analogue modem's transmitter runs on this clock
+ * from its first symbol. Sd's own measurement (a few hundred symbols, off by
+ * up to 1.6 ppm on the test lines) then replaces it only when the two
+ * differ by more than 5 ppm; the timing loop goes on from there. */
+void v90arx_clock(v90arx_t *r, int32_t ppm_q8);
+
+/* While waiting for Sd: stop looking for it (1), or look again from scratch
+ * (0). For a V.92 analogue modem, whose own Ru (+ + + - - -) has Sd's
+ * period: its echo, before the canceller has learnt, is no Sd. */
+void v90arx_deaf(v90arx_t *r, int on);
 
 /* Freeze (1) or release (0) all adaptation: equaliser, estimate, timing. */
 void v90arx_hold(v90arx_t *r, int on);

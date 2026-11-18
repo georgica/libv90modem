@@ -9,6 +9,7 @@
 #                        under qemu, through the internals and the public API
 #   make bench-v90a      the same for the V.90 analogue modem's downstream receiver
 #   make bench-v90c      the same for the whole V.90 calling modem (orig, v90a)
+#   make bench-v92c      ... and for it in V.92 (PCM upstream); cost-v92c counts
 #   make test-interop    against spandsp (SPANDSP=its install prefix), host only
 #
 # Cross-compiling: set CC (and BUILD to keep the objects apart), e.g.
@@ -81,12 +82,12 @@ TESTS    := test_g711 test_noise test_filt test_resamp test_channel test_v21 tes
             test_v22tx test_v22rx test_v22bis test_v14 test_answer test_info test_dpsk test_probe test_p2 test_qamrx test_ec test_ecdly test_v34train test_sres test_answer_v90 test_p34 test_pcmenc \
             test_v34mp test_p2ans test_v34mod test_v34dx test_v34call test_answer_v34 test_answer_v32 test_answer_v90_v34 \
             test_p2_v92 test_v92call test_answer_v92 test_v92real test_answer_lin \
-            test_anstone test_v8orig test_orig test_orig_v32 test_p2call test_orig_v34 test_v90arx test_v90arx_robust test_v90adec test_v90dil test_p2v90 test_v90a test_orig_v90 test_pcmtx test_v92aseq
+            test_anstone test_v8orig test_orig test_orig_v32 test_p2call test_orig_v34 test_v90arx test_v90arx_robust test_v90adec test_v90dil test_p2v90 test_v90a test_orig_v90 test_pcmtx test_v92aseq test_p2v92a test_v92a test_orig_v92
 # the public API, against the library as it is installed
 API_TESTS := test_api
 SUBS     := v34 v90 v92 v42 v32
 
-.PHONY: test-fixtures all lib dev install uninstall clean check check-arm test test-arm test-api test-interop examples bench-v90 bench-v34 bench-v90a bench-v90c replay
+.PHONY: test-fixtures all lib dev install uninstall clean check check-arm test test-arm test-api test-interop examples bench-v90 bench-v34 bench-v90a bench-v90c bench-v92c replay
 all: lib
 lib: $(STATIC) $(SHARED) $(PCFILE)
 dev: $(DEV)
@@ -324,6 +325,32 @@ cost-v90c: $(BUILD)/rec_v90c $(BUILD)/bench_v90c $(BUILD)/bench_v90c.arm
 	   a=$$($(CNT) $(abspath $(BUILD))/bench_v90c.arm $(BUILD)/v90c_t.a 2>&1 | grep -c '^Trace'); \
 	   b=$$($(CNT) $(abspath $(BUILD))/bench_v90c.arm $(BUILD)/v90c_t.b 2>&1 | grep -c '^Trace'); \
 	   echo "V.90 caller, 100 ppm: tick $$t ($$((t / 8)) ms): $$((b - a)) ARM instructions"; \
+	 done
+# ---- the same for the caller in V.92 (PCM upstream): rec_v90c ... v92 records
+# a V.92 call (the upstream through the answerer's own V.92 line), and
+# bench_v90c replays it with V.92 on ----
+V92C_REC := $(BUILD)/v92c.rec
+bench-v92c: $(BUILD)/rec_v90c $(BUILD)/bench_v90c $(BUILD)/bench_v90c.arm
+	$(abspath $(BUILD))/rec_v90c 100 5 $(V92C_REC) v92
+	$(abspath $(BUILD))/bench_v90c $(V92C_REC)
+	$(QEMU) $(abspath $(BUILD))/bench_v90c.arm $(V92C_REC)
+.PHONY: cost-v92c
+cost-v92c: $(BUILD)/rec_v90c $(BUILD)/bench_v90c $(BUILD)/bench_v90c.arm
+	@for p in 0 100; do \
+	   $(abspath $(BUILD))/rec_v90c $$p 4 $(BUILD)/v92c_$$p.rec v92 > /dev/null; \
+	   d=$$(od -An -tu4 -j8 -N4 $(BUILD)/v92c_$$p.rec | tr -d ' '); \
+	   head -c $$((12 + 2 * (d + 16000))) $(BUILD)/v92c_$$p.rec > $(BUILD)/v92c_$$p.a; \
+	   head -c $$((12 + 2 * (d + 24000))) $(BUILD)/v92c_$$p.rec > $(BUILD)/v92c_$$p.b; \
+	   a=$$($(CNT) $(abspath $(BUILD))/bench_v90c.arm $(BUILD)/v92c_$$p.a 2>&1 | grep -c '^Trace'); \
+	   b=$$($(CNT) $(abspath $(BUILD))/bench_v90c.arm $(BUILD)/v92c_$$p.b 2>&1 | grep -c '^Trace'); \
+	   echo "V.92 caller, $$p ppm: data mode $$((b - a)) ARM instructions per second of line (seconds 2 to 3 of data mode)"; \
+	 done; \
+	 for t in $$($(abspath $(BUILD))/bench_v90c $(BUILD)/v92c_100.rec -w 6 | sed -n 's/^slow tick \([0-9]*\) .*/\1/p'); do \
+	   head -c $$((12 + 2 * t)) $(BUILD)/v92c_100.rec > $(BUILD)/v92c_t.a; \
+	   head -c $$((12 + 2 * (t + 1))) $(BUILD)/v92c_100.rec > $(BUILD)/v92c_t.b; \
+	   a=$$($(CNT) $(abspath $(BUILD))/bench_v90c.arm $(BUILD)/v92c_t.a 2>&1 | grep -c '^Trace'); \
+	   b=$$($(CNT) $(abspath $(BUILD))/bench_v90c.arm $(BUILD)/v92c_t.b 2>&1 | grep -c '^Trace'); \
+	   echo "V.92 caller, 100 ppm: tick $$t ($$((t / 8)) ms): $$((b - a)) ARM instructions"; \
 	 done
 $(BUILD)/rec_v90c: tools/rec_v90c.c test/v90link.h $(SIM_SRC) $(MODEM_SRC) $(HDRS)
 	@mkdir -p $(BUILD)

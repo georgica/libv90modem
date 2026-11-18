@@ -24,7 +24,7 @@ measured and when is in v90d's `PROGRESS.md`, where this code grew.
 | | what |
 |---|---|
 | `api/` | the public API over everything below: configuration, the block calls, events found by reading the modem's state after each sample, stats; start-stop (V.14) and V.42 objects |
-| `modem/` | answering modem: V.8, V.21 and Bell 103, V.22bis/V.22 and Bell 212A, V.14, V.90 Phase 2 (`p2d`), Phases 3/4 and data (`p34d`), upstream receiver (`qamrx`, `ec`, `v34train`); V.34 answering (`p2ans`, `v34mp`, `v34mod`, `v34dx`, `v34ans`); the sequencer `answer` |
+| `modem/` | answering modem: V.8, V.21 and Bell 103, V.22bis/V.22 and Bell 212A, V.14, V.90 Phase 2 (`p2d`), Phases 3/4 and data (`p34d`), upstream receiver (`qamrx`, `ec`, `v34train`); V.34 answering (`p2ans`, `v34mp`, `v34mod`, `v34dx`, `v34ans`); the sequencer `answer`. Calling modem: V.8 (`v8orig`), V.34 (`p2call`, `v34orig`), the V.90 / V.92 analogue modem (`v90a` with `v90arx`, `v90dil`, `v90adec`; for V.92 `pcmtx`, `v92aseq` and `v92/v92_enc`); the sequencer `orig` |
 | `v32/` | V.32bis / V.32 (4800 to 14400 bit/s), answer side |
 | `v34/` | V.34 coding: training point sequences, data encoder and decoder (trellis, shell mapping, non-linear encoder) |
 | `v90/` | V.90 digital transmitter from Phase 3 on (PCM signals, Jd, DIL, MP, data encoder), CP codec |
@@ -225,6 +225,39 @@ decode. `v92/README.md` has the detail and every reading of the text.
   under the caller's symbols with each decision's error, because what is
   left of our own low frequencies wanders there.
 
+### 4.2c V.92, analogue (calling) side
+`modem/v90a` with `v92` on (`ORIG_MODE_V92`, `V90M_MOD_V92` calling): Phase
+2 says V.92 in INFO0a and selects PCM upstream in INFO1a (Table 18: all four
+filter sections, the longest filters, no MD) when INFO0d and INFO1d allow
+it; otherwise the call is V.90. Downstream is V.90's receiver (`v90arx`,
+DIL, CP) with V.92's Jd / Jp / Jp' and SUVd / CPd / Ed (`modem/v92aseq`,
+word by word: CPd may be 20000 bits). Upstream: `v92/v92_enc` with what
+CPd dictates, at LU = the configured level.
+- The symbol clock is the network's (6.2/V.92). The transmitter
+  (`modem/pcmtx`) runs the downstream receiver's interpolator accumulator
+  with its increments, so it follows the receiver's timing loop sample for
+  sample, and carries the symbols on to our D/A clock through a 64-tap
+  bank that is also a low-pass at 3.7 kHz: the digital modem measures the
+  channel once and does not follow it, so what reaches its codec must be
+  one fixed response of our symbols however the two clocks stand, and near
+  4 kHz no interpolator of that length is right.
+- The clock is known before the first symbol: from the digital modem's L2
+  in Phase 2 (each tone turns from block to block by its frequency times
+  the offset; within 0.1 ppm on the test lines), and Sd's own estimate
+  (off by up to 1.6 ppm) only overrules it beyond 5 ppm. A clock found at
+  Sd and corrected afterwards moved our symbols against the network while
+  the digital modem trained on them (failed starts at 100 ppm, a bit error
+  every few seconds elsewhere).
+- The echo canceller learns on the first TRN1u (the digital modem is
+  silent), sent through the receiver's full band bank: the hybrid's echo is
+  strongest at the band edge, where the low-pass has little left to learn
+  on. Our own Ru has Sd's period, so Sd is not looked for until Ja.
+- Rate renegotiation begun by the digital modem is followed (Ru on our data
+  frame boundary after its Rd-bar); cleardown either way (CPu / CPd with
+  drn = 0). No retrain, no renegotiation of our own, no quick connect, no
+  modem-on-hold. Tried in simulation and against this library's own
+  answerer only.
+
 ### 4.2b Not done, maybe later: K56flex and x2
 The two 56k schemes from before V.90 are not spoken; a modem that has
 nothing else gets V.34. Neither has a published specification.
@@ -256,7 +289,9 @@ nothing else gets V.34. Neither has a published specification.
   under qemu (`make check-arm`).
 - Peers written here (`sim/`): channel with loss, delay, echo, noise, clock and
   carrier offset; calling modems for V.8 / V.22bis, V.32bis, V.34, V.90 Phase 2
-  and Phases 3/4 (analogue side), V.92; QAM modulator. They may use knowledge a
+  and Phases 3/4 (analogue side), V.92; QAM modulator; `dschan` (the PCM
+  downstream as an analogue modem's A/D has it) and `test/v90link.h` (a whole
+  line between the library's analogue and digital modems). They may use knowledge a
   real modem does not have; they are a test reference, not code to ship.
 - Independent peers (`make test-interop`, host only): spandsp for V.8,
   V.22bis, V.42 and V.42bis.

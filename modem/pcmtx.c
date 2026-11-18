@@ -1,7 +1,11 @@
 /* PCM upstream transmit clock and interpolator. See pcmtx.h. */
 #include <string.h>
 #include "pcmtx.h"
+#include "pcmtx_tab.h"
 #include "v34_tabs.h"
+
+/* the wide bank (pcmtx_wide) is the receiver's, of the same shape */
+typedef char pcmtx_same_banks[(V34_IP == PCMTX_IP && V34_IN == PCMTX_IN && V34_ID == PCMTX_ID) ? 1 : -1];
 
 #define ONE32 ((int64_t)1 << 32)
 
@@ -29,12 +33,12 @@ void pcmtx_put(pcmtx_t *t, int16_t sym, int64_t step)
     t->nsym++;
 }
 
-/* The bank's branch p yields the signal 31 + p / 32 samples before the
+/* The bank's branch p yields the signal PCMTX_ID + p / 32 samples before the
  * newest input it is laid on. The output is the symbols' signal at
- * PCMTX_DELAY (33) samples before now, and the newest symbol's instant was
- * `since` ago: laid on the newest symbol (j = 0) that is 33 - since samples
- * before it, laid on the one before (j = 1) 32 - since. Of the two, the one
- * that gives a branch in 0..32. */
+ * PCMTX_DELAY = PCMTX_ID + 2 samples before now, and the newest symbol's
+ * instant was `since` ago: laid on the newest symbol (j = 0) that is
+ * PCMTX_ID + 2 - since samples before it, laid on the one before (j = 1)
+ * PCMTX_ID + 1 - since. Of the two, the one that gives a branch in 0..32. */
 int16_t pcmtx_out(const pcmtx_t *t)
 {
     int64_t a, acc0 = 0, acc1 = 0, v;
@@ -45,10 +49,11 @@ int16_t pcmtx_out(const pcmtx_t *t)
     else { j = 0; a = 2 * ONE32 - t->since; if (a < 0) a = 0; }
     p = (int)(a >> 27);
     f = (int32_t)((a >> 12) & 0x7fff);
-    if (p >= V34_IP) { p = V34_IP - 1; f = 0x8000; }
-    h0 = v34_interp[p]; h1 = v34_interp[p + 1];
+    if (p >= PCMTX_IP) { p = PCMTX_IP - 1; f = 0x8000; }
+    if (t->wide) { h0 = v34_interp[p]; h1 = v34_interp[p + 1]; }
+    else { h0 = pcmtx_interp[p]; h1 = pcmtx_interp[p + 1]; }
     base = t->pos - 1 - j;
-    for (i = 0; i < V34_IN; i++) {
+    for (i = 0; i < PCMTX_IN; i++) {
         int32_t s = t->ring[(base - i) & (PCMTX_RING - 1)];
         acc0 += s * h0[i];
         acc1 += s * h1[i];
@@ -57,6 +62,8 @@ int16_t pcmtx_out(const pcmtx_t *t)
     v = (v + 8192) >> 14;
     return (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
 }
+
+void pcmtx_wide(pcmtx_t *t, int on) { t->wide = on != 0; }
 
 void pcmtx_slip(pcmtx_t *t, uint32_t frac_q16)
 {

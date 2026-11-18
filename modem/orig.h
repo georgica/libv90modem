@@ -4,7 +4,9 @@
  *   V.8 (modem/v8orig: answer tone, CI, CM / JM / CJ) ->
  *     JM selects PCM (V.90)     -> the V.90 analogue modem (modem/v90a: Phase 2
  *                                  to data mode, cleardown; PCM downstream,
- *                                  V.34 upstream)
+ *                                  V.34 upstream; with ORIG_MODE_V92 too, V.92
+ *                                  with PCM upstream when the answerer offers
+ *                                  it in Phase 2, V.90 otherwise)
  *     JM selects V.34           -> V.34 call modem (modem/v34orig: Phase 2,
  *                                  Phases 3 and 4, data, retrains, rate
  *                                  renegotiation, cleardown)
@@ -59,10 +61,14 @@ typedef enum {
 #define ORIG_MOD_V34    5
 #define ORIG_MOD_V32BIS 6
 #define ORIG_MOD_V90    4     /* PCM downstream (received), V.34 upstream (sent) */
+#define ORIG_MOD_V92    7     /* PCM both ways (V.92 with PCM upstream) */
 
 /* orig_cfg.modes: V.90 as the analogue modem, next to the V8_MOD_* bits
  * (the number of ANS_MODE_V90) */
 #define ORIG_MODE_V90 0x10000u
+/* ... and V.92 next to it (PCM upstream when the answerer offers it; the
+ * number of ANS_MODE_V92) */
+#define ORIG_MODE_V92 0x20000u
 
 /* why a call ended (orig_t.end) */
 #define ORIG_END_NONE       0

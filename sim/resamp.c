@@ -74,3 +74,38 @@ int sresamp_push(sresamp_t *r, double x, double *out, int maxout)
     r->idx++;
     return k;
 }
+
+void lresamp_init(lresamp_t *r, double ratio)
+{
+    int i;
+    r->inv = 1.0 / ratio; r->t = 0.0; r->idx = 0; r->pos = 0;
+    for (i = 0; i < LRESAMP_TAPS; i++) r->h[i] = 0.0;
+}
+
+/* sresamp_push with the longer window; sin(pi d) for the taps comes from one
+ * sine, its sign alternating from tap to tap */
+int lresamp_push(lresamp_t *r, double x, double *out, int maxout)
+{
+    const double pi = 3.14159265358979323846;
+    int k = 0;
+    r->h[r->pos] = x;
+    r->pos = (r->pos + 1) % LRESAMP_TAPS;
+    while (r->t <= (double)(r->idx - LRESAMP_DELAY) && r->t > (double)(r->idx - LRESAMP_DELAY) - 1.0 && k < maxout) {
+        double acc = 0.0, wsum = 0.0, s0 = sin(pi * (r->t - (double)r->idx));
+        int i;
+        for (i = 0; i < LRESAMP_TAPS; i++) {
+            long si = r->idx - i;
+            double d = r->t - (double)si, a = d / (double)LRESAMP_DELAY, w, sv;
+            if (a <= -1.0 || a >= 1.0) continue;
+            w = 0.5 + 0.5 * cos(pi * a);
+            sv = (fabs(d) < 1e-12) ? 1.0 : ((i & 1) ? -s0 : s0) / (pi * d);
+            acc += r->h[(r->pos - 1 - i + 2 * LRESAMP_TAPS) % LRESAMP_TAPS] * sv * w;
+            wsum += sv * w;
+        }
+        out[k++] = acc / wsum;
+        r->t += r->inv;
+    }
+    while (r->t <= (double)(r->idx - LRESAMP_DELAY) - 1.0) r->t += r->inv;
+    r->idx++;
+    return k;
+}

@@ -38,7 +38,7 @@ static void fail(p2call_t *p, int why)
 /* Table 14: what this modem can do, as p2ans says it: 3000 and 3200 on
  * either carrier, no 2743 / 2800 / 3429, power reduction, one symbol rate
  * for both directions, up to 1664 points, internal transmit clock */
-static void send_info0c(p2call_t *p, int ack)
+static void send_info0(p2call_t *p, int ack, int v92)
 {
     info0_t i;
     uint8_t bits[INFO_MAX_BITS];
@@ -50,10 +50,13 @@ static void send_info0c(p2call_t *p, int ack)
     i.max_sr_diff = 0;
     i.c1664 = 1;
     i.ack = (uint8_t)ack;
+    i.v92 = (uint8_t)(v92 != 0);            /* bit 26 of Table 16/V.92; reserved (0) elsewhere */
     n = info0a_build(&i, bits);             /* INFO0c and INFO0a share Table 14 */
     dpsktx_send(&p->tx, bits, n);
     p->n_info0c++;
 }
+
+static void send_info0c(p2call_t *p, int ack) { send_info0(p, ack, 0); }
 
 static void common_init(p2call_t *p, const p2call_cfg *cfg)
 {
@@ -540,7 +543,7 @@ int16_t p2call_tick(p2call_t *p, int16_t x)
 
 static void send_info0a_v90(p2call_t *p, int ack)
 {
-    send_info0c(p, ack);        /* Table 8/V.90 is Table 14/V.34 */
+    send_info0(p, ack, p->cfg.v92);     /* Table 8/V.90 is Table 14/V.34; V.92: Table 16 */
     p->tone_since = -1;
 }
 
@@ -564,14 +567,35 @@ void p2call_init_v90(p2call_t *p, const p2call_cfg *cfg)
 
 /* INFO1d is in: the upstream symbol rate of INFO1a (3000 or 3200, the one
  * INFO1d projects the higher rate for; 3200 on a tie), and what INFO1d asks
- * of our transmitter at it. -1 when it offers nothing we can send. */
+ * of our transmitter at it. With V.92 on both sides and PCM upstream
+ * allowed (INFO0d bit 27, INFO1d bit 70 of Table 17, which info1d_parse
+ * puts where the 3429 carrier bit was), INFO1a of Table 18/V.92 instead:
+ * our precoder and prefilter have all four sections and take the longest
+ * filters there are (Ltot 384, Lmax 320), and no MD is sent (the V.92
+ * analogue modem's canceller learns on TRN1u). -1 when it offers nothing we
+ * can send. */
 static int take_info1d(p2call_t *p)
 {
     const info1d_t *d = &p->info1d;
     int k, best = -1;
+    p->pcm_up = p->cfg.v92 && p->info0d.v92 && d->sr[5].hi_carrier;
     for (k = 3; k <= 4; k++) {
         if (!((p->cfg.sr_mask >> k) & 1) || d->sr[k].max_rate == 0) continue;
         if (best < 0 || d->sr[k].max_rate >= d->sr[best].max_rate) best = k;
+    }
+    memset(&p->info1a_v90, 0, sizeof p->info1a_v90);
+    p->info1a_v90.v90 = 1;
+    p->info1a_v90.md_len = (uint8_t)(p->cfg.md_len & 127);
+    p->info1a_v90.uinfo = (uint8_t)(p->cfg.uinfo & 127);
+    if (p->pcm_up) {
+        p->info1a_v90.pcm = 1;
+        p->info1a_v90.md_len = 0;           /* no MD: the canceller learns on TRN1u */
+        p->info1a_v90.up_sr = 6;
+        p->info1a_v90.down_sr = 6;
+        p->info1a_v90.sections = 3;
+        p->info1a_v90.ltot_code = 3;
+        p->info1a_v90.lmax_code = 3;
+        return 0;
     }
     if (best < 0) return -1;
     p->sym_idx = best; p->sym_rate = SR[best];
@@ -579,14 +603,34 @@ static int take_info1d(p2call_t *p)
     p->tx_preemph = d->sr[best].preemph > 10 ? 0 : d->sr[best].preemph;
     p->tx_pwr_red = d->min_pwr_red;
     p->md_len = d->md_len;
-    memset(&p->info1a_v90, 0, sizeof p->info1a_v90);
-    p->info1a_v90.v90 = 1;
-    p->info1a_v90.md_len = (uint8_t)(p->cfg.md_len & 127);
-    p->info1a_v90.uinfo = (uint8_t)(p->cfg.uinfo & 127);
     p->info1a_v90.up_sr = (uint8_t)best;
     p->info1a_v90.down_sr = 6;
     p->info1a_v90.freq_off = p->info1c.freq_off;
     return 0;
+}
+
+/* V.92: our clock against the network's from the digital modem's L2. Each
+ * of its tones, at 150 m Hz on the network's clock, turns from one 20 ms
+ * block to the next by -2 pi 3 m e on ours (e the offset), small enough
+ * (0.05 rad at 100 ppm, m = 25) that the turn is ci / cr; weighted by cr, the
+ * least squares slope over m is e = -sum m ci / (6 pi sum m^2 cr). Tones with
+ * an SNR under 20 dB are left out. 1/256 ppm, within +-1000 ppm; 0 when
+ * there is nothing to go on. */
+static int32_t clock_q8(const proberx_t *r)
+{
+    int64_t num = 0, den = 0, q;
+    int m;
+    for (m = 1; m <= PROBE_NBIN; m++) {
+        if (!probe_has_tone(m) || proberx_snr(r, m) < 200 || r->cr[m] <= 0) continue;
+        num += (int64_t)m * (r->ci[m] >> 8);
+        den += (int64_t)m * m * (r->cr[m] >> 8);
+    }
+    if (den <= 0) return 0;
+    while (den > 0x7fffffff) { den >>= 1; num /= 2; }
+    if (den == 0) return 0;
+    /* 256e6 / (6 pi) = 13581342 */
+    q = -(num * 13581342) / den;
+    return (int32_t)(q > 256000 ? 256000 : q < -256000 ? -256000 : q);
 }
 
 static int16_t p2call_tick_v90(p2call_t *p, int16_t x)
@@ -698,6 +742,7 @@ static int16_t p2call_tick_v90(p2call_t *p, int16_t x)
             proberx_tick(&p->prx, x);
             if (p->prx.nblk >= PROBE_BLOCKS) {
                 analyse(p);                             /* levels, SNRs, frequency offset */
+                p->clk_ppm_q8 = clock_q8(&p->prx);      /* (V.92's transmitter needs it, 6.2/V.92) */
                 dpskrx_expect(&p->rx, INFO_PAYLOAD(INFO1D_BITS));
                 dpsktx_on(&p->tx);                      /* Tone A; INFO1d comes */
                 go(p, P2L_A_WAIT_INFO1D);

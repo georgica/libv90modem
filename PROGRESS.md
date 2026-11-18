@@ -826,3 +826,196 @@ gives it one.
 
 Both tests' output is byte-identical under qemu-arm. No answering-side
 file is touched (two new modules, two new tests, the Makefile lists).
+
+## C6-2: the V.92 analogue modem, V.8 to data mode with PCM upstream (2026-11-17)
+
+- `modem/p2call` (V.90 mode): `cfg.v92` sets INFO0a bit 26; when INFO0d
+  bit 27 and INFO1d bit 70 allow it, INFO1a is Table 18 (PCM upstream: all
+  four filter sections, Ltot 384, Lmax 320, UINFO, no MD) and `pcm_up` is 1.
+  `clk_ppm_q8`: our clock against the network's from the digital modem's
+  L2 (each tone turns from 20 ms block to block by 2 pi 3 m e; weighted
+  least squares over the tones with 20 dB SNR). Within 0.1 ppm on every
+  test line; Sd's estimate, which V.90 uses, is off by up to 1.6 ppm.
+- `modem/v90a` with `cfg.v92`: when INFO1a selected PCM upstream, V.92's
+  Phases 3 and 4 and data (9.5.2, 9.6.2; the header of the V.92 block in
+  v90a.c has the order): silence, Ru, Ru-bar, TRN1u 6000 T (the canceller
+  learns on it), Ja with the DIL descriptor and our rates until Sd-bar (to
+  a 12 bit boundary); Jd / Jp / Jp' parsed (Table 21, 22); Su 144 T, Su-bar
+  24.5 T, Su until Jp, Su-bar (24 + Jp's fraction) T; TRN1u while the DIL is
+  measured, CPt (Table 23 type 0, V.90's CPt design) once it is, until Ri;
+  E1u; TRN2u (4 or 8 points as Jp says) until SUVd or 12000 T; SUVu, one CPu
+  after SUVd (V.90's CP design), the acknowledge bit after CPd, E2u, B1u and
+  data through `v92/v92_enc` with CPd's moduli, constellations, precoder,
+  prefilter and gain at LU = the configured level. Downstream as C5, with
+  SUVd / CPd / Ed from `v92aseq`. Rate renegotiation by the digital modem
+  (Ru on our data frame boundary after its Rd-bar, TRN2u 2400 T, as Phase 4)
+  and cleardown either way (CPu / CPd with drn = 0). Time limits: 9.5.2.2.1,
+  9.5.2.2.2, 9.6.2.2.1 (20 s), Jp within 3 s of Su and Jp' of Su-bar (ours),
+  12 s for a renegotiation (the digital modem designs CPd again).
+- The transmitter (`pcmtx`, C6-1) runs on the receiver's clock from the
+  first symbol: `v90arx_clock()` sets the receiver's step from L2 before
+  Phase 3, and Sd overrules it only beyond 5 ppm. `v90arx_deaf()`: Sd is not
+  looked for before Ja (our own Ru has its period: its echo was taken for
+  Sd before the canceller had learnt). Neither changes V.90 (not called
+  there; the Sd step computation is now relative to the step Sd came
+  through, which is one sample in V.90, the same expression).
+- `pcmtx` changed after C6-1: its bank is `modem/pcmtx_tab.h`
+  (`tools/gen_pcmtx_tab.py`): 64 taps, a low-pass at 3.7 kHz (-1.7 dB at
+  3.6 kHz, -15 dB at 3.8, -31 at 3.9), every branch within -78 dB of the
+  others over the band; `pcmtx_wide()` uses the receiver's full band bank
+  (v34_tabs.h), for the canceller's training on TRN1u. Why, below.
+- `modem/orig`: `ORIG_MODE_V92` (= `ANS_MODE_V92`) passes `v92` to v90a;
+  modulation `ORIG_MOD_V92` (= `ANS_MOD_V92`) when the upstream is PCM.
+- API: the calling role takes `V90M_MOD_V92` with `V90M_MOD_V90`
+  (`V90M_ENOTSUP` without it); header and README say "tried in simulation
+  and against this library's own answerer only". `V90M_MEM_SIZE` stays
+  112 KiB: `orig_t` 100752 -> 109504 octets on the host (109232 on ARM),
+  so `struct v90m`, a union of the two roles, is now sized by the caller
+  (about 109.6 KiB) where `answer_t` (106560) sized it before.
+- Test line (`test/v90link.h`): the digital modem's V.92 parts (p2d with
+  V.92 offered, v92d as answer.c starts it) or the whole answerer with
+  `ANS_MODE_V92`; `up_line`: the upstream through a line and codec response
+  on the network clock (1: sim/v92chan's pulse, the answerer's own V.92 test
+  line, short to 2 km, long beyond; 2: dschan's downstream loop response),
+  and our clock carried on to the network's by a 320-tap resampler
+  (`sim/resamp`'s new `lresamp`). Off, everything is as in C5.
+- Tests: test_p2v92a, test_v92a (the sequencer against p2d + v92d, no V.8),
+  test_orig_v92 (end to end), test_api (V.92 calling case). Bench:
+  `rec_v90c ... v92` / `bench_v90c` replay a V.92 recording (header
+  "V92C0001"); `make bench-v92c`, `make cost-v92c`.
+
+Seen failing first: test_p2v92a 46 checks, 9 failures (fields added, no
+behaviour); test_v92a 65 checks, 18 failures (v90a not yet V.92: the call
+went V.90), and its L2 clock check 66 / 1 before p2call measured it;
+test_orig_v92 109 checks, 24 failures (orig not passing V.92 on: V.90
+everywhere); test_api 242 checks, 6 failures (V.92 calling refused). Now
+46 / 66 / 109 / 262 checks, 0 failures.
+
+What it took (each found in simulation, in this order):
+1. The answerer's MD wait: v90a defaults MD to 22 units, which Table 18
+   reads as 22 x 276 symbols; the digital modem waited it out and missed
+   our Ru. PCM INFO1a carries MD = 0.
+2. Our Ru's echo taken for Sd (deafness until Ja, above).
+3. C5's upstream (48-tap resampler, no band limit): PCM upstream needs
+   the far codec's band limit and a resampler that is right to 3.9 kHz;
+   without them B1u came with 21 units RMS of error at 30 ppm (9.6 at 0
+   ppm) and decoded wrong (588 of 2688 bits).
+4. The band edge. The digital modem's prefilter puts a third of our power
+   above 3.5 kHz (it makes up for the codec filters); the receiver's 64-tap
+   bank is -74 dB to 3.7 kHz but -9 dB at 3.9 kHz, and what it gets wrong
+   there turns with the clocks: errors came and went with a 4 s period at
+   30 ppm. A 128-tap bank cut at 3850 Hz was time-invariant but rang 64
+   taps ahead of the cursor, outside the digital modem's 24-tap look-ahead
+   (-39 dB of its energy): unbudgeted interference, errors at 0 ppm. The
+   64-tap cut at 3700 Hz has -64 dB beyond 24 taps and is time-invariant to
+   -78 dB.
+5. The canceller trained on the low-passed TRN1u reached 33 dB (73 before):
+   the hybrid's echo peaks at the band edge (+23 dB at 3.8 kHz against 1
+   kHz in sim/dschan), where the low-pass leaves little to learn on. TRN1u
+   (and Ru, Ja) go out through the full band bank (73 dB).
+6. The clock. Found at Sd and corrected afterwards, it moved our symbols
+   against the network by up to a hundredth of a sample during and after
+   the digital modem's measurements (at 100 ppm its training receiver lost
+   the first TRN1u altogether: no Ja); from L2 (0.1 ppm) the first TRN1u is
+   already on the network clock and the receiver's loop has little to do.
+7. Echo -10 dB: the PCM upstream's band edge echo clipped our 16-bit A/D
+   (peaks of 30000) before the low-pass of 4; the end-to-end lines use
+   -16 dB as C5's did; test_v92a's -10 dB call is clean now.
+
+End to end (test_orig_v92, seeds as in the suite; 10 s of data per line;
+"fail" counts failures of the self-synchronising check, three per wrong
+bit; rtd includes the 320-tap resampler's 20 ms):
+
+```
+  line                                    mod data ms   down     up SNR dB   rtd  bits down  fail    bits up  fail
+  2 km,    0 ppm, -75 dBm0               V.92   12251  52000  34666  56.7   184     520026     0     346632     0
+  0 km, +100 ppm, -75 dBm0               V.92   12994  38666  34666  50.4   184     386628     0     346632     0
+  6 km, -100 ppm, -75 dBm0               V.92   12707  44000  30666  51.6   183     440055     0     306682     0
+  4 km,  +50 ppm, -65 dBm0               V.92   13822  40000  30666  45.8   185     399960     0     306636     0
+  2 km,  +30 ppm, 3 dB pad               V.92   12246  48000  36000  45.3   184     479952     0     359964     0
+  2 km,  -30 ppm, 6 dB pad               V.92   12702  42666  34666  50.1   184     426688     0     346632     0
+  2 km,  +30 ppm, robbed bit             V.92   13155  44000  34666  50.3   184     439989     0     346684     0
+  2 km,  +30 ppm, 6 dB pad, robbed bit   V.92   12018  40000  34666  49.5   184     399960     0     346632     0
+  2 km,  -50 ppm, A-law                  V.92   11506  46666  37333  51.8   183     466690     0     373352     0
+V.90 when V.92 is not on both sides
+  the answerer without V.92              V.90   10697  52000  28800  56.5   184     520026     0     288000     0
+  ours with V.92 off                     V.90   10394  52000  28800  56.9   184     520026     0     288000     0
+reported only: the upstream through the downstream's loop and codec response
+  2 km,    0 ppm, dschan's response up   V.92   13791  52000  32000  56.5   195     520026     0     319968     0
+ending a call
+```
+
+Every line reaches V.92 with PCM upstream, 30666 to 37333 bit/s up and
+38666 to 52000 down, with no check failure either way in 10 s; the V.90
+fallback both ways (answerer without V.92, our V.92 off); cleardown from
+either end. test_v92a (sequencer, 2 km, +30 ppm, echo -10 dB): 45333 /
+32000, 4 s clean; the digital modem's renegotiation followed (one break of
+the stream, 24 check failures, then 2 s clean); cleardown both ways; the
+time-outs (no Sd, no Jd, no Jp, no DIL, no CPd by 20 s, carrier in data).
+
+Not in the suite, the same table with six more seeds per line (54 calls),
+the final code: 48 clean. The rest, honestly:
+- 0 km, +100 ppm, seeds 100 and 104: the downstream receiver collapses in
+  data mode and takes our transmitter's timing with it. Not V.92's: C5's
+  V.90 caller on its own C5 line with the same seeds collapses on 3 of 6
+  (and A-law -50 ppm had downstream errors on 2 of 6, which V.92's runs did
+  not). C5's single-seed table hid it; it is C5-1's band edge at 100 ppm.
+- 2 km, +30 ppm, robbed bit, seed 104: 1428 downstream check failures.
+- 2 km, +30 ppm, 6 dB pad and robbed bit: seed 101 never reached data
+  mode on both sides (the answerer gave B1u up, ERR_B1, and retrained; we
+  do not retrain); seeds 103 and 104 have upstream errors (1836, 389). The
+  cause found: our receiver's timing loop walks by about a hundredth of a
+  sample between TRN1d and the end of the DIL (decisions on unmeasured
+  pad / robbed bit levels), comes back during TRN2u, and our symbols move
+  with it while the digital modem measures the channel for CPd, which it
+  does not follow afterwards. Tried and not kept (no net gain over the 54
+  calls): holding the loop from TRN1d to TRN2d, waiting 1 s after the DIL
+  before CPt, the loop at 1/4 and 1/8 of its gains (48, 46, 44, 49 clean).
+
+ARM: check-arm passes, the same programs and counts as the sync-0.5.0
+baseline taken here first (99 programs) but for the new ones and api;
+host and qemu-arm output of test_pcmtx, test_v92aseq, test_p2v92a,
+test_v92a, test_orig_v92 identical. Benches: bench-v90 8e3136e9 (internals
+and API, host, shared, qemu-arm); bench-v90c 5a5e5ca7 as at C5;
+bench-v92c (2 km, +100 ppm) cd66ac82 on the host and under qemu-arm.
+
+Cost (`make cost-v92c`, qemu instruction counts, the caller alone on its
+recording): data mode 102.9 M ARM instructions per second of line at 0 ppm
+(52000 / 34666 here), 112.5 M at 100 ppm (40000 / 34666), against C5's
+V.90 77.4 / 79.8 M: the PCM upstream (encoder with LZ2 128, LP1 64; the 64
+by 2 tap bank) costs some 25 to 33 M more than the V.34 upstream. That is
+about 90 % of the box's CPU (V34-REPORT: 39.5 M is 32 %): one call, barely.
+The six slowest ticks at 100 ppm:
+
+| tick | what | ARM instructions |
+|---|---|---|
+| 8.286 s | end of the DIL: analysis and CPt design (C5's) | 9.03 M |
+| 7.012, 9.125, 9.189, 13.861, 16.421 s | the receiver's equaliser computed again (C5's) | 0.84 to 0.86 M |
+
+No V.92 step is among them: the worst tick is C5's DIL analysis, as
+before, still to be spread over ticks.
+
+Answering side, by diff against the sync-0.5.0 baseline (host and ARM):
+the only differences are the new programs (pcmtx, v92aseq, p2v92a, v92a,
+orig_v92) and api 237 -> 262 (its calling cases). No answering-side file
+changed (modem/answer.c, p2d, p34d, v92/, v90/ untouched); `answer_t` is as it was.
+
+Open:
+- The multi-seed failures above; most of all our timing walking during
+  Phase 3 on lines with pads and robbed bits (a transmitter clock that does
+  not follow the receiver's loop excursions, but still the network, is the
+  next thing to try).
+- Cost: ~103 to 112 M instructions per second of data mode.
+- No retrain (a digital modem's retrain or its B1u failure ends our call),
+  no renegotiation of our own, no quick connect, no modem-on-hold, no
+  fast parameter exchange. A CPd that leaves out a part (has_mod / has_filt
+  / has_const = 0) is refused (V90A_ERR_CPD) rather than merged with the
+  last one.
+- SUVu says "no level measured"; 8-point TRN2u is coded but our answerer
+  never asks for it, so it is untested; MD is never sent.
+- The upstream lines are the answerer's own V.92 model (sim/v92chan);
+  through dschan's full loop response (up_line 2) the 2 km row is clean on
+  its seed, but the loop's low frequency tail outlasts the digital modem's
+  12 ms channel estimate by -46 dB, which its design does not budget for.
+- Tried in simulation and against this library's own answerer only: a
+  reading of V.92 common to both sides passes every test.

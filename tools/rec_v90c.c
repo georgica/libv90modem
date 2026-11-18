@@ -5,12 +5,16 @@
  * into the caller alone: what the caller does depends on nothing else (its
  * upstream data is the same 2^23 - 1 sequence there). Host only.
  *
- *   rec_v90c PPM SECONDS OUT
+ *   rec_v90c PPM SECONDS OUT [v92]
  *
- * OUT: "V90C0001", the sample at which the caller reached data mode (32-bit
- * little-endian), then every A/D sample as a 16-bit little-endian value. */
+ * v92: V.92 on both sides (PCM upstream; the upstream through the
+ * answerer's own V.92 line, test/v90link.h's up_line 1).
+ * OUT: "V90C0001" ("V92C0001" with v92), the sample at which the caller
+ * reached data mode (32-bit little-endian), then every A/D sample as a
+ * 16-bit little-endian value. */
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <inttypes.h>
 #include "v90link.h"
 
@@ -25,15 +29,17 @@ int main(int argc, char **argv)
     FILE *f;
     int64_t t_data = -1, end;
     int32_t secs;
-    if (argc < 4) { fprintf(stderr, "usage: rec_v90c PPM SECONDS OUT\n"); return 2; }
+    int v92 = argc > 4 && strcmp(argv[4], "v92") == 0;
+    if (argc < 4) { fprintf(stderr, "usage: rec_v90c PPM SECONDS OUT [v92]\n"); return 2; }
     secs = (int32_t)atoi(argv[2]);
     memset(&c, 0, sizeof c);
     c.loop_km = 2; c.noise_dbm0 = -75; c.ppm = atof(argv[1]); c.phase = 0.3; c.echo_db = -16;
     c.up_loss_db = 6; c.up_noise_dbm0 = -70; c.full = 1; c.caller_orig = 1; c.seed = 5;
+    if (v92) { c.v92 = 1; c.caller_v92 = 1; c.up_line = 1; }
     vl_init(l, &c);
     f = fopen(argv[3], "wb");
     if (!f) { perror(argv[3]); return 1; }
-    fputs("V90C0001", f);
+    fputs(v92 ? "V92C0001" : "V90C0001", f);
     put32(f, 0);
     end = (int64_t)8000 * 40;
     while (l->k < end) {
@@ -47,7 +53,8 @@ int main(int argc, char **argv)
     fseek(f, 8, SEEK_SET);
     put32(f, (uint32_t)(t_data < 0 ? 0 : t_data));
     fclose(f);
-    printf("rec_v90c: %" PRId64 " samples (%.2f s), %+g ppm, data mode at sample %" PRId64 ", %d / %d bit/s down / up\n",
-           l->k, (double)l->k / 8000.0, c.ppm, t_data, l->org.rx_bitrate, l->org.bitrate);
+    printf("rec_v90c: %" PRId64 " samples (%.2f s), %+g ppm, %s, data mode at sample %" PRId64 ", %d / %d bit/s down / up\n",
+           l->k, (double)l->k / 8000.0, c.ppm, l->org.modulation == ORIG_MOD_V92 ? "V.92" : "V.90", t_data,
+           l->org.rx_bitrate, l->org.bitrate);
     return t_data < 0;
 }

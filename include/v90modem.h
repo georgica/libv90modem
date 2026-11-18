@@ -55,15 +55,19 @@ typedef enum {
     V90M_ROLE_ANSWER = 0,       /* the called modem */
     V90M_ROLE_ORIGINATE = 1     /* the calling modem, from the moment the far end has answered
                                    (dialling and call progress are the owner's): V.21, V.22,
-                                   V.22bis, V.32bis, V.34 and V.90 as its analogue modem (after
-                                   V.8, or V.32bis Annex A after a pre-V.8 answer tone). V.90's
-                                   analogue modem needs the received samples linear
-                                   (v90m_process_linear or _lin_rx: a G.711 decoder on our side
-                                   would bury the PCM downstream in its own quantising noise),
-                                   does no retrain (v90m_retrain gives V90M_ESTATE) and has been
-                                   tried against this library's answerer in simulation only.
-                                   V90M_MOD_V92, V90M_MOD_BELL103 and V90M_MOD_BELL212A
-                                   give V90M_ENOTSUP */
+                                   V.22bis, V.32bis, V.34, and V.90 and V.92 as their analogue
+                                   modem (after V.8, or V.32bis Annex A after a pre-V.8 answer
+                                   tone). V.90's analogue modem needs the received samples
+                                   linear (v90m_process_linear or _lin_rx: a G.711 decoder on
+                                   our side would bury the PCM downstream in its own quantising
+                                   noise), does no retrain (v90m_retrain gives V90M_ESTATE) and
+                                   has been tried against this library's answerer in simulation
+                                   only. V90M_MOD_V92 (with V90M_MOD_V90): PCM upstream when the
+                                   answerer offers it in Phase 2, V.90 otherwise; full start-up,
+                                   no quick connect, no modem-on-hold, no retrain; tried in
+                                   simulation and against this library's own answerer only.
+                                   V90M_MOD_V92 without V90M_MOD_V90, V90M_MOD_BELL103 and
+                                   V90M_MOD_BELL212A give V90M_ENOTSUP */
 } v90m_role;
 
 /* modulations offered (v90m_cfg.modulations) */
@@ -71,8 +75,10 @@ typedef enum {
 #define V90M_MOD_V22     0x0002u     /* V.22 and V.22bis */
 #define V90M_MOD_V32BIS  0x0004u     /* V.32bis and V.32 (both roles) */
 #define V90M_MOD_V34     0x0008u     /* (both roles) */
-#define V90M_MOD_V90     0x0010u     /* the digital (server) side: answering only */
-#define V90M_MOD_V92     0x0020u     /* with V90M_MOD_V90: PCM upstream on offer */
+#define V90M_MOD_V90     0x0010u     /* answering: the digital (server) side; calling: the analogue
+                                        (client) side */
+#define V90M_MOD_V92     0x0020u     /* with V90M_MOD_V90: PCM upstream on offer (answering), or
+                                        asked for (calling; simulation and own answerer only) */
 /* answering only, and not in the defaults. Bell 103: a caller without V.8
  * that sends 1270 Hz (the Bell 103 mark) gets 300 bit/s FSK on 2225 / 2025
  * Hz, start-stop and no error control as in V.21. Bell 212A, with
