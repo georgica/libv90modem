@@ -719,3 +719,45 @@ replayed (1613 files) identical octet for octet; see v90d's PROGRESS.md.
 Not done: `modem/v90a` (the calling side's V.90) keeps its own history of
 what was sent for its fixed-delay canceller (`ecdl`, `V90A_ECDL`); it could
 use `ecdly_put/ref/next`, a change of its own to be proved on its own.
+
+## Sync with v90d 0.5.0: Bell 103 and Bell 212A answering (2026-11-17)
+
+v90d main 4799c4c..9484fb7 (Bell 103 and Bell 212A callers answered),
+modem side applied as it is: `modem/answer.c`, `answer.h`, `v21.h`, the new
+`modem/bell103_bpf.h` and `test/test_answer.c` are octet for octet main's.
+`tools/gen_v21_bpf.py` is merged (the library's `--high` and main's
+`bell103`); it regenerates `v21_bpf.h`, `v21h_bpf.h` and `bell103_bpf.h`
+octet for octet. No new source file, so no Makefile list changed.
+`answer_t` 106496 -> 106560 octets on the host, 106208 -> 106264 on ARM
+(`tonedet_t` and the tap pointer); `V90M_MEM_SIZE` stays 112 KiB.
+
+API 0.2.0: `V90M_MOD_BELL103` (0x0040) and `V90M_MOD_BELL212A` (0x0080),
+answering only and not in `v90m_cfg_default` (they change what a caller
+without V.8 hears after 4 s); originating with either gives
+`V90M_ENOTSUP`. `V90M_CONN_BELL103` = 8 and `V90M_CONN_BELL212A` = 9,
+appended, checked equal to `ANS_MOD_*` at compile time. State, stats and
+events need nothing new: the connection's modulation says it (SNR -1 in
+Bell 103, as in V.21). `test_api` gains the cfg checks and five calls
+(Bell 103 with and without V.22, Bell 212A, each not offered). Against the
+unchanged API (the new names supplied by a scratch header): 203 checks, 10
+failures; now 237 checks, 0 failures. Calling with Bell: planned after C6.
+
+Checked against sync-0.4.1 (dc4e119), same PC, both run afresh:
+
+| | sync-0.4.1 | this |
+|---|---|---|
+| `make check` | 99 programs, ALL HOST CHECKS PASS | the same 99, the same counts but `answer` 33 -> 54 and `api` 187 -> 237; ALL HOST CHECKS PASS |
+| `make check-arm` | the same 99, ALL ARM CHECKS PASS | the same two changes; ALL ARM CHECKS PASS |
+| `make bench-v90` | transmit hash 8e3136e9 | 8e3136e9 (internals and API; host, shared, qemu-arm) |
+
+The output of both runs, host and ARM, is identical line for line but for
+the new Bell lines of `answer` and `api`, their counts, the order `-j8`
+gives and timings: the calling side's tests (anstone, v8orig, orig,
+orig_v32, orig_v34, orig_v90, p2call, p2v90, v90a, v90adec, v90arx,
+v90arx_robust, v90dil and the calling cases of api) print the same.
+
+In v90d (`libv90modem-split` with main 9484fb7 merged, built against this):
+main's 108 host and 107 ARM programs with the same counts (but `tel`, the
+branch's own), bench hash 8e3136e9 as main, 106 recordings x 8
+configurations replayed (1613 files) identical octet for octet, release
+image built and `test-release` passes; see v90d's PROGRESS.md.
