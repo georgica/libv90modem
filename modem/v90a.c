@@ -463,6 +463,10 @@ static void ri_dec(v90a_t *a, const v90arx_dec_t *d)
         a->ribar_m0 = m - 5; a->m_trn2d = a->ribar_m0 + 24; a->t_ribar = a->now;
         a->ribar_seen = 1;
         set_cons(a, &a->cpt, a->m_trn2d);
+        /* the DIL's levels are measured: from here the equaliser leaves the
+         * band edge's turning image out (v90arx_edge), TRN2d's noise, which
+         * CP is designed on, included */
+        v90arx_edge(&a->rx, 1);
         v90adec_init(&a->dec, &a->tmap);
         v90_scr_init(&a->dscr);
         a->mbn = a->mones = 0; a->got_mp = a->got_mpa = a->after_mpa = a->got_ed = 0;

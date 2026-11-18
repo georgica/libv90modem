@@ -22,6 +22,7 @@ extern const uint8_t v32_abcd_label[4], v32_label_abcd[4];
 
 #define TRN1_MIN   1280          /* 5.2.3: at least 1280 symbols */
 #define TRN1_MAX   8192          /* 5.2.3: at most 8192 symbols */
+#define C_TRN_MIN  2560          /* the calling modem's TRN, at least (v32_call.c) */
 #define T_REVERSAL MS(4000)      /* CA / second AC unanswered */
 #define T_TRAIN    MS(10000)     /* no S / R2 / E */
 #define RT_BAD_MS  2000

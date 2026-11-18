@@ -3,6 +3,7 @@
 #include "v90arx.h"
 #include "v34_tabs.h"           /* the fractional delay bank, shared with qamrx */
 #include "v90_pcm.h"
+#include "sintab.h"           /* the band edge's image (edge_image) */
 
 #define ONE32    ((int64_t)1 << 32)
 #define AGC_RMS  4096           /* Sd at the equaliser input */
@@ -74,6 +75,11 @@ void v90arx_init(v90arx_t *r, const v90arx_cfg_t *cfg)
 }
 
 void v90arx_ec(v90arx_t *r, int mu_shift) { r->ec_mu = mu_shift; }
+void v90arx_edge(v90arx_t *r, int on)
+{
+    if ((on != 0) != r->edge) r->redo = 1;      /* at once, not at the next computation due */
+    r->edge = on != 0;
+}
 void v90arx_hold(v90arx_t *r, int on)
 {
     r->hold = on != 0;
@@ -207,6 +213,44 @@ static int find_cursor(v90arx_t *r)
  * About 18000 64-bit multiplies and 1200 divisions. */
 #define NT ((V90ARX_NF * (V90ARX_NF + 1)) / 2)
 #define TRI(i, j) ((i) * ((i) + 1) / 2 + (j))
+
+/* The band edge (v90arx_edge). Our A/D samples the line on its own clock:
+ * what the far codec leaves above 4 kHz (the image of the band below it)
+ * folds on to 3.8 .. 4 kHz with a phase that turns once per sample of clock
+ * drift, so the channel there is not what the estimate says for long (on a
+ * 0 km line at 100 ppm its response at 4 kHz goes from -20 to -70 dB and
+ * back every 1.25 s, at 3.9 kHz from -17 to -22 dB; measured). An MMSE
+ * equaliser computed from the estimate amplifies that band as if it stood
+ * still, and the moment it turns, every symbol carries the error (bursts of
+ * decision errors, then the decision directed estimate and the timing loop
+ * follow them away). So the image is taken into the design as interference
+ * of unknown phase: at four frequencies of 3805 .. 3992 Hz, a quarter of the
+ * power the channel estimate has there (the image is weaker than the band
+ * it mirrors: G.712's codec filters fall from 14 dB at 4 kHz to 32 dB at
+ * 4.6 kHz), each over its 46.875 Hz, added to R as
+ *   R_ij += sum_k w P_k cos(2 pi f_k (i - j)),  w = 2 46.875 / 8000 / 4.
+ * hh and R in the units of dfe_design. */
+static void edge_image(const int32_t *hh, int64_t *A)
+{
+    int k, j, i, d;
+    int64_t P[4];
+    for (k = 0; k < 4; k++) {
+        int64_t xr = 0, xi = 0;
+        int n = 490 + 6 * k;                    /* f = n 8000 / 1024: 3828 .. 3969 Hz */
+        for (j = 0; j < V90ARX_NCH; j++) {
+            int ph = (n * j) & SIN_MASK;
+            xr += (int64_t)hh[j] * sintab[(ph + SIN_N / 4) & SIN_MASK];
+            xi -= (int64_t)hh[j] * sintab[ph];
+        }
+        xr /= 32768; xi /= 32768;               /* |X| <= 2^27 */
+        P[k] = (xr * xr + xi * xi) * 3 / 1024;  /* w = 3 / 1024 */
+    }
+    for (d = 0; d < V90ARX_NF; d++) {
+        int64_t v = 0;
+        for (k = 0; k < 4; k++) v += (P[k] / 32768) * sintab[((490 + 6 * k) * d + SIN_N / 4) & SIN_MASK];
+        for (i = d; i < V90ARX_NF; i++) A[TRI(i, i - d)] += v;
+    }
+}
 static int dfe_design(v90arx_t *r)
 {
     int64_t A[NT], z[V90ARX_NF], fs[V90ARX_NF], mx = 0, dmax = 0, s2, bias = 0, t;
@@ -235,6 +279,7 @@ static int dfe_design(v90arx_t *r)
     s2 = r->res;
     s2 = 16 - hs >= 0 ? s2 << (2 * (16 - hs)) : s2 >> (2 * (hs - 16));
     for (i = 0; i < V90ARX_NF; i++) if (A[TRI(i, i)] > dmax) dmax = A[TRI(i, i)];
+    if (r->edge) edge_image(hh, A);
     if (s2 < (dmax >> 18)) s2 = dmax >> 18;
     if (s2 < 1) s2 = 1;
     for (i = 0; i < V90ARX_NF; i++) A[TRI(i, i)] += s2;
@@ -432,6 +477,11 @@ static void equalise(v90arx_t *r, int32_t k, int16_t q)
     /* the channel estimate, one symbol behind (every symbol of its span is
      * known or decided), the timing loop, and the equaliser again from time
      * to time */
+    /* the symbol as known or decided, held or not: the estimate's
+     * regressor (when it was kept only while adapting, the estimate went on
+     * after a hold with up to NCH stale symbols in its span, and its error
+     * moved it and the timing loop with it: PROGRESS.md, robust) */
+    r->sb[m & 255] = (int16_t)(lev >> V90ARX_YF);
     if (!r->hold) {
         /* what aliases at the band edge turns with our sampling phase, one
          * turn per sample of drift: compute the equaliser more often the
@@ -439,13 +489,12 @@ static void equalise(v90arx_t *r, int32_t k, int16_t q)
          * 61 ppm, above) */
         int64_t off = r->step - ONE32;
         int rc = V90ARX_RECALC;
-        r->sb[m & 255] = (int16_t)(lev >> V90ARX_YF);
         if (off < 0) off = -off;
         if (off > (ONE32 >> 15)) rc >>= 1;          /* 30.5 ppm */
         if (off > (ONE32 >> 14)) rc >>= 1;          /* 61 ppm */
         if (!gate) estimate(r, m - V90ARX_LEAD, r->state == V90ARX_TRAIN ? (int64_t)r->L * r->L : r->pd >> 8, 2);
         if (++r->tblk >= TBLK) { r->tblk = 0; timing(r); }
-        if (r->state == V90ARX_DD && r->neq % rc == 0) (void)dfe_design(r);
+        if (r->state == V90ARX_DD && (r->neq % rc == 0 || r->redo)) { r->redo = 0; (void)dfe_design(r); }
     }
 
     if (r->nout >= 2) return;

@@ -1604,3 +1604,133 @@ then these fixes can go in with the tests green.
 | `make bench-v92c` (the caller) | cd66ac82 | 66686c34, host and qemu-arm agree: the caller's own V.8 changed |
 | `check-arm` (armv5, qemu; run once, on this tree) | the ARM count lines of sync-build/proof/afterports/check-arm.log | the same lines but v8orig 54, realcheck 666, and orig_v32 / orig_v90 / orig_v92 with the host's failures; v34, v90, v92, v42, v32 all pass, identical |
 | v90d-split's live/replay, 106 recordings x 8 configs | 1613 files (sync-build/proof/afterports) | manifest identical, all 1613 (a copy of v90d-split d707463 built against this tree, uncommitted fixes in; rc-scripts/replayproof.sh) |
+
+## robust 2a: the V.90 caller's data-mode collapse, and V.32bis's rate (2026-11-18)
+
+Branch `robust`, from `realcheck-v8` (848f47a). Harnesses (not in the
+repository): ~/rb-tmp/t (`ts.c` a Te sweep of one line, `tr.c`
+the receiver's decisions against the octets the answerer sent, `tr4.c` /
+`tr5.c` a least-squares channel fitted on the true symbols, `dil.c` the
+DIL's levels, `sweep.sh` / `sweep92.sh` every line of test_orig_v90 /
+test_orig_v92 with its seed, Te 1000 to 1130 ms).
+
+### Test first
+
+- `test/test_orig_v90_te.c` (new): test_orig_v90's 0 km +100 ppm line (seed
+  21), 2 km +30 ppm (seed 24) and 2 km -50 ppm A-law (seed 31), each with
+  Te = 1000, 1006 ... 1126 ms (22 calls); every call must reach data mode,
+  meet the line's floor and carry 10 s both ways without a check failure.
+  On realcheck-v8: 3 checks, 2 failures (15 of 22 calls bad on 0 km, 0 of 22
+  on 2 km +30, 14 of 22 on A-law). ~16 s on the host; TEST_SHORT 4 per line.
+- `test/test_orig_v32.c`: the realistic line again with Te = 1000 ... 1130
+  ms (14 calls), each at 9600 or more and error free. On realcheck-v8: 96
+  checks, 2 failures (the row at 7200; 5 of 14 calls at 7200 or 4800).
+
+### What was wrong: three faults
+
+1. **The DIL's small Ucodes** (modem/v90dil). The receiver's decisions in
+   the bad calls against what the answerer sent: every early error (the
+   1e-4) was one point, the smallest of one interval (e.g. slot 4, Ucode 1:
+   the receiver's level 158 units, its true level 8; sign errors). The
+   DIL's means of Ucodes 0 to 6 were off by up to 160 units on 0 km (Ucode
+   0 at 105..131, Ucode 1 at 120..167, falling to normal by Ucode 7), not
+   snapped (where the codec's step is under 32 units the mean stands), and
+   CP took such a Ucode as its smallest point whenever its false level
+   cleared d/2. The cause: the segment of Ucode 0 followed that of Ucode
+   119; what the equaliser leaves of fifteen symbols at the largest level
+   lies on the next 126 symbols (segments 0..6) and, the DIL repeating
+   every pass, does not average out. The Te shift only decided whether a
+   false level was picked. Fix: the DIL in the order 0 2 4 ... 118 119 117
+   ... 3 1 (no segment after a much larger one). With it the levels of
+   Ucodes 0..11 on 0 km are 1..98, rising, as Table 1 has them.
+2. **The band edge** (modem/v90arx). With (1) alone 16 of 308 calls (0 km,
+   +100 ppm, 7 seeds x 44 Te) still collapsed, four of five at the same
+   moment of the clock drift (1.507 s into data mode). The equaliser's input
+   fitted against the true symbols: its residual grows from 5 to 50 units
+   at 4 kHz within 30 ms, and sliding fits show the channel at 4 kHz going
+   from -20 to -70 dB and back every 1.25 s (3.9 kHz: -17 to -22 dB): the
+   image of the band above 4 kHz folding on to the band below it with a
+   phase that turns with the clocks (C5-1's finding). The MMSE equaliser,
+   computed from an estimate 64 ms old, amplified that band as if it stood
+   still (+12 dB over mid-band at Nyquist): errors on alternate symbols,
+   then the decision directed estimate and the timing loop followed them
+   (delta to -2500, total loss; the receiver never came back). Fix:
+   `v90arx_edge()`: the image taken into the design as interference of
+   unknown phase, a quarter of the power the estimate has at 3828, 3875,
+   3922 and 3969 Hz, each over its 46.875 Hz (R += sum w P_k cos(w_k d)).
+   v90a turns it on at Ri-bar (TRN2d, which CP is designed on, included);
+   the DIL is measured with the plain equaliser (with it during the DIL the
+   pad lines' levels came out worse: 6 dB pad's gain search picked the
+   wrong codeword). Tried and dropped: a fixed triangle at Nyquist (costs
+   rate on every line, breaks the pad lines).
+3. **The estimate's regressor while held** (modem/v90arx): `sb[]`, the
+   symbols the channel estimate is computed against, was written only when
+   not held, so after every hold (Jd' to two DIL passes; Ri for 128
+   symbols) the estimate resumed with up to 128 stale symbols in its span:
+   its residual jumped (63 -> 1455) and the timing loop swung (delta -900
+   during TRN2d) while TRN2d's noise, which CP is designed on, was being
+   measured. Now written always.
+
+V.32bis (orig_v32, realistic line, 20-22 dB): of 14 Te, 3 took 7200 and 2
+took 4800; ports-2 the same line: 3 at 7200 and 2 that never reached data.
+Not a row on its floor: a caller weakness, two of them.
+4. Our receiver took the end of the answerer's AC for S (sim: in S mode for
+   130 symbols, then the 16 T of silence before the real S, whose start
+   passed for S-bar): it trained on S, read R1 with an error of 25000 and
+   offered 4800 only in R2. Fix (v32_rx, calling role only: `!r->answer`):
+   four symbols with next to nothing on time in S mode and it was not S;
+   look for S again.
+5. Our TRN ended at 1280 T + the round trip (the echo canceller had
+   converged), but it also trains the answerer's receiver, which picks R3 by
+   its error at the end of it: R3 at 7200 where its error in data mode
+   allows 9600. Fix (v32_call): the caller's TRN at least 2560 T (6.1
+   allows 8192); calls reach data 0.1 to 0.5 s later.
+
+### After
+
+`test_orig_v90_te`: 3 checks, 0 failures (0 of 22 on each line; 0 km at
+45333 .. 46666, was 40000 .. 45333). `test_orig_v32`: 96, 0 (9600 on all 14).
+
+Te sweeps, every line of the suites with its own seed, Te 1000 .. 1130 ms in
+5 ms steps (27 calls a line; bad = any check failure or no data mode):
+
+| line | V.90 before | V.90 after | V.92 before | V.92 after |
+|---|---|---|---|---|
+| 2 km, 0 ppm | 0, 52000 | 0, 50666..52000 | 0, 52000 | 0, 50666..52000 |
+| 0 km, +100 ppm | **23**, 40000..45333 | 0, 45333..46666 | 2, 37333 | 0, 38666..48000 |
+| 6 km, -100 ppm | 0, 46666..48000 | 0, 46666..48000 | 0, 42666..45333 | 0, 46666 |
+| 4 km, +50 ppm, -65 dBm0 | 0, 40000..41333 | 0, 38666..40000 | 0, 38666..40000 | 0, 38666..40000 |
+| 2 km, 3 dB pad | 0, 44000..48000 | 0, 44000..48000 | 0, 42666..48000 | 2 (up), 41333..48000 |
+| 2 km, 6 dB pad | 0, 30666..40000 | 0, 40000..45333 | 0, 41333..45333 | 0, 44000..45333 |
+| 2 km, robbed bit | 1, 45333..48000 | 0, 46666..49333 | 0, 44000..45333 | 0, 41333..46666 |
+| 2 km, 6 dB pad, robbed bit | 1, 30666..42666 | 0, 29333..44000 | 10, 30666..44000 | 10 (up), 29333..45333 |
+| 2 km, -50 ppm, A-law | **17**, 45333..46666 | 0, 46666..49333 | 0, 46666 | 0, 46666..48000 |
+
+V.90: 42 of 243 calls bad, now 0. V.92: 12 of 243, still 12, all upstream
+errors on the pad lines (2b). 0 km +100 ppm, 7 seeds x 44 Te: 0 of 308.
+
+Floors moved, on that evidence (a row is one draw of its line's spread):
+test_orig_v90's "6 dB pad, robbed bit" 40000 -> 28000 (29333 .. 44000
+with Te alone, 30666 .. 42666 before these changes), test_orig_v92's "3 dB
+pad" 45333 -> 40000 (41333 .. 48000; before 42666 .. 48000: five of 27
+now at 41333, the DIL's levels under a pad, see 2b). The pad lines' spread
+is the DIL's accuracy with pads and robbed bits (level biases of 45 units,
+a codeword, on some points; the timing loop walking after the holds): 2b.
+
+realcheck-v8's failures: orig_v90 104 checks 0 failures (0 km +100 ppm at
+46666, SNR 52.8), orig_v92 109, 0, orig_v32 96, 0.
+
+### Unchanged
+
+| | realcheck (~/c52v/rcv/check.log) | robust 2a |
+|---|---|---|
+| `make check` (host), 107 count lines | | the same lines, by diff, but orig_v32 95 -> 96, v8orig 53 -> 54 and realcheck 652 -> 666 (realcheck-v8), orig_v90_te added; every answering-side line identical; the subdirectories (v34, v90, v92, v42, v32) identical |
+| `make bench-v90` | 8e3136e9 x6 | 8e3136e9 x6 |
+| `make bench-bell` | 48f22641, fc125ef2 | the same, host and qemu-arm |
+| `make bench-v92c` (the caller) | 66686c34 (realcheck-v8) | ff7367a8, host and qemu-arm |
+| `make bench-v90c` (the caller) | | 695b27e5, host and qemu-arm |
+| `check-arm` (armv5, qemu; once, on this commit's tree) | sync-build/proof/afterports/check-arm.log's library lines | all pass; the same lines but orig_v32 96, v8orig 54, realcheck 666 (realcheck-v8), orig_v90_te 3 (TEST_SHORT: 4 Te per line), by diff |
+
+Answering side: no file of it changed (v32_rx's change is under `!r->answer`;
+v32_call, v90arx, v90dil, v90a are the calling side's). `v32rx_t` has one
+int more (`s_lost`), which `answer_t` holds through its union.

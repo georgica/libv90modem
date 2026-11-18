@@ -172,6 +172,8 @@ typedef struct {
     v90arx_cons_t cons, next; int32_t next_m; int have_next;
     int deaf;                   /* 1: Sd is not looked for (v90arx_deaf) */
     int clk_set;                /* 1: the clock was given (v90arx_clock) */
+    int edge;                   /* 1: the band edge's image in the design (v90arx_edge) */
+    int redo;                   /* 1: compute the equaliser at the next symbol adapted on */
     /* the decisions of the last tick */
     v90arx_dec_t out[2]; int nout;
 } v90arx_t;
@@ -200,6 +202,14 @@ void v90arx_clock(v90arx_t *r, int32_t ppm_q8);
  * (0). For a V.92 analogue modem, whose own Ru (+ + + - - -) has Sd's
  * period: its echo, before the canceller has learnt, is no Sd. */
 void v90arx_deaf(v90arx_t *r, int on);
+
+/* From now on (the equaliser is computed again at once): the band edge (3.8 to 4
+ * kHz), where what folds from above 4 kHz turns with the clock offset, is
+ * taken as interference (1), not as channel (0, the default). A caller sets
+ * it once what it measures with the plain equaliser (the DIL's levels) is
+ * done: it trades a little SNR on most lines for an equaliser that does not
+ * amplify a band that will not stay as it was estimated (v90arx.c). */
+void v90arx_edge(v90arx_t *r, int on);
 
 /* Freeze (1) or release (0) all adaptation: equaliser, estimate, timing. */
 void v90arx_hold(v90arx_t *r, int on);

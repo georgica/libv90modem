@@ -3,7 +3,8 @@
  * and CP (V.90 8.3.1, 8.4.1, 8.5.2).
  *
  * The DIL asked for (v90dil_design). Every Ucode 0..119 is a training
- * symbol, in that order, one DIL-segment each (N = 120); a segment is 18
+ * symbol, one DIL-segment each (N = 120), in the order 0 2 4 ... 118 119
+ * 117 ... 3 1 (no segment follows a much larger one: see v90dil.c); a segment is 18
  * symbols (Hc = 2 for every Uchord). Each segment opens with REFc = UINFO
  * three times, all positive, and then 15 training symbols, the first of them
  * positive too (TP = 0 0 0 1 ..., SP = + + + + - - + - + + - - - + - + - +,

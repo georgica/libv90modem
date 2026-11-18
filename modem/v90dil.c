@@ -22,7 +22,15 @@ void v90dil_design(v90_dil_t *d, int uinfo)
         if (i >= 3) d->tp[i >> 3] |= (uint8_t)(1u << (i & 7));
     }
     for (c = 0; c < 8; c++) { d->h[c] = 2; d->ref[c] = (uint8_t)(uinfo & 127); }
-    for (i = 0; i < V90DIL_NU; i++) d->train[i] = (uint8_t)i;
+    /* up by the even Ucodes, down by the odd ones (0 2 ... 118 119 117 ...
+     * 1, then 0 again): no segment follows one much larger than itself. In
+     * the order 0 .. 119 the segment of Ucode 0 followed that of 119, and
+     * what the equaliser leaves of fifteen symbols at the largest level (its
+     * residual interference, deterministic in a pattern that repeats every
+     * pass, so not averaged out) stood in the means of Ucodes 0 to 6 at up
+     * to 160 units on a 0 km line, where their true levels are 0 to 50:
+     * CP then took such a Ucode as its smallest point (PROGRESS.md, robust) */
+    for (i = 0; i < V90DIL_NU; i++) d->train[i] = (uint8_t)(i < V90DIL_NU / 2 ? 2 * i : 2 * (V90DIL_NU - 1 - i) + 1);
 }
 
 void v90dil_cur_init(v90dil_cur_t *c) { c->seg = c->pos = 0; }

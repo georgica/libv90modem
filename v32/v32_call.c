@@ -247,6 +247,12 @@ void v32c_rx_control(v32_t *m)
             rt = m->nt - SYM2SAMP(64);
             v32ec_set_bulk(&m->ec, rt - 28);
             m->trn1_min = TRN1_MIN + (rt > 0 ? (uint32_t)rt * 3 / 10 : 0);
+            /* our TRN also trains the answerer's receiver, which picks R3 by
+             * its error at the end of it: 1280 T left it short of where it
+             * settles on a lossy line (R3 at 7200 where 9600 fits, 3 calls
+             * in 14 on test_orig_v32's realistic line); 6.1 allows up to
+             * 8192 T */
+            if (m->trn1_min < C_TRN_MIN) m->trn1_min = C_TRN_MIN;
             if (m->trn1_min > TRN1_MAX - 512) m->trn1_min = TRN1_MAX - 512;
             /* NT in symbols, to the nearest even count */
             m->snt_len = (m->nt * 3 + 10) / 20 * 2;

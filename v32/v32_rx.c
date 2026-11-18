@@ -45,7 +45,7 @@ static void reset_train(v32rx_t *r)
     r->theta = 0; r->freq = 0;
     r->t_integ = 0;
     r->gain = 0; r->agc_acc = 0; r->agc_n = 0;
-    r->o1r = r->o1i = r->o2r = r->o2i = 0; r->sbar_neg = 0;
+    r->o1r = r->o1i = r->o2r = r->o2i = 0; r->sbar_neg = 0; r->s_lost = 0;
     r->nsym = 0; r->mse = 0;
     r->ref_idx = 0; r->ref_scr.reg = 0;
     r->dscr_dir.reg = 0; r->dscr.reg = 0;
@@ -408,6 +408,17 @@ static void half_symbol(v32rx_t *r, int32_t yr, int32_t yi, int p)
     if (r->mode == V32_RX_S) {
         /* S-bar: the on-time samples turn over against those two symbols back */
         int64_t pp = (int64_t)gr * r->o2r + (int64_t)gi * r->o2i;
+        /* the calling modem: what looked like S may have been the end of the
+         * answerer's AC, before its 16 T of silence and the real S (5.2):
+         * four symbols with next to nothing on time and it was not S; wait
+         * for S again. (Taken for S, the AC set the gain and the timing, and
+         * the real S's start passed for S-bar: the receiver trained on S
+         * and read R1 with an error of 25000, so R2 offered 4800 only.) */
+        if (!r->answer) {
+            if ((int64_t)gr * gr + (int64_t)gi * gi < (TARGET_PW >> 4)) {
+                if (++r->s_lost >= 4) { r->mode = V32_RX_TONE; r->s_run = 0; r->s_lost = 0; return; }
+            } else r->s_lost = 0;
+        }
         r->o2r = r->o1r; r->o2i = r->o1i; r->o1r = gr; r->o1i = gi;
         r->nsym++;
         if (r->nsym > 4 && pp < -(TARGET_PW >> 3)) r->sbar_neg++; else r->sbar_neg = 0;

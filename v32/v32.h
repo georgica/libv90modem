@@ -173,6 +173,7 @@ typedef struct {
     uint32_t   theta; int32_t freq;
     int32_t    o1r, o1i, o2r, o2i;           /* previous on-time samples (S-bar detector) */
     int        sbar_neg;
+    int        s_lost;            /* calling modem, S mode: symbols with nothing on time in a row */
     uint32_t   nsym;              /* symbols in this mode */
     int32_t    mse;               /* smoothed |error|^2, 4096 = one signal space unit squared */
     int32_t    zr, zi;            /* last equalised point (diagnostic) */

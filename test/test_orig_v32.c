@@ -294,6 +294,32 @@ static void via_v8(void)
     CHECK(t > 0); CHECK_EQ_I(O.bitrate, 14400);
     data("data", O.bitrate);
 
+    /* the realistic line again with our Te moved (V.8 ends a few ms
+     * earlier or later): the rate must not depend on that moment. At 20 to
+     * 22 dB both receivers' error allows 9600 (v32_rate_mse); before the
+     * "robust" branch 5 of 14 calls took 7200 or 4800 (PROGRESS.md) */
+    {
+#ifdef TEST_SHORT
+        enum { NTE = 3, TSTEP = 48 };
+#else
+        enum { NTE = 14, TSTEP = 10 };
+#endif
+        int k, low = 0, lo = 99999;
+        for (k = 0; k < NTE; k++) {
+            start(P_ANSWER, ANS_ALL, ANS_ALL, 1, 0, 0);
+            O.v8.cfg.te_ms = 1000 + TSTEP * k;
+            t = to_data(20000);
+            run(MS(500)); data_reset(); run(MS(SECS * 1000));
+            if (t < 0 || O.bitrate < 9600 || c_chk.errs || a_chk.errs || c_chk.bits < 9600L * SECS * 3 / 4) {
+                low++;
+                printf("    Te %d ms: data at %.2f s, %d bit/s, %ld / %ld bad bits\n", 1000 + TSTEP * k, t, O.bitrate, c_chk.errs, a_chk.errs);
+            }
+            if (O.bitrate < lo) lo = O.bitrate;
+        }
+        printf("  the same line, Te moved: %d of %d calls under 9600 or with errors (lowest %d bit/s)\n", low, NTE, lo);
+        CHECK_EQ_I(low, 0);
+    }
+
     printf("  rate ceilings of ours\n");
     start(P_ANSWER, ANS_ALL, ANS_ALL, 0, 9600, 0);
     t = to_data(20000);
