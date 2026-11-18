@@ -1370,3 +1370,178 @@ answering use; v90d-split needed no change.
   today.
 - On 32-bit x86 the suite runs with SSE2 doubles; an x87-only build of the
   test harness prints other numbers (its line simulation), as described.
+
+## realcheck: the calling side against recordings of real callers (2026-11-18)
+
+Until now the caller (C1 to C7) had met only the library's own answerer, so
+a misreading of a Recommendation shared by both sides would pass every
+test. The only outside reference without a phone line: v90d's 106
+recordings of real modems calling the box (sync-build/live-050, a copy of
+v90d's live/*.raw; not in this repository). What real callers send was
+read out of them with the answering side's own decoders, our caller's
+calls were recorded the same way and read with the same tool, and the two
+compared field by field.
+
+### What the recordings hold
+
+- Format (tools/README.md): per 10 ms, 80 samples the box's codec received
+  and 80 codewords it sent. 75 recordings receive in 16-bit linear
+  (`V90DLIN1`), 31 companded (mu-law). Both directions at the box's 2-wire
+  port: what the caller sent (with the echo of the box's own signal under
+  it) and what the box sent, from off-hook; 20 to 82 s, half under 36.
+- No metadata in the files. The caller is told by what it sends (CM and
+  INFO0a differ between the makers) and by v90d's PROGRESS.md (which modem
+  was on the port that day): Conexant CX93001 (USB) 56 calls (16 V.90,
+  33 with V.92 PCM upstream offered, 6 V.34 forced, 1 V.21 forced);
+  U.S. Robotics 5686 (flash 5.4.62) 44, all V.92; U.S. Robotics 56K of
+  1998 (flash 5.1.4, no V.92) 6, V.90. None of them sent CI. No V.32bis,
+  V.22bis or Bell caller was recorded.
+- The box's software changed between the calls (0.2.x to 0.4.x): today's
+  answerer, set up as the recording box was (the options below), sends
+  what was recorded until 15 to 25 s into most calls, data mode or late
+  Phase 4; the 12 `pw_*` calls diverge after 8 to 10 s (Phase 3). Of every
+  call the caller's side up to there is read with the answerer following.
+
+### Tools
+
+- `tools/v90m_fields.c` (`build/v90m-fields`, not installed): the answering
+  modem run over a recording as `v90m-replay` runs it (same options), and
+  after each sample what it decoded: CM (its octets), INFO0a / INFO0c,
+  INFO1a / INFO1c, the probe's per-tone levels, Ja (V.90 and V.92), CPt,
+  CP, CPu, SUVu, MP, the states of each engine with their times. Next to
+  it, from the first sample of the recording, the library's V.21(L)
+  start-stop receiver (CI, CM, CJ, V.21 data) and the Phase 2 DPSK
+  receivers on both carriers (every CRC-clean INFO frame, every reversal
+  of the caller's tone), and the caller's level per state of the answerer
+  (L1 and L2 apart, the 1800 Hz guard tone against 2400 Hz). Every
+  sequence is also rebuilt from what the parser read with the builder the
+  caller sends it with (info0a_build, info1a_build, info1c_build,
+  v90_dil_build, v90_cp_build, v92_ja_build, v92_cpu_build,
+  v92_suvu_build, v34_mp_build, v8_encode) and compared bit by bit.
+- `tools/rec_orig.c` (`build/rec_orig`, host): a call of our caller
+  (V.92 + V.90 + V.34 + V.32bis + V.22bis + V.21; V.34 and below; V.21
+  only) against the answerer through the public API set up exactly as
+  `v90m-replay` sets it up, recorded at the answerer in the format above
+  (test/v90link.h: 2 km, +100 ppm, the V.92 upstream line; test/line34.h's
+  "real" line for V.34 and V.21). `v90m-replay` follows these recordings
+  with 0 transmit differences up to data mode (15 to 59 in data mode,
+  whose data are not the replay's), so `v90m-fields` reads them exactly as
+  it reads the real ones (step 4: cross-decode).
+- test/v90link.h: a hook for the digital end (`dig`), off in every test.
+
+Options per recording: of `-9 -u 33600`, `-9`, `-9 -u 32000`,
+`-9 -u 33333` and none, the one with which the replay's transmit stays
+equal to the recording's longest (the seven extracts below name theirs).
+
+### Real callers and ours, field by field
+
+| field | Conexant CX93001 | USR 5686 | USR 1998 | ours | verdict |
+|---|---|---|---|---|---|
+| CI | none | none | none | none (send_ci off) | (a) V.8 7.1: optional |
+| Te (ANSam start to first CM) | 1.24-1.26 s (1.56 in 10) | 1.50-1.52 s | 1.41-1.42 s | 1.49-1.52 s | (a) 8.1.1: >= 0.5 s, >= 1 s for V.25 echo control |
+| CM octets | c1 65 13 94 2a 0d 27 (V.92/V.90), c1 45 13 94 2a (V.34) | c1 65 13 10 27 0d | c1 65 13 10 27 0d | c1 65 13 90 2a 27 (V.92/V.90), c1 45 13 90 2a | **(b)** 6.3 and 7.3: with the PCM category the PSTN access category "shall also be present"; every real PCM CM has 0d. The rest (V.23, LAPM, category order) (a): clause 6 fixes no order and the two makers differ |
+| CM repeated | back to back, 10 ONEs between | same | same | same | = |
+| JM to CJ (end) | 2 JM + the CM octet: 0.673 s (5-octet JM), 0.807 s (7) | 2 JM + the rest of the CM | same | 0.806 s on the V.90 line; one JM more (0.94 s) on line34's 20 ms delay | **(b)** 8.1.2 "after a minimum of 2": legal, but the first JM after ANSam is lost (below) |
+| CJ | after callf (c1) | after the whole CM | after the whole CM | mid-CM, at the next octet | (a) 8.1.2: "complete the current octet" |
+| INFO0a | all symbol rates, 3429 allowed, power reduction, 1664, bit 26 (V.92) 1, ack 0; sent once | the same | the same, bit 26 0 | 3000/3200 only, no 3429, power reduction, 1664, bit 26 1 with V.92; once | (a) capabilities; bits 26/27 as Table 16/V.92 |
+| INFO0c (V.34) | all rates, bits 26:27 (clock) 00 | - | - | 3000/3200, 00 | (a) |
+| Tone A / guard | carrier 1800/2400 Hz -6.1..-6.7 dB | -6.2 dB | -6.3 dB | -5.5 dB (the simulated loop's slope) | = 8.2.3.1/V.90: guard 6 dB under the carrier |
+| reversals | 2nd = RTD + 80.0 ms; L2 521.6 ms (RTD 33 ms) | RTD + 80.0; L2 544 ms (RTD 34) | the same | RTD + 80.0; L2 528 ms (RTD 23) | = 9.2.2.1.5/.6: 40 + 40 ms; L2 <= 550 ms + RTD |
+| L1 / L2 level | L1 = L2 + 6.0 dB | + 6.0 | + 6.0 | + 6.0 | = 10.1.2.4/V.34 |
+| INFO1a, Table 18/V.92 | 12:17 0, MD 0, UINFO 79 (69..85 with the box's power), 32:33 0, 34:36 6, 37:39 6, **40:49 0x3fd** | 12:17 0x04 (Ltot 256), UINFO 78, 40:49 0x3ff | - | 12:17 0x3f (z1, p2; 384, 320), UINFO 90, 40:49 0x3ff | (a) ours as the table; the Conexant puts its frequency offset in 40:49, "not interpreted" by the digital modem, and ours does not |
+| INFO1a, Table 10/V.90 | 12:17 0, MD 0, UINFO 79, up_sr 4, freq -3 | (in its retrain) MD 0, UINFO 78, 4, freq 0 | MD 0, UINFO 78, 4, freq 0 | MD 22 (770 ms), UINFO 90, 4, freq -5 (the line's 100 ppm) | (a) |
+| INFO1c (V.34) | power red. 3-4, 3000/3200 pre-emph. 1, rates 11/13, freq -3 | - | - | power red. 0 + 3 more, pre-emph. 0, 11/12, freq -46 (line34's 1 Hz shift: sign and size right) | (a); freq. offset sign per Table 15 |
+| Ja (V.90 DIL) | N 119, Lsp 124, Ltp 126, H 22..8, REF 79 | N 197, Lsp 66, H 10, REF 0 | the same as the 5686 | N 120, Lsp 18, H 2, REF 90 | (a) designs; layout the same (rebuilt bit for bit) |
+| Ja (V.92) | as V.90 + rates 0x7ffff, filled to 12 | + 0x7ffff, **2092 bits: no fill to 12** | - | + 0x7ffff, filled | (a) ours per Table 20 / 8.5.4; the 5686 leaves the fill out, ours accepts it |
+| CPt (V.90) | drn 9, Sr 1, ld 1, rates 0x1fff, a1 1.0, 1 constellation, **1 fill bit** | drn 16, Sr 1, ld 3, 0x07ff, a1 1.0 | drn 16, Sr 1, ld 3, 6 constellations, codec differs | drn 14, Sr 0, ld 0, 0x0fff, a1 0, 6 constellations | (a) Sr 0 (no shaping) and a1 0 are allowed (5.4.5); every real one asks for the DC null T(z) = 1 - z^-1. Conexant: Table 14 has 3 fill bits |
+| CP (V.90) | (none recorded: V.92 taken) | drn 21, ack 1, 64-65 points | drn 21, ack 1, 65 points | drn 14, 25 points | (a) |
+| CPt / CPu (V.92) | drn 9 / 18, Sr 1, ld 1, a1 1.0; CPt **289 bits** between repeats (no 12-fill) | drn 16 / 21, ld 3 | - | drn 14 / 10, Sr 0, ld 0, a1 0 | (a); Table 23 fills to 12 symbols, the Conexant does not between CPts, ours does |
+| SUVu | no level, no wait, no silence | the same | - | the same | = |
+| MP (V.34) | type 1 (precoder), max 12-13, nonlinear, rates 0x3fff, asym | - | type 1, trellis 64, shaping, 0x0ffe | type 0, 14/10, linear, 0x1ffe | (a) |
+| Phase 3/4 durations (V.92) | TRN1u+Ja 2.4 s, Jd to Su 3.8 s, CPt after 2.0 s | 2.2, 2.1, 3.0 s | - | 0.92, 0.07, 1.25 s | (a) all inside 9.5.2: TRN1u >= 2040T, Su within 5 s of Jd, CPt within 5 s of Su |
+| upstream level, Phase 3 (V.90, V.34 TRN) | 2.2 dB under Tone A | 6.0 under | 5.1 under | 0.2 under | (a) ours as INFO1d asks (no reduction); the real ones go lower |
+| upstream level, V.92 TRN1u | 4.4 under | 2.0 under | - | 0.7 under | (a) LU is the modem's choice (3.8/V.92) |
+| V.21 forced | no V.8 at all: silent through ANSam and V.22's unscrambled ones; V.21 after the answerer's mark | - | - | V.8 with CM "V.21 only", then V.21 | (a) |
+
+Rebuilt bit for bit from the parsed fields with the caller's builders:
+every CM of the 5686 and the 1998 modem and every V.34 CM; INFO0a/c 107
+of 107; INFO1a 102 of 135 (the other 33: the Conexant's 40:49 of Table
+18, nothing else); INFO1c 9/9; V.90 Ja 42/42, V.92 Ja 34 + 44 (the 5686's
+fill); CPt, CP, CPt (V.92), CPu, SUVu, MP all equal but the fill lengths
+named above. No field was read differently from what the tables say and
+the values make sense for three modems of two makers (e.g. the training
+Ucodes 1..118 or 116, 115, 0, 110 ...; the constellations' Ucodes
+rising; the DIL's sign patterns), so the parsers' layout is confirmed from
+outside, and the caller's builders give the real modems' bits.
+
+Answering side (c): nothing the real modems would have had to tolerate.
+Our answerer takes the shorter fills of the Conexant (V.90 CP: 1 bit; V.92
+CPt: none) and of the 5686 (V.92 Ja) and the Conexant's 40:49; it
+should.
+
+### Found
+
+1. **CM without the PSTN access category** (V.8 6.3, 7.3): the caller
+   offers PCM and leaves access0 out. Fix (modem/orig.c, access 0: an
+   analogue connection, as the real ones) and its test: branch
+   `realcheck-v8`, see below.
+2. **The first JM after ANSam is lost** on some line delays: the V.21(H)
+   receiver reads ANSam's 2100 Hz as characters, and one in progress when
+   JM begins swallows JM's ten ONEs, so its sync does not start a sequence
+   and a third JM is needed (0.23 s more). test_v8orig over the clean
+   line with delays 0 to 30 ms: 21 of 31 waited for a third JM. Fix
+   (modem/v8orig.c: while 2100 Hz is heard the JM receiver reads idle
+   mark; anstone's 5 ms block test, held two blocks): 0 of 31, CJ at most
+   0.533 s after JM arrives. Branch `realcheck-v8`.
+3. Both fixes move V.8's end by tens of milliseconds, and so every
+   simulated call after it; with that, test_orig_v90 (0 km +100 ppm: 1626
+   or 27362 downstream bit errors), test_orig_v92 (a row under its floor)
+   and test_orig_v32 (the realistic row at 7200, floor 9600, at 21.1 dB)
+   fail. The fault is not in the fixes: on ports-2 unchanged, moving only
+   Te by 4 to 130 ms, the V.90 caller's data mode collapses (10^5 bit
+   errors, the receiver's SNR from 45-50 dB to 25-30 dB within 10 s) in 10
+   of 22 calls on the 0 km +100 ppm line, 1 of 13 on 2 km +30 ppm, 0 of 13
+   on 6 km -100 ppm. In the bad calls there are errors from the start of
+   data mode (about 1e-4), and after a few seconds the timing loop of
+   modem/v90arx (fed by the decision-directed channel estimate) swings
+   (delta -400 .. +2700 per block) and the errors run away. The tests
+   passed because ports-2's V.8 timing happens to land in good calls. Not
+   fixed here (C5's receiver; it needs its own work); the V.8 fixes stay
+   on `realcheck-v8` until it is.
+
+### New test
+
+`test/test_realcheck.c` with `test/data/realcheck.txt` (20 kB of text: 32
+sequences from 7 named recordings, as v90m-fields printed them, and where
+each comes from). For each: the parser reads the fields named in the test
+for that recording; the caller's builder given them gives the same bits,
+CRC included (and the documented departures: the Conexant's 40:49 and
+fill, the 5686's Ja fill, where ours follows the table); our INFO0a as
+p2call sends it. CM, INFO0a, INFO0c, INFO1a (Tables 10 and 18), INFO1c,
+Ja (V.90, V.92), CPt, CP, CPt and CPu of V.92, SUVu, MP. Portable: plain
+text read with sscanf, no byte order. 652 checks, 0 failures.
+
+### Unchanged
+
+| | ports-2 (0f67c01) | realcheck |
+|---|---|---|
+| `make check` (host) | 106 count lines = ~/c52v/portsv/check.log | the same 106 lines, by diff, plus `realcheck: 652 checks, 0 failures`; every other line the same (sorted, compile lines out) but the ns timings of v34's bench |
+| `make bench-v90` | 8e3136e9 x6 | 8e3136e9 x6 |
+| `make bench-v92c` | cd66ac82 (host, qemu-arm) | cd66ac82 (host, qemu-arm) |
+| `make bench-bell` | 48f22641, fc125ef2 | the same |
+
+No file of the library changed (tools, test/, the Makefile).
+
+### What the recordings cannot say
+
+- The downstream as a client receives it: the recordings are taken at the
+  box, so how the PCM downstream, JM, INFO0d / INFO1d, Jd, Jp, CPd, SUVd,
+  MP and Ed of a real digital modem look, and how our caller's receivers
+  take them, is not in them; the server side is always ours.
+- A real answerer's ANSam, JM and Phase 2 timing (ours in all of them).
+- Absolute levels: the box's port and the loop are not calibrated; only
+  levels relative to the same call's Tone A compare.
+- V.32bis, V.22 / V.22bis, Bell 103 / 212A and CI: no caller sent them.
+  Short Phase 2, quick connect and modem-on-hold of V.92: none used them.
+- Rate renegotiations and retrains begun by the caller are in a few calls
+  only (v34a, x2r4, usr7's V.90 retrain); not compared here.

@@ -87,7 +87,7 @@ TESTS    := test_g711 test_noise test_filt test_resamp test_channel test_v21 tes
             test_v22tx test_v22rx test_v22bis test_v14 test_answer test_info test_dpsk test_probe test_p2 test_qamrx test_ec test_ecdly test_v34train test_sres test_answer_v90 test_p34 test_pcmenc \
             test_v34mp test_p2ans test_v34mod test_v34dx test_v34call test_answer_v34 test_answer_v32 test_answer_v90_v34 \
             test_p2_v92 test_v92call test_answer_v92 test_v92real test_answer_lin \
-            test_anstone test_v8orig test_orig test_orig_v32 test_p2call test_orig_v34 test_v90arx test_v90arx_robust test_v90adec test_v90dil test_p2v90 test_v90a test_orig_v90 test_pcmtx test_v92aseq test_p2v92a test_v92a test_orig_v92 test_belltone test_orig_bell
+            test_anstone test_v8orig test_orig test_orig_v32 test_p2call test_orig_v34 test_v90arx test_v90arx_robust test_v90adec test_v90dil test_p2v90 test_v90a test_orig_v90 test_pcmtx test_v92aseq test_p2v92a test_v92a test_orig_v92 test_belltone test_orig_bell test_realcheck
 # the public API, against the library as it is installed
 API_TESTS := test_api
 SUBS     := v34 v90 v92 v42 v32
@@ -219,6 +219,12 @@ $(BUILD)/v90m-replay: $(REPLAY_SRC) $(LIB_HDR) tools/trace.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) $(CPPFLAGS_ALL) -DP34D_TRACE $(INC) -Itools -o $@ $(REPLAY_SRC) $(LDLIBS)
 replay: $(BUILD)/v90m-replay
+# what the caller of a recorded call sent, field by field (tools/v90m_fields.c;
+# not installed): the answering modem as v90m-replay runs it, without the
+# trace hooks, and the library's receivers on the caller's signal
+$(BUILD)/v90m-fields: tools/v90m_fields.c $(LIB_SRC) $(LIB_HDR)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) $(CPPFLAGS_ALL) $(INC) -o $@ tools/v90m_fields.c $(LIB_SRC) $(LDLIBS)
 
 # ---- V.90 on the target: record a simulated call on the host, replay it
 # (rig/bench_v90.c): CPU cost per phase and a bit-exactness check; the same
@@ -416,3 +422,8 @@ $(BUILD)/bench_v90c: rig/bench_v90c.c $(MODEM_SRC) $(HDRS)
 $(BUILD)/bench_v90c.arm: rig/bench_v90c.c $(MODEM_SRC) $(HDRS)
 	@mkdir -p $(BUILD)
 	$(ARM_CC) $(T_CFLAGS) -static -o $@ rig/bench_v90c.c $(MODEM_SRC) $(LDLIBS)
+# a simulated call of the library's caller, recorded at the answerer as v90d
+# records real ones (tools/rec_orig.c; host only)
+$(BUILD)/rec_orig: tools/rec_orig.c $(SIM_SRC) $(MODEM_SRC) api/v90modem.c $(HDRS) test/v90link.h test/line34.h
+	@mkdir -p $(BUILD)
+	$(CC) $(T_CFLAGS) -Iinclude -Iapi -o $@ tools/rec_orig.c api/v90modem.c $(SIM_SRC) $(MODEM_SRC) $(addprefix v42/,v42_hdlc.c v42_detect.c v42_comp.c v44_comp.c v42_lapm.c v42.c) $(LDLIBS)

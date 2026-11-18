@@ -99,6 +99,11 @@ typedef struct {
     p2d_t p2; p34d_t p34; int dstate;  /* 0 Phase 2, 1 p34d, 2 dead, 3 v92d */
     v92d_t v92d;
     int dmute;                      /* the digital modem's output silenced (a test's doing) */
+    /* a digital modem of the test's own (tools/rec_orig: the answerer through the
+       public API): when set, it takes each network sample's codeword in place of
+       the ones above and gives the codeword it sends */
+    uint8_t (*dig)(void *u, uint8_t in);
+    void *dig_user;
     /* analogue */
     orig_t org;
     v90a_t va;
@@ -181,7 +186,8 @@ static uint8_t vl_src(void *ctx)
     up = up * l->up_gain + l->up_nrms * rng_gauss(&l->rng);
     in = pcm_encode(alaw, (int16_t)(up > 32767 ? 32767 : up < -32768 ? -32768 : floor(up + 0.5)));
     l->n++;
-    if (l->cfg.full) out = answer_tick_pcm(&l->ans, in);
+    if (l->dig) out = l->dig(l->dig_user, in);
+    else if (l->cfg.full) out = answer_tick_pcm(&l->ans, in);
     else {
         int16_t x = (int16_t)v90_octet_linear(alaw, in);
         if (l->dstate == 0) {
