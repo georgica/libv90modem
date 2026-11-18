@@ -24,7 +24,7 @@
 #include "v92_info.h"
 #include "v90_pcm.h"
 
-#ifdef __arm__
+#ifdef TEST_SHORT
 #define NOISY_FRAMES 500        /* qemu: keep the Monte Carlo runs short */
 #else
 #define NOISY_FRAMES 4000

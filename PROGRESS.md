@@ -1168,3 +1168,91 @@ Open:
 - JM with nothing in common does not fall back to Bell (it cannot: the
   answerer has gone V.8); ANSam with a V.8 mode on offer never tries Bell.
 - A 212A start that fails without 103 on offer waits the V.22 30 s.
+
+## ports-2: the port matrix on calling-bell (2026-11-18)
+
+Branch `ports-2`, from calling-bell (632a820), with the parked `ports` work
+(b26345f: the 16-target matrix, `tools/winerun`, the static library's
+internal symbols renamed `v90m__i_*` by `tools/symmap.sh`, `check-symbols`,
+CROSS / NM / SUB_BUILD in the Makefile, two clang warnings) cherry-picked
+on top: no conflict.
+
+### Why the earlier matrix runs failed on every target
+
+They wrote their logs, and the compilers their temporary files, to /tmp,
+which had run out of quota; nothing of them is left. The same script with
+everything under /home builds and passes every target (below): it was the
+environment. `tools/check-ports.sh` now refuses an OUT under /tmp and sets
+TMPDIR to OUT/tmp.
+
+### The matrix script
+
+- Each test program's output is kept apart (`tools/portrun`, given to make
+  as QEMU) and compared with host gcc's, program by program. Only lines
+  that measure the host are left out: CPU and wall time, and the two lines
+  that print the size of structures in memory (`sizeof(v90tx_t)` and
+  `v34_rx_t`, which follow the pointer width and alignment).
+- PAR targets at once (`xargs -P`), JOBS compilers each; QUICK="..." skips
+  the slow programs of `tools/ports-slow.txt` on the targets named;
+  COMPARE_ONLY=1 compares what a run left.
+- `-DTEST_FULL` on every target: the ten tests that ran a shorter version
+  under `__arm__` (v32 call, caller, startup, v8; v34 precoder, bench,
+  resync, ber; v92 e2e, design) now say `TEST_SHORT`, which test/test.h
+  sets on 32-bit ARM unless TEST_FULL is given. So `make check-arm` on the
+  box's ARM is what it was, and the matrix runs the whole tests everywhere.
+- 32-bit x86 (i686, win32) builds with `-msse2 -mfpmath=sse`; see below.
+- `tools/printf-probe.c` is run on each target; see below.
+
+### What was wrong
+
+1. Unspecified order of evaluation (clang against gcc on the same host):
+   test_viterbi drew its two noise samples as two arguments of one call,
+   `v32_vit_step(&v, f(rng_gauss()), g(rng_gauss()), ...)`; gcc evaluates
+   them right to left, clang left to right, so the two compilers fed the
+   decoder different noise (clang's run: 8 bit errors at 12000 bit/s where
+   gcc's has 0). test_constel did the same with `tu_rand()` twice in
+   `v34_map_point`'s arguments. Both now draw in gcc's order in separate
+   statements: gcc's output is unchanged, clang's is now the same.
+2. Undefined behaviour in the signal path, found with `make check-ubsan`
+   (new: the host suite built with clang `-fsanitize=undefined
+   -fno-sanitize-recover`; it failed before, 36 reports, the tests aborted):
+   - left shifts of negative numbers, on 23 lines: qamrx (2), dpsk, ec (2),
+     v22rx, v90arx (10, and 3 more of the same kind beside them), v92_p34d
+     (2), v32_rx (2), v32_ec, v34_nl (2). Each
+     is now the multiplication it stood for (`x << 16` -> `x * 65536`,
+     `x << -rs` -> `x * ((int64_t)1 << -rs)`): the same value wherever the
+     shift was defined, and what every compiler made of it before.
+   - signed overflow in 32-bit products: v22rx's carrier derotation
+     (`zr * c + zi * s` while the gain has not settled: 168199 * -26905 in
+     test_v22bis) and v90arx's forward-filter update (`es * x[i] + half`
+     with a wild error, 286331153 * -8 in test_v90a, and in test_v92a). They
+     wrapped on every target; they still wrap, now defined (unsigned
+     arithmetic, converted back). Making them 64-bit would change what
+     the modem does in those moments (and could move hashes): left as an
+     open question, below.
+   After: `make check-ubsan` passes, no report. The real-modem fixtures
+   through v90m-replay, and the recordings of bench-v90, bench-v90c,
+   bench-v92c and bench-bell replayed by sanitized builds: no report, and
+   the same hashes (8e3136e9, 5a5e5ca7, cd66ac82, 48f22641, fc125ef2).
+3. test.h's CHECK_EQ_I compared in `long` (32 bits on every 32-bit target
+   and on Windows): now `long long`.
+
+### Floating point: what differs and why
+
+- uClibc-ng's printf (armv5 and m68k toolchains, uClibc-ng 1.0.43) rounds
+  up where the correct rounding is down: 0.25 -> "0.3", 5.835 (the double
+  5.83499999999999996...) -> "5.84", where glibc, musl and mingw print
+  0.2 and 5.83. That is the 5.84 s against 5.83 s seen on ARM before
+  (test_orig_bell): the same double, printed differently, not a different
+  computation. `tools/printf-probe.c` finds such a printf on the target
+  itself, and only there `tools/ports-cmp.awk` lets a number be one unit
+  larger in its last printed digit (same sign and decimals); those lines
+  are counted and reported; any other difference fails.
+- The x87 (i686 and win32 by default) computes the simulator's doubles in
+  80 bits: the simulated line differs, so the modem is fed other samples
+  (test_v34dx on i686 without SSE: SNR at MP 40.3 / 43.3 dB against
+  39.7 / 45.1, one renegotiation to 19200 against 16800 bit/s; the 32
+  programs before it were identical). The library itself has no floating
+  point: built for i686, its 78 objects contain no x87 instruction. So
+  32-bit x86 builds the suite with SSE2 doubles, which round as binary64
+  does everywhere else.

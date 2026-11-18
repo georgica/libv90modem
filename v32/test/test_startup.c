@@ -101,7 +101,7 @@ static void startup(int delay, unsigned a_rates, unsigned c_rates, int want_rate
 int main(void)
 {
     startup(40, V32_RALL, V32_RALL, 4);
-#ifndef __arm__
+#ifndef TEST_SHORT
     startup(400, V32_RALL, V32_RALL, 4);                        /* 100 ms round trip */
     startup(2400, V32_RALL, V32_R4800 | V32_R7200 | V32_R9600, 2);   /* a satellite hop; a V.32-rate caller */
     startup(8, V32_R4800 | V32_R7200, V32_RALL, 1);

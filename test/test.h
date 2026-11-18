@@ -6,6 +6,14 @@
 #include <stdlib.h>
 #include <math.h>
 
+/* TEST_SHORT: some long tests run a shorter version on 32-bit ARM, the box's
+ * architecture, where `make check-arm` runs them under qemu. The port matrix
+ * (tools/check-ports.sh) builds every target with -DTEST_FULL, so that all
+ * of them run the same, whole tests and must print the same. */
+#if defined(__arm__) && !defined(TEST_FULL)
+#define TEST_SHORT 1
+#endif
+
 static int t_checks = 0, t_fails = 0;
 
 #define CHECK(cond) do { \
@@ -15,10 +23,10 @@ static int t_checks = 0, t_fails = 0;
 } while (0)
 
 #define CHECK_EQ_I(got, want) do { \
-    long _g = (long)(got), _w = (long)(want); \
+    long long _g = (long long)(got), _w = (long long)(want); \
     t_checks++; \
     if (_g != _w) { t_fails++; \
-        printf("  FAIL %s:%d: %s == %ld, want %ld\n", __FILE__, __LINE__, #got, _g, _w); } \
+        printf("  FAIL %s:%d: %s == %lld, want %lld\n", __FILE__, __LINE__, #got, _g, _w); } \
 } while (0)
 
 /* near: |got-want| <= tol */

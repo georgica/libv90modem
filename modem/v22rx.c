@@ -193,8 +193,13 @@ static void symbol(v22rx_t *r)
     /* ---- carrier loop derotation: z * exp(-j theta) ---- */
     s = sintab[(r->theta >> 22) & SIN_MASK];
     c = sintab[((r->theta >> 22) + SIN_N / 4) & SIN_MASK];
-    pr = (zr * c + zi * s) >> 15;
-    pi_ = (zi * c - zr * s) >> 15;
+    /* In 32 bits, as always: z is within 16 bits once the gain has settled,
+     * but before that (and with a wild input) the products overflow. They
+     * wrap, as they always did on every target, now with defined behaviour
+     * (unsigned arithmetic; the conversion back is two's complement on
+     * every target this is built for). */
+    pr = (int32_t)((uint32_t)zr * (uint32_t)c + (uint32_t)zi * (uint32_t)s) >> 15;
+    pi_ = (int32_t)((uint32_t)zi * (uint32_t)c - (uint32_t)zr * (uint32_t)s) >> 15;
     r->zr = pr; r->zi = pi_;
 
     slice(r, pr, pi_, &x, &y);
@@ -226,7 +231,7 @@ static void symbol(v22rx_t *r)
     /* ---- carrier loop update ---- */
     if (!wild) {
         int32_t im = pi_ * x - pr * y;                 /* Im(z conj(d)) / U */
-        int32_t perr = (im << 2) / (x * x + y * y);    /* radians, Q12 */
+        int32_t perr = im * 4 / (x * x + y * y);       /* radians, Q12 */
         r->freq += perr * 326;
         if (r->freq > FREQ_MAX) r->freq = FREQ_MAX; else if (r->freq < -FREQ_MAX) r->freq = -FREQ_MAX;
         r->theta += (uint32_t)(perr * 20861 + r->freq);

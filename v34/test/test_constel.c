@@ -153,7 +153,7 @@ int main(void)
                     r.re = (int16_t)lrint((2 * tu_uniform() - 1) * scale * V34_ONE);
                     r.im = (int16_t)lrint((2 * tu_uniform() - 1) * scale * V34_ONE);
                 } else {                  /* a constellation point plus noise */
-                    v34_map_point(tu_rand() % p.npts, tu_rand() & 3, &re, &im);
+                    { unsigned rot = tu_rand() & 3; v34_map_point(tu_rand() % p.npts, rot, &re, &im); }  /* in a fixed order */
                     r.re = (int16_t)(re * V34_ONE); r.im = (int16_t)(im * V34_ONE);
                     r = tu_add_noise(r, 0.8);
                 }
@@ -191,7 +191,7 @@ int main(void)
                     r.re = (int16_t)lrint((2 * tu_uniform() - 1) * (p.ymax + 3.0) * V34_ONE);
                     r.im = (int16_t)lrint((2 * tu_uniform() - 1) * (p.ymax + 3.0) * V34_ONE);
                 } else {
-                    v34_map_point(tu_rand() % p.npts, tu_rand() & 3, &re, &im);
+                    { unsigned rot = tu_rand() & 3; v34_map_point(tu_rand() % p.npts, rot, &re, &im); }  /* in a fixed order */
                     r.re = (int16_t)(re * V34_ONE); r.im = (int16_t)(im * V34_ONE);
                     r = tu_add_noise(r, 0.6);
                 }

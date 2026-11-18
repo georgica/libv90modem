@@ -13,7 +13,7 @@
 
 #define T (10.0 / 3)
 
-#ifdef __arm__
+#ifdef TEST_SHORT
 #define SECS 1
 #else
 #define SECS 3
@@ -306,7 +306,7 @@ int main(void)
     startup("clean, mu-law, echoes 15 / 20 dB", 40, 0, V32_RALL, V32_RALL, 4);
     startup("10 dB loss, echoes 12-18 dB, -45 dBm0 noise, 1 Hz, 100 ppm", 160, 1, V32_RALL, V32_RALL, 2);
     startup("the same, -60 dBm0 noise", 160, 2, V32_RALL, V32_RALL, 3);
-#ifndef __arm__
+#ifndef TEST_SHORT
     startup("100 ms round trip", 400, 0, V32_RALL, V32_RALL, 4);
     startup("a satellite hop, the answerer up to 9600", 2400, 0, V32_RALL, V32_R4800 | V32_R7200 | V32_R9600, 2);
     startup("caller 9600 only", 160, 1, V32_R9600, V32_RALL, 2);

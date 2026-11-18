@@ -46,7 +46,7 @@ static const double C5[72] = {
     0.00092, 0.00090, 0.00087, 0.00083, 0.00080, 0.00075, 0.00071, 0.00066,
 };
 
-#ifdef __arm__
+#ifdef TEST_SHORT
 #define NSYM 6000
 #else
 #define NSYM 36000

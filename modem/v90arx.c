@@ -112,7 +112,7 @@ static void estimate(v90arx_t *r, int32_t k, int64_t pd, int g)
      * 0 alone): not below (L / 8)^2 */
     if (pd < ((int64_t)r->L * r->L >> 6)) pd = (int64_t)r->L * r->L >> 6;
     if (pd < 1) pd = 1;
-    es = (((int64_t)e * r->L) << 24) / ((int64_t)V90ARX_NCH * pd) >> g;
+    es = (int64_t)e * r->L * ((int64_t)1 << 24) / ((int64_t)V90ARX_NCH * pd) >> g;
     for (j = 0; j < V90ARX_NCH; j++)
         r->h[j] += (int32_t)((es * r->sb[(m0 - j) & 255]) >> 8);
     r->res += (((int64_t)e * e) - r->res) / 64;
@@ -147,7 +147,7 @@ static int32_t later_q16(const int32_t *v, const int32_t *u, int n, int sh)
         pr = (xr * ur + xi * ui) >> 30;
         pi = (xi * ur - xr * ui) >> 30;
         if (pr <= 0) continue;
-        t = (pi << 16) / pr;                       /* tan, Q16 */
+        t = pi * 65536 / pr;                       /* tan, Q16 */
         if (t > 32768) t = 32768;
         if (t < -32768) t = -32768;
         t -= (((t * t) >> 16) * t >> 16) / 3;      /* atan, to third order */
@@ -243,15 +243,15 @@ static int dfe_design(v90arx_t *r)
     rs = 0;
     while ((dmax >> rs) > ((int64_t)1 << 28)) rs += 2;
     while (rs > -28 && (rs >= 0 ? dmax >> rs : dmax << -rs) <= ((int64_t)1 << 26)) rs -= 2;
-    for (i = 0; i < NT; i++) A[i] = rs > 0 ? (A[i] + ((int64_t)1 << (rs - 1))) >> rs : A[i] << -rs;
+    for (i = 0; i < NT; i++) A[i] = rs > 0 ? (A[i] + ((int64_t)1 << (rs - 1))) >> rs : A[i] * ((int64_t)1 << -rs);
     /* Cholesky, in place: G in Q14 */
     for (j = 0; j < V90ARX_NF; j++) {
-        int64_t d = A[TRI(j, j)] << 28;
+        int64_t d = A[TRI(j, j)] * ((int64_t)1 << 28);
         for (k = 0; k < j; k++) d -= A[TRI(j, k)] * A[TRI(j, k)];
         if (d <= 0) return -1;
         A[TRI(j, j)] = isqrt64(d);
         for (i = j + 1; i < V90ARX_NF; i++) {
-            t = A[TRI(i, j)] << 28;
+            t = A[TRI(i, j)] * ((int64_t)1 << 28);
             for (k = 0; k < j; k++) t -= A[TRI(i, k)] * A[TRI(j, k)];
             A[TRI(i, j)] = t / A[TRI(j, j)];
         }
@@ -266,13 +266,13 @@ static int dfe_design(v90arx_t *r)
      * substitution stays under 2^59 */
     for (i = 0; i < V90ARX_NF; i++) {
         int64_t p = HH(a - i);
-        p = rs > 16 ? (p + (1 << (rs / 2 - 9))) >> (rs / 2 - 8) : p << (8 - rs / 2);
-        t = p << 36;
+        p = rs > 16 ? (p + (1 << (rs / 2 - 9))) >> (rs / 2 - 8) : p * ((int64_t)1 << (8 - rs / 2));
+        t = p * ((int64_t)1 << 36);
         for (k = 0; k < i; k++) t -= A[TRI(i, k)] * z[k];
         z[i] = t / A[TRI(i, i)];
     }
     for (i = V90ARX_NF - 1; i >= 0; i--) {
-        t = z[i] << 16;
+        t = z[i] * 65536;
         for (k = i + 1; k < V90ARX_NF; k++) t -= A[TRI(k, i)] * fs[k];
         fs[i] = t / A[TRI(i, i)];
     }
@@ -280,7 +280,7 @@ static int dfe_design(v90arx_t *r)
      * Q32: divided out, so the output is unbiased */
     for (i = 0; i < V90ARX_NF; i++) {
         int64_t p = HH(a - i);
-        p = rs > 16 ? (p + (1 << (rs / 2 - 9))) >> (rs / 2 - 8) : p << (8 - rs / 2);
+        p = rs > 16 ? (p + (1 << (rs / 2 - 9))) >> (rs / 2 - 8) : p * ((int64_t)1 << (8 - rs / 2));
         bias += (fs[i] * p) >> 8;
     }
     bias >>= 12;                                         /* Q20 */
@@ -290,7 +290,7 @@ static int dfe_design(v90arx_t *r)
     for (i = 0; i < V90ARX_NF; i++) {
         int64_t v = fs[i] * r->L / bias;                 /* fs L / bias, Q12 */
         int sh = e1 + 20 + V90ARX_YF - 12;
-        v = sh >= 0 ? v << sh : v >> -sh;
+        v = sh >= 0 ? v * ((int64_t)1 << sh) : v >> -sh;
         if (v > 0x7fffffff) v = 0x7fffffff;
         if (v < -0x7fffffff) v = -0x7fffffff;
         r->f[i] = (int32_t)v;
@@ -299,8 +299,8 @@ static int dfe_design(v90arx_t *r)
     for (j = 0; j < V90ARX_NB; j++) {
         int64_t acc = 0;
         for (i = 0; i < V90ARX_NF; i++) acc += fs[i] * HH(a - i + 1 + j);
-        acc = rs > 0 ? (acc + (1 << (rs / 2 - 1))) >> (rs / 2) : acc << (-rs / 2);
-        acc = (acc << 4) / bias;                         /* Q32 / Q20 -> Q16 */
+        acc = rs > 0 ? (acc + (1 << (rs / 2 - 1))) >> (rs / 2) : acc * ((int64_t)1 << (-rs / 2));
+        acc = acc * 16 / bias;                           /* Q32 / Q20 -> Q16 */
         r->b[j] = (int32_t)(acc > 0x7fffffff ? 0x7fffffff : acc < -0x7fffffff ? -0x7fffffff : acc);
     }
 #undef HH
@@ -364,7 +364,7 @@ static void equalise(v90arx_t *r, int32_t k, int16_t q)
     if (r->have_next && m >= r->next_m) { r->cons = r->next; r->have_next = 0; }
     slot = (int)(m % 6);
     if (m < r->cfg.ntrain && m < r->mref) {
-        lev = (int32_t)r->sb[m & 255] << V90ARX_YF;
+        lev = (int32_t)r->sb[m & 255] * (1 << V90ARX_YF);
         uc = r->cfg.uinfo; pos = lev >= 0; known = 1;
     } else if (r->cfg.known_lv && r->cfg.known_lv(r->cfg.known_ctx, m, &uc, &pos, &lev)) {
         known = 1;
@@ -404,7 +404,10 @@ static void equalise(v90arx_t *r, int32_t k, int16_t q)
         {
             int sh = r->shf + g;
             int32_t half = (int32_t)1 << (sh - 1);
-            for (i = 0; i < V90ARX_NF; i++) r->f[i] -= (es * x[i] + half) >> sh;
+            /* 32 bits, as always; with a wild error (es far out) the
+             * product overflows and wraps, as it always did, now defined:
+             * unsigned arithmetic, two's complement back */
+            for (i = 0; i < V90ARX_NF; i++) r->f[i] -= (int32_t)((uint32_t)es * (uint32_t)x[i] + (uint32_t)half) >> sh;
         }
         es = (int32_t)(((int64_t)ec * r->kb) >> 16);
         {

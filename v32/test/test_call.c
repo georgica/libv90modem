@@ -7,7 +7,7 @@
 
 static call_t k;
 
-#ifdef __arm__
+#ifdef TEST_SHORT
 #define SECS 2
 #else
 #define SECS 8
@@ -97,7 +97,7 @@ static void retrains(void)
 {
     printf(" retrain (7.2), mu-law, echo\n");
     retrain1("asked for by the caller", 1);
-#ifndef __arm__
+#ifndef TEST_SHORT
     retrain1("asked for by the answerer", 0);
 #endif
     {   /* not in data mode: refused */
@@ -108,7 +108,7 @@ static void retrains(void)
     }
 }
 
-#ifndef __arm__
+#ifndef TEST_SHORT
 /* a driver's buffering between the modem and the line: the near echo starts
  * late (cfg.echo_delay), and the 64 T turn-round must still hold at the line */
 static void io_delay(void)
@@ -166,7 +166,7 @@ static void carrier_loss(void)
     printf("  answerer: error %d (carrier lost) %.0f ms after the caller went silent\n", k.m.error, (n - t0) / 8.0);
 }
 
-#ifndef __arm__
+#ifndef TEST_SHORT
 /* the line gets worse in data mode: the answerer retrains by itself and comes
  * back at a rate the line carries */
 static void auto_retrain(void)
@@ -228,7 +228,7 @@ int main(void)
 
     /* (under qemu the double-precision peer is slow: the ARM build runs one
      * group at every rate and one or two calls of the others) */
-#ifndef __arm__
+#ifndef TEST_SHORT
     printf(" clean line (6 dB loss, no echo, linear)\n");
     line_defaults(&lc);
     all_rates("clean", &lc, 0);
@@ -247,14 +247,14 @@ int main(void)
     line_defaults(&lc); lc.mulaw = 1; lc.delay = 200;
     lc.loss_db = 15.6;
     lc.near_db = 15; lc.far_db = 20; lc.c_near_db = 15; lc.c_far_db = 20;
-#ifndef __arm__
+#ifndef TEST_SHORT
     all_rates("-30 dBm0", &lc, 0);
 #else
     { res_t x = call("-30 dBm0, any rate", &lc, V32_RALL, V32_RALL, SECS);
       CHECK(x.ok); CHECK_EQ_I(x.rate, 14400); CHECK_EQ_I((int)x.ae, 0); CHECK_EQ_I((int)x.ce, 0); }
 #endif
 
-#ifndef __arm__
+#ifndef TEST_SHORT
     printf(" sample clock offset (caller against network), with echo\n");
     line_defaults(&lc); lc.mulaw = 1; lc.delay = 200;
     lc.near_db = 15; lc.far_db = 20; lc.c_near_db = 15; lc.c_far_db = 20;
@@ -300,7 +300,7 @@ int main(void)
         unsigned i;
         for (i = 0; i < sizeof nz / sizeof nz[0]; i++) {
             char name[64]; res_t x;
-#ifdef __arm__
+#ifdef TEST_SHORT
             if (!(nz[i].r == 4 && nz[i].snr == 26) && !(nz[i].r == 0 && nz[i].snr == 13)) continue;
 #endif
             line_defaults(&lc); lc.mulaw = 1; lc.delay = 200;
@@ -321,7 +321,7 @@ int main(void)
         unsigned i;
         for (i = 0; i < sizeof snr / sizeof snr[0]; i++) {
             char name[64]; res_t x;
-#ifdef __arm__
+#ifdef TEST_SHORT
             if (snr[i] != 20) continue;
 #endif
             line_defaults(&lc); lc.mulaw = 1; lc.delay = 200;
@@ -334,7 +334,7 @@ int main(void)
         }
     }
     retrains();
-#ifndef __arm__
+#ifndef TEST_SHORT
     io_delay();
     auto_retrain();
 #endif

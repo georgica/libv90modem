@@ -17,7 +17,7 @@ static v8ans_t va;
 static v8call_t vc;
 static long c_wait;                 /* part 3: caller's samples before it sends AA */
 
-#ifdef __arm__
+#ifdef TEST_SHORT
 #define SECS 2
 #else
 #define SECS 5

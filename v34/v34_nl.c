@@ -46,8 +46,8 @@ v34_pt_t v34_nl_decode(const v34_params_t *p, v34_pt_t xp)
             e = (ep << 28) / ((phi * phi) >> 4);
         }
         phi = phi_q16(p, e);
-        y.re = sat((((int64_t)xp.re << 17) / phi + (xp.re < 0 ? -1 : 1)) / 2);
-        y.im = sat((((int64_t)xp.im << 17) / phi + (xp.im < 0 ? -1 : 1)) / 2);
+        y.re = sat(((int64_t)xp.re * 131072 / phi + (xp.re < 0 ? -1 : 1)) / 2);
+        y.im = sat(((int64_t)xp.im * 131072 / phi + (xp.im < 0 ? -1 : 1)) / 2);
     }
     return y;
 }

@@ -225,7 +225,7 @@ static void symbol(v32rx_t *r)
 
     /* carrier loop update: phase error in radians, Q12 */
     im = pi_ * dx - pr * dy;
-    perr = (im << 3) / (dx * dx + dy * dy);
+    perr = im * 8 / (dx * dx + dy * dy);
     if (perr > 2048) perr = 2048; else if (perr < -2048) perr = -2048;
     r->freq += perr * kf;
     if (r->freq > FREQ_MAX) r->freq = FREQ_MAX; else if (r->freq < -FREQ_MAX) r->freq = -FREQ_MAX;
@@ -273,7 +273,7 @@ static void timing(v32rx_t *r, int p)
     int64_t m = (qr < 0 ? -qr : qr) + (qi < 0 ? -qi : qi);
     if (m < 16) { r->te = 0; return; }          /* nothing on the band edges */
     while (m >= ((int64_t)1 << 29)) { qr >>= 1; qi >>= 1; m >>= 1; }
-    while (m < ((int64_t)1 << 28)) { qr <<= 1; qi <<= 1; m <<= 1; }
+    while (m < ((int64_t)1 << 28)) { qr *= 2; qi *= 2; m *= 2; }
     a = (int32_t)(qr >> 15); b = (int32_t)(qi >> 15);
     s = sintab[idx & SIN_MASK];
     c = sintab[(idx + SIN_N / 4) & SIN_MASK];

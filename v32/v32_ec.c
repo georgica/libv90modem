@@ -101,7 +101,7 @@ int32_t v32ec_tick(v32ec_t *e, int16_t tx, int32_t rx, int mu_shift)
         int sh = 0, s2;
         while (en >= 65536) { en >>= 1; sh++; }
         if (c > 32767) c = 32767; else if (c < -32768) c = -32768;
-        g = (int32_t)(((int64_t)c << 30) / (int32_t)en);
+        g = (int32_t)((int64_t)c * ((int64_t)1 << 30) / (int32_t)en);
         int64_t rnd;
         s2 = 6 + sh + mu_shift;
         rnd = (int64_t)1 << (s2 - 1);       /* rounded: truncation is a steady drift of every tap */

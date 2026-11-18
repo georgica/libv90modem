@@ -451,8 +451,8 @@ uint8_t v92d_tick(v92d_t *p, int16_t rxs)
         if (p->ec_mu >= 0) {
             ec_adapt(&p->ec, e, p->ec_mu);
             if (p->et_pw > 4096) {
-                p->et_g[0] += (int32_t)((((int64_t)e * u1) << 10) / p->et_pw);
-                p->et_g[1] += (int32_t)((((int64_t)e * u2) << 10) / p->et_pw);
+                p->et_g[0] += (int32_t)((int64_t)e * u1 * 1024 / p->et_pw);
+                p->et_g[1] += (int32_t)((int64_t)e * u2 * 1024 / p->et_pw);
             }
         }
         x = (int16_t)(e > 32767 ? 32767 : e < -32767 ? -32767 : e);

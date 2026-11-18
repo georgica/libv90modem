@@ -144,7 +144,7 @@ static int produce(qamrx_t *r)
                 zmr = (int32_t)(((int64_t)r->ymr * c + (int64_t)r->ymi * s) >> 15);
                 zmi = (int32_t)(((int64_t)r->ymi * c - (int64_t)r->ymr * s) >> 15);
                 g = (int64_t)r->er * (zpr - zmr) + (int64_t)r->ei * (zpi - zmi);
-                gn = (int32_t)((g << 12) / r->dnorm);       /* Q12 */
+                gn = (int32_t)(g * 4096 / r->dnorm);       /* Q12 */
                 if (gn > 4096) gn = 4096;
                 if (gn < -4096) gn = -4096;
                 /* second-order loop, time constant about 130 symbols */
@@ -219,7 +219,7 @@ void qamrx_update(qamrx_t *r, int32_t dr, int32_t di, int flags, int mu_shift)
     if (flags & QRX_CARRIER) {
         /* phase error Im{z conj(d)} / |d|^2 in rad, Q16 */
         int64_t num = (int64_t)r->zi * dr - (int64_t)r->zr * di;
-        int32_t phi = (int32_t)((num << 16) / dn);
+        int32_t phi = (int32_t)(num * 65536 / dn);
         if (phi > 32768) phi = 32768;
         if (phi < -32768) phi = -32768;
         r->freq += phi * 16;

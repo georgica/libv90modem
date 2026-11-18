@@ -7,7 +7,7 @@
 #include "test.h"
 #include "testutil.h"
 
-#ifdef __arm__                  /* under qemu: keep it short */
+#ifdef TEST_SHORT                  /* under qemu: keep it short */
 #define NBITS 60000UL
 #else
 #define NBITS 1000000UL
@@ -98,7 +98,7 @@ int main(void)
     CHECK(g > 2.5);
     g = curve(3000, 9600, V34_TRELLIS_16, 0, 8.0, 20.0);
     CHECK(g > 2.5);
-#ifndef __arm__
+#ifndef TEST_SHORT
     /* expanded shaping, and the optional codes */
     g = curve(3200, 19200, V34_TRELLIS_16, 1, 17.0, 29.0);
     CHECK(g > 2.5);

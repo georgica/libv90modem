@@ -3,6 +3,7 @@
 #   make                 static and shared library, pkg-config file (in $(BUILD))
 #   make check           the simulator suite on the host
 #   make check-arm       the same, cross-built (ARM_CC) and run under qemu-arm
+#   make check-ubsan     the host suite with undefined behaviour trapped (clang)
 #   make install         into $(DESTDIR)$(PREFIX); make uninstall takes it out
 #   make examples        examples/answer_file
 #   make bench-v90       record a simulated V.90 call, replay it on the host and
@@ -91,7 +92,7 @@ TESTS    := test_g711 test_noise test_filt test_resamp test_channel test_v21 tes
 API_TESTS := test_api
 SUBS     := v34 v90 v92 v42 v32
 
-.PHONY: test-fixtures all lib dev install uninstall clean check check-arm test test-arm test-api test-interop examples bench-v90 bench-v34 bench-v90a bench-v90c bench-v92c replay
+.PHONY: test-fixtures all lib dev install uninstall clean check check-arm check-ubsan test test-arm test-api test-interop examples bench-v90 bench-v34 bench-v90a bench-v90c bench-v92c replay
 all: lib
 lib: $(STATIC) $(SHARED) $(PCFILE)
 dev: $(DEV)
@@ -188,6 +189,14 @@ test-fixtures: $(BUILD)/v90m-replay
 SUB_BUILD = $(if $(filter build,$(BUILD)),build,$(abspath $(BUILD))/$$d)
 check-arm: test-arm test-api-arm
 	@for d in $(SUBS); do echo "== $$d (arm) =="; $(MAKE) -s -C $$d BUILD=$(SUB_BUILD) test-arm ARM_CC=$(ARM_CC) QEMU="$(QEMU)" || exit 1; done; echo "ALL ARM CHECKS PASS"
+# The host suite with undefined behaviour trapped (clang's -fsanitize=undefined):
+# a signed overflow or a shift of a negative number is what lets the same C
+# compute differently on another target or compiler; any of them fails.
+UBSAN_CC    ?= clang
+UBSAN_FLAGS := -std=c99 -O1 -g -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=undefined
+check-ubsan:
+	@$(MAKE) -s BUILD=$(BUILD)/ubsan CC=$(UBSAN_CC) CFLAGS="$(UBSAN_FLAGS)" test test-api
+	@for d in $(SUBS); do echo "== $$d (ubsan) =="; $(MAKE) -s -C $$d BUILD=$(abspath $(BUILD))/ubsan/$$d CC=$(UBSAN_CC) CFLAGS="$(UBSAN_FLAGS)" test || exit 1; done; echo "ALL UBSAN CHECKS PASS"
 
 INTEROP := interop_v8_spandsp interop_v22bis_spandsp interop_v8orig_spandsp interop_orig_v22bis_spandsp
 $(BUILD)/interop_%: test/interop_%.c test/peer_spandsp.c $(T_SRC)

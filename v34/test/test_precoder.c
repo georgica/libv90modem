@@ -6,7 +6,7 @@
 #include "test.h"
 #include "testutil.h"
 
-#ifdef __arm__
+#ifdef TEST_SHORT
 #define NFRAMES 40
 #define NSYMS   20000UL
 #else

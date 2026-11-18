@@ -18,7 +18,7 @@
 #include "test.h"
 #include "testutil.h"
 
-#ifdef __arm__
+#ifdef TEST_SHORT
 #define NSYM 24000UL
 #else
 #define NSYM 240000UL
@@ -91,7 +91,7 @@ static void bench(unsigned S, unsigned R, int trellis, const int16_t h[3][2], do
            S, R, 16 << trellis, note, t_tx, t_rx, t_tent);
     /* the decoder did decode: all but the B1 frame and the decoding delay */
     CHECK(nsunk >= (NSYM / 8 - p.map.P - V34_VIT_DEPTH / 4 - 2) * (p.map.b - 1u));
-#ifndef __arm__
+#ifndef TEST_SHORT
     CHECK(t_rx < 5000);
 #endif
 }
@@ -157,7 +157,7 @@ int main(int argc, char **argv)
     printf("  decoder state: sizeof(v34_rx_t) = %u bytes, v34_params_t = %u, v34_tx_t = %u (depth %d)\n",
            (unsigned)sizeof(v34_rx_t), (unsigned)sizeof(v34_params_t), (unsigned)sizeof(v34_tx_t),
            V34_VIT_DEPTH);
-#ifdef __arm__
+#ifdef TEST_SHORT
     printf("  wall time under the emulator, not target time: see `make cost-arm`\n");
 #endif
     printf("    config                       encoder    decoder    slicer\n");

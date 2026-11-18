@@ -20,12 +20,16 @@ static int run(int rate, double sigma, int rot, int nsym, int *hard_err, int ski
     v32_vit_init(&v, rate);
     for (k = 0; k < nsym + V32_VDEPTH; k++) {
         int x, y, t, i, label, hard, out;
+        double nx, ny;
         l = l * 1103515245u + 12345u;
         if (k < NSYM) qbuf[k] = (l >> 12) & ((1 << n) - 1);
         label = v32_encode(&e, rate, k < NSYM ? qbuf[k] : 0, &x, &y);
         for (i = 0; i < rot; i++) { t = x; x = -y; y = t; }
-        out = v32_vit_step(&v, (int32_t)lrint((x + sigma * rng_gauss(&rng)) * V32_UNIT),
-                               (int32_t)lrint((y + sigma * rng_gauss(&rng)) * V32_UNIT), &hard);
+        /* the two noise samples drawn in a fixed order (y's first, as gcc
+         * happened to evaluate them as arguments; clang takes x's first) */
+        ny = rng_gauss(&rng); nx = rng_gauss(&rng);
+        out = v32_vit_step(&v, (int32_t)lrint((x + sigma * nx) * V32_UNIT),
+                               (int32_t)lrint((y + sigma * ny) * V32_UNIT), &hard);
         if (rot == 0 && hard != label) herr++;
         if (out >= 0) {
             int q = v32_decode_bits(rate, out, &yprev), j = k - (V32_VDEPTH - 1), d;

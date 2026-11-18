@@ -6,7 +6,7 @@
 #include "testutil.h"
 
 #define PRE   24000UL           /* symbols before the disturbance */
-#ifdef __arm__
+#ifdef TEST_SHORT
 #define POST  16000UL
 #else
 #define POST  40000UL           /* symbols after it */
