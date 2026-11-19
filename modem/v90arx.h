@@ -145,6 +145,8 @@ typedef struct {
     int32_t level;              /* RMS of Sd at the A/D, A/D units */
     /* training reference, channel estimate */
     v90_scr_t scr; int32_t mref; int16_t L;
+    int16_t ls[6];              /* UINFO's level by interval on TRN1d (L, or what ls_set found) */
+    int64_t ls_num[6], ls_den[6];
     int16_t sb[256];            /* symbol levels (Table 1 units) by m & 255: reference or decided */
     int16_t qb[256];            /* equaliser input by k & 255 (k = n - n0) */
     int32_t h[V90ARX_NCH];      /* channel estimate, Q16, input units per symbol of level L */
@@ -173,6 +175,7 @@ typedef struct {
     int deaf;                   /* 1: Sd is not looked for (v90arx_deaf) */
     int clk_set;                /* 1: the clock was given (v90arx_clock) */
     int edge;                   /* 1: the band edge's image in the design (v90arx_edge) */
+    int thold;                  /* 1: the timing loop stands (v90arx_timing_hold) */
     int redo;                   /* 1: compute the equaliser at the next symbol adapted on */
     /* the decisions of the last tick */
     v90arx_dec_t out[2]; int nout;
@@ -210,6 +213,10 @@ void v90arx_deaf(v90arx_t *r, int on);
  * done: it trades a little SNR on most lines for an equaliser that does not
  * amplify a band that will not stay as it was estimated (v90arx.c). */
 void v90arx_edge(v90arx_t *r, int on);
+
+/* Hold (1) or release (0) the timing loop alone: the step stays, no phase
+ * correction; the equaliser and the estimate go on. */
+void v90arx_timing_hold(v90arx_t *r, int on);
 
 /* Freeze (1) or release (0) all adaptation: equaliser, estimate, timing. */
 void v90arx_hold(v90arx_t *r, int on);

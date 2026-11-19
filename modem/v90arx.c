@@ -12,6 +12,8 @@
 #define TBLK     64             /* symbols per timing measurement */
 #define ECLIP    (1 << 15)      /* error used for adaptation, Q YF */
 #define FASTN    8000           /* equaliser symbols with the larger steps (1 s) */
+#define LS_FROM  700            /* estimator steps over which each interval's UINFO level is measured (ls_set) */
+#define LS_TO    1300
 /* The far end is not trusted: whatever the line carries, the clock ratio
  * stays within this of one (Q32; 1000 ppm, ten times what V.90's clocks
  * may be off), the phase slew within half of that, and the
@@ -66,6 +68,7 @@ void v90arx_init(v90arx_t *r, const v90arx_cfg_t *cfg)
     v92_p6_init(&r->sd);
     r->L = (int16_t)v90_ucode_linear(cfg->alaw, (unsigned)cfg->uinfo);
     if (r->L < 1) r->L = 1;             /* mu-law Ucode 0: it divides */
+    for (i = 0; i < 6; i++) r->ls[i] = r->L;
     /* until told otherwise: the two points of UINFO (TRN1d, Jd, Jd') */
     for (i = 0; i < 6; i++) {
         r->cons.n[i] = 1; r->cons.u[i][0] = (uint8_t)cfg->uinfo;
@@ -75,6 +78,8 @@ void v90arx_init(v90arx_t *r, const v90arx_cfg_t *cfg)
 }
 
 void v90arx_ec(v90arx_t *r, int mu_shift) { r->ec_mu = mu_shift; }
+void v90arx_timing_hold(v90arx_t *r, int on) { r->thold = on != 0; if (r->thold) r->slew = 0; }
+
 void v90arx_edge(v90arx_t *r, int on)
 {
     if ((on != 0) != r->edge) r->redo = 1;      /* at once, not at the next computation due */
@@ -116,6 +121,16 @@ static void estimate(v90arx_t *r, int32_t k, int64_t pd, int g)
     /* h += mu e s L / (NCH pd), h in Q16, applied as (es s) >> 8. The
      * decided levels' power can decay to nothing (a far end sending Ucode
      * 0 alone): not below (L / 8)^2 */
+    /* TRN1d: how far each interval's UINFO stands from L (v90arx.h, ls) */
+    if (r->state == V90ARX_EST && r->nest >= LS_FROM && r->nest < LS_TO) {
+        int64_t c[6] = { 0, 0, 0, 0, 0, 0 };
+        int s;
+        for (j = 0; j < V90ARX_NCH; j++) c[(m0 - j) % 6] += (int64_t)r->h[j] * r->sb[(m0 - j) & 255];
+        for (s = 0; s < 6; s++) {
+            int32_t u = asr64(c[s] / r->L, 16);
+            r->ls_num[s] += (int64_t)e * u; r->ls_den[s] += (int64_t)u * u;
+        }
+    }
     if (pd < ((int64_t)r->L * r->L >> 6)) pd = (int64_t)r->L * r->L >> 6;
     if (pd < 1) pd = 1;
     es = (int64_t)e * r->L * ((int64_t)1 << 24) / ((int64_t)V90ARX_NCH * pd) >> g;
@@ -493,7 +508,7 @@ static void equalise(v90arx_t *r, int32_t k, int16_t q)
         if (off > (ONE32 >> 15)) rc >>= 1;          /* 30.5 ppm */
         if (off > (ONE32 >> 14)) rc >>= 1;          /* 61 ppm */
         if (!gate) estimate(r, m - V90ARX_LEAD, r->state == V90ARX_TRAIN ? (int64_t)r->L * r->L : r->pd >> 8, 2);
-        if (++r->tblk >= TBLK) { r->tblk = 0; timing(r); }
+        if (++r->tblk >= TBLK) { r->tblk = 0; if (!r->thold) timing(r); else r->slew = 0; }
         if (r->state == V90ARX_DD && (r->neq % rc == 0 || r->redo)) { r->redo = 0; (void)dfe_design(r); }
     }
 
@@ -516,6 +531,39 @@ static void eq_start(v90arx_t *r, int32_t k)
         r->d[i] = r->d[i + V90ARX_NB] = v;
     }
     r->dpos = 0;
+}
+
+/* An interval where UINFO arrives at another level than in the others: a
+ * robbed bit behind a pad (UINFO 90 is even, so a robbed bit alone leaves it
+ * be, but a 6 dB pad makes it codeword 75, which loses its LSB). The
+ * estimate, fitted against +-L in every interval, then carried that
+ * interval's error into every tap: TRN1d's error 42 dB (mse), the timing loop
+ * following the estimate 0.03 sample away during the DIL and back during
+ * TRN2d, and a V.92 transmitter, on that clock, moved under the digital
+ * modem's measurements (PROGRESS.md, robust 2b). So the estimate's residual
+ * is projected on each interval's part of the prediction over TRN1d's
+ * symbols LS_FROM .. LS_TO, and each interval's level set from it (within
+ * 25 % of L; one closer than 1 % to L stays L); the reference from there,
+ * and the symbols in the estimate's span, take it, and the estimate has
+ * EST0 - LS_TO steps to settle on it. */
+static void ls_set(v90arx_t *r)
+{
+    int s;
+    int32_t m;
+    for (s = 0; s < 6; s++) {
+        int64_t d;
+        if (r->ls_den[s] <= 0) continue;
+        d = r->ls_num[s] * 4096 / r->ls_den[s];             /* delta, Q12 */
+        if (d > 1024) d = 1024;
+        if (d < -1024) d = -1024;
+        if (d > -41 && d < 41) continue;
+        r->ls[s] = (int16_t)(r->L + (r->L * d) / 4096);
+    }
+    for (m = r->mref - 256 > 0 ? r->mref - 256 : 0; m < r->mref; m++) {
+        int16_t v = r->sb[m & 255];
+        r->sb[m & 255] = (int16_t)(v >= 0 ? r->ls[m % 6] : -r->ls[m % 6]);
+    }
+    for (s = 0; s < 6; s++) r->cons.lv[s][0] = (int32_t)r->ls[s] << V90ARX_YF;
 }
 
 /* ---- one network-rate sample ----------------------------------------------- */
@@ -579,6 +627,7 @@ static void process(v90arx_t *r, int16_t q)
             v90_scr_init(&r->scr);
             r->mref = 0; r->nest = 0;
             memset(r->h, 0, sizeof r->h);
+            { int s; for (s = 0; s < 6; s++) { r->ls[s] = r->L; r->ls_num[s] = r->ls_den[s] = 0; } }
             r->state = V90ARX_EST;
         } else if (st == 0) {
             r->sd_pow = 0; r->sd_cnt = 0;
@@ -594,7 +643,7 @@ static void process(v90arx_t *r, int16_t q)
      * estimate needs it up to its end, V90ARX_EST0 steps from sample NCH,
      * whatever is taken as known (TRN1d is at least 2040 T) */
     while (r->mref <= k + V90ARX_LEAD && (r->mref < r->cfg.ntrain || r->state == V90ARX_EST)) {
-        r->sb[r->mref & 255] = (int16_t)(v90_scramble_gpc(&r->scr, 1) ? r->L : -r->L);
+        r->sb[r->mref & 255] = (int16_t)(v90_scramble_gpc(&r->scr, 1) ? r->ls[r->mref % 6] : -r->ls[r->mref % 6]);
         r->mref++;
     }
     if (r->state == V90ARX_EST) {
@@ -604,6 +653,7 @@ static void process(v90arx_t *r, int16_t q)
          * over the first 300 symbols, 0.13 by 600), so a smaller step would
          * still be converging when the equaliser is computed */
         estimate(r, k, (int64_t)r->L * r->L, 0);
+        if (r->nest == LS_TO) ls_set(r);
         if (r->nest == V90ARX_EST0) {
             int i;
             if (find_cursor(r) != 0 || dfe_design(r) != 0) { r->state = V90ARX_FAIL; return; }

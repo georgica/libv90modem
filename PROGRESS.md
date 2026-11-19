@@ -1734,3 +1734,172 @@ realcheck-v8's failures: orig_v90 104 checks 0 failures (0 km +100 ppm at
 Answering side: no file of it changed (v32_rx's change is under `!r->answer`;
 v32_call, v90arx, v90dil, v90a are the calling side's). `v32rx_t` has one
 int more (`s_lost`), which `answer_t` holds through its union.
+
+## robust 2b: the rest of the simulation failures (2026-11-18)
+
+### Test first
+
+`test/test_orig_seeds.c` (new): every line of test_orig_v90 / test_orig_v92
+with seeds 100 .. 105 (C6's extra seeds), V.90 and V.92: 108 calls, 10 s of
+data each way (~50 s on the host; TEST_SHORT one seed). Every call: data
+mode on both sides and kept, >= 28000 down (V.92: PCM upstream, >= 24000
+up), the downstream without a check failure, the upstream likewise but for
+one documented exception (below). On robust 2a: 3 checks, 2 failures:
+
+- V.90 1 of 54: 3 dB pad, seed 103: the receiver lost (217000 failures);
+- V.92 4 of 54, all on 6 dB pad + robbed bit: seeds 100, 103, 105 the
+  answerer gave B1u up and retrained (we stayed in "data" until the carrier
+  check ended the call 10 s later: 2c), seed 104 2389 upstream failures.
+
+(On ports-2, C6 counted 6 of 54 for V.92; 2a fixed the two 0 km ones.)
+
+### What was wrong
+
+1. **The DIL's snapping under a pad** (modem/v90dil). The receiver's
+   decisions against the octets sent: the 3 dB pad call lost after
+   repeated errors on one point (slot 2, Ucode 69: level 2628, true 2743,
+   one codeword off); one wrong decision there started an avalanche through
+   the feedback (dense constellation, a feedback tail of norm 1.1) from
+   which a decision directed receiver does not come back. The DIL's raw
+   means against the true levels (data mode, 2 km, 3 dB pad): a gain of
+   their own per interval, -0.4 .. -0.8 % in intervals 0..2, +0.3 .. +0.9 %
+   in 3..5 (the segment positions next to the REF symbols or not), and one
+   common gain was used to pick each mean's codeword: at a pad's spacing
+   that picked a neighbour now and then. Fix: the codeword is picked with
+   the interval's own gain (least squares over its Ucodes 64..127, twice,
+   within 3 % of the common gain), the level written is the common gain's
+   (data mode has no such bias). Snapped levels within 12 units of the true
+   ones on that line (were off by a codeword on some points).
+2. **TRN1d with UINFO robbed** (modem/v90arx). UINFO 90 is even so that a
+   robbed bit leaves it alone, but behind a 6 dB pad it is codeword 75,
+   which a robbed bit changes: in one interval in six TRN1d's symbols are
+   not +-L. The channel estimate, fitted against +-L everywhere, carried
+   that into every tap (TRN1d's error 42 dB where the other lines show
+   21..24), the timing loop followed the estimate 0.03 sample away and back
+   during TRN2d, and V.92's transmitter, on that clock, with it: the digital
+   modem lost B1u (it retrained) or had upstream errors. Fix (`ls_set`):
+   over TRN1d's estimator steps 700..1300 the residual is projected on each
+   interval's part of the prediction, each interval's UINFO level set from
+   it (within 25 % of L, left at L within 1 %), the reference and the
+   symbols in the estimate's span take it; the estimate has 400 more steps
+   to settle. TRN1d's error on that line 42 -> 33 dB, the timing walk
+   during TRN1d gone.
+3. **The timing loop during the DIL** (modem/v90a, V.92 only). Even so the
+   loop walked 0.01 sample during the DIL on the pad / robbed bit lines
+   (the DIL's repetitive patterns on levels still being measured pull the
+   estimate) and came back during TRN2d, moving our PCM upstream while the
+   digital modem measured it for CPd. V.92's clock comes from L2 (within
+   0.1 ppm, C6-2): `v90arx_timing_hold()` holds the loop (step kept, no
+   phase correction) from the DIL to Ri-bar. V.90 is left as it was: its
+   clock comes from Sd (up to 1.6 ppm off) and nothing follows the loop
+   (holding it there cost V.90 rates when tried).
+4. **The v90arx input and Ucodes 122..127**: measured, not changed. Runs of
+   Ucodes 116..127 in the DIL's sign pattern sent on 0 km, +100 ppm (test
+   line, the A/D at the line's -6 dB): the A/D peaks 22716 (116) .. 32599
+   (121) and clips from 122; the receiver's own 16-bit input (after the AGC,
+   Sd at 4096 RMS, gain 1.28 there) clips from 125. Neither is reachable:
+   the DIL stops at 119, CP uses measured Ucodes only, Rd is CP's largest
+   point, every other downstream sequence is UINFO; data mode peaks at
+   9200 .. 13500 (7.7 dB of headroom at the A/D). Taking the AGC below unit
+   gain would move every fixed-point scale of the receiver for no reachable
+   case; left, documented here.
+
+### After
+
+test_orig_seeds: 3 checks, 0 failures; V.90 0 of 54 bad, V.92 0 of 54 bad,
+2 of 54 with an upstream burst (pad6rb seed 102 at 37333 up: 147 failures;
+robbed bit seed 105 at 37333: 88). The C6 extra-seed table (54 calls, V.92):
+6 bad on ports-2, 5 on 2a, 0 now (+ 2 bursts).
+
+The Te sweeps again (27 calls a line, as in 2a):
+
+| line | V.90 2a | V.90 2b | V.92 2a | V.92 2b |
+|---|---|---|---|---|
+| 2 km, 0 ppm | 0, 50666..52000 | 0, 50666..52000 | 0, 50666..52000 | 0, 49333..52000 |
+| 0 km, +100 ppm | 0, 45333..46666 | 0, 45333..46666 | 0, 38666..48000 | 0, 45333..48000 |
+| 6 km, -100 ppm | 0, 46666..48000 | 0, 46666..48000 | 0, 46666 | 0, 46666 |
+| 4 km, +50 ppm, -65 dBm0 | 0, 38666..40000 | 0, 38666..40000 | 0, 38666..40000 | 0, 38666..40000 |
+| 2 km, 3 dB pad | 0, 44000..48000 | 0, 44000..48000 | 2 (up), 41333..48000 | 0, 44000..48000 |
+| 2 km, 6 dB pad | 0, 40000..45333 | 0, 40000..45333 | 0, 44000..45333 | 1 (up 81, at 37333), 44000..45333 |
+| 2 km, robbed bit | 0, 46666..49333 | 0, 46666..49333 | 0, 41333..46666 | 0, 44000..46666 |
+| 2 km, 6 dB pad, robbed bit | 0, 29333..44000 | 0, **38666..45333** | 10, 29333..45333 | 1 (up 32, at 34666), 40000..45333 |
+| 2 km, -50 ppm, A-law | 0, 46666..49333 | 0, 46666..49333 | 0, 46666..48000 | 0, 46666..48000 |
+
+V.92: 12 of 243 -> 2 of 243 (both one upstream burst). With the pad
+lines' spread narrowed, 2a's floors go back up: test_orig_v90's "6 dB
+pad, robbed bit" 28000 -> 37333 (38666 .. 45333), test_orig_v92's "3 dB
+pad" 40000 -> 42666 (44000 .. 48000).
+
+### Left open: V.92 upstream bursts
+
+At the rates the digital modem's CPd picks at the top of a line (34666 to
+37333 here) its PCM upstream receiver sometimes takes one symbol wrong: a
+burst of 30 to 50 check failures (about 10 to 17 bits), recurring about
+every 4.5 s on such a call (17.54 s and 22.01 s on robbed bit seed 105),
+4 calls of 243 + 108. Traced: our transmit timing against the network is
+steady to 0.0005 sample through the burst; the harness's upstream FIFO
+neither under- nor overflows; freezing our timing in data mode makes it
+far worse (drift). The answerer's receiver does not adapt in data mode
+(v92_p34d: v92_trn_store) and picks the rate: answering-side code, not
+touched here. test_orig_seeds counts such calls and lets them pass while
+they stay bursts (under 200 failures in 10 s).
+
+### Unchanged, and the end-of-step checks (on this commit's tree)
+
+| | reference | robust 2b |
+|---|---|---|
+| `make check` (host) | ~/c52v/rcv/check.log | the same count lines, by diff, but orig_v32 95 -> 96, v8orig 53 -> 54, realcheck 652 -> 666 (2a, realcheck-v8), orig_v90_te 3 and orig_seeds 3 added; every answering-side line and the subdirectories identical |
+| `check-arm` (armv5, qemu, once) | 2a's | all pass; the same lines plus orig_seeds 3 (TEST_SHORT: seed 100, 18 calls, 0 bad, 0 bursts), by diff |
+| `make bench-v90` | 8e3136e9 x6 | 8e3136e9 x6 |
+| `make bench-bell` | 48f22641, fc125ef2 | the same, host and qemu-arm |
+| `make bench-v92c` (the caller) | ff7367a8 (2a) | 506f2bcc, host and qemu-arm agree |
+| `make bench-v90c` (the caller) | 695b27e5 (2a) | 695b27e5, host and qemu-arm |
+| v90d's replay, 106 recordings x 8 configs (rc-scripts/replayproof.sh, v90d-split d707463's copy built against this tree) | sync-build/proof/afterports/manifest.sha256 | MANIFEST IDENTICAL, 1613 of 1613 |
+| `make check-ubsan` | | ALL UBSAN CHECKS PASS, no runtime error |
+| `tools/check-ports.sh` i686-musl, aarch64be-musl, mips-musl, win32-mingw, host-clang (PAR=5, outputs under ~/rb-tmp/ports) | host gcc | ALL PORTS PASS: 109 of 109 programs identical on each |
+
+No answering-side file changed in 2b (v90arx, v90dil, v90a are the
+calling side's). The ubsan, port and replay runs were made on a copy of
+this tree (~/rb-2b, `diff -r` identical but PROGRESS.md) while
+check-arm ran in the worktree.
+
+## robust 2c: retrains on the calling side, not done (design)
+
+Left for its own step (2a and 2b took the branch's time). What is there:
+V.32bis (v32_call: 7.1 / 7.2 both ways, test_orig_v32 checks both) and
+V.34 (v34orig: 11.5.1.1 / 11.5.1.2 both ways, test_orig_v34) already
+retrain from either end; V.90 and V.92 do not: `v90a_retrain()` and
+`orig_retrain()` refuse in V.90 / V.92 (`v90m_retrain` gives V90M_ESTATE in
+the calling role), an answerer's retrain (70 ms of silence, then Tone B,
+answer.c ANS_RETRAIN) is taken for the downstream lost and ends the call
+(V90A_ERR_CARRIER, ~0.5 s of input 12 dB under, or 10 s after a B1u the
+answerer gave up), and the receiver does not ask for one when it degrades.
+The digital modem's renegotiation is followed (9.6.2.2 / 9.8.2.2).
+
+Design:
+- Detecting the answerer's retrain in data mode or Phase 3/4: the PCM
+  downstream silent (the 70 ms; v90arx's input power, as the loss check
+  but over ~40 ms) followed by Tone B (2400 Hz, p2call's tone detector):
+  go to Phase 2 of a retrain (V.90 9.5.1.2 / V.92 9.5: p2call's V.90 mode
+  started at "after Tone B": Tone A from us, INFO0 not exchanged, INFO1d /
+  INFO1a, V.92's Table 17/18 forms when both indicated V.92 at the start),
+  then v90a's Phases 3 and 4 again from Ja with a fresh v90arx (the DIL
+  measured again) and, for V.92, a fresh pcmtx / echo canceller training on
+  TRN1u.
+- Ours (9.5.1.1): 70 ms of silence, Tone A, the same Phase 2. Triggers:
+  `orig_retrain()` (API), and the receiver: v90arx's error over 1 s more
+  than 6 dB above what CP was designed for, or the self-check of the
+  descrambled data (Rd never ambiguous), or decision errors in Rd / B1d.
+  A limit (2 in a minute, as answer.c's rt_recent) before giving up.
+- Our rate renegotiation (9.6.2.1 V.90 / 9.8.2.1 V.92): Rd-equivalent from
+  the analogue side is CPs (CP with the request for silence) on V.90, Ru on
+  V.92; then CP / CPu designed on the current noise. A first step that
+  would also give the receiver a way down without a retrain.
+- orig_t has room: the V.90 retrain reuses p2call and v90a in place.
+- Tests, failing first: test_orig_v90 / v92: `answer_retrain()` mid-call
+  (today: the call ends), a line change mid-call through test/v90link.h
+  (level drop 10 dB, noise +20 dB: today the receiver collapses and the
+  call ends 0.5 .. 10 s later) that must lead to our retrain and data again,
+  renegotiation both ways; test_api: `v90m_retrain` in the calling role
+  V90M_OK (today V90M_ESTATE, which test_api asserts); then README /
+  include/v90modem.h on what the calling role does.

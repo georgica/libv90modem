@@ -72,8 +72,8 @@ int main(void)
         { "  ... Table 1 levels",                2,  -30, -75, 6, 0, 0, 1, 0 },
         { "2 km,  +30 ppm, robbed bit",          2,   30, -75, 0, 1, 0, 0, 44000 },
         { "  ... Table 1 levels",                2,   30, -75, 0, 1, 0, 1, 0 },
-        { "2 km,  +30 ppm, 6 dB pad, robbed bit", 2,  30, -75, 6, 1, 0, 0, 28000 },   /* moves 29333 .. 44000 with
-                                   Te alone, before the robust branch's changes and after (PROGRESS.md, robust 2a) */
+        { "2 km,  +30 ppm, 6 dB pad, robbed bit", 2,  30, -75, 6, 1, 0, 0, 37333 },   /* 38666 .. 45333 with Te
+                                   alone (29333 .. 44000 before robust 2b; PROGRESS.md) */
         { "2 km,  -50 ppm, A-law",               2,  -50, -75, 0, 0, 1, 0, 42666 },
     };
     enum { NR = sizeof R / sizeof R[0] };

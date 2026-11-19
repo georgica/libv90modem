@@ -122,7 +122,7 @@ void v90dil_analyse(const v90dil_acc_t *a, int alaw, int uinfo, v90dil_res_t *r)
 {
     int s, u, v, bv = uinfo;
     int32_t t1[128];
-    int64_t g, best = -1, num = 0, den = 0, tu = (int64_t)v90_ucode_linear(alaw, (unsigned)(uinfo & 127));
+    int64_t g, best = -1, num = 0, den = 0, tu = (int64_t)v90_ucode_linear(alaw, (unsigned)(uinfo & 127)), gs[6];
     memset(r, 0, sizeof *r);
     table1(alaw, t1);
     for (s = 0; s < 6; s++)
@@ -158,11 +158,40 @@ void v90dil_analyse(const v90dil_acc_t *a, int alaw, int uinfo, v90dil_res_t *r)
     if (den > 0) g = (num << 16) / den;
     r->gain_q16 = (int32_t)g;
     r->uinfo_as = bv;
+    /* ... and by least squares again in each interval alone: what the DIL's
+     * repetitive patterns leave of the equaliser's residual interference
+     * differs from interval to interval (the positions in a segment, next to
+     * the REF symbols or not), a gain of its own of up to +-0.9 % (measured
+     * on 2 km with a 3 dB pad: intervals 0..2 low, 3..5 high), which at a
+     * pad's codeword spacing was enough to snap a level to its neighbour
+     * (PROGRESS.md, robust 2b). The codeword is found with the interval's
+     * gain, held within 3 % of the common one; its level is the common
+     * gain's. */
+    for (s = 0; s < 6; s++) {
+        int it;
+        gs[s] = g;
+        for (it = 0; it < 2; it++) {
+            int64_t ns = 0, ds = 0, gn;
+            for (u = 64; u < 128; u++) {
+                int64_t l = r->lv[s][u], t;
+                if (l < 0) continue;
+                t = (int64_t)t1[nearest(t1, (l << 16) / gs[s])] * (1 << YF);
+                ns += (l * t) >> 8; ds += (t * t) >> 8;
+            }
+            if (ds <= 0) break;
+            gn = (ns << 16) / ds;
+            if (gn > g + g * 3 / 100) gn = g + g * 3 / 100;
+            if (gn < g - g * 3 / 100) gn = g - g * 3 / 100;
+            gs[s] = gn;
+        }
+    }
     for (s = 0; s < 6; s++)
         for (u = 0; u < 128; u++) {
             int64_t l = r->lv[s][u], w, st;
             if (l < 0) continue;
-            w = nearest(t1, (l << 16) / g);
+            /* the codeword by the interval's gain; its level by the common
+             * one (data mode has no such bias) */
+            w = nearest(t1, (l << 16) / gs[s]);
             /* where the codec's step is under 32 units the measurement's own
              * noise would pick a neighbour as often: the mean stands */
             st = w < 127 ? t1[w + 1] - t1[w] : 1024;

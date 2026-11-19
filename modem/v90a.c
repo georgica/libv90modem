@@ -467,6 +467,7 @@ static void ri_dec(v90a_t *a, const v90arx_dec_t *d)
          * band edge's turning image out (v90arx_edge), TRN2d's noise, which
          * CP is designed on, included */
         v90arx_edge(&a->rx, 1);
+        v90arx_timing_hold(&a->rx, 0);
         v90adec_init(&a->dec, &a->tmap);
         v90_scr_init(&a->dscr);
         a->mbn = a->mones = 0; a->got_mp = a->got_mpa = a->after_mpa = a->got_ed = 0;
@@ -797,6 +798,15 @@ static void jd92_bit(v90a_t *a, const v90arx_dec_t *d)
             v90dil_acc_init(&a->acc);
             a->acc_on = 1;
             a->ds = D_DIL;
+            /* V.92: our transmitter runs on this loop's clock (6.2/V.92), and
+             * the DIL's repetitive patterns, on levels still being measured,
+             * pull the estimate the loop follows (0.01 to 0.03 sample on the
+             * pad and robbed bit lines, back during TRN2d), moving our
+             * symbols while the digital modem measures them for CPd. The
+             * clock from L2 is within 0.1 ppm: the loop stands until Ri-bar
+             * (PROGRESS.md, robust 2b). V.90's clock comes from Sd (off by up
+             * to 1.6 ppm) and nothing follows it: its loop runs on. */
+            v90arx_timing_hold(&a->rx, 1);
             return;
         }
     }
