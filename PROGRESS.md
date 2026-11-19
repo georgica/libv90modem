@@ -2496,3 +2496,28 @@ Tests (short set): v90arx, v90arx_robust, v90dil, v90a, orig_v90, v92a,
 orig_v92, p2call, p2v90, p2v92a, orig_retrain, orig_v90_te, realcheck,
 orig, orig_v34, api, orig_bell, orig_seeds: all 0 failures. bench-v90
 8e3136e9 x6.
+
+## cpu 4: retrain and renegotiation ticks measured (2026-11-19)
+
+`tools/rec_v90c ... rt` / `rn`: 2 s into data mode the recorded caller
+retrains (orig_retrain) or renegotiates (orig_renegotiate, no ceiling);
+the magic ends in 2 and the header says which and before which tick;
+`rig/bench_v90c` asks for the same at the same tick, so the replay stays
+the call (V90C0001 recordings as before). Counted with prof (every tick of
+the whole call, 2 km, +100 ppm, 12 s after the event):
+
+| call | event | heaviest tick from the event on | data mode at the end |
+|---|---|---|---|
+| V.90 | our retrain | 97.7 k (the retrain itself: v90a_init's clearing of 50 kbytes), 95.2 k (+70 ms, Phase 2's start), then 82 k | 59.2 M a second |
+| V.90 | our renegotiation | 81.8 k (steps of CP's design and of the equaliser's) | 59.3 M |
+| V.92 | our retrain | 97.7 k, 95.2 k, then 82 k | 74.8 M |
+| V.92 | our renegotiation | 77.7 k | 75.2 M |
+
+Nothing new is heavy: the retrain's ticks are those of a call's start.
+Tried and dropped (each measured on the tests): the channel estimate on
+every other data symbol (-6.4 M a second; test_v90arx's MSE 1.5 to 2.5 dB
+worse at 30 to 80 ppm, one check failed, test_orig_v92 one failure); the
+equaliser's LMS on every other symbol (-4 M; orig_seeds' mean downstream
+46123 -> 45185 and one bad call of 54); the interpolators (receiver and
+PCM upstream) two taps a pass (gcc's code for two 64-bit sums per tap got
+worse: +1.3 M).

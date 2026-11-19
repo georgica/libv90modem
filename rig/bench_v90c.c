@@ -9,7 +9,9 @@
  * -w N also lists the N ticks that took the longest here (host time), for
  * an instruction count of each under qemu (`make cost-v90c`). For counts
  * per second of line run it under qemu on truncated copies of the recording
- * (the header says where data mode begins).
+ * (the header says where data mode begins). A recording with a retrain or
+ * a renegotiation of ours (rec_v90c ... rt / rn) asks for it at the same
+ * tick.
  *
  * -t calls bench_v90c_mark() before every tick and -n N stops after N
  * samples: tools/qprof turns qemu's log of such a run into the instructions
@@ -50,19 +52,21 @@ static void (*volatile mark)(int64_t) = bench_v90c_mark;
 
 int main(int argc, char **argv)
 {
-    uint8_t hdr[12], b[2];
+    uint8_t hdr[20], b[2];
     orig_cfg c;
     src_t s;
     uint32_t hash = 2166136261u, t_rec;
     int64_t k = 0, t_data = -1;
     int nw = 0, tm = 0, i;
-    int64_t nmax = -1;
+    int64_t nmax = -1, t_ev = -1;
+    int ev = 0;
     double t0, t, wt[NW]; int64_t wk[NW];
     FILE *f;
 
     if (argc < 2) { fprintf(stderr, "usage: bench_v90c RECORDING [-w N] [-t] [-n N]\n"); return 2; }
     f = fopen(argv[1], "rb");
-    if (!f || fread(hdr, 1, 12, f) != 12 || (memcmp(hdr, "V90C0001", 8) != 0 && memcmp(hdr, "V92C0001", 8) != 0)) {
+    if (!f || fread(hdr, 1, 12, f) != 12 || (memcmp(hdr, "V90C000", 7) != 0 && memcmp(hdr, "V92C000", 7) != 0)
+        || (hdr[7] != '1' && hdr[7] != '2') || (hdr[7] == '2' && fread(hdr + 12, 1, 8, f) != 8)) {
         fprintf(stderr, "bench_v90c: not a recording of rec_v90c\n");
         return 1;
     }
@@ -72,12 +76,16 @@ int main(int argc, char **argv)
         else if (strcmp(argv[i], "-t") == 0) tm = 1;
     }
     t_rec = (uint32_t)hdr[8] | (uint32_t)hdr[9] << 8 | (uint32_t)hdr[10] << 16 | (uint32_t)hdr[11] << 24;
+    if (hdr[7] == '2') {
+        ev = (int)hdr[12];
+        t_ev = (int64_t)((uint32_t)hdr[16] | (uint32_t)hdr[17] << 8 | (uint32_t)hdr[18] << 16 | (uint32_t)hdr[19] << 24);
+    }
     if (nw > NW) nw = NW;
     for (i = 0; i < NW; i++) { wt[i] = 0; wk[i] = -1; }
     memset(&s, 0, sizeof s); s.gen = (0x4321u + 5u) | 1u;
     memset(&c, 0, sizeof c);
     c.level = 3000; c.modes = V8_MOD_V34 | V8_MOD_V22 | V8_MOD_V21 | ORIG_MODE_V90;
-    if (memcmp(hdr, "V92C0001", 8) == 0) c.modes |= ORIG_MODE_V92;
+    if (memcmp(hdr, "V92C", 4) == 0) c.modes |= ORIG_MODE_V92;
     c.echo_delay = 0; c.law = 0;
     c.getbit = get; c.putbit = put; c.user = &s;
     orig_init(&o, &c);
@@ -86,6 +94,7 @@ int main(int argc, char **argv)
         int16_t rx = (int16_t)(uint16_t)(b[0] | (unsigned)b[1] << 8), tx;
         double ta = nw ? now() : 0;
         if (tm) mark(k);
+        if (ev && k == t_ev) { if (ev == 1) (void)orig_retrain(&o); else (void)orig_renegotiate(&o, 0); }
         tx = orig_tick(&o, rx);
         if (nw) {
             double d = now() - ta;
