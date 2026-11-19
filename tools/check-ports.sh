@@ -23,6 +23,8 @@
 #   QUICK="t1 t2 ..."  targets that skip the slow programs listed in
 #              tools/ports-slow.txt (the comparison then covers the rest
 #              and says how many were skipped)
+#   SKIP="arm_test_orig_seeds ..."  programs no target but the reference
+#              runs (as a quick target's are skipped and counted)
 #   COMPARE_ONLY=1  compare what an earlier run left in OUT, run nothing
 #   TOOLCHAINS (default ../toolchains) holds the cross compilers (Bootlin
 #              "stable-2023.08-1", musl where there is one); a target whose
@@ -71,6 +73,11 @@ if [ "${1:-}" = --one ]; then
     cc=$2; run=$3; B=$OUT/$name
     skip=-
     case " $QUICK " in *" $name "*) [ "$name" != "$REF" ] && skip=$ROOT/tools/ports-slow.txt ;; esac
+    if [ -n "${SKIP:-}" ] && [ "$name" != "$REF" ]; then
+        mkdir -p "$B"
+        { [ "$skip" = - ] || cat "$skip"; printf '%s\n' $SKIP; } > "$B/skip.txt"
+        skip=$B/skip.txt
+    fi
     if ! command -v "$cc" >/dev/null 2>&1; then echo "skip: no compiler $cc" > "$OUT/$name.status"; exit 0; fi
     r=${run%%:*}
     if [ "$run" != - ] && ! command -v "$r" >/dev/null 2>&1; then echo "skip: no runner $r" > "$OUT/$name.status"; exit 0; fi

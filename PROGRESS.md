@@ -2521,3 +2521,59 @@ equaliser's LMS on every other symbol (-4 M; orig_seeds' mean downstream
 46123 -> 45185 and one bad call of 54); the interpolators (receiver and
 PCM upstream) two taps a pass (gcc's code for two 64-bit sums per tap got
 worse: +1.3 M).
+
+## cpu: the end-of-branch checks (2026-11-19)
+
+The calling side's cost on the box (qemu-counted ARM instructions; the box
+is about 123 M a second, 1 % = 1.23 M; seconds 2 to 3 of data mode, 2 km):
+
+| | answer-fix | cpu | % of the box, before -> after |
+|---|---|---|---|
+| V.90 data mode, 0 ppm | 78.8 M/s | 54.6 M/s | 64 % -> 44 % |
+| V.90 data mode, 100 ppm | 89.4 M/s | 58.8 M/s | 72 % -> 48 % |
+| V.92 data mode, 0 ppm | 104.1 M/s | 69.4 M/s | 84 % -> 56 % |
+| V.92 data mode, 100 ppm | 114.0 M/s | 73.9 M/s | 92 % -> 60 % |
+| Bell 103 / 212A data mode (cost-bell) | 9.85 / 4.43 M/s | 9.84 / 4.43 M/s | 8.0 / 3.6 % |
+| heaviest tick, V.90 and V.92 calls | 9.30 M (DIL end) | 98 k (Phase 2's start) | 755 % -> 8 % of a 10 ms block |
+| heaviest tick of our retrain / renegotiation (cpu 4) | (DIL 9.3 M again; CP design 0.6-0.9 M) | 98 k / 82 k | 8 % / 7 % of a block |
+| Bell heaviest tick | | 2.3 k / 2.8 k | |
+| the answering modem's heaviest tick (bench_v90, shared code of cpu 2) | 173 k | 87 k | its output unchanged |
+| the answering modem, 40 s V.90 call | 1391 M | 1365 M | |
+
+Where the 100 ppm data mode goes now (M/s, V.92): equaliser 48 + 128 taps
+and its LMS, interpolator, Sd watch 24.1; channel estimate 13.1; V.92
+precoder / prefilter 10.1; upstream interpolator 4.2; canceller 3.6; the
+equaliser's designs (16 a second at 100 ppm, 4 at 0 ppm, some 350 k each)
+5.5; the rest under 3 each. What is left is the per-tap work of the
+algorithm (3.5 to 7 instructions a tap); halving the estimate's or the
+equaliser's adaptation was tried and costs SNR or rate (cpu 4).
+
+Checks on the branch's last commit:
+
+| | result |
+|---|---|
+| `make check` (host) | ALL HOST CHECKS PASS; its 110 count lines are answer-fix's (~/c52v/afix/check.log) line for line, every answering-side line among them; fixtures pass |
+| `make check-arm` (parallel, BUILD=build/armchk) | ALL ARM CHECKS PASS; the counts are the host's but for the programs that run shorter on ARM, as before (orig_retrain 138, v32's and v34's) |
+| `make check-ubsan` | ALL UBSAN CHECKS PASS, no runtime error |
+| `make bench-v90` | 8e3136e9 x6 |
+| `make bench-bell` | 48f22641 / fc125ef2, host and qemu-arm |
+| bench-v90c / bench-v92c | fa7486c7 / 22bf87ff (cpu 3 changed them; host and qemu-arm the same) |
+| v90d's real-recording replay (afix-tmp/replaypar.sh against this tree, 106 recordings x 8 configs) | MANIFEST IDENTICAL 1613 (to sync-build/proof/afterports/manifest.sha256, sorted) |
+| tools/check-ports.sh (PAR=3 JOBS=2, QUICK=i686-musl, SKIP=arm_test_orig_seeds) | host-clang, aarch64be-musl, mips-musl, win32-mingw: 109 of 110 identical, orig_seeds skipped; i686-musl: 98 of 110 identical, 12 skipped; ALL PORTS PASS |
+
+`tools/check-ports.sh` takes SKIP="prog ..." now: programs every target
+but the reference skips (orig_seeds here: covered on the host and on ARM).
+
+Memory: `V90M_MEM_SIZE` 112 -> 120 KiB; `orig_t` 109920 -> 118704 octets
+on x86-64 (109632 -> 118416 on ARM): the equaliser design's state (7 k),
+the DIL / CP jobs' (2.8 k); `answer_t` 106552 -> 106104 (proberx_t smaller).
+
+Open:
+- V.92 at 100 ppm is at 60 % of the box (56 % at 0 ppm): one call fits
+  with room, two V.92 calls at once do not. What is left is per-tap work;
+  further cuts would be numeric (a shorter estimate or feedback filter, a
+  slower design rate at high clock offsets), each to be weighed on rates.
+- The estimate's per-symbol 64-bit division (some 1.4 M a second) and the
+  timing loop's DFT (0.9 M) could still be made cheaper exactly.
+- All counts are qemu's instruction counts; cycles on the ARM926 (cache,
+  multiply latency) have not been measured on the box.
