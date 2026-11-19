@@ -2177,3 +2177,48 @@ would lower the rate of every V.92 call, real ones included.
 The replay and the Te sweep were run on a copy of this tree
 (~/afix-tmp/dev, the same v92_p34d.c) built with the fixes of
 answer-fix 2 and 3 as well; neither touches the data mode receiver.
+
+## answer-fix 2: PCM upstream after the answerer's own retrain (2026-11-19)
+
+robust 2c left open: after a retrain the digital modem began of its own
+accord (v92d's checks: a rate renegotiation that stalls, the upstream not
+holding even the lowest rate), answer.c offered no PCM upstream in the
+retrain's Phase 2 (`retrain_ours && !rt_asked`): the call went on as V.90.
+Only answer_retrain() (rt_asked) kept it. 9.3/V.92 has every retrain of a
+call in which both indicated V.92 use V.92's Phase 2, and that Phase 2,
+with Phases 3 and 4 after it, measures the line again.
+
+### Test first
+
+`test/test_orig_retrain.c`: a case "the answerer's own retrain": v92d_retrain()
+(p34d_retrain() for V.90) called on the engine, not through answer_retrain(),
+as v92d's own checks do. Checked as the other retrains are: data again
+within 12 s, 5 s clean both ways, one retrain counted by each side, not
+ours, and V.92 still V.92. On robust 2c: 248 checks, 1 failure (V.92: 46666
+/ 34666 -> 50666 / 28800 V.90).
+
+### The fix (modem/answer.c, v92/v92_p34d)
+
+PCM upstream is offered again in the Phase 2 of every retrain of a call
+that reached V.92 data mode, whoever began it, except when
+- that start-up never reached data mode (as before),
+- v92d failed (as before: the design found no rate, B1u wrong, ...), or
+- v92d retrains because the upstream did not hold even the lowest PCM
+  rate in data mode (its rate drops reached 24000): new, `v92d_t.up_floor`.
+  There the line has shown it does not carry PCM upstream, whatever a new
+  design says, and a V.90 call goes on where V.92 would retrain again.
+`answer_t.rt_asked` is gone (nothing else read it).
+
+### After
+
+test_orig_retrain: 248 checks, 0 failures. V.92 "the answerer's own
+retrain": 9.9 s, 46666 / 34666 -> 48000 / 34666, still V.92; V.90 7.4 s
+(V.90 has no PCM upstream to lose). The other cases print as in robust 2c
+(same seeds; the new case is appended). test_answer_v92 (whose retrains
+are answer_retrain() and the caller's, and the start-up failures that end
+in V.90), test_v92call, test_answer_lin, test_v92real: output identical to
+answer-fix 1's; test_answer, test_answer_v90, test_answer_v34 identical to
+before. armv5 (qemu, TEST_SHORT: V.90's cases): orig_retrain, answer_v92,
+answer pass. v90d's replay: MANIFEST IDENTICAL, 1613 of 1613 (no
+recorded call has a retrain of v92d's own from data mode; the retrains in
+them are the callers' Tone A, or a start-up that failed).

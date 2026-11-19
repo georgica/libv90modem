@@ -17,6 +17,8 @@
  *     up without it; the answerer's (9.6.1.1 / 9.8.1.1) as before
  *   the receiver collapses (its channel estimate and equaliser wiped; and a
  *     burst of loud noise): a retrain brings it back
+ *   the answerer's engine (p34d / v92d) retrains of its own accord, not
+ *     through answer_retrain(): V.92 must come back with PCM upstream
  * Then the limits: three retrains in a minute are allowed, a fourth refused,
  * and the receiver lost after them clears the call down (ORIG_END_RETRAIN,
  * the answerer told); a retrain that the answerer never answers ends the call
@@ -31,10 +33,11 @@
 
 static vl_t L;
 
-enum { K_ANS_RETRAIN, K_OUR_RETRAIN, K_NOISE, K_LEVEL, K_PAD, K_RENEG, K_ANS_RENEG, K_WIPE, K_BURST, K_N };
+enum { K_ANS_RETRAIN, K_OUR_RETRAIN, K_NOISE, K_LEVEL, K_PAD, K_RENEG, K_ANS_RENEG, K_WIPE, K_BURST, K_ANS_OWN, K_N };
 static const char *const kname[K_N] = {
     "the answerer retrains", "we retrain", "noise +15 dB", "level -10 dB", "a 6 dB pad put in",
-    "we renegotiate, ceiling 40000", "the answerer renegotiates", "receiver wiped", "noise burst 300 ms"
+    "we renegotiate, ceiling 40000", "the answerer renegotiates", "receiver wiped", "noise burst 300 ms",
+    "the answerer's own retrain"
 };
 
 typedef struct {
@@ -136,6 +139,13 @@ static void run(int v92, int kind, uint32_t seed, res_t *o)
         memset(l->org.v90.rx.f, 0, sizeof l->org.v90.rx.f);
         memset(l->org.v90.rx.b, 0, sizeof l->org.v90.rx.b);
         break;
+    case K_ANS_OWN:
+        /* the answerer's engine retrains of its own accord (its checks of
+         * the upstream, a renegotiation that stalls), not through
+         * answer_retrain() */
+        if (v92) CHECK_EQ_I(v92d_retrain(&l->ans.u.v92), 0);
+        else CHECK_EQ_I(p34d_retrain(&l->ans.p34), 0);
+        break;
     case K_BURST: {
         double n0 = l->ch.nrms;
         l->ch.nrms = l->ch.tone_rms * pow(10, -10 / 20.0);   /* -10 dBm0 */
@@ -190,7 +200,7 @@ static void cases(int v92)
         CHECK_EQ_I(o.fu, 0);
         CHECK_EQ_I(o.mod1, o.mod0);                     /* V.92 stays V.92 */
         switch (k) {
-        case K_ANS_RETRAIN: case K_OUR_RETRAIN:
+        case K_ANS_RETRAIN: case K_OUR_RETRAIN: case K_ANS_OWN:
             CHECK_EQ_I(o.rt_o, 1); CHECK_EQ_I(o.rt_a, 1);
             CHECK_EQ_I(o.rt_ours, k == K_OUR_RETRAIN);
             CHECK(o.down1 >= o.down0 - 4000);

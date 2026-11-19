@@ -50,7 +50,7 @@ static int32_t pace_ms(const v92d_t *p) { return p->cfg.dsn_pace > 1 ? (int32_t)
 static void retrain(v92d_t *p, int ours)
 {
     p->tx_ready = p->rx_ready = 0; p->rx_on = 0; p->trn_on = 0;
-    p->retrain_ours = ours;
+    p->retrain_ours = ours; p->up_floor = 0;
     (void)v90tx_select(&p->tx, V90TX_SILENCE);
     enter(p, V92D_RETRAIN);
 }
@@ -776,7 +776,7 @@ uint8_t v92d_tick(v92d_t *p, int16_t rxs)
             p->q_bad = nb >= 4 ? p->q_bad + 1 : 0;
             if (p->q_bad >= 2) {
                 p->rate_drops++;
-                if (p->up_rate - 4000 * p->rate_drops < 24000) retrain(p, 1);
+                if (p->up_rate - 4000 * p->rate_drops < 24000) { retrain(p, 1); p->up_floor = 1; }
                 else reneg_begin(p, 1);
             }
         }
