@@ -2286,3 +2286,30 @@ test_p2v90, test_p2v92a: pass, unchanged.
   against our own answerer made to send INFO0d.
 - v92d's own retrain for an upstream that does not hold 24000 still drops
   PCM upstream for the rest of the call (up_floor), by design.
+
+## answer-fix: the end-of-branch checks (2026-11-19)
+
+On the branch's last commit (3f271f4; ubsan and the port matrix on a copy
+of its tree, ~/afix-tmp/final, identical but PROGRESS.md).
+
+| | reference | answer-fix |
+|---|---|---|
+| `make check` (host, inside v90d-split's `make check`) | robust 2c's count lines (~/rb-tmp/check-2c.log) | the same lines, by diff, but orig_retrain 222 -> 276 (answer-fix 2, 3); every answering-side line identical (orig_seeds 3, its exception gone); subdirectories identical; fixtures all pass; realcheck 666; api 326; symbols 555 internal |
+| `make bench-v90` | 8e3136e9 x6 | 8e3136e9 x6 (a V.90 call: nothing here acts on it) |
+| v90d's replay, 106 recordings x 8 configs (v90d-split d707463 built against this tree; replay_all050.sh's files, run 12 at a time) | sync-build/proof/afterports/manifest.sha256 | MANIFEST IDENTICAL, 1613 of 1613 |
+| `make check-ubsan` | | ALL UBSAN CHECKS PASS, no runtime error |
+| `tools/check-ports.sh` (PAR=5, JOBS=2, outputs ~/afix-tmp/ports) | host gcc, 110 programs | aarch64be-musl, mips-musl, win32-mingw, host-clang: 110 of 110 identical; i686-musl with QUICK: 99 of 110 identical, the 11 of tools/ports-slow.txt skipped (orig_seeds, orig_retrain, orig_v90_te and realcheck whole: the full i686 run would have passed the hour); ALL PORTS PASS |
+| v90d-split (d707463, unchanged, nothing committed) built against this tree (LIBV90M=the worktree, as sync-build/proof/afterports.sh; ~/afix-tmp/v90dproof.sh, outputs ~/afix-tmp/proof) | sync-build/proof/afterports | `make check`: ALL HOST CHECKS PASS, v90d's own count lines identical, the library's as above; `make check-arm` (the library's now in parallel): ALL ARM CHECKS PASS, v90d's own lines identical, the library's those of robust 2c's check-arm but orig_retrain 111 -> 138; bench-v90 8e3136e9 x6; replay MANIFEST IDENTICAL 1613; `fw release` and `fw test-release` exit 0, test-release's count lines identical |
+
+No recording's output changed, so there is no recording / before / after
+table to give: the answering-side changes act only where no recorded call
+goes (a G.711 codec in V.92 data mode; v92d's own retrain from V.92 data
+mode; an INFO0d in a retrain).
+
+For v90d main (separate repository, its own copies of the answering
+modem): answer-fix 1 and 2 are patches to its modem/answer.c, answer.h,
+v92/v92_p34d.c and v92_p34d.h, which are the library's but for the
+portability fix of ports-2 in v92_p34d.c (et_g's update); answer-fix 3
+changes nothing there. Its HT802 records linear (`rx_linear`), so fix 1's
+step is the old eighth on the box unless the codec runs G.711; fix 2 acts
+on any V.92 call v92d retrains of its own accord.
