@@ -40,6 +40,12 @@ API changes:
   V.92 retrain failed, or one more was due past the limit.
 - `v90m_retrain`: in the calling role also V.90 and V.92.
 - `v90m_reset(m, NULL)` returns `V90M_EINVAL` (it crashed before).
+- **Changed:** `v90m_ec_send_break` returns `V90M_OK` or `V90M_ESTATE`
+  (it returned 0 or -1, and -1 is `V90M_EINVAL`). A caller testing for
+  0 is unaffected; one testing for -1 must test for `V90M_ESTATE`.
+- **Changed:** the answering role now refuses what the calling role
+  refused: no modulations at all (`V90M_EINVAL`), and `V90M_MOD_V92`
+  without `V90M_MOD_V90` (`V90M_ENOTSUP`). Before, it accepted both.
 - `V90M_MEM_SIZE` 112 KiB -> 120 KiB (the calling side's receiver).
 - The static library's internal symbols are renamed `v90m__i_*` instead
   of made local (some targets' relocations need them global); a program

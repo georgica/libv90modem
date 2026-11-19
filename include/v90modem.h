@@ -85,8 +85,9 @@ typedef enum {
 #define V90M_MOD_V34     0x0008u     /* (both roles) */
 #define V90M_MOD_V90     0x0010u     /* answering: the digital (server) side; calling: the analogue
                                         (client) side */
-#define V90M_MOD_V92     0x0020u     /* with V90M_MOD_V90: PCM upstream on offer (answering), or
-                                        asked for (calling); not in the defaults */
+#define V90M_MOD_V92     0x0020u     /* with V90M_MOD_V90 (alone: V90M_ENOTSUP): PCM upstream on
+                                        offer (answering), or asked for (calling); not in the
+                                        defaults */
 /* Not in the defaults, either role. Answering: Bell 103: a caller without V.8
  * that sends 1270 Hz (the Bell 103 mark) gets 300 bit/s FSK on 2225 / 2025
  * Hz, start-stop and no error control as in V.21. Bell 212A, with
@@ -137,8 +138,9 @@ typedef void (*v90m_event_fn)(void *user, v90m_event ev);
 
 typedef struct {
     v90m_role      role;
-    unsigned       modulations;     /* V90M_MOD_*; default all but V.92 and Bell. Calling: at
-                                       least one (0 gives V90M_EINVAL) */
+    unsigned       modulations;     /* V90M_MOD_*; default all but V.92 and Bell. Either role:
+                                       at least one (0 gives V90M_EINVAL), and V.92 only with
+                                       V.90 (else V90M_ENOTSUP) */
     int            alaw;            /* the codec's law: 0 mu-law, 1 A-law */
     int            codec_linear_rx; /* answering: 1 = the codec receives in 16-bit linear, with no
                                        G.711 quantiser on the receive path (V.92 then designs the
@@ -370,9 +372,9 @@ int         v90m_ec_tx_busy(const v90m_ec_t *e);        /* a frame is still leav
 void        v90m_ec_release(v90m_ec_t *e);              /* orderly: DISC, wait for UA */
 void        v90m_ec_abort(v90m_ec_t *e);                /* the line is gone: stop without a word */
 /* break signals (V.42 12.3.1): opt is one of these, len10ms the length in
- * 10 ms units. send_break: 0 when the break is on its way; -1 (not a V90M_*
- * code) when error control is not up (V90M_EC_CONNECTED) or a break of ours
- * is still pending. get_break: 1 with *opt and *len10ms when a break came
+ * 10 ms units. send_break: V90M_OK when the break is on its way;
+ * V90M_ESTATE when error control is not up (V90M_EC_CONNECTED) or a break of
+ * ours is still pending. get_break: 1 with *opt and *len10ms when a break came
  * (in its place among the octets read), else 0. */
 #define V90M_BRK_NONDESTRUCTIVE_INSEQ      0x00
 #define V90M_BRK_NONDESTRUCTIVE_EXPEDITED  0x40

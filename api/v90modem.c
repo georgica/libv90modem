@@ -80,6 +80,9 @@ static int check_cfg(const v90m_cfg *c)
     if (c->modulations & ~V90M_MOD_ALL) return V90M_EINVAL;
     if (c->max_tx_code < 0 || c->max_tx_code > 31 || c->tx_level < 0 || c->max_down_bps < 0 || c->max_up_bps < 0 || c->echo_delay < -1)
         return V90M_EINVAL;
+    if (!c->modulations) return V90M_EINVAL;
+    /* V.92 is V.90's start-up with PCM upstream on top, in either role */
+    if ((c->modulations & V90M_MOD_V92) && !(c->modulations & V90M_MOD_V90)) return V90M_ENOTSUP;
     if (c->role == V90M_ROLE_ORIGINATE) {
         if (!(c->modulations & V90M_MOD_ORIG)) return (c->modulations ? V90M_ENOTSUP : V90M_EINVAL);
         if (c->modulations & ~V90M_MOD_ORIG) return V90M_ENOTSUP;
@@ -466,7 +469,7 @@ int    v90m_ec_tx_idle(const v90m_ec_t *e) { return v42ec_tx_idle(&e->e); }
 int    v90m_ec_tx_busy(const v90m_ec_t *e) { return e->e.hdlc_tx_on && v42hdlc_tx_busy(&e->e.htx); }
 void   v90m_ec_release(v90m_ec_t *e) { v42ec_release(&e->e); }
 void   v90m_ec_abort(v90m_ec_t *e) { v42lapm_abort(&e->e.lapm, V42LAPM_R_LOCAL); }
-int    v90m_ec_send_break(v90m_ec_t *e, int opt, int len10ms) { return v42ec_send_break(&e->e, opt, len10ms); }
+int    v90m_ec_send_break(v90m_ec_t *e, int opt, int len10ms) { return v42ec_send_break(&e->e, opt, len10ms) == 0 ? V90M_OK : V90M_ESTATE; }
 int    v90m_ec_get_break(v90m_ec_t *e, int *opt, int *len10ms) { return v42ec_get_break(&e->e, opt, len10ms); }
 int    v90m_ec_state(const v90m_ec_t *e) { return v42ec_state(&e->e); }
 

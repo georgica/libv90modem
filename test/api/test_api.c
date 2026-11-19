@@ -50,6 +50,13 @@ static void test_cfg(void)
     c.modulations = V90M_MOD_V92 | V90M_MOD_V34;  /* ... but not without it: V.92 is V.90's start-up */
     m = v90m_create(&c, &err);
     CHECK(m == NULL); CHECK_EQ_I(err, V90M_ENOTSUP);
+    /* the answering role refuses the same: V.92 without V.90, and nothing offered */
+    c.role = V90M_ROLE_ANSWER;
+    err = 99; m = v90m_create(&c, &err);
+    CHECK(m == NULL); CHECK_EQ_I(err, V90M_ENOTSUP);
+    c.modulations = 0;
+    err = 99; m = v90m_create(&c, &err);
+    CHECK(m == NULL); CHECK_EQ_I(err, V90M_EINVAL);
     /* Bell 103 and Bell 212A: both roles, and not in the defaults */
     v90m_cfg_default(&c);
     CHECK(!(c.modulations & (V90M_MOD_BELL103 | V90M_MOD_BELL212A)));
@@ -180,7 +187,7 @@ static void test_errors(void)
         CHECK_EQ_I(v90m_ec_reset(e, NULL), V90M_EINVAL);
         CHECK_EQ_I(v90m_ec_reset(e, &ec), V90M_OK);
         /* no break before error control is up; none received */
-        CHECK_EQ_I(v90m_ec_send_break(e, V90M_BRK_DESTRUCTIVE_EXPEDITED, 10), -1);
+        CHECK_EQ_I(v90m_ec_send_break(e, V90M_BRK_DESTRUCTIVE_EXPEDITED, 10), V90M_ESTATE);
         CHECK_EQ_I(v90m_ec_get_break(e, &opt, &len), 0);
         v90m_ec_destroy(e);
     }
