@@ -148,59 +148,89 @@ static int64_t snap_cost(const v90dil_res_t *r, const int32_t *t1, int64_t g, in
     return c;
 }
 
-void v90dil_analyse(const v90dil_acc_t *a, int alaw, int uinfo, v90dil_res_t *r)
+/* The analysis runs in steps (v90dil_an_t), each some tens of thousands of
+ * ARM instructions at most: begin, one gain candidate a step, the common
+ * gain, one interval's own gain a step, one interval's snapping a step, the
+ * robbed bits. v90dil_analyse() runs them all. */
+enum { AN_CAND = 1, AN_GAIN, AN_SLOT, AN_SNAP, AN_END, AN_DONE };
+
+void v90dil_analyse_begin(v90dil_an_t *an, const v90dil_acc_t *a, int alaw, int uinfo, v90dil_res_t *r)
 {
-    int s, u, v, bv = uinfo;
-    int32_t t1[128];
-    int64_t g, best = -1, num = 0, den = 0, tu = (int64_t)v90_ucode_linear(alaw, (unsigned)(uinfo & 127)), gs[6];
+    int s, u;
+    memset(an, 0, sizeof *an);
+    an->alaw = alaw; an->uinfo = uinfo; an->bv = uinfo; an->best = -1;
+    an->tu = (int64_t)v90_ucode_linear(alaw, (unsigned)(uinfo & 127));
     memset(r, 0, sizeof *r);
-    table1(alaw, t1);
+    table1(alaw, an->t1);
     for (s = 0; s < 6; s++)
         for (u = 0; u < 128; u++) r->lv[s][u] = a->cnt[s][u] ? mean(a->sum[s][u], a->cnt[s][u]) : -1;
-    /* Whatever a pad or a robbed bit does, the far codec puts out the Table 1
-     * level of some codeword; the receiver has scaled everything so that
-     * UINFO, arriving as codeword v, is at UINFO's own level: the levels are
-     * Table 1's times g = T(UINFO) / T(v). v is found as the one whose g
-     * leaves the measurements of Ucodes 64 and up closest to such levels
-     * (a pad of up to 15 dB), g is then refined by least squares (the
-     * receiver's own gain is not exact), and every level is replaced by g
-     * times the Table 1 level nearest to it. What the DIL measures beyond
-     * that, the residual interference of its repetitive patterns, is not
-     * there in data mode. */
-    for (v = uinfo; v >= 1 && v >= uinfo - 40; v--) {
-        int64_t c;
-        int64_t tv = t1[v];
-        if (tv <= 0) continue;
-        /* from Ucode 32: A-law's upper segments are exact doublings of each
-         * other, and only its lower ones tell g from 2 g; a near tie goes
-         * to the smaller pad */
-        c = snap_cost(r, t1, (tu << 16) / tv, 32, best < 0 ? -1 : best - best / 8);
-        if (best < 0 || c < best - best / 8) { best = c; bv = v; }
-    }
-    g = (tu << 16) / (v90_ucode_linear(alaw, (unsigned)bv) > 0 ? v90_ucode_linear(alaw, (unsigned)bv) : 1);
-    for (s = 0; s < 6; s++) {
-        int hint = 0;
-        for (u = 64; u < 128; u++) {
-            int64_t l = r->lv[s][u], t;
-            if (l < 0) continue;
-            t = (int64_t)t1[nearest_g(t1, l, g, &hint)] * (1 << YF);
-            num += (l * t) >> 8; den += (t * t) >> 8;
+    an->v = uinfo;
+    an->phase = AN_CAND;
+}
+
+int v90dil_analyse_step(v90dil_an_t *an, v90dil_res_t *r)
+{
+    const int32_t *t1 = an->t1;
+    int s, u;
+    switch (an->phase) {
+    case AN_CAND:
+        /* Whatever a pad or a robbed bit does, the far codec puts out the Table 1
+         * level of some codeword; the receiver has scaled everything so that
+         * UINFO, arriving as codeword v, is at UINFO's own level: the levels are
+         * Table 1's times g = T(UINFO) / T(v). v is found as the one whose g
+         * leaves the measurements of Ucodes 64 and up closest to such levels
+         * (a pad of up to 15 dB), g is then refined by least squares (the
+         * receiver's own gain is not exact), and every level is replaced by g
+         * times the Table 1 level nearest to it. What the DIL measures beyond
+         * that, the residual interference of its repetitive patterns, is not
+         * there in data mode. One candidate a step. */
+        for (; an->v >= 1 && an->v >= an->uinfo - 40; an->v--) {
+            int64_t c, tv = t1[an->v], best = an->best;
+            if (tv <= 0) continue;
+            /* from Ucode 32: A-law's upper segments are exact doublings of each
+             * other, and only its lower ones tell g from 2 g; a near tie goes
+             * to the smaller pad */
+            c = snap_cost(r, t1, (an->tu << 16) / tv, 32, best < 0 ? -1 : best - best / 8);
+            if (best < 0 || c < best - best / 8) { an->best = c; an->bv = an->v; }
+            an->v--;
+            return 0;
         }
+        an->phase = AN_GAIN;
+        return 0;
+    case AN_GAIN: {
+        int64_t g, num = 0, den = 0;
+        int32_t tb = v90_ucode_linear(an->alaw, (unsigned)an->bv);
+        g = (an->tu << 16) / (tb > 0 ? tb : 1);
+        for (s = 0; s < 6; s++) {
+            int hint = 0;
+            for (u = 64; u < 128; u++) {
+                int64_t l = r->lv[s][u], t;
+                if (l < 0) continue;
+                t = (int64_t)t1[nearest_g(t1, l, g, &hint)] * (1 << YF);
+                num += (l * t) >> 8; den += (t * t) >> 8;
+            }
+        }
+        if (den > 0) g = (num << 16) / den;
+        r->gain_q16 = (int32_t)g;
+        r->uinfo_as = an->bv;
+        an->g = g;
+        an->s = 0;
+        an->phase = AN_SLOT;
+        return 0;
     }
-    if (den > 0) g = (num << 16) / den;
-    r->gain_q16 = (int32_t)g;
-    r->uinfo_as = bv;
-    /* ... and by least squares again in each interval alone: what the DIL's
-     * repetitive patterns leave of the equaliser's residual interference
-     * differs from interval to interval (the positions in a segment, next to
-     * the REF symbols or not), a gain of its own of up to +-0.9 % (measured
-     * on 2 km with a 3 dB pad: intervals 0..2 low, 3..5 high), which at a
-     * pad's codeword spacing was enough to snap a level to its neighbour
-     * (PROGRESS.md, robust 2b). The codeword is found with the interval's
-     * gain, held within 3 % of the common one; its level is the common
-     * gain's. */
-    for (s = 0; s < 6; s++) {
+    case AN_SLOT: {
+        /* ... and by least squares again in each interval alone: what the DIL's
+         * repetitive patterns leave of the equaliser's residual interference
+         * differs from interval to interval (the positions in a segment, next to
+         * the REF symbols or not), a gain of its own of up to +-0.9 % (measured
+         * on 2 km with a 3 dB pad: intervals 0..2 low, 3..5 high), which at a
+         * pad's codeword spacing was enough to snap a level to its neighbour
+         * (PROGRESS.md, robust 2b). The codeword is found with the interval's
+         * gain, held within 3 % of the common one; its level is the common
+         * gain's. One interval a step. */
         int it;
+        int64_t g = an->g, *gs = an->gs;
+        s = an->s;
         gs[s] = g;
         for (it = 0; it < 2; it++) {
             int64_t ns = 0, ds = 0, gn;
@@ -217,49 +247,69 @@ void v90dil_analyse(const v90dil_acc_t *a, int alaw, int uinfo, v90dil_res_t *r)
             if (gn < g - g * 3 / 100) gn = g - g * 3 / 100;
             gs[s] = gn;
         }
+        if (++an->s == 6) { an->s = 0; an->phase = AN_SNAP; }
+        return 0;
     }
-    for (s = 0; s < 6; s++) {
+    case AN_SNAP: {
+        int64_t g = an->g;
         int hint = 0;
+        s = an->s;
         for (u = 0; u < 128; u++) {
             int64_t l = r->lv[s][u], w, st;
             if (l < 0) continue;
             /* the codeword by the interval's gain; its level by the common
              * one (data mode has no such bias) */
-            w = nearest_g(t1, l, gs[s], &hint);
+            w = nearest_g(t1, l, an->gs[s], &hint);
             /* where the codec's step is under 32 units the measurement's own
              * noise would pick a neighbour as often: the mean stands */
             st = w < 127 ? t1[w + 1] - t1[w] : 1024;
             if (st * g < ((int64_t)32 << 16)) continue;
             r->lv[s][u] = (int32_t)(((int64_t)t1[w] * (1 << YF) * g + 32768) >> 16);
         }
+        if (++an->s == 6) an->phase = AN_END;
+        return 0;
     }
-    /* A robbed bit takes one interval in six away from the others: where the
-     * others agree (their median), it stands off by more than a quarter of
-     * the Ucode's step at many Ucodes (mu-law; with a pad in front the
-     * codewords that lose to it are no longer just the odd Ucodes) */
-    for (u = 64; !alaw && u < 128; u++) {
-        int32_t vv[6], t, step = (v90_ucode_linear(0, (unsigned)u) - v90_ucode_linear(0, (unsigned)(u - 1))) * (1 << YF), med;
-        int i, j, ok = 1;
-        for (i = 0; i < 6; i++) { vv[i] = r->lv[i][u]; if (vv[i] < 0) ok = 0; }
-        if (!ok) continue;
-        for (i = 1; i < 6; i++) for (j = i; j > 0 && vv[j - 1] > vv[j]; j--) { t = vv[j]; vv[j] = vv[j - 1]; vv[j - 1] = t; }
-        med = (vv[2] + vv[3]) / 2;
-        for (s = 0; s < 6; s++) {
-            int32_t d = r->lv[s][u] - med;
-            if (d < 0) d = -d;
-            if (d > step / 4 && r->robbed[s] < 255) r->robbed[s]++;
+    case AN_END:
+        /* A robbed bit takes one interval in six away from the others: where the
+         * others agree (their median), it stands off by more than a quarter of
+         * the Ucode's step at many Ucodes (mu-law; with a pad in front the
+         * codewords that lose to it are no longer just the odd Ucodes) */
+        for (u = 64; !an->alaw && u < 128; u++) {
+            int32_t vv[6], t, step = (t1[u] - t1[u - 1]) * (1 << YF), med;
+            int i, j, ok = 1;
+            for (i = 0; i < 6; i++) { vv[i] = r->lv[i][u]; if (vv[i] < 0) ok = 0; }
+            if (!ok) continue;
+            for (i = 1; i < 6; i++) for (j = i; j > 0 && vv[j - 1] > vv[j]; j--) { t = vv[j]; vv[j] = vv[j - 1]; vv[j - 1] = t; }
+            med = (vv[2] + vv[3]) / 2;
+            for (s = 0; s < 6; s++) {
+                int32_t d = r->lv[s][u] - med;
+                if (d < 0) d = -d;
+                if (d > step / 4 && r->robbed[s] < 255) r->robbed[s]++;
+            }
         }
+        for (s = 0; s < 6; s++) r->robbed[s] = (uint8_t)(r->robbed[s] >= 16);     /* a quarter of 64 Ucodes */
+        for (s = 0; s < 6; s++)
+            for (u = 64; u < 128; u++) {
+                int32_t t = t1[u] * (1 << YF), e;
+                if (r->lv[s][u] < 0) continue;
+                e = r->lv[s][u] - t;
+                if (e < 0) e = -e;
+                /* in 32 bits where it fits (ARMv5 divides 64-bit numbers slowly) */
+                e = e < (1 << 23) ? e * 256 / t : (int32_t)(((int64_t)e * 256) / t);
+                if (e > r->dev_q8) r->dev_q8 = e;
+            }
+        an->phase = AN_DONE;
+        return 1;
+    default:
+        return 1;
     }
-    for (s = 0; s < 6; s++) r->robbed[s] = (uint8_t)(r->robbed[s] >= 16);     /* a quarter of 64 Ucodes */
-    for (s = 0; s < 6; s++)
-        for (u = 64; u < 128; u++) {
-            int32_t t = v90_ucode_linear(alaw, (unsigned)u) * (1 << YF), e;
-            if (r->lv[s][u] < 0) continue;
-            e = r->lv[s][u] - t;
-            if (e < 0) e = -e;
-            e = (int32_t)(((int64_t)e * 256) / t);
-            if (e > r->dev_q8) r->dev_q8 = e;
-        }
+}
+
+void v90dil_analyse(const v90dil_acc_t *a, int alaw, int uinfo, v90dil_res_t *r)
+{
+    v90dil_an_t an;
+    v90dil_analyse_begin(&an, a, alaw, uinfo, r);
+    while (!v90dil_analyse_step(&an, r)) ;
 }
 
 /* ---- power (8.5.2) and its limit (Table 15) ---- */
@@ -315,18 +365,7 @@ uint32_t v90dil_power(int alaw, int K, const uint8_t M[6], const uint8_t C[6][12
 
 /* ---- constellations ---- */
 
-typedef struct {
-    const v90dil_res_t *res;
-    int alaw;
-    int32_t t1[128];                /* Table 1 of the law */
-    int32_t sig[6];                 /* noise, Table 1 units Q YF */
-    uint64_t lim2;                  /* the power limit, units^2 */
-    /* a design: points of each interval, ascending */
-    uint8_t n[6], pts[6][128];
-    uint8_t M[6];
-    uint8_t C[6][128];
-    uint32_t power;
-} dsn_t;
+typedef v90dil_dsn_t dsn_t;
 
 /* the points of interval s, from the bottom up, d apart */
 static int pick(const dsn_t *g, int s, int32_t d, uint8_t *pts)
@@ -416,21 +455,24 @@ static int32_t isqrt32(uint32_t v)
     return (int32_t)r;
 }
 
-int v90dil_design_cp(const v90dil_res_t *res, const v90dil_req_t *req, v90_cp_t *cp, v90dil_choice_t *ch)
+enum { CP_K = 1, CP_Z, CP_FIN, CP_DONE };
+
+void v90dil_design_begin(v90dil_cpjob_t *j, const v90dil_res_t *res, const v90dil_req_t *req, v90_cp_t *cp, v90dil_choice_t *ch)
 {
-    dsn_t g;
-    int K, kmin, kmax, s, z, lo, hi;
+    dsn_t *g = &j->g;
+    int s;
     int64_t lim = v90dil_limit(req->max_tx_code);
+    memset(j, 0, sizeof *j);
+    j->req = *req;
     memset(cp, 0, sizeof *cp);
     memset(ch, 0, sizeof *ch);
-    memset(&g, 0, sizeof g);
-    g.res = res; g.alaw = req->alaw;
-    table1(req->alaw, g.t1);
+    g->res = res; g->alaw = req->alaw;
+    table1(req->alaw, g->t1);
     /* Table 15 less 0.1 dB (a factor of 0.977 in power) */
-    g.lim2 = (uint64_t)(lim * lim) * 977 / 1000;
+    g->lim2 = (uint64_t)(lim * lim) * 977 / 1000;
     for (s = 0; s < 6; s++) {
-        g.sig[s] = isqrt32(req->sigma2_q8[s]);      /* units Q4 = Q YF */
-        if (g.sig[s] < 16) g.sig[s] = 16;           /* not below one unit */
+        g->sig[s] = isqrt32(req->sigma2_q8[s]);     /* units Q4 = Q YF */
+        if (g->sig[s] < 16) g->sig[s] = 16;         /* not below one unit */
     }
     cp->is_cp = (uint8_t)(req->is_cp != 0);
     cp->alaw = (uint8_t)(req->alaw != 0);
@@ -439,31 +481,69 @@ int v90dil_design_cp(const v90dil_res_t *res, const v90dil_req_t *req, v90_cp_t 
     for (s = 0; s < 6; s++) cp->idx[s] = (uint8_t)s;
     /* Sr = 0: D = K + 6. CP: drn = D - 20, 1..22 (Table 2: K 15..36 here);
      * CPt: drn = D - 8, K 6..24 (Table 17) */
-    if (req->is_cp) { kmin = 15; kmax = 36; }
-    else { kmin = 6; kmax = req->max_k > 0 && req->max_k < 24 ? req->max_k : 24; }
-    for (K = kmax; K >= kmin; K--) {
-        int D = K + 6, bps = D * 4000 / 3;
-        if (req->is_cp) {
-            int r = D - 21;
-            if (req->rates && !((req->rates >> r) & 1)) continue;
+    if (req->is_cp) { j->kmin = 15; j->kmax = 36; }
+    else { j->kmin = 6; j->kmax = req->max_k > 0 && req->max_k < 24 ? req->max_k : 24; }
+    j->K = j->kmax;
+    j->phase = CP_K;
+}
+
+/* one feasible() a step */
+int v90dil_design_step(v90dil_cpjob_t *j, const v90dil_res_t *res, v90_cp_t *cp, v90dil_choice_t *ch)
+{
+    const v90dil_req_t *req = &j->req;
+    dsn_t *g = &j->g;
+    int s;
+    g->res = res;
+    switch (j->phase) {
+    case CP_K:
+        for (; j->K >= j->kmin; j->K--) {
+            int D = j->K + 6, bps = D * 4000 / 3;
+            if (req->is_cp) {
+                int r = D - 21;
+                if (req->rates && !((req->rates >> r) & 1)) continue;
+            }
+            if (req->max_bps > 0 && bps > req->max_bps) continue;
+            if (feasible(g, j->K, req->z_q4)) {
+                /* as much margin as the power allows */
+                j->lo = req->z_q4; j->hi = 64 * 16;
+                j->phase = CP_Z;
+            } else j->K--;
+            return 0;
         }
-        if (req->max_bps > 0 && bps > req->max_bps) continue;
-        if (feasible(&g, K, req->z_q4)) break;
+        j->k = 0;                                   /* drn = 0: cleardown */
+        j->phase = CP_DONE;
+        return 1;
+    case CP_Z:
+        if (j->lo < j->hi) {
+            int z = (j->lo + j->hi + 1) / 2;
+            if (feasible(g, j->K, z)) j->lo = z; else j->hi = z - 1;
+            return 0;
+        }
+        j->phase = CP_FIN;
+        return 0;
+    case CP_FIN: {
+        int K = j->K;
+        (void)feasible(g, K, j->lo);
+        ch->K = K; ch->D = K + 6; ch->bps = ch->D * 4000 / 3; ch->z_q4 = j->lo; ch->power = g->power;
+        cp->drn = (uint8_t)(req->is_cp ? ch->D - 20 : ch->D - 8);
+        for (s = 0; s < 6; s++) {
+            int i;
+            ch->M[s] = g->M[s];
+            for (i = 0; i < g->M[s]; i++) cp->mask[s][g->C[s][i] >> 3] |= (uint8_t)(1u << (g->C[s][i] & 7));
+        }
+        j->k = K;
+        j->phase = CP_DONE;
+        return 1;
     }
-    if (K < kmin) return 0;                         /* drn = 0: cleardown */
-    /* as much margin as the power allows */
-    lo = req->z_q4; hi = 64 * 16;
-    while (lo < hi) {
-        z = (lo + hi + 1) / 2;
-        if (feasible(&g, K, z)) lo = z; else hi = z - 1;
+    default:
+        return 1;
     }
-    (void)feasible(&g, K, lo);
-    ch->K = K; ch->D = K + 6; ch->bps = ch->D * 4000 / 3; ch->z_q4 = lo; ch->power = g.power;
-    cp->drn = (uint8_t)(req->is_cp ? ch->D - 20 : ch->D - 8);
-    for (s = 0; s < 6; s++) {
-        int j;
-        ch->M[s] = g.M[s];
-        for (j = 0; j < g.M[s]; j++) cp->mask[s][g.C[s][j] >> 3] |= (uint8_t)(1u << (g.C[s][j] & 7));
-    }
-    return K;
+}
+
+int v90dil_design_cp(const v90dil_res_t *res, const v90dil_req_t *req, v90_cp_t *cp, v90dil_choice_t *ch)
+{
+    v90dil_cpjob_t j;
+    v90dil_design_begin(&j, res, req, cp, ch);
+    while (!v90dil_design_step(&j, res, cp, ch)) ;
+    return j.k;
 }

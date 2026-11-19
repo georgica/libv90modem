@@ -91,6 +91,18 @@ typedef struct {
 
 void v90dil_analyse(const v90dil_acc_t *a, int alaw, int uinfo, v90dil_res_t *r);
 
+/* The same in steps of some tens of thousands of ARM instructions each (the
+ * whole was 9 M in one tick at first, 1.1 M made faster): begin (it reads a
+ * and clears r), then step until it returns 1. a may change after begin;
+ * r must not change between steps. */
+typedef struct {
+    int     phase, alaw, uinfo, v, bv, s;
+    int64_t best, tu, g, gs[6];
+    int32_t t1[128];
+} v90dil_an_t;
+void v90dil_analyse_begin(v90dil_an_t *an, const v90dil_acc_t *a, int alaw, int uinfo, v90dil_res_t *r);
+int  v90dil_analyse_step(v90dil_an_t *an, v90dil_res_t *r);
+
 /* ---- constellations for CPt and CP ---- */
 typedef struct {
     int      alaw;
@@ -114,6 +126,31 @@ typedef struct {
 /* Fills cp (and ch) with the best constellation set; returns K, or 0 when
  * not even the lowest rate fits (cp is then a cleardown, drn = 0). */
 int  v90dil_design_cp(const v90dil_res_t *res, const v90dil_req_t *req, v90_cp_t *cp, v90dil_choice_t *ch);
+
+/* The same in steps, one trial constellation set each (some tens of
+ * thousands of ARM instructions; a design takes 10 to 30 of them): begin
+ * (it copies req, clears cp and ch), then step until it returns 1; then
+ * j->k is what v90dil_design_cp() returns. res, cp and ch must not change
+ * between steps. */
+typedef struct {
+    const v90dil_res_t *res;
+    int alaw;
+    int32_t t1[128];                /* Table 1 of the law */
+    int32_t sig[6];                 /* noise, Table 1 units Q YF */
+    uint64_t lim2;                  /* the power limit, units^2 */
+    /* a design: points of each interval, ascending */
+    uint8_t n[6], pts[6][128];
+    uint8_t M[6];
+    uint8_t C[6][128];
+    uint32_t power;
+} v90dil_dsn_t;
+typedef struct {
+    int phase, K, kmin, kmax, lo, hi, k;
+    v90dil_req_t req;
+    v90dil_dsn_t g;
+} v90dil_cpjob_t;
+void v90dil_design_begin(v90dil_cpjob_t *j, const v90dil_res_t *res, const v90dil_req_t *req, v90_cp_t *cp, v90dil_choice_t *ch);
+int  v90dil_design_step(v90dil_cpjob_t *j, const v90dil_res_t *res, v90_cp_t *cp, v90dil_choice_t *ch);
 
 /* 8.5.2's average power of a constellation set (K, Mi, Ucodes of label j
  * in C[i][j], law), Table 1 units squared, rounded up */

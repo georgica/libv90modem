@@ -155,6 +155,9 @@ typedef struct {
     int32_t    cb_seg;              /* ... being handed to the receiver as known */
     v90dil_acc_t acc; int acc_on;
     v90dil_res_t res;
+    /* the DIL's analysis, CPt's and CP's designs, a step a tick (v90a.c) */
+    int        job, job_new;
+    union { v90dil_an_t an; v90dil_cpjob_t cp; } jw;
     uint32_t   sig_jd[6];           /* noise per interval at the end of Jd (Q8) */
     /* Ri, Ri-bar, TRN2d, MP, Ed, B1d, data */
     int32_t    ri_m0, ribar_m0, m_trn2d, m_b1d, hold_until;
@@ -228,6 +231,7 @@ typedef struct {
     uint32_t   dsn[6];              /* the noise CP was designed for, by interval (as v90arx_mse_slot) */
     int32_t    deg_frames, good_frames;     /* data frames in a row with the error above / below it */
     int32_t    col_frames;          /* ... with the receiver lost (the error far above it) */
+    int        col_hold;            /* the timing loop held since a collapse (line_watch) */
     int32_t    since_auto;          /* data frames since a renegotiation for the line ended */
     int        auto_down;           /* the receiver's watch took the rate down (or retrained) */
     int        best_rate;           /* the highest downstream of this call */

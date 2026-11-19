@@ -2423,3 +2423,76 @@ orig, orig_v34, v8orig print what answer-fix's build prints):
 - modem/p2call.c: analyse() through proberx_bin().
 - modem/dpsk.c: dpsktx_init divides in 32 bits where the product fits.
 - v34/v34_params.c: the convolution loops over the k that pass the tests.
+
+## cpu 3: the heavy computations spread over ticks (2026-11-19)
+
+Target for the heaviest tick: under 100 k ARM instructions, i.e. under 8 %
+of the 1.23 M a 10 ms block of the box has, below the answering modem's own
+heaviest (173 k before cpu 2), and some 6 average samples of V.92 data mode
+(a block of V.92 data mode, 0.6 M after cpu 1, has room for it twice over).
+
+What is spread (these change when things happen, so they change numerics):
+- The equaliser's design (`v90arx`): a job of steps, one a symbol, from
+  the estimate taken when it starts: start (R's first column, diagonal,
+  band edge, load, scale, the first 14 of R's 48 diagonals), fill (the
+  other 34), Cholesky (columns by a budget of 9000 multiplies a step, 4
+  steps), solve (z, f, the bias, the forward taps), feedback taps (then
+  both sets go in): 8 symbols. The first equaliser, at the end of TRN1d's
+  estimate, likewise: the estimate goes on and the equaliser starts on the
+  symbol its design ends on. A tick in which the receiver took a step
+  (`v90arx_t.dsn_ran`) takes no step of v90a's jobs.
+- The DIL's analysis, CPt's design and CP's design (`v90dil_analyse_begin
+  / _step`, `v90dil_design_begin / _step`; the whole-call functions run
+  them to the end): at the end of the DIL, S goes out at once as before and
+  the analysis (begin, one gain candidate a step, the common gain, one
+  interval a step twice, the robbed bits) and CPt's design (one trial
+  constellation set a step) follow, some 60 ticks (8 ms); CP's design
+  from TRN2d's noise the same way. Where a result is wanted before its
+  job is done (our S-bar before CPt, Ri-bar, our SCR's 2 s) the rest runs
+  then (none of the tests needed it).
+- `v90a_t` holds the job (a union of the analysis and the design: 2.8
+  kbytes), `v90arx_dsn_t` grows by R's first column and diagonal values
+  (768 octets): `orig_t` 116160 -> 118704 octets on x86-64 (118416 on
+  ARM), within the 120 KiB of cpu 1.
+
+Found on the way (test_orig_retrain's "lost past the limit", V.92, failed
+with the new timing: the answerer never saw our cleardown): with the
+receiver wiped, line_watch held the timing loop at the collapse, let it go
+at the first data frame whose error fell under 16 times the design's,
+and the half-recovered receiver (its estimate regrown from nothing) moved
+the clock -25 ppm in 150 ms; the cleardown's CPus then went out where the
+digital modem did not listen. answer-fix's run had moved it -2.4 ppm (on
+8 seeds of that scenario: answer-fix 8 of 8, this commit without the fix 7
+of 8, with it 8 of 8). Now the loop stays held after a collapse until the
+error is back within twice the design's (`col_hold`).
+
+Heaviest ticks (prof-v90c / prof-v92c, the whole call):
+
+| | before (answer-fix) | after cpu 1 | after (this) |
+|---|---|---|---|
+| V.90 0 ppm | 9.30 M (DIL), 0.62 M (CP design), 0.39 M (equaliser) | 1.14 M, 0.62 M, 0.39 M | 98 k (Phase 2's start), 82 k (end of probing), 81 k (a step of the equaliser's design) |
+| V.90 100 ppm | 9.27 M, 0.91 M, 0.91 M | 1.17 M, 0.90 M, 0.40 M | 98 k, 82 k, 80 k |
+| V.92 0 ppm | 9.30 M, 0.72 M, 0.91 M | 1.14 M, 0.72 M, 0.40 M | 98 k, 82 k, 80 k |
+| V.92 100 ppm | 9.30 M, 0.59 M, 0.91 M | 1.15 M, 0.59 M, 0.40 M | 98 k, 82 k, 81 k |
+
+Data mode is as cpu 1 left it (the designs cost the same, spread):
+54.6 / 58.8 M a second (V.90, 0 / 100 ppm), 69.4 / 73.9 M (V.92).
+
+Rates (the same tests, answer-fix's build against this one; each call
+is one seed, so single calls move by a step either way):
+- test_orig_seeds (9 lines x 6 seeds each, with the mean added in a copy
+  of the test): V.90 down 46073.8 -> 46123.1, up 28800.0 -> 28888.9; V.92
+  down 45728.0 -> 45777.4, up 34765.2 -> 34765.1; 0 of 108 bad either way.
+- test_orig_v92's table (11 calls): down 47111 -> 47444, up 33244 -> 33911.
+- test_orig_retrain's tables (44 rate pairs): down 47666 -> 47818, up
+  31642 -> 31703.
+- test_orig_v90's table, its 9 lines: down 46370 -> 46222 (the 6 dB pad
+  45333 -> 44000, robbed bit 49333 -> 48000, pad and robbed bit 40000 ->
+  41333), the A-law line's upstream 31200 -> 28800.
+- bench-v90c fa7486c7 (46666 / 28800 as before), bench-v92c 22bf87ff
+  (46666 / 34666; it was 48000 / 36000): host and qemu-arm the same.
+
+Tests (short set): v90arx, v90arx_robust, v90dil, v90a, orig_v90, v92a,
+orig_v92, p2call, p2v90, p2v92a, orig_retrain, orig_v90_te, realcheck,
+orig, orig_v34, api, orig_bell, orig_seeds: all 0 failures. bench-v90
+8e3136e9 x6.

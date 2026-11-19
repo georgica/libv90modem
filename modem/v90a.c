@@ -62,6 +62,10 @@ static void end(v90a_t *a, int err)
 
 static void ugo(v90a_t *a, int s) { a->us = s; a->un = 0; }
 
+/* jobs (below): the DIL's analysis, CPt's design, CP's design */
+enum { JOB_NONE, JOB_DIL, JOB_CPT, JOB_CP };
+static void job_finish(v90a_t *a, int kind);
+
 /* ---- the DIL as known symbols for the receiver ---- */
 
 static int dil_known(void *ctx, int32_t m, int *u, int *pos, int32_t *lev)
@@ -271,6 +275,8 @@ static void up_symbol(v90a_t *a, int32_t *re, int32_t *im)
         else if (a->us == U_SBJ) ugo(a, U_DILQ);
         else if (a->us == U_SB4) {
             /* Phase 4: scrambler and differential encoder from zero (8.5.2) */
+            job_finish(a, JOB_CPT);
+            if (a->state == V90A_ENDED) return;
             v34_tmod_init(&a->tmod, V34_GPA, 4);
             load_cp(a, &a->cpt, 0);
             a->state = V90A_P4;
@@ -333,7 +339,7 @@ static void up_symbol(v90a_t *a, int32_t *re, int32_t *im)
         break;
     case U_SCR:
         /* our renegotiation: no TRN2d in 2000 ms, CP as it was */
-        if (a->reneg_ours && ++a->un >= a->p2.sym_rate * T_SCR_MS / 1000) a->cp_ready = 1;
+        if (a->reneg_ours && ++a->un >= a->p2.sym_rate * T_SCR_MS / 1000) { job_finish(a, JOB_CP); a->cp_ready = 1; }
         if (a->cp_ready) { load_cp(a, &a->cp, a->got_mp || a->got_mpa); ugo(a, U_CP); up_symbol(a, re, im); return; }
         pt = v34_tmod_put(&a->tmod, 3);
         break;
@@ -429,15 +435,60 @@ static void cp_to_cpu(const v90_cp_t *cp, int type, v92_cpu_t *u)
     memcpy(u->codec_mask, cp->codec_mask, sizeof u->codec_mask);
 }
 
-/* enough of the DIL: what it says, CPt, and S, S-bar to end it (9.3.2.10) */
-static void dil_finish(v90a_t *a)
+/* ---- the DIL's analysis and the CPt / CP designs, as jobs ----
+ *
+ * Each runs a step a tick (v90dil_analyse_step, v90dil_design_step: some
+ * tens of thousands of ARM instructions each; done whole they made one
+ * tick of 9 M, later 1.1 M, and of 0.6 to 0.9 M): the DIL's end asks for S
+ * at once, as before, and the analysis and CPt's design follow in the next
+ * ticks (some 60, 8 ms); CP's design likewise from TRN2d's noise. Where a
+ * result is wanted before its job is done (our S, S-bar has gone out; Ri-bar
+ * has come; our SCR waited 2 s) the rest runs at once. A tick in which the
+ * receiver took a step of its equaliser's design takes none. */
+static void job_cpt(v90a_t *a);
+
+static void job_step(v90a_t *a)
+{
+    switch (a->job) {
+    case JOB_DIL:
+        if (v90dil_analyse_step(&a->jw.an, &a->res)) job_cpt(a);
+        break;
+    case JOB_CPT:
+        if (v90dil_design_step(&a->jw.cp, &a->res, &a->cpt, &a->cpt_ch)) {
+            a->job = JOB_NONE;
+            if (a->jw.cp.k == 0 || v90_map_from_cp(&a->tmap, &a->cpt) != 0) { end(a, V90A_ERR_RATE); return; }
+            if (a->pcm) { cp_to_cpu(&a->cpt, V92_UP_CPT, &a->cpt92); a->cpt_ready = 1; }   /* V.92: CPt goes out next */
+        }
+        break;
+    case JOB_CP:
+        if (v90dil_design_step(&a->jw.cp, &a->res, &a->cp, &a->cp_ch)) {
+            a->job = JOB_NONE;
+            if (a->jw.cp.k == 0 || v90_map_from_cp(&a->dmap, &a->cp) != 0) {
+                /* nothing fits: CP with drn = 0 is the cleardown (8.5.2; V.92: CPu, 9.11) */
+                a->clearing = 1; a->error = V90A_ERR_RATE; a->cpus_left = CLEAR_CPS;
+            }
+            a->cp_ready = 1;
+        }
+        break;
+    default:
+        a->job = JOB_NONE;
+        break;
+    }
+}
+
+/* the rest of a job (and of the CPt design after the analysis), now */
+static void job_finish(v90a_t *a, int kind)
+{
+    while (a->job != JOB_NONE && (kind == JOB_NONE || a->job <= kind) && a->state != V90A_ENDED) job_step(a);
+}
+
+/* the analysis done: what it says, then CPt's design */
+static void job_cpt(v90a_t *a)
 {
     v90dil_req_t q;
     int s;
     int32_t L = v90_ucode_linear(a->alaw, (unsigned)a->cfg.uinfo) * (1 << YF);
-    a->acc_on = 0;
-    a->dil_passes = v90dil_acc_min(&a->acc);
-    v90dil_analyse(&a->acc, a->alaw, a->cfg.uinfo, &a->res);
+    a->job = JOB_NONE;
     if (a->cfg.table1) {
         int u;
         for (s = 0; s < 6; s++) for (u = 0; u < V90DIL_NU; u++) a->res.lv[s][u] = v90_ucode_linear(a->alaw, (unsigned)u) * (1 << YF);
@@ -454,10 +505,18 @@ static void dil_finish(v90a_t *a)
     q.max_tx_code = a->p2.info0d.max_tx_power;
     for (s = 0; s < 6; s++) q.sigma2_q8[s] = a->sig_jd[s];
     q.up_rates = a->up_rates;
-    if (v90dil_design_cp(&a->res, &q, &a->cpt, &a->cpt_ch) == 0 || v90_map_from_cp(&a->tmap, &a->cpt) != 0) {
-        end(a, V90A_ERR_RATE); return;
-    }
-    if (a->pcm) { cp_to_cpu(&a->cpt, V92_UP_CPT, &a->cpt92); a->cpt_ready = 1; }   /* V.92: CPt goes out next */
+    v90dil_design_begin(&a->jw.cp, &a->res, &q, &a->cpt, &a->cpt_ch);
+    a->job = JOB_CPT;
+}
+
+/* enough of the DIL: S, S-bar to end it (9.3.2.10), and what it says, CPt
+ * (as jobs) */
+static void dil_finish(v90a_t *a)
+{
+    a->acc_on = 0;
+    a->dil_passes = v90dil_acc_min(&a->acc);
+    v90dil_analyse_begin(&a->jw.an, &a->acc, a->alaw, a->cfg.uinfo, &a->res);
+    a->job = JOB_DIL; a->job_new = 1;
     a->t_dil_end = a->now;
     a->ds = D_DILEND;
 }
@@ -488,6 +547,8 @@ static void ri_dec(v90a_t *a, const v90arx_dec_t *d)
     if (r >= 5) { if (++a->ri_units >= 2 && a->pcm) a->ri_seen = 1; return; }
     if (r <= 1 && a->ri_units >= 2) {
         /* Ri-bar, 24 T; TRN2d after it with CPt's constellations (8.6.5) */
+        job_finish(a, JOB_CPT);
+        if (a->state == V90A_ENDED) return;
         a->ribar_m0 = m - 5; a->m_trn2d = a->ribar_m0 + 24; a->t_ribar = a->now;
         a->ribar_seen = 1;
         set_cons(a, &a->cpt, a->m_trn2d);
@@ -507,7 +568,7 @@ static void ri_dec(v90a_t *a, const v90arx_dec_t *d)
     }
 }
 
-/* CP from the noise the receiver shows on TRN2d */
+/* CP from the noise the receiver shows on TRN2d (a job) */
 static void design_cp(v90a_t *a)
 {
     v90dil_req_t q;
@@ -523,11 +584,10 @@ static void design_cp(v90a_t *a)
         a->dsn[s] = q.sigma2_q8[s];         /* what the receiver's watch compares with */
     }
     q.rates = a->jd.rates; q.max_bps = a->cfg.max_rx_bps; q.up_rates = a->up_rates;
-    if (v90dil_design_cp(&a->res, &q, &a->cp, &a->cp_ch) == 0 || v90_map_from_cp(&a->dmap, &a->cp) != 0) {
-        /* nothing fits: CP with drn = 0 is the cleardown (8.5.2; V.92: CPu, 9.11) */
-        a->clearing = 1; a->error = V90A_ERR_RATE; a->cpus_left = CLEAR_CPS;
-    }
-    a->cp_ready = 1;
+    job_finish(a, JOB_NONE);            /* (none is under way by now) */
+    if (a->state == V90A_ENDED) return;
+    v90dil_design_begin(&a->jw.cp, &a->res, &q, &a->cp, &a->cp_ch);
+    a->job = JOB_CP; a->job_new = 1;
 }
 
 static void deliver(v90a_t *a, const uint8_t *bits, int n)
@@ -684,10 +744,15 @@ static void line_watch(v90a_t *a)
      * which now follows noise: it stands until the retrain, so that the PCM
      * upstream stays whole meanwhile */
     if (e > 16 * d) {
-        if (a->col_frames++ == 0 && a->pcm) v90arx_timing_hold(&a->rx, 1);
-    } else if (a->col_frames) {
+        if (a->col_frames++ == 0 && a->pcm) { v90arx_timing_hold(&a->rx, 1); a->col_hold = 1; }
+    } else {
         a->col_frames = 0;
-        if (a->pcm) v90arx_timing_hold(&a->rx, 0);
+        /* the loop goes on once the error is back within twice the design's:
+         * a receiver that only half recovers (its estimate regrown from
+         * nothing, cpu 2) moved the clock some 25 ppm in 150 ms, and the
+         * cleardown that followed went out where the digital modem did not
+         * listen */
+        if (a->col_hold && e <= 2 * d) { a->col_hold = 0; v90arx_timing_hold(&a->rx, 0); }
     }
     if (a->deg_frames >= DEG_FRAMES || a->col_frames >= COL_FRAMES) {
         /* the line's level moved by 3 dB: the DIL's levels no longer hold */
@@ -1221,6 +1286,10 @@ static int16_t tick(v90a_t *a, int16_t rx)
     }
     for (i = 0; i < nd && a->state != V90A_ENDED; i++) on_dec(a, &a->rx.out[i]);
     if (a->state != V90A_ENDED) watch(a);
+    if (a->job != JOB_NONE && a->state != V90A_ENDED && !a->rx.dsn_ran) {
+        if (a->job_new) a->job_new = 0;         /* (begun this tick: the first step in the next) */
+        else job_step(a);
+    }
     return (int16_t)y;
 }
 

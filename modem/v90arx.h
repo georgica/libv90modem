@@ -132,6 +132,7 @@ typedef struct {
     int32_t  G[V90ARX_NT];      /* R, then its Cholesky factor in place */
     int32_t  z[V90ARX_NF], fs[V90ARX_NF], fn[V90ARX_NF];   /* solutions; fn: the forward taps */
     uint64_t rc[V90ARX_NF];     /* reciprocals of G's diagonal */
+    int64_t  c0[V90ARX_NF], ev[V90ARX_NF];  /* R's first column; what is added along each diagonal */
     int64_t  bias; uint64_t rb; /* the solution's gain on the symbol, its reciprocal */
 } v90arx_dsn_t;
 
