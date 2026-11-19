@@ -24,8 +24,7 @@ void    probetx_init(probetx_t *p, int level);
 int16_t probetx_tick(probetx_t *p, int l1);
 
 typedef struct {
-    int16_t  cs[PROBE_BLK];             /* cos(2 pi k / 160), Q15 */
-    int16_t  blk[PROBE_BLK];
+    int64_t  ar[PROBE_NBIN + 1], ai[PROBE_NBIN + 1];    /* the block's bins so far, sample by sample */
     int      n, nblk;
     int32_t  lr[PROBE_NBIN + 1], li[PROBE_NBIN + 1];    /* previous block's bins */
     int64_t  pw[PROBE_NBIN + 1];        /* sum |X|^2 */
@@ -45,6 +44,8 @@ int  proberx_snr(const proberx_t *r, int m);
  * that repeats with the probing signal), |X|^2 units per block; 0 with
  * fewer than 3 blocks */
 int64_t proberx_power(const proberx_t *r, int m);
+/* proberx_snr(), proberx_level() and proberx_power() of bin m at once */
+void proberx_bin(const proberx_t *r, int m, int *snr, int *level, int64_t *power);
 /* level at 150*m Hz in the most recent complete block alone (tone detection
  * under the echo of our own probing signal, which never falls in a gap) */
 int  proberx_last(const proberx_t *r, int m);

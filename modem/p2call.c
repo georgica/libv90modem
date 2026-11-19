@@ -302,13 +302,16 @@ static void analyse(p2call_t *p)
     int m;
     int64_t ptot = 0, gap = 0;
     for (m = 1; m <= PROBE_NBIN; m++) {
+        int snr, lvl;
+        int64_t pw;
+        proberx_bin(&p->prx, m, &snr, &lvl, &pw);
         if (probe_has_tone(m)) {
-            p->snr[m] = proberx_snr(&p->prx, m);
-            p->rx_level[m] = proberx_level(&p->prx, m);
-            ptot += proberx_power(&p->prx, m);
+            p->snr[m] = snr;
+            p->rx_level[m] = lvl;
+            ptot += pw;
         } else {
             p->snr[m] = 0; p->rx_level[m] = 0;
-            gap += proberx_power(&p->prx, m);
+            gap += pw;
         }
     }
     p->sdr_db10 = gap > 0 ? probe_db10(ptot * 12, gap * 80) : 600;
