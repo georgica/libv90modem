@@ -144,6 +144,12 @@ int16_t p2call_tick(p2call_t *p, int16_t rx);
  * tx_preemph, tx_pwr_red (what INFO1d asks of our transmitter at that rate),
  * rtd (RTDEa), info0d, info1d and info1a_v90. */
 void    p2call_init_v90(p2call_t *p, const p2call_cfg *cfg);
+/* The same for a retrain (9.5.2/V.90, 9.7.2/V.92), after its 70 ms of
+ * silence: Tone A at once, no INFO0 exchange (info0d: the digital modem's
+ * from the first Phase 2), our reversal once Tone B has been heard and Tone
+ * A has run 50 ms. With cfg.v92 and V.92 in info0d, INFO1d / INFO1a of
+ * V.92 as in the first Phase 2. */
+void    p2call_init_v90_retrain(p2call_t *p, const p2call_cfg *cfg, const info0_t *info0d);
 
 /* The INFO1c decision (Table 15) from snr[], rx_level[], sdr_db10 and the
  * answerer's INFO0a: fills info1c and band_snr[]. Run by p2call_tick when

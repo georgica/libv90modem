@@ -119,6 +119,8 @@ typedef enum {
 #define ORIG_END_LOST       5   /* the carrier went in data mode */
 #define ORIG_END_CLEARDOWN  6   /* the answerer called for a cleardown (V.32bis R3 or E; V.34 11.7) */
 #define ORIG_END_HANGUP     7   /* we cleared down (orig_cleardown, V.34 11.7) */
+#define ORIG_END_RETRAIN    8   /* V.90 / V.92: a retrain failed, or one more was due past the
+                                   limit (V90A_MAX_RETRAINS; the receiver's then cleared down) */
 
 typedef struct {
     int           level;     /* transmit RMS, 16-bit sample units */
@@ -179,17 +181,21 @@ int     orig_moving(const orig_t *o);
 /* the receiver's signal to error ratio in data mode, 0.1 dB (0..600), as
  * answer_snr_db10; -1 where there is none (V.21) */
 int     orig_snr_db10(const orig_t *o);
-/* V.22bis at 2400 bit/s (6.4), V.32bis (7.1) or V.34 (11.5.1.1) in data
- * mode: start a retrain. 0, or -1 */
+/* V.22bis at 2400 bit/s (6.4), V.32bis (7.1), V.34 (11.5.1.1), V.90 (9.5.2.1)
+ * or V.92 (9.7.2.1) in data mode: start a retrain. 0, or -1 (V.90 / V.92:
+ * also when V90A_MAX_RETRAINS have run without a minute of data between) */
 int     orig_retrain(orig_t *o);
 /* 1 while a retrain runs (connected stays 1, no data moves); a V.34 rate
  * renegotiation is not one */
 int     orig_retraining(const orig_t *o);
 /* retrains begun this call, by either end */
 int     orig_retrains(const orig_t *o);
-/* V.34 data mode: rate renegotiation (11.6), max_rx_bps > 0 a new ceiling
- * for what we receive; cleardown (11.7), the phase goes to ORIG_FAILED by
- * itself with ORIG_END_HANGUP. 0, or -1 (other modulations have neither) */
+/* V.34, V.90, V.92 data mode: rate renegotiation (V.34 11.6, V.90 9.6.2.1,
+ * V.92 9.8.2.1), max_rx_bps > 0 a new ceiling for what we receive (V.90 /
+ * V.92: never above the configured one; 0 keeps the ceiling and designs the
+ * downstream anew on the line as it is); cleardown (11.7, 9.7, 9.11), the
+ * phase goes to ORIG_FAILED by itself with ORIG_END_HANGUP. 0, or -1 (other
+ * modulations have neither) */
 int     orig_renegotiate(orig_t *o, int max_rx_bps);
 int     orig_cleardown(orig_t *o);
 /* V.32bis: the round trip measured in the start-up (NT less the answerer's

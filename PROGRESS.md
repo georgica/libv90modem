@@ -1863,7 +1863,7 @@ calling side's). The ubsan, port and replay runs were made on a copy of
 this tree (~/rb-2b, `diff -r` identical but PROGRESS.md) while
 check-arm ran in the worktree.
 
-## robust 2c: retrains on the calling side, not done (design)
+## robust 2c: retrains on the calling side (the design, as written before the step)
 
 Left for its own step (2a and 2b took the branch's time). What is there:
 V.32bis (v32_call: 7.1 / 7.2 both ways, test_orig_v32 checks both) and
@@ -1903,3 +1903,158 @@ Design:
   renegotiation both ways; test_api: `v90m_retrain` in the calling role
   V90M_OK (today V90M_ESTATE, which test_api asserts); then README /
   include/v90modem.h on what the calling role does.
+
+## robust 2c: retrains and rate renegotiation, V.90 / V.92 calling side (2026-11-18)
+
+Branch `robust`, from robust 2b (8fb789c). Harnesses (not in the
+repository): ~/rb-tmp/t2 (`dbg.c` one case with the caller's
+and the answerer's states, the receiver's error against the design noise
+every 250 ms; `ed.c` that ratio over 10 s of data on every test line).
+
+### Test first
+
+- `test/test_orig_retrain.c` (new): the library's caller against the
+  library's answerer, 2 km, V.90 and V.92; each case to data mode, 2 s of
+  data, the event, the time until data moves both ways again, then 5 s that
+  must pass the check without a failure, V.92 staying V.92: the answerer
+  retrains (answer_retrain), we retrain (orig_retrain), noise +15 dB (down,
+  then back up when it goes), the level -10 dB, a 6 dB pad put in, our
+  renegotiation with a ceiling of 40000 and back up without it, the
+  answerer's renegotiation (p34d / v92d), the receiver wiped (channel
+  estimate and equaliser zeroed: a total collapse), a 300 ms noise burst at
+  -10 dBm0. Then the limits: three retrains in a minute, the fourth refused,
+  the receiver lost after them a cleardown; a retrain never answered ends
+  the call. On robust 2b: **194 checks, 91 failures** (every case but the
+  answerer's renegotiation: the call ended on the answerer's retrain or a
+  V.92 line change, the receiver stayed lost on the others, orig_retrain /
+  orig_renegotiate gave -1; the later checks, V.92 staying V.92, who began
+  the retrain, the cleardown past the limit, use fields 2b has not).
+  ~13 s on the host; TEST_SHORT: V.90 and its limits.
+- `test/api/test_api.c`: the V.90 and V.92 caller blocks ask for a retrain
+  (V90M_OK, a second at once V90M_ESTATE), wait for data again (retrains 1,
+  DATA_STOPPED, rates, no renegotiation counted), then clear down. On robust
+  2b: **302 checks, 10 failures**. Then a block (it needs the new end code,
+  so not run on 2b): a retrain the answerer never answers ends the call with
+  V90M_END_RETRAIN_FAILED and V90M_EV_ENDED.
+- test_orig_v90 / test_orig_v92 / test_v90a / test_v92a asserted the
+  refusal (-1); those checks now assert no retrain on a clean start-up (the
+  counts stay: 104, 109, ...).
+
+### What was built (modem/v90a, modem/p2call, modem/orig, api)
+
+1. **Phase 2 of a retrain** (`p2call_init_v90_retrain`): Tone A at once,
+   no INFO0 (the answerer's p2d_init_retrain sends none, V.92 too, though
+   9.7 says "the full Phase 2"; not ours to change), the first INFO0d kept;
+   9.2.2.1.3 on as at the start, V.92's INFO1d / INFO1a forms as then.
+2. **Retrains** (9.5.2 / 9.7.2): the answerer's Tone B (modem/tonedet on
+   what our echo canceller leaves, from Phase 3 on: data mode, Phases 3 and
+   4, renegotiations) or ours: 70 ms of silence, Phase 2 as above, then
+   Phases 3 and 4 with everything fresh (v90a re-initialised in place:
+   receiver, DIL, canceller, V.92's pcmtx) but the call's counts, clock and
+   first INFO0d. `v90a_retrain()` / `orig_retrain()` from data mode or a
+   renegotiation. A renegotiation without Ed (9.6.2), and a Phase 3 / 4 that
+   fails once the call has carried data, are retrains too; a retrain's
+   Phase 2 that fails ends the call.
+3. **Our renegotiation** (9.6.2.1: S, S-bar, SCR until the digital modem's
+   TRN2d has shown 4000 symbols of noise, then CP designed on it; 9.8.2.1:
+   Ru, Ru-bar, TRN2u, SUVu, a CPu designed the same way), `v90a_renegotiate`
+   / `orig_renegotiate(o, ceiling)`, the ceiling never above the
+   configured one. Found on the way: V.92's SUVd / CPd / acknowledge / Ed
+   flags of Phase 4 were still set when our Ru went out, so we sent E2u at
+   once and the answerer failed B1u (v92d ERR_B1, a retrain, V.90 after it):
+   cleared at the start of ours. Not CPs (the request for silence): our
+   canceller needs no new training for a renegotiation.
+4. **The receiver's watch** (once a data frame): the sum over the six
+   intervals of v90arx's error against the noise CP was designed for (twice
+   TRN2d's). Measured (`ed.c`, 72 calls on the test lines, 4 seeds): 0.20 to
+   0.97 of it in data mode, max over 50 ms. The design said 6 dB over: by
+   then the decision feedback is already going (noise +15 dB on 2 km: the
+   ratio sits at 4, 0 errors for 2.5 s, then an avalanche, the error 10^5
+   over). So: 3 dB over for 1 s -> a renegotiation down when only the noise
+   rose, a retrain when the equaliser's input power moved 3 dB (level, pad:
+   the DIL no longer holds) or a renegotiation for the line ended within 5 s;
+   12 dB over for 250 ms (the receiver lost) -> a retrain, V.92's timing loop
+   held meanwhile (our PCM upstream runs on its clock: unheld, the wiped
+   receiver dragged it until the answerer's design failed and it retrained
+   with PCM upstream off), and Rd not believed meanwhile (a lost receiver
+   took garbage for Rd). 6 dB under for 5 s after the watch took the rate
+   down -> a renegotiation back up (once). On those 72 calls: 0 retrains, 0
+   renegotiations.
+5. **Limits** (as answer.c's): 3 retrains without a minute of data mode
+   between them (one forgotten per minute). Past it: orig_retrain gives -1;
+   the answerer's Tone B, or a retrain that fails, ends the call; one our
+   receiver needs is a cleardown (CP / CPu with drn = 0). Either way
+   V90A_ERR_RETRAINS -> ORIG_END_RETRAIN (8) -> V90M_END_RETRAIN_FAILED
+   (appended to v90m_end) with V90M_EV_ENDED.
+6. orig: orig_retraining / orig_retrains for V.90 / V.92; include/v90modem.h
+   and README say what the calling side does now.
+
+### After
+
+test_orig_retrain: 222 checks, 0 failures. Time from the event to data both
+ways again, downstream / upstream before -> after:
+
+| case | V.90 | V.92 |
+|---|---|---|
+| the answerer retrains | 7.4 s, 52000/28800 -> 48000/28800 | 10.6 s, 49333/34666 -> 52000/32000 |
+| we retrain | 7.4 s, 50666 -> 50666 | 8.3 s, 50666/36000 -> 46666/36000 |
+| noise +15 dB | 2.0 s, renegotiation, 46666 -> 36000; noise gone: 6.1 s, back up to 49333 | 10.2 s, renegotiation then retrain, 48000 -> 36000; back up to 45333 in 8.3 s |
+| level -10 dB | 7.6 s, retrain, 48000 -> 36000 (later up to 41333) | 10.1 s, retrain, 46666 -> 40000 |
+| 6 dB pad put in | 7.6 s, retrain, 52000 -> 45333 | 9.4 s, retrain, 46666 -> 45333 |
+| our renegotiation, ceiling 40000 | 1.0 s, 52000 -> 40000; no ceiling: 1.0 s, 52000 | 4.0 s, 52000 -> 40000; 4.8 s, 52000 |
+| the answerer renegotiates | 0.4 s (as before) | 4.8 s (as before) |
+| receiver wiped | 7.6 s, retrain, 50666 -> 50666 | 10.6 s, 48000 -> 50666, PCM upstream kept |
+| noise burst 300 ms | 7.6 s, retrain, 48000 -> 52000 | 9.3 s, 46666 -> 48000 |
+
+Retrain limits: three in a row 7.4 s each (V.90), 9.8 to 10.7 s (V.92);
+the fourth refused; lost after them: cleared down in 0.9 s, the answerer
+told (cleared 1); never answered: ended 8.1 s after the request, silent.
+test_api: 326 checks, 0 failures (V.90 retrain by API 7.3 s, V.92 8.9 s).
+
+Per-tick work added: the Tone B watch, one tonedet_tick per sample from
+Phase 3 on (two multiplies, three accumulates; every 80 samples a block
+decision); the watch once a data frame (two six-term sums). A retrain
+re-initialises v90a_t in place (one memset of it). Nothing heavy; costs are
+step 3's.
+
+### Unchanged (by diff)
+
+| | reference | robust 2c |
+|---|---|---|
+| `make check` (host) | ~/c52v/robv/check.log | the same count lines, by diff, but orig_retrain 222 added and api 303 -> 326; every answering-side line and the subdirectories identical; orig_v90 104, orig_v92 109, orig_v90_te 3, orig_seeds 3 as they were |
+| `make bench-v90` | 8e3136e9 x6 | 8e3136e9 x6 |
+| `make bench-bell` | 48f22641, fc125ef2 | the same, host and qemu-arm |
+| `make bench-v92c` (the caller) | 506f2bcc (2b) | 506f2bcc, host and qemu-arm (unchanged: nothing in these calls retrains) |
+| `make bench-v90c` (the caller) | 695b27e5 | 695b27e5, host and qemu-arm |
+| v90d's replay, 106 recordings x 8 configs (rc-scripts/replayproof.sh on a copy of this tree, ~/rb-2c) | sync-build/proof/afterports/manifest.sha256 | MANIFEST IDENTICAL, 1613 of 1613 |
+| `make check-ubsan` (copy ~/rb-2c-u) | | ALL UBSAN CHECKS PASS, no runtime error; it found one on the way (below) |
+| `tools/check-ports.sh` (copy ~/rb-2c-p, PAR=5, outputs ~/rb-tmp/ports2c) | host gcc, 110 programs | aarch64be-musl, mips-musl, win32-mingw, host-clang: 110 of 110 identical; i686-musl: the full-length run stopped by the coordinator an hour into test_orig_seeds, run instead with -DTEST_SHORT=1 against a host reference built the same way (~/rb-tmp/short), checked by the coordinator |
+| `check-arm` (armv5, qemu, TEST_SHORT, once) | 2b's | all pass; the same lines plus orig_retrain 111 (TEST_SHORT: V.90 and its limits) and api 326, by diff |
+
+ubsan's find: `v90arx`'s LMS step on the forward taps (`f[i] -= ...`) and
+the feedback taps overflowed int32 once the receiver was wiped (the taps of
+a lost receiver run to the end of the range). Both now wrap through
+uint32 (defined; the same values whenever nothing overflows, so every
+output above is unchanged); the retrain follows anyway.
+
+No answering-side file changed: api/v90modem.c's change is the
+originating end code, include/v90modem.h's an appended enum value and
+comments; modem/p2call, orig, v90a, v90arx are the calling side's.
+
+### Open
+
+- The answerer drops PCM upstream for the rest of the call when it
+  retrains on its own (answer.c: `retrain_ours && !rt_asked`); when its
+  check of our upstream fires before our receiver's watch does, a V.92
+  call goes on as V.90 after the retrain. The watch's 250 ms collapse rule
+  and the held timing loop make that rare in the tests (the wiped and
+  burst cases stay V.92); answering side, not touched.
+- 9.7/V.92 asks for "the full Phase 2" in a retrain; the answerer sends no
+  INFO0 (p2d_init_retrain), and so neither do we. Against a real V.92
+  digital modem that sends INFO0d in a retrain, P2L_A_INFO0 would take it
+  (got0d is set, a frame is parsed) but this is untried.
+- No public `v90m_renegotiate`: our renegotiation is internal
+  (orig_renegotiate) and automatic.
+- The watch's thresholds (3 dB over for 1 s, 12 dB for 250 ms, 6 dB under
+  for 5 s) come from the simulator's lines only.
+- V.92 upstream bursts (2b) unchanged.

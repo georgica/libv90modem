@@ -467,13 +467,19 @@ static void equalise(v90arx_t *r, int32_t k, int16_t q)
             /* 32 bits, as always; with a wild error (es far out) the
              * product overflows and wraps, as it always did, now defined:
              * unsigned arithmetic, two's complement back */
-            for (i = 0; i < V90ARX_NF; i++) r->f[i] -= (int32_t)((uint32_t)es * (uint32_t)x[i] + (uint32_t)half) >> sh;
+            for (i = 0; i < V90ARX_NF; i++) {
+                int32_t d = (int32_t)((uint32_t)es * (uint32_t)x[i] + (uint32_t)half) >> sh;
+                /* (a lost receiver's taps run to the end of the range: the
+                 * step wraps there as well, defined; the retrain follows) */
+                r->f[i] = (int32_t)((uint32_t)r->f[i] - (uint32_t)d);
+            }
         }
         es = (int32_t)(((int64_t)ec * r->kb) >> 16);
         {
             int sh = r->shb + g;
             int32_t half = (int32_t)1 << (sh - 1);
-            for (i = 0; i < V90ARX_NB; i++) r->b[i] += (es * dl[i] + half) >> sh;
+            for (i = 0; i < V90ARX_NB; i++)
+                r->b[i] = (int32_t)((uint32_t)r->b[i] + (uint32_t)((int32_t)((uint32_t)es * (uint32_t)dl[i] + (uint32_t)half) >> sh));
         }
     }
     {

@@ -16,8 +16,30 @@
  * In data mode: a rate renegotiation begun by the digital modem (Rd) is
  * followed (S, S-bar, CP ... as Phase 4 from CP on); MP with drn = 0 is its
  * cleardown (9.7). v90a_cleardown() sends ours: S, S-bar, CP with drn = 0.
- * Retrains (9.5) are not done: v90a_retrain() refuses, and a digital modem
- * that retrains is lost (the call ends, V90A_ERR_CARRIER).
+ * v90a_renegotiate() begins ours (9.6.2.1): S, S-bar, SCR until the digital
+ * modem's TRN2d has shown the noise, then a CP designed on it (V.92, 9.8.2.1:
+ * Ru, Ru-bar, TRN2u, SUVu ... a CPu designed the same way).
+ *
+ * Retrains (9.5/V.90, 9.7/V.92), either end, from Phase 3 on: the digital
+ * modem's is its Tone B (more than 50 ms of it, after the 70 ms of silence;
+ * modem/tonedet on what the echo canceller leaves); ours, v90a_retrain(), is
+ * 70 ms of silence and Tone A. Either way: 70 ms of silence from us, then
+ * Phase 2 again without INFO0 (p2call_init_v90_retrain), then Phases 3 and 4
+ * with a fresh receiver (the DIL measured again) and, V.92, a fresh PCM
+ * upstream. In data mode the receiver watches itself against the noise CP
+ * was designed for (twice TRN2d's, by interval; data mode shows 0.2 to 0.97
+ * of it on the test lines): 3 dB over it for 1 s is a rate renegotiation
+ * down (only the noise rose) or a retrain (the line's level moved 3 dB or
+ * more, or a renegotiation for the line did not help); 12 dB over for 250 ms
+ * (the receiver lost) a retrain; 6 dB under it for 5 s, after the watch took
+ * the rate down, a renegotiation back up. (6 dB over is already where the
+ * decision feedback collapses: PROGRESS.md, robust 2c.) A rate
+ * renegotiation without Ed (9.6.2), and a Phase 3 or 4 that
+ * fails once the call has carried data, are retrains too. Retrains are
+ * limited as answer.c's: V90A_MAX_RETRAINS without a minute of data mode
+ * between them (each minute forgets one); past that a retrain the far end
+ * asks for, or one that fails, ends the call (V90A_ERR_RETRAINS), and one
+ * the receiver needs is a cleardown (9.7) ending the same way.
  *
  * The echo canceller learns on MD: MD is "manufacturer defined" (V.34
  * 10.1.3.5) and the digital modem is silent through it, so it is white noise
@@ -45,6 +67,7 @@
 #include "../v92/v92_enc.h"
 #include "pcmtx.h"
 #include "v92aseq.h"
+#include "tonedet.h"
 
 #define V90A_ECDL 512               /* echo canceller reference delay line */
 
@@ -78,8 +101,11 @@ typedef enum {
     V90A_P4,                        /* Phase 4 */
     V90A_DATA,                      /* both directions carry data */
     V90A_RENEG,                     /* a rate renegotiation (data stopped) */
-    V90A_ENDED                      /* see error */
+    V90A_ENDED,                     /* see error */
+    V90A_RETRAIN                    /* the 70 ms of silence that begin a retrain; Phase 2 next */
 } v90a_state;
+
+#define V90A_MAX_RETRAINS 3         /* retrains without a minute of data mode between them */
 
 enum {
     V90A_OK = 0,
@@ -97,7 +123,8 @@ enum {
     V90A_ERR_HANGUP,                /* we cleared down (v90a_cleardown) */
     V90A_ERR_CARRIER,               /* the downstream went away (or the digital modem retrained) */
     V90A_ERR_JP,                    /* V.92: no Jp after our Su, or no Jp' after our second Su-bar */
-    V90A_ERR_CPD                    /* V.92: a CPd our transmitter cannot use */
+    V90A_ERR_CPD,                   /* V.92: a CPd our transmitter cannot use */
+    V90A_ERR_RETRAINS               /* a retrain failed, or one more was due past the limit */
 };
 
 typedef struct {
@@ -186,6 +213,24 @@ typedef struct {
     v92_enc_t  enc;
     int32_t    b1_bits;
     int32_t    t_su, t_jp, t_cpt, t_suvd;
+    /* ---- retrains, our renegotiation, the receiver's watch on itself ---- */
+    tonedet_t  tone_b;              /* the digital modem's Tone B: its retrain */
+    info0_t    info0d;              /* the first Phase 2's INFO0d (a retrain has none) */
+    int        retrains;            /* begun this call, either end */
+    int        retrains_ours;       /* ... of them, ours */
+    int        rt_recent;           /* retrains lately: one forgotten per minute of data mode */
+    int32_t    rt_clock;            /* data frames towards that minute */
+    int        rt_due;              /* at the end of this tick: 1 our retrain, 2 the digital modem's */
+    int        rt_check;            /* ended in Phase 3 / 4 or a renegotiation, after data: retrain */
+    int        reneg_ours;          /* our renegotiation under way: 1 asked for, 2 for the line */
+    int        clear_err;           /* a cleardown of ours ends with this error, not V90A_ERR_HANGUP */
+    int        max_rx0;             /* cfg.max_rx_bps as configured */
+    uint32_t   dsn[6];              /* the noise CP was designed for, by interval (as v90arx_mse_slot) */
+    int32_t    deg_frames, good_frames;     /* data frames in a row with the error above / below it */
+    int32_t    col_frames;          /* ... with the receiver lost (the error far above it) */
+    int32_t    since_auto;          /* data frames since a renegotiation for the line ended */
+    int        auto_down;           /* the receiver's watch took the rate down (or retrained) */
+    int        best_rate;           /* the highest downstream of this call */
 } v90a_t;
 
 void    v90a_init(v90a_t *a, const v90a_cfg *cfg);
@@ -198,7 +243,13 @@ int     v90a_snr_db10(const v90a_t *a);
 /* From data mode: clear down (9.7): S, S-bar, CP with drn = 0. Ends in
  * V90A_ENDED / V90A_ERR_HANGUP. 0, or -1 when not in data mode. */
 int     v90a_cleardown(v90a_t *a);
-/* Retrains are not done: always -1. */
+/* From data mode or a rate renegotiation: begin a retrain (9.5.2.1 /
+ * 9.7.2.1). 0, or -1 (not that far, or V90A_MAX_RETRAINS reached). */
 int     v90a_retrain(v90a_t *a);
+/* From data mode: a rate renegotiation of ours (9.6.2.1 / 9.8.2.1), CP
+ * designed anew on the noise of the digital modem's TRN2d. max_rx_bps > 0:
+ * a new downstream ceiling (never above the configured one); 0: the ceiling
+ * stays. 0, or -1 when not in data mode. */
+int     v90a_renegotiate(v90a_t *a, int max_rx_bps);
 
 #endif

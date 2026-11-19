@@ -531,15 +531,15 @@ static void test_originate(void)
     /* V.90: an API caller offering V.90, V.34 and V.22 to an API answerer
      * (its default modulations) back to back. The 4-wire line passes the
      * answerer's codewords' levels to the caller as they are (a channel of
-     * one tap), linear both ways; data both ways, a refused retrain, a
-     * cleardown from the caller */
+     * one tap), linear both ways; data both ways, a retrain asked for by the
+     * caller (9.5.2.1), data again, a cleardown from the caller */
     end_init(&cl, V90M_ROLE_ORIGINATE, V90M_MOD_V90 | V90M_MOD_V34 | V90M_MOD_V22);
     end_init(&an, V90M_ROLE_ANSWER, V90M_MOD_ALL_DEFAULT);
     nc = na = 0; c_rx = a_rx = 0;
     if (cl.m && an.m) {
-        int k_wr = -1, k_cd = -1;
+        int k_wr = -1, k_rt = -1, k_cd = -1, stopped = 0, n_ev0 = 0;
         v90m_stats st;
-        for (k = 0; k < 8000 * 40; k++) {
+        for (k = 0; k < 8000 * 60; k++) {
             int16_t c_tx, a_tx;
             v90m_process_linear(cl.m, &c_rx, &c_tx, 1);
             v90m_process_linear(an.m, &a_rx, &a_tx, 1);
@@ -548,9 +548,24 @@ static void test_originate(void)
             if (k_wr < 0 && sc.moving && sa.moving) {
                 v90m_async_write(cl.a, (const uint8_t *)"from the caller", 15);
                 v90m_async_write(an.a, (const uint8_t *)"from the answerer", 17);
-                k_wr = k; k_cd = k + 8000 * 2;
+                k_wr = k; k_rt = k + 8000 * 2;
             }
-            if (k == k_cd) {
+            if (k > k_rt && k_rt >= 0 && k_cd < 0) {
+                /* the retrain: data stops, the rates stay, data moves again */
+                if (!sc.moving && sc.retraining && sc.connected) stopped = 1;
+                if (stopped && sc.moving && sa.moving) {
+                    v90m_get_stats(cl.m, &st);
+                    printf("  V.90 retrain asked for by the caller: moving again after %d ms, retrains %u (answerer: %d), %d/%d bit/s\n",
+                           (k - k_rt) / 8, st.retrains, sa.retraining, sc.tx_bps, sc.rx_bps);
+                    CHECK_EQ_I(st.retrains, 1); CHECK_EQ_I(sc.modulation, V90M_CONN_V90);
+                    CHECK(sc.rx_bps >= 40000); CHECK_EQ_I(sa.tx_bps, sc.rx_bps); CHECK_EQ_I(sa.rx_bps, sc.tx_bps);
+                    CHECK(cl.n_ev >= n_ev0 + 2 && cl.ev[n_ev0] == V90M_EV_DATA_STOPPED);
+                    CHECK_EQ_I(st.renegotiations, 0);
+                    k_cd = k + 8000;
+                }
+            }
+            if (k == k_cd) CHECK_EQ_I(v90m_cleardown(cl.m), V90M_OK);          /* 9.7 */
+            if (k == k_rt) {
                 got_c[nc] = 0; got_a[na] = 0;
                 v90m_get_stats(cl.m, &st);
                 printf("  V.90: caller %d %s %d/%d bit/s (V.8 %d), answerer %d %s %d/%d; SNR %.1f dB, round trip %d samples; caller got \"%s\", answerer got \"%s\"\n",
@@ -565,8 +580,9 @@ static void test_originate(void)
                 CHECK(strcmp(got_c, "from the answerer") == 0);
                 CHECK(strcmp(got_a, "from the caller") == 0);
                 CHECK(st.snr_db10 > 300); CHECK(st.rtd >= 0 && st.rtd < 80);
-                CHECK_EQ_I(v90m_retrain(cl.m), V90M_ESTATE);        /* not done */
-                CHECK_EQ_I(v90m_cleardown(cl.m), V90M_OK);          /* 9.7 */
+                n_ev0 = cl.n_ev;
+                CHECK_EQ_I(v90m_retrain(cl.m), V90M_OK);            /* 9.5.2.1 */
+                CHECK_EQ_I(v90m_retrain(cl.m), V90M_ESTATE);        /* one at a time */
             }
             if (k_cd >= 0 && k > k_cd + 8000 * 2) break;
             nc += v90m_async_read(cl.a, (uint8_t *)got_c + nc, sizeof got_c - 1 - nc);
@@ -580,16 +596,42 @@ static void test_originate(void)
     }
     v90m_destroy(cl.m); v90m_destroy(an.m); v90m_async_destroy(cl.a); v90m_async_destroy(an.a);
 
+    /* V.90: a retrain the answerer never answers (it is gone): the call ends
+     * with V90M_END_RETRAIN_FAILED, reported as V90M_EV_ENDED */
+    end_init(&cl, V90M_ROLE_ORIGINATE, V90M_MOD_V90 | V90M_MOD_V34 | V90M_MOD_V22);
+    end_init(&an, V90M_ROLE_ANSWER, V90M_MOD_ALL_DEFAULT);
+    c_rx = a_rx = 0;
+    if (cl.m && an.m) {
+        int k_rt = -1, gone = 0;
+        for (k = 0; k < 8000 * 50; k++) {
+            int16_t c_tx, a_tx;
+            v90m_process_linear(cl.m, &c_rx, &c_tx, 1);
+            v90m_process_linear(an.m, &a_rx, &a_tx, 1);
+            a_rx = c_tx; c_rx = gone ? 0 : a_tx;
+            v90m_get_state(cl.m, &sc); v90m_get_state(an.m, &sa);
+            if (k_rt < 0 && sc.moving && sa.moving) k_rt = k + 8000;
+            if (k == k_rt) { CHECK_EQ_I(v90m_retrain(cl.m), V90M_OK); gone = 1; }
+            if (k_rt >= 0 && sc.end != V90M_END_NONE) break;
+        }
+        printf("  V.90 retrain never answered: caller end %d after %d ms, last event %d\n", sc.end, (k - k_rt) / 8,
+               cl.n_ev > 0 && cl.n_ev <= 8 ? cl.ev[cl.n_ev - 1] : -1);
+        CHECK_EQ_I(sc.end, V90M_END_RETRAIN_FAILED); CHECK_EQ_I(sc.connected, 0);
+        CHECK(cl.n_ev <= 8 && cl.ev[cl.n_ev - 1] == V90M_EV_ENDED);
+        CHECK_EQ_I(v90m_retrain(cl.m), V90M_ESTATE);
+    }
+    v90m_destroy(cl.m); v90m_destroy(an.m); v90m_async_destroy(cl.a); v90m_async_destroy(an.a);
+
     /* V.92: an API caller offering V.92, V.90, V.34 and V.22 to an API
      * answerer with V.92 on, back to back as above; data both ways, PCM
-     * upstream, a refused retrain, a cleardown from the caller */
+     * upstream, a retrain asked for by the caller (9.7.2.1), data again, a
+     * cleardown from the caller */
     end_init(&cl, V90M_ROLE_ORIGINATE, V90M_MOD_V92 | V90M_MOD_V90 | V90M_MOD_V34 | V90M_MOD_V22);
     end_init(&an, V90M_ROLE_ANSWER, V90M_MOD_ALL_DEFAULT | V90M_MOD_V92);
     nc = na = 0; c_rx = a_rx = 0;
     if (cl.m && an.m) {
-        int k_wr = -1, k_cd = -1;
+        int k_wr = -1, k_rt = -1, k_cd = -1, stopped = 0, n_ev0 = 0;
         v90m_stats st;
-        for (k = 0; k < 8000 * 50; k++) {
+        for (k = 0; k < 8000 * 70; k++) {
             int16_t c_tx, a_tx;
             v90m_process_linear(cl.m, &c_rx, &c_tx, 1);
             v90m_process_linear(an.m, &a_rx, &a_tx, 1);
@@ -598,9 +640,24 @@ static void test_originate(void)
             if (k_wr < 0 && sc.moving && sa.moving) {
                 v90m_async_write(cl.a, (const uint8_t *)"from the caller", 15);
                 v90m_async_write(an.a, (const uint8_t *)"from the answerer", 17);
-                k_wr = k; k_cd = k + 8000 * 2;
+                k_wr = k; k_rt = k + 8000 * 2;
             }
-            if (k == k_cd) {
+            if (k > k_rt && k_rt >= 0 && k_cd < 0) {
+                if (!sc.moving && sc.retraining && sc.connected) stopped = 1;
+                if (stopped && sc.moving && sa.moving) {
+                    v90m_get_stats(cl.m, &st);
+                    printf("  V.92 retrain asked for by the caller: moving again after %d ms, retrains %u (answerer: %d), %d/%d bit/s\n",
+                           (k - k_rt) / 8, st.retrains, sa.retraining, sc.tx_bps, sc.rx_bps);
+                    CHECK_EQ_I(st.retrains, 1); CHECK_EQ_I(sc.modulation, V90M_CONN_V92);
+                    CHECK(sc.rx_bps >= 40000); CHECK(sc.tx_bps >= 24000);
+                    CHECK_EQ_I(sa.tx_bps, sc.rx_bps); CHECK_EQ_I(sa.rx_bps, sc.tx_bps);
+                    CHECK(cl.n_ev >= n_ev0 + 2 && cl.ev[n_ev0] == V90M_EV_DATA_STOPPED);
+                    CHECK_EQ_I(st.renegotiations, 0);
+                    k_cd = k + 8000;
+                }
+            }
+            if (k == k_cd) CHECK_EQ_I(v90m_cleardown(cl.m), V90M_OK);          /* 9.11/V.92 */
+            if (k == k_rt) {
                 got_c[nc] = 0; got_a[na] = 0;
                 v90m_get_stats(cl.m, &st);
                 printf("  V.92: caller %d %s %d/%d bit/s (V.8 %d), answerer %d %s %d/%d; SNR %.1f dB, round trip %d samples; caller got \"%s\", answerer got \"%s\"\n",
@@ -615,8 +672,8 @@ static void test_originate(void)
                 CHECK(strcmp(got_c, "from the answerer") == 0);
                 CHECK(strcmp(got_a, "from the caller") == 0);
                 CHECK(st.snr_db10 > 300); CHECK(st.rtd >= 0 && st.rtd < 80);
-                CHECK_EQ_I(v90m_retrain(cl.m), V90M_ESTATE);        /* not done */
-                CHECK_EQ_I(v90m_cleardown(cl.m), V90M_OK);          /* 9.11/V.92 */
+                n_ev0 = cl.n_ev;
+                CHECK_EQ_I(v90m_retrain(cl.m), V90M_OK);            /* 9.7.2.1 */
             }
             if (k_cd >= 0 && k > k_cd + 8000 * 3) break;
             nc += v90m_async_read(cl.a, (uint8_t *)got_c + nc, sizeof got_c - 1 - nc);

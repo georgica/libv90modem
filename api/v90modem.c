@@ -210,6 +210,7 @@ static v90m_end end_of(const v90m_t *m)
         case ORIG_END_LOST: return V90M_END_LOST;
         case ORIG_END_CLEARDOWN: return V90M_END_CLEARDOWN_FAR;
         case ORIG_END_HANGUP: return V90M_END_CLEARDOWN_OURS;
+        case ORIG_END_RETRAIN: return V90M_END_RETRAIN_FAILED;
         default: return V90M_END_FAILED;
         }
     } else {

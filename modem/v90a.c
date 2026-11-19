@@ -32,6 +32,13 @@
 #define T_JP_MS      3000           /* Jp after our Su, Jp' after our second Su-bar */
 #define T_P4_92_MS   20000          /* 9.6.2.2.1: B1d within 20 s (+ 6 round trips) of INFO1a */
 #define T_RENEG92_MS 12000          /* the digital modem designs CPd again: several seconds */
+/* retrains, and the receiver's watch on itself in data mode (data frames: 1333 a second) */
+#define RT_FORGET_FRAMES 80000      /* a minute of data mode forgets a retrain */
+#define DEG_FRAMES   1333           /* 1 s with the error 3 dB over the design noise: act */
+#define COL_FRAMES   333            /* 250 ms with it 12 dB over (the receiver lost): retrain */
+#define UP_FRAMES    6667           /* 5 s 6 dB under it, after a renegotiation down: back up */
+#define AUTO_GRACE   6667           /* still degraded within 5 s of a renegotiation for the line: retrain */
+#define T_SCR_MS     2000           /* 9.6.2.1.2: SCR for no more than 2000 ms */
 
 enum { U_SIL, U_S1, U_SB1, U_MD, U_S2, U_SB2, U_PP, U_TRN, U_JA, U_QUIET, U_SJ, U_SBJ, U_DILQ, U_S4, U_SB4,
        U_CPT, U_SCR, U_CP, U_E, U_DATA, U_RS, U_RSB, U_OFF };
@@ -42,6 +49,12 @@ enum { P_SIL = 64, P_RU, P_RUB, P_TRN1, P_JA, P_QUIET, P_SU1, P_SUB1, P_SU2, P_S
 
 static void end(v90a_t *a, int err)
 {
+    if (err == V90A_ERR_HANGUP && a->clear_err) err = a->clear_err;
+    /* once the call has carried data, a Phase 3 or 4 that fails (a retrain's)
+     * and a renegotiation without Ed (9.6.2) are a retrain of ours (v90a_tick) */
+    a->rt_check = a->t_data >= 0 && (a->state == V90A_P3 || a->state == V90A_P4 || a->state == V90A_RENEG)
+                  && err != V90A_ERR_CLEARDOWN && err != V90A_ERR_HANGUP && err != V90A_ERR_RATE
+                  && err != V90A_ERR_RETRAINS && !a->clearing;
     a->state = V90A_ENDED; a->error = err; a->t = 0;
     a->tx_ready = a->rx_ready = 0;
     a->us = U_OFF; a->md_on = 0;
@@ -109,6 +122,15 @@ static void set_cons(v90a_t *a, const v90_cp_t *cp, int32_t m)
 
 /* ---- start ---- */
 
+static void p2_cfg(const v90a_t *a, p2call_cfg *pc)
+{
+    memset(pc, 0, sizeof *pc);
+    pc->level = a->cfg.level; pc->io_delay = a->cfg.echo_delay;
+    pc->uinfo = a->cfg.uinfo; pc->md_len = a->cfg.md_len;
+    pc->max_rate = a->cfg.max_rx_bps;
+    pc->v92 = a->cfg.v92;
+}
+
 void v90a_init(v90a_t *a, const v90a_cfg *cfg)
 {
     p2call_cfg pc;
@@ -120,12 +142,10 @@ void v90a_init(v90a_t *a, const v90a_cfg *cfg)
     if (a->cfg.z_q4 <= 0) a->cfg.z_q4 = V90A_Z_CP;
     if (a->cfg.echo_delay < 0) a->cfg.echo_delay = 0;
     if (a->cfg.echo_delay >= V90A_ECDL) a->cfg.echo_delay = V90A_ECDL - 1;
-    memset(&pc, 0, sizeof pc);
-    pc.level = a->cfg.level; pc.io_delay = a->cfg.echo_delay;
-    pc.uinfo = a->cfg.uinfo; pc.md_len = a->cfg.md_len;
-    pc.max_rate = a->cfg.max_rx_bps;
-    pc.v92 = a->cfg.v92;
+    a->max_rx0 = a->cfg.max_rx_bps;
+    p2_cfg(a, &pc);
     p2call_init_v90(&a->p2, &pc);
+    tonedet_init(&a->tone_b, TONEDET_1200);
     a->state = V90A_P2;
     a->t_info1a = a->t_ja = a->t_ja_end = a->t_sd = a->t_jd = a->t_jdp = a->t_dil_end = -1;
     a->t_ri = a->t_ribar = a->t_mp = a->t_ed = a->t_data = -1;
@@ -257,6 +277,12 @@ static void up_symbol(v90a_t *a, int32_t *re, int32_t *im)
             ugo(a, U_CPT);
         } else {                        /* U_RSB: renegotiation or cleardown, CP follows */
             a->cp_ack_sent = 0; a->cps_sent = 0;
+            if (a->reneg_ours && !a->clearing) {
+                /* ours (9.6.2.1.2): SCR until the digital modem's TRN2d has
+                 * shown the noise CP is designed on */
+                ugo(a, U_SCR);
+                return;
+            }
             if (a->clearing) { v90_cp_t c = a->cp; c.drn = 0; load_cp(a, &c, 0); }
             else load_cp(a, &a->cp, 0);
             ugo(a, U_CP);
@@ -306,6 +332,8 @@ static void up_symbol(v90a_t *a, int32_t *re, int32_t *im)
         pt = v34_tmod_put(&a->tmod, bits2(a, 0));
         break;
     case U_SCR:
+        /* our renegotiation: no TRN2d in 2000 ms, CP as it was */
+        if (a->reneg_ours && ++a->un >= a->p2.sym_rate * T_SCR_MS / 1000) a->cp_ready = 1;
         if (a->cp_ready) { load_cp(a, &a->cp, a->got_mp || a->got_mpa); ugo(a, U_CP); up_symbol(a, re, im); return; }
         pt = v34_tmod_put(&a->tmod, 3);
         break;
@@ -492,6 +520,7 @@ static void design_cp(v90a_t *a)
     for (s = 0; s < 6; s++) {
         uint64_t v = 2 * v90arx_mse_slot(&a->rx, s);
         q.sigma2_q8[s] = v > 0xffffffffu ? 0xffffffffu : (uint32_t)v;
+        a->dsn[s] = q.sigma2_q8[s];         /* what the receiver's watch compares with */
     }
     q.rates = a->jd.rates; q.max_bps = a->cfg.max_rx_bps; q.up_rates = a->up_rates;
     if (v90dil_design_cp(&a->res, &q, &a->cp, &a->cp_ch) == 0 || v90_map_from_cp(&a->dmap, &a->cp) != 0) {
@@ -575,8 +604,11 @@ static void frame(v90a_t *a, int32_t m0)
             if (a->b1d_bad * 8 > 48 * D) { end(a, V90A_ERR_B1D); return; }
             a->ds = D_DATA; a->rx_ready = 1;
             a->down_rate = (a->cp.drn + 20) * 4000 / 3;
+            if (a->state == V90A_P4) a->since_auto = AUTO_GRACE;
+            if (a->down_rate > a->best_rate) a->best_rate = a->down_rate;
             a->mse_ref = (uint64_t)a->rx.pq;   /* (the equaliser's input power) */
             a->rd_frames = 0; a->bad_syms = 0;
+            a->deg_frames = a->good_frames = 0;
             a->dly_cnt = 0;
         }
         break;
@@ -593,12 +625,13 @@ static void frame(v90a_t *a, int32_t m0)
         }
         if (pol && (a->rd_frames == 0 || pol == a->rd_pol)) { a->rd_pol = pol; a->rd_frames++; }
         else a->rd_frames = 0;
-        if (a->rd_frames >= 2) {
+        if (a->rd_frames >= 2 && !a->col_frames) {      /* (a lost receiver decides anything) */
             /* 9.6.2.2: the digital modem renegotiates; S, S-bar, CP from us.
              * V.92 (9.8.2.2): our Ru waits for its Rd-bar */
             a->rx_ready = 0; a->tx_ready = 0;
             a->rd_units = 2;
-            if (!a->pcm) { a->state = V90A_RENEG; a->t = 0; ugo(a, U_RS); }
+            if (!a->pcm && a->reneg_ours) { if (a->state != V90A_RENEG) { a->state = V90A_RENEG; a->t = 0; } }
+            else if (!a->pcm) { a->state = V90A_RENEG; a->t = 0; ugo(a, U_RS); }
             else if (a->state != V90A_RENEG) { a->state = V90A_RENEG; a->t = 0; }
             a->ds = D_RD;
             return;
@@ -616,6 +649,62 @@ static void frame(v90a_t *a, int32_t m0)
     }
 }
 
+/* our rate renegotiation: 1 asked for, 2 for the line (see v90a.h) */
+static int renegotiate(v90a_t *a, int kind)
+{
+    if (a->state != V90A_DATA) return -1;
+    a->reneg_ours = kind;
+    a->cp_ready = 0;                    /* designed on the digital modem's TRN2d (rd_dec) */
+    a->rx_ready = a->tx_ready = 0;
+    a->state = V90A_RENEG; a->t = 0;
+    if (a->pcm) {
+        /* 9.8.2.1.1: Ru on our next data frame boundary; what Phase 4 heard
+         * (SUVd, CPd, their acknowledge bits, Ed) is not this one's */
+        v92aseq_init(&a->aseq); a->got_suvd = a->got_cpd = a->got_ack = a->got_ed = 0;
+        a->ru_due = 1;
+    } else ugo(a, U_RS);                /* 9.6.2.1.1: S, S-bar */
+    return 0;
+}
+
+/* once a data frame in data mode: the receiver's error against the noise
+ * CP was designed for (v90a.h). The sum over the intervals: a pad or a
+ * robbed bit leaves one interval noisier than the others, by design. */
+static void line_watch(v90a_t *a)
+{
+    uint64_t e = 0, d = 0, p = (uint64_t)a->rx.pq;
+    int s;
+    if (++a->rt_clock >= RT_FORGET_FRAMES) { a->rt_clock = 0; if (a->rt_recent > 0) a->rt_recent--; }
+    if (a->since_auto < AUTO_GRACE) a->since_auto++;
+    for (s = 0; s < 6; s++) { e += v90arx_mse_slot(&a->rx, s); d += a->dsn[s]; }
+    if (!d) return;
+    a->deg_frames = e > 2 * d ? a->deg_frames + 1 : 0;
+    a->good_frames = 4 * e < d ? a->good_frames + 1 : 0;
+    /* collapsed: decisions on nothing (the error 12 dB over the design). Our
+     * V.92 transmitter runs on the clock of this receiver's timing loop,
+     * which now follows noise: it stands until the retrain, so that the PCM
+     * upstream stays whole meanwhile */
+    if (e > 16 * d) {
+        if (a->col_frames++ == 0 && a->pcm) v90arx_timing_hold(&a->rx, 1);
+    } else if (a->col_frames) {
+        a->col_frames = 0;
+        if (a->pcm) v90arx_timing_hold(&a->rx, 0);
+    }
+    if (a->deg_frames >= DEG_FRAMES || a->col_frames >= COL_FRAMES) {
+        /* the line's level moved by 3 dB: the DIL's levels no longer hold */
+        int moved = p > 2 * a->mse_ref || 2 * p < a->mse_ref;
+        a->deg_frames = 0;
+        a->auto_down = 1;
+        if (moved || a->col_frames || a->since_auto < AUTO_GRACE) {
+            if (a->rt_recent < V90A_MAX_RETRAINS) a->rt_due = 1;
+            else { a->clear_err = V90A_ERR_RETRAINS; (void)v90a_cleardown(a); }
+        } else (void)renegotiate(a, 2);                         /* only the noise rose: CP for it */
+    } else if (a->good_frames >= UP_FRAMES && a->auto_down && a->since_auto >= AUTO_GRACE && a->down_rate < a->best_rate
+               && (a->cfg.max_rx_bps <= 0 || a->down_rate < a->cfg.max_rx_bps)) {
+        /* what brought the rate down has gone again: once more, up */
+        if (renegotiate(a, 2) == 0) a->auto_down = 0;
+    }
+}
+
 static void frame_dec(v90a_t *a, const v90arx_dec_t *d)
 {
     int32_t mref = a->ds == D_TRAIN ? a->m_trn2d : a->m_b1d, k;
@@ -630,7 +719,10 @@ static void frame_dec(v90a_t *a, const v90arx_dec_t *d)
         if ((uint64_t)a->rx.pq < a->mse_ref / 16) { if (++a->bad_syms > LOSS_SYMS) { end(a, V90A_ERR_CARRIER); return; } }
         else a->bad_syms = 0;
     }
-    if (k == 5) frame(a, d->m - 5);
+    if (k == 5) {
+        frame(a, d->m - 5);
+        if (a->ds == D_DATA && a->state == V90A_DATA) line_watch(a);
+    }
 }
 
 /* the digital modem's Rd, Rd-bar in a renegotiation: TRN2d (CPt's points),
@@ -651,6 +743,7 @@ static void rd_dec(v90a_t *a, const v90arx_dec_t *d)
         v90_scr_init(&a->dscr);
         a->mbn = a->mones = 0; a->got_mp = a->got_mpa = a->after_mpa = a->got_ed = 0;
         a->trn2d_syms = TRN2D_MEAS;     /* CP stays as it was */
+        if (a->reneg_ours) { a->trn2d_syms = 0; a->cp_ready = 0; }   /* ours: designed on TRN2d's noise */
         if (a->pcm) {
             /* 9.8.2.2.2: Ru on our next data frame boundary */
             v92aseq_init(&a->aseq); a->got_suvd = a->got_cpd = a->got_ack = 0;
@@ -702,6 +795,8 @@ static void watch(v90a_t *a)
     if (a->state == V90A_RENEG && a->t > (a->pcm ? MS(T_RENEG92_MS) : MS(T_RENEG_MS)) + 2 * rtd) { end(a, V90A_ERR_CARRIER); return; }
     if ((a->state == V90A_P4 || a->state == V90A_RENEG) && a->rx_ready && a->tx_ready && !a->clearing) {
         if (a->state == V90A_RENEG) a->renegs++;
+        if (a->reneg_ours == 2) a->since_auto = 0;
+        a->reneg_ours = 0;
         a->state = V90A_DATA; a->t = 0;
         if (a->t_data < 0) a->t_data = a->now;
     }
@@ -1056,7 +1151,7 @@ static int16_t up92_symbol(v90a_t *a)
     }
 }
 
-int16_t v90a_tick(v90a_t *a, int16_t rx)
+static int16_t tick(v90a_t *a, int16_t rx)
 {
     int32_t y;
     int16_t ref;
@@ -1065,8 +1160,8 @@ int16_t v90a_tick(v90a_t *a, int16_t rx)
     if (a->state == V90A_ENDED) return 0;
     if (a->state == V90A_P2) {
         int16_t o = p2call_tick(&a->p2, rx);
-        if (a->p2.state == P2L_DONE) start_p3(a);
-        else if (a->p2.state == P2L_FAILED) end(a, V90A_ERR_PHASE2);
+        if (a->p2.state == P2L_DONE) { a->info0d = a->p2.info0d; start_p3(a); }
+        else if (a->p2.state == P2L_FAILED) end(a, a->t_data >= 0 ? V90A_ERR_RETRAINS : V90A_ERR_PHASE2);
         return o;
     }
     if (a->pcm) {
@@ -1118,6 +1213,8 @@ int16_t v90a_tick(v90a_t *a, int16_t rx)
     ref = a->ecdl[(a->ecpos - a->cfg.echo_delay) & (V90A_ECDL - 1)];
     a->ecpos = (a->ecpos + 1) & (V90A_ECDL - 1);
     nd = v90arx_tick(&a->rx, rx, ref);
+    /* the digital modem's retrain: Tone B for more than 50 ms (9.5.2.2 / 9.7.2.2) */
+    if (tonedet_tick(&a->tone_b, a->rx.eout)) a->rt_due = 2;
     if ((a->md_on && a->md_samples > a->md_total * 3 / 4) || (a->ec_len > 0 && a->ec_n > a->ec_len * 3 / 4)) {
         a->erle_rx += (int64_t)rx * rx;
         a->erle_res += (int64_t)a->rx.eout * a->rx.eout;
@@ -1125,6 +1222,51 @@ int16_t v90a_tick(v90a_t *a, int16_t rx)
     for (i = 0; i < nd && a->state != V90A_ENDED; i++) on_dec(a, &a->rx.out[i]);
     if (a->state != V90A_ENDED) watch(a);
     return (int16_t)y;
+}
+
+/* a retrain, ours or the digital modem's: everything as at the start but the
+ * call's counts, our clock and the first INFO0d; 70 ms of silence first */
+static void begin_retrain(v90a_t *a, int ours)
+{
+    v90a_cfg cfg = a->cfg;
+    info0_t i0 = a->info0d;
+    int32_t now = a->now, t_data = a->t_data, rt_clock = a->rt_clock;
+    int retrains = a->retrains, ro = a->retrains_ours, rr = a->rt_recent, renegs = a->renegs, max0 = a->max_rx0;
+    int best = a->best_rate, adown = a->auto_down;
+    if (rr >= V90A_MAX_RETRAINS) {
+        a->rt_due = 0;
+        a->state = V90A_P2;             /* (so that end() asks for nothing more) */
+        end(a, V90A_ERR_RETRAINS);
+        return;
+    }
+    v90a_init(a, &cfg);
+    a->max_rx0 = max0;
+    a->now = now; a->t_data = t_data; a->rt_clock = rt_clock; a->info0d = i0;
+    a->retrains = retrains + 1; a->retrains_ours = ro + (ours != 0); a->rt_recent = rr + 1;
+    a->renegs = renegs; a->best_rate = best; a->auto_down = adown;
+    a->state = V90A_RETRAIN; a->t = 0;
+}
+
+int16_t v90a_tick(v90a_t *a, int16_t rx)
+{
+    int16_t y;
+    if (a->state == V90A_RETRAIN) {
+        /* 9.5.2 / 9.7.2: 70 ms of silence, then Tone A and Phase 2 */
+        a->now++; a->t++;
+        if (a->t >= MS(70)) {
+            p2call_cfg pc;
+            p2_cfg(a, &pc);
+            p2call_init_v90_retrain(&a->p2, &pc, &a->info0d);
+            a->state = V90A_P2; a->t = 0;
+        }
+        return 0;
+    }
+    y = tick(a, rx);
+    if (a->rt_due || (a->state == V90A_ENDED && a->rt_check)) {
+        begin_retrain(a, a->rt_due != 2);
+        return 0;
+    }
+    return y;
 }
 
 int v90a_tx_rate(const v90a_t *a) { return a->state == V90A_DATA ? a->up_rate : 0; }
@@ -1158,4 +1300,16 @@ int v90a_cleardown(v90a_t *a)
     return 0;
 }
 
-int v90a_retrain(v90a_t *a) { (void)a; return -1; }
+int v90a_retrain(v90a_t *a)
+{
+    if ((a->state != V90A_DATA && a->state != V90A_RENEG) || a->clearing || a->rt_recent >= V90A_MAX_RETRAINS) return -1;
+    begin_retrain(a, 1);
+    return 0;
+}
+
+int v90a_renegotiate(v90a_t *a, int max_rx_bps)
+{
+    if (a->state != V90A_DATA) return -1;
+    if (max_rx_bps > 0) a->cfg.max_rx_bps = a->max_rx0 > 0 && max_rx_bps > a->max_rx0 ? a->max_rx0 : max_rx_bps;
+    return renegotiate(a, 1);
+}

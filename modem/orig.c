@@ -95,6 +95,7 @@ static int v90_end(const orig_t *o)
     switch (o->v90.error) {
     case V90A_ERR_CLEARDOWN: return ORIG_END_CLEARDOWN;
     case V90A_ERR_HANGUP: return ORIG_END_HANGUP;
+    case V90A_ERR_RETRAINS: return ORIG_END_RETRAIN;
     case V90A_ERR_RATE: return o->connected ? ORIG_END_LOST : ORIG_END_NO_COMMON;
     default: return o->connected ? ORIG_END_LOST : ORIG_END_NO_CARRIER;
     }
@@ -496,7 +497,9 @@ int orig_retraining(const orig_t *o)
     if (o->phase == ORIG_V22) return o->v22.retraining != 0;
     if (o->phase == ORIG_V32) return o->v32.retraining != 0;
     if (o->phase == ORIG_V34) return o->connected && o->v34.state != V34O_DATA && o->v34.state != V34O_RENEG;
-    return 0;                   /* V.90: no retrains (a renegotiation is not one) */
+    /* V.90, V.92: a renegotiation is not one */
+    if (o->phase == ORIG_V90) return o->connected && o->v90.state != V90A_DATA && o->v90.state != V90A_RENEG;
+    return 0;
 }
 
 int orig_retrains(const orig_t *o)
@@ -504,6 +507,8 @@ int orig_retrains(const orig_t *o)
     if (o->phase == ORIG_V22) return o->v22.retrains;
     if (o->phase == ORIG_V32) return o->v32.retrains;
     if (o->phase == ORIG_V34 || (o->phase == ORIG_FAILED && o->modulation == ORIG_MOD_V34)) return o->v34.retrains;
+    if (o->phase == ORIG_V90 || (o->phase == ORIG_FAILED && (o->modulation == ORIG_MOD_V90 || o->modulation == ORIG_MOD_V92)))
+        return o->v90.retrains;
     return 0;
 }
 
@@ -537,7 +542,7 @@ int orig_snr_db10(const orig_t *o)
 int orig_retrain(orig_t *o)
 {
     if (o->phase == ORIG_V34) return o->connected ? v34orig_retrain(&o->v34) : -1;
-    if (o->phase == ORIG_V90) return v90a_retrain(&o->v90);      /* not done: -1 */
+    if (o->phase == ORIG_V90) return o->connected ? v90a_retrain(&o->v90) : -1;
     if (o->phase == ORIG_V32) return o->connected ? v32_retrain(&o->v32) : -1;
     if (o->phase != ORIG_V22 || !o->connected || o->v22.bitrate != 2400) return -1;
     v22m_retrain(&o->v22);
@@ -554,6 +559,7 @@ int orig_rtd(const orig_t *o)
 
 int orig_renegotiate(orig_t *o, int max_rx_bps)
 {
+    if (o->phase == ORIG_V90) return o->connected ? v90a_renegotiate(&o->v90, max_rx_bps) : -1;
     return o->phase == ORIG_V34 && o->connected ? v34orig_renegotiate(&o->v34, max_rx_bps) : -1;
 }
 

@@ -138,7 +138,7 @@ int main(void)
         while (l->k < MS(30000) && !(orig_moving(&l->org) && answer_moving(&l->ans))) vl_tick(l);
         CHECK_EQ_I(l->org.modulation, ORIG_MOD_V92);
         CHECK_EQ_I(l->ans.modulation, ANS_MOD_V92);
-        CHECK_EQ_I(orig_retrain(&l->org), -1);
+        CHECK_EQ_I(orig_retrains(&l->org), 0);      /* (retrains: test_orig_retrain) */
         CHECK(orig_snr_db10(&l->org) > 400);
         t0 = l->k;
         CHECK_EQ_I(orig_cleardown(&l->org), 0);

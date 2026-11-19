@@ -565,6 +565,21 @@ void p2call_init_v90(p2call_t *p, const p2call_cfg *cfg)
     send_info0a_v90(p, 0);
 }
 
+void p2call_init_v90_retrain(p2call_t *p, const p2call_cfg *cfg, const info0_t *info0d)
+{
+    /* 9.5.2 (V.92 9.7.2): after the 70 ms of silence, Tone A; no INFO0
+     * exchange (the digital modem's p2d_init_retrain sends none either), so
+     * the first Phase 2's INFO0d holds. Then 9.2.2.1.3 on: our reversal
+     * once Tone B is heard and Tone A has run 50 ms. */
+    p2call_init_v90(p, cfg);
+    dpsktx_init(&p->tx, DPSK_FC_A, cfg->level, 1);     /* drop the INFO0a queued */
+    p->n_info0c = 0;
+    p->info0d = *info0d;
+    p->got0d = 1;
+    dpsktx_on(&p->tx);
+    p->tone_since = 0;
+}
+
 /* INFO1d is in: the upstream symbol rate of INFO1a (3000 or 3200, the one
  * INFO1d projects the higher rate for; 3200 on a tie), and what INFO1d asks
  * of our transmitter at it. With V.92 on both sides and PCM upstream

@@ -97,7 +97,7 @@ int main(void)
         CHECK_EQ_I(l->down.fails, 0);
         CHECK_EQ_I(l->up.fails, 0);
     }
-    CHECK_EQ_I(v90a_retrain(&l->va), -1);
+    CHECK_EQ_I(l->va.retrains, 0);              /* (retrains: test_orig_retrain, with the whole answerer) */
 
     printf("a rate renegotiation begun by the digital modem\n");
     {

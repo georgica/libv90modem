@@ -60,12 +60,17 @@ typedef enum {
                                    tone). V.90's analogue modem needs the received samples
                                    linear (v90m_process_linear or _lin_rx: a G.711 decoder on
                                    our side would bury the PCM downstream in its own quantising
-                                   noise), does no retrain (v90m_retrain gives V90M_ESTATE) and
-                                   has been tried against this library's answerer in simulation
-                                   only. V90M_MOD_V92 (with V90M_MOD_V90): PCM upstream when the
-                                   answerer offers it in Phase 2, V.90 otherwise; full start-up,
-                                   no quick connect, no modem-on-hold, no retrain; tried in
-                                   simulation and against this library's own answerer only.
+                                   noise) and has been tried against this library's answerer in
+                                   simulation only. It retrains (either end asks: v90m_retrain,
+                                   or the answerer's Tone B) and renegotiates the rate (the
+                                   answerer's, and its own when its receiver's error rises or
+                                   falls far from what the rate was chosen for; a retrain when
+                                   the line's level moved or the receiver is lost); see
+                                   v90m_retrain. V90M_MOD_V92 (with V90M_MOD_V90): PCM upstream
+                                   when the answerer offers it in Phase 2, V.90 otherwise; full
+                                   start-up and retrains as V.90's, no quick connect, no
+                                   modem-on-hold; tried in simulation and against this
+                                   library's own answerer only.
                                    V90M_MOD_V92 without V90M_MOD_V90 gives V90M_ENOTSUP.
                                    V90M_MOD_BELL103 / V90M_MOD_BELL212A: see below; tried in
                                    simulation and against this library's own answerer only */
@@ -186,7 +191,13 @@ int      v90m_process_lin_rx(v90m_t *m, const int16_t *rx, uint8_t *tx, size_t n
 int      v90m_process_linear(v90m_t *m, const int16_t *rx, int16_t *tx, size_t n);
 
 /* Ask for a retrain (data mode of V.92, V.90, V.34, V.32bis; originating:
- * V.22bis at 2400 bit/s, V.32bis, V.34). V90M_OK or V90M_ESTATE. */
+ * V.22bis at 2400 bit/s, V.32bis, V.34, V.90, V.92). V90M_OK or V90M_ESTATE.
+ * Originating V.90 / V.92: 70 ms of silence and Tone A, Phase 2 to data mode
+ * again (some 7 to 11 s); also during a rate renegotiation; V90M_ESTATE when
+ * one is under way or three have run without a minute of data mode between
+ * them. A retrain that fails, or one more due past that limit (the far end's,
+ * or one the receiver needs), ends the call with V90M_END_RETRAIN_FAILED
+ * (the receiver's after a cleardown, V.90 9.7 / V.92 9.11). */
 int      v90m_retrain(v90m_t *m);
 /* Hang up, telling the far modem where the modulation has a way to (V.90
  * 9.7, V.92 9.11, V.34 11.7, either role): V90M_OK when that has begun
@@ -203,7 +214,9 @@ typedef enum {
     /* originating */
     V90M_END_NO_ANSWER_TONE,    /* no answer tone came */
     V90M_END_NO_JM,             /* ANSam came, but no JM in answer to CM (V.8) */
-    V90M_END_NO_COMMON          /* the answerer has no modulation in common with us */
+    V90M_END_NO_COMMON,         /* the answerer has no modulation in common with us */
+    V90M_END_RETRAIN_FAILED     /* (appended) originating V.90 / V.92: a retrain failed, or one
+                                   more was due past the limit (see v90m_retrain) */
 } v90m_end;
 
 /* Cheap; fine to read after every sample. */

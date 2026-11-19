@@ -24,20 +24,21 @@ recommendations, and has answered real modems there (see the table below).
 | Bell 212A | answering (`V90M_MOD_BELL212A` with V.22, not in the defaults); calling: **tried in simulation and against this library's own answerer only** | 1200 bit/s after 2225 Hz in the V.22bis answer sequence (answering) or on hearing it (calling; falls back to Bell 103 when offered); simulation only |
 | V.32, V.32bis | answering | 4800 to 14400 bit/s |
 | V.34 | answering | Phase 2 to data mode, retrains, rate renegotiation |
-| V.90 | digital (server) side; analogue (client) side: **simulation and own answerer only** | PCM downstream, V.34 upstream; the analogue side measures the DIL (pads, robbed bits), has no retrain |
-| V.92 | digital (server) side; analogue (client) side: **tried in simulation and against this library's own answerer only** | PCM upstream, full start-up only; the analogue side falls back to V.90 when the answerer does not offer PCM upstream, has no retrain |
+| V.90 | digital (server) side; analogue (client) side: **simulation and own answerer only** | PCM downstream, V.34 upstream; the analogue side measures the DIL (pads, robbed bits), retrains and renegotiates the rate (either end begins them; its receiver asks for them when the line changes) |
+| V.92 | digital (server) side; analogue (client) side: **tried in simulation and against this library's own answerer only** | PCM upstream, full start-up and retrains; the analogue side falls back to V.90 when the answerer does not offer PCM upstream, retrains and renegotiates as in V.90 |
 | V.14 | yes | start-stop characters on the synchronous bit pump |
 | V.42 | yes | LAPM, detection phase, start-stop fallback, breaks |
 | V.42bis, V.44 | yes | V.44 preferred when both ends have it |
 
 Not implemented:
 
-- Retrains on the analogue (client) side of V.90 and V.92. (V.21, V.22bis,
-  V.32bis, V.34, Bell 103, Bell 212A and the V.90 and V.92 analogue modems call; none has been
-  tried against a real modem yet.)
-- V.92 quick connect, short Phase 2 and modem on hold; on the analogue side
-  also a rate renegotiation of its own (one begun by the answerer is
-  followed).
+- Calling against a real modem: V.21, V.22bis, V.32bis, V.34, Bell 103,
+  Bell 212A and the V.90 and V.92 analogue modems call (V.90 / V.92 with
+  retrains and rate renegotiation from either end), but none has been tried
+  against a real modem yet. A rate renegotiation of the analogue side's own
+  is not in the public API (the library does one by itself when its
+  receiver needs it).
+- V.92 quick connect, short Phase 2 and modem on hold.
 - x2 and K56flex, the two 56k schemes from before V.90: not spoken. A modem
   that has nothing newer connects at V.34. (Neither was published; see
   `DESIGN.md`, 4.2b.)

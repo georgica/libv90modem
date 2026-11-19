@@ -9,7 +9,8 @@
  * ways (2^23 - 1, self-synchronising check: a wrong bit fails it three
  * times). The rows marked "Table 1" take Table 1's levels instead of what
  * the DIL measured (a test setting): what the DIL analysis is for. Then
- * cleardown from either end and a refused retrain. */
+ * cleardown from either end (retrains and our renegotiation:
+ * test_orig_retrain). */
 #include <stdio.h>
 #include <inttypes.h>
 #include "test.h"
@@ -119,8 +120,8 @@ int main(void)
         while (l->k < MS(30000) && !(orig_moving(&l->org) && answer_moving(&l->ans))) vl_tick(l);
         CHECK_EQ_I(l->org.modulation, ORIG_MOD_V90);
         CHECK_EQ_I(l->org.used_v8, 1);
-        CHECK_EQ_I(orig_retrain(&l->org), -1);
-        CHECK_EQ_I(orig_renegotiate(&l->org, 0), -1);
+        CHECK_EQ_I(orig_retrains(&l->org), 0);      /* (retrains and renegotiations: test_orig_retrain) */
+        CHECK_EQ_I(orig_retraining(&l->org), 0);
         CHECK(orig_snr_db10(&l->org) > 400);
         t0 = l->k;
         CHECK_EQ_I(orig_cleardown(&l->org), 0);

@@ -3,8 +3,8 @@
  * test/v90link.h's line: the order and timing of Phases 3 and 4 as 9.3.2 and
  * 9.4.2 ask, the echo canceller trained on MD, the DIL measured, data both
  * ways; the time-outs when the digital modem goes away at each stage; a
- * rate renegotiation begun by the digital modem, cleardown from either end,
- * and a retrain request refused. */
+ * rate renegotiation begun by the digital modem, cleardown from either end.
+ * (Retrains need the whole answerer: test_orig_retrain.) */
 #include <stdio.h>
 #include <inttypes.h>
 #include "test.h"
@@ -87,7 +87,7 @@ int main(void)
         CHECK_EQ_I(l->down.fails, 0);
         CHECK_EQ_I(l->up.fails, 0);
     }
-    CHECK_EQ_I(v90a_retrain(&l->va), -1);
+    CHECK_EQ_I(l->va.retrains, 0);              /* (retrains: test_orig_retrain, with the whole answerer) */
 
     printf("a rate renegotiation begun by the digital modem\n");
     {
