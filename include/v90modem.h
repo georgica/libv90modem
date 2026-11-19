@@ -1,6 +1,9 @@
 /* libv90modem: a software voice-band data modem (V.92, V.90, V.34, V.32bis,
- * V.22bis, V.22, V.21, V.8; answering also Bell 212A and Bell 103) with V.42
- * error control (LAPM, V.42bis, V.44).
+ * V.22bis, V.22, V.21, Bell 212A, Bell 103, V.8) with V.42 error control
+ * (LAPM, V.42bis, V.44). Both roles: answering (for V.90 / V.92 the digital,
+ * server side) and calling (for V.90 / V.92 the analogue, client side). The
+ * calling role has been tried in simulation and against this library's own
+ * answerer only, never against a real modem.
  * SPDX-License-Identifier: GPL-2.0-only
  *
  * The API is NOT stable before version 1.0: any 0.x release may change it.
@@ -16,9 +19,10 @@
  *
  * Data: the modem is a synchronous bit pump. Once connected, it calls getbit
  * for every bit it transmits and putbit for every bit it receives, from
- * inside v90m_process(), at the moment the bit is needed or decided. V.42
- * (below) or a start-stop framer sits on that pump. Callbacks are only ever
- * made from inside v90m_process() and v90m_ec_*() on the calling thread. */
+ * inside v90m_process_*(), at the moment the bit is needed or decided. V.42
+ * (below) or a start-stop framer sits on that pump. Callbacks (getbit,
+ * putbit, on_event) are only ever made from inside v90m_process_*() on the
+ * calling thread. */
 #ifndef V90MODEM_H
 #define V90MODEM_H
 
@@ -30,15 +34,15 @@ extern "C" {
 #endif
 
 #define V90M_VERSION_MAJOR 0
-#define V90M_VERSION_MINOR 2
+#define V90M_VERSION_MINOR 3
 #define V90M_VERSION_PATCH 0
-/* "0.2.0": the version of the library linked in (may differ from the header) */
+/* "0.3.0": the version of the library linked in (may differ from the header) */
 const char *v90m_version(void);
 
 /* error codes (negative returns) */
 #define V90M_OK        0
-#define V90M_EINVAL   -1    /* a configuration value out of range */
-#define V90M_ENOTSUP  -2    /* not implemented in this version (see v90m_role) */
+#define V90M_EINVAL   -1    /* a NULL or misaligned argument, or a configuration value out of range */
+#define V90M_ENOTSUP  -2    /* a combination not implemented in this version (see v90m_role) */
 #define V90M_ENOMEM   -3    /* create could not allocate, or init was given too little memory */
 #define V90M_ESTATE   -4    /* not possible in the present state of the call */
 
@@ -51,29 +55,27 @@ int16_t v90m_g711_decode(int alaw, uint8_t codeword);
 /* ------------------------------------------------------------------ modem */
 typedef struct v90m v90m_t;
 
+/* The calling role (V90M_ROLE_ORIGINATE) starts when the far end has
+ * answered; dialling and call progress are the owner's. Every modulation of
+ * the calling role has been tried in simulation and against this library's
+ * own answerer only.
+ *  - V.21, V.22, V.22bis, V.32bis, V.34: after V.8, or without it after a
+ *    pre-V.8 answer tone (V.22bis, V.21; V.32bis Annex A).
+ *  - V.90 (V90M_MOD_V90) as the analogue modem. It needs the received samples
+ *    linear as the line delivers them (v90m_process_linear or _lin_rx): a
+ *    G.711 quantiser on our side would bury the PCM downstream in its noise.
+ *    It retrains (either end asks: v90m_retrain, or the answerer's Tone B)
+ *    and renegotiates the rate (the answerer's, and its own when its
+ *    receiver's error moves far from what the rate was chosen for; a retrain
+ *    when the line's level moved or the receiver is lost).
+ *  - V.92 (V90M_MOD_V92, only with V90M_MOD_V90: V90M_ENOTSUP without it):
+ *    PCM upstream when the answerer offers it in Phase 2, V.90 otherwise;
+ *    full start-up, retrains and rate renegotiation as V.90's. No quick
+ *    connect, short Phase 2 or modem-on-hold.
+ *  - Bell 103 and Bell 212A: see V90M_MOD_BELL103 below. */
 typedef enum {
     V90M_ROLE_ANSWER = 0,       /* the called modem */
-    V90M_ROLE_ORIGINATE = 1     /* the calling modem, from the moment the far end has answered
-                                   (dialling and call progress are the owner's): V.21, V.22,
-                                   V.22bis, V.32bis, V.34, and V.90 and V.92 as their analogue
-                                   modem (after V.8, or V.32bis Annex A after a pre-V.8 answer
-                                   tone). V.90's analogue modem needs the received samples
-                                   linear (v90m_process_linear or _lin_rx: a G.711 decoder on
-                                   our side would bury the PCM downstream in its own quantising
-                                   noise) and has been tried against this library's answerer in
-                                   simulation only. It retrains (either end asks: v90m_retrain,
-                                   or the answerer's Tone B) and renegotiates the rate (the
-                                   answerer's, and its own when its receiver's error rises or
-                                   falls far from what the rate was chosen for; a retrain when
-                                   the line's level moved or the receiver is lost); see
-                                   v90m_retrain. V90M_MOD_V92 (with V90M_MOD_V90): PCM upstream
-                                   when the answerer offers it in Phase 2, V.90 otherwise; full
-                                   start-up and retrains as V.90's, no quick connect, no
-                                   modem-on-hold; tried in simulation and against this
-                                   library's own answerer only.
-                                   V90M_MOD_V92 without V90M_MOD_V90 gives V90M_ENOTSUP.
-                                   V90M_MOD_BELL103 / V90M_MOD_BELL212A: see below; tried in
-                                   simulation and against this library's own answerer only */
+    V90M_ROLE_ORIGINATE = 1     /* the calling modem (see above) */
 } v90m_role;
 
 /* modulations offered (v90m_cfg.modulations) */
@@ -84,7 +86,7 @@ typedef enum {
 #define V90M_MOD_V90     0x0010u     /* answering: the digital (server) side; calling: the analogue
                                         (client) side */
 #define V90M_MOD_V92     0x0020u     /* with V90M_MOD_V90: PCM upstream on offer (answering), or
-                                        asked for (calling; simulation and own answerer only) */
+                                        asked for (calling); not in the defaults */
 /* Not in the defaults, either role. Answering: Bell 103: a caller without V.8
  * that sends 1270 Hz (the Bell 103 mark) gets 300 bit/s FSK on 2225 / 2025
  * Hz, start-stop and no error control as in V.21. Bell 212A, with
@@ -93,9 +95,11 @@ typedef enum {
  * unscrambled ones for 4 s; a caller that then starts as V.22 does is a
  * Bell 212A call at 1200 bit/s. */
 /* Calling (tried in simulation and against this library's own answerer
- * only): V.8 cannot offer Bell, so it is what the caller does when no V.8
- * comes about. In this order: ANSam with a V.8 modulation also on offer ->
- * V.8 as ever. 2225 Hz (the Bell answer tone, within some 10 Hz) before any
+ * only; the 212A handshake follows V.22 and was not checked against a Bell
+ * 212A specification): V.8 cannot offer Bell, so it is what the caller does
+ * when no V.8 comes about; a V.8 exchange that finds nothing in common does
+ * not fall back to Bell. In this order: ANSam with a V.8 modulation also on
+ * offer -> V.8 as ever. 2225 Hz (the Bell answer tone, within some 10 Hz) before any
  * 2100 Hz tone, or after ANS (V.25) -> Bell 212A if offered, else Bell 103.
  * Only Bell on offer: after ANSam or ANS we stay silent and listen; 2225 Hz
  * -> Bell 212A (else 103); with 103 alone, 150 ms of a carrier in the Bell
@@ -120,7 +124,7 @@ typedef enum {
 typedef int  (*v90m_getbit_fn)(void *user);             /* next bit to send, 0 or 1 */
 typedef void (*v90m_putbit_fn)(void *user, int bit);    /* a bit received */
 
-/* State changes, reported from inside v90m_process() right after the sample
+/* State changes, reported from inside v90m_process_*() right after the sample
  * at which they happened, before the next one is processed. */
 typedef enum {
     V90M_EV_CONNECTED = 1,      /* data mode reached: v90m_state has the modulation and rates */
@@ -133,26 +137,32 @@ typedef void (*v90m_event_fn)(void *user, v90m_event ev);
 
 typedef struct {
     v90m_role      role;
-    unsigned       modulations;     /* V90M_MOD_*; default all but V.92 and Bell */
+    unsigned       modulations;     /* V90M_MOD_*; default all but V.92 and Bell. Calling: at
+                                       least one (0 gives V90M_EINVAL) */
     int            alaw;            /* the codec's law: 0 mu-law, 1 A-law */
-    int            codec_linear_rx; /* 1: the codec receives in 16-bit linear, with no G.711
-                                       quantiser on the receive path (V.92 then designs the
-                                       upstream constellation without its share of the noise).
-                                       0: the received samples went through G.711, also when
-                                       they are handed over as linear values */
-    int            tx_level;        /* transmit RMS outside PCM modes, 16-bit units; default 3000 */
-    int            max_tx_code;     /* power ceiling: the most downstream power the caller may ask for,
-                                       -0.5 dBm0 less 0.5 dB per step, 1..31; 0 = 23 (-12 dBm0) */
-    int            max_down_bps;    /* rate ceilings, bit/s; 0 = none. V.34: max_down caps what we */
-    int            max_up_bps;      /* send, max_up what we receive. V.92 PCM up to 48000; 33600 holds it at 33333.
-                                       V.32bis (either role): one rate both ways, under the lower of the two */
+    int            codec_linear_rx; /* answering: 1 = the codec receives in 16-bit linear, with no
+                                       G.711 quantiser on the receive path (V.92 then designs the
+                                       upstream constellation without its share of the noise);
+                                       0 = the received samples went through G.711, also when
+                                       they are handed over as linear values. Calling: unused */
+    int            tx_level;        /* transmit RMS outside PCM modes, 16-bit units, >= 0; default
+                                       3000 */
+    int            max_tx_code;     /* answering, V.90 / V.92: the most downstream power the caller
+                                       may ask for, -0.5 dBm0 less 0.5 dB per step, 1..31;
+                                       0 = 23 (-12 dBm0). Calling: unused (0..31 accepted) */
+    int            max_down_bps;    /* rate ceilings, bit/s, >= 0; 0 = none. max_down caps what we */
+    int            max_up_bps;      /* send, max_up what we receive (named from the answering, server
+                                       side), in V.34, V.90 and V.92, either role: V.92's PCM upstream
+                                       (up to 48000) under max_up answering, max_down calling; 33600
+                                       holds it at 33333. V.32bis (either role): one rate both ways,
+                                       under the lower of the two. V.21, V.22, V.22bis, Bell: unused */
     int            echo_delay;      /* samples from a sample leaving to its echo starting back (the
-                                       driver's buffering); -1 = measure it in every start-up */
+                                       driver's buffering), >= 0; -1 = measure it in every start-up */
     v90m_getbit_fn getbit;
     v90m_putbit_fn putbit;
     v90m_event_fn  on_event;        /* may be NULL: poll v90m_get_state() instead */
-    int            send_ci;         /* originating: send CI before the answer tone (V.8 7.1) */
-    void          *user;
+    int            send_ci;         /* calling: send CI before the answer tone (V.8 7.1) */
+    void          *user;            /* passed to getbit, putbit and on_event */
 } v90m_cfg;
 
 /* Memory for v90m_init() / v90m_ec_init() / v90m_async_init() as part of a
@@ -165,16 +175,24 @@ typedef struct {
 /* alignment for that memory:  union { v90m_align a; uint8_t b[V90M_MEM_SIZE]; } mem; */
 typedef union { long double ld; double d; int64_t i; void *p; void (*f)(void); } v90m_align;
 
+/* Answering, the default modulations, tx_level 3000, echo_delay -1, the
+ * rest 0 or NULL. */
 void     v90m_cfg_default(v90m_cfg *cfg);
-/* One modem. The only allocation the library makes for it. */
+/* One modem. The only allocation the library makes for it. NULL on failure,
+ * with *err (err may be NULL): V90M_EINVAL (cfg NULL or a value out of
+ * range), V90M_ENOTSUP, V90M_ENOMEM; V90M_OK otherwise. */
 v90m_t  *v90m_create(const v90m_cfg *cfg, int *err);
 /* Or in memory of the caller's, at least v90m_mem_size() octets, aligned for
- * any type (nothing is allocated, v90m_destroy() is not called). */
+ * any type (nothing is allocated; v90m_destroy() then does nothing). Errors
+ * as v90m_create, and V90M_EINVAL for mem NULL or misaligned, V90M_ENOMEM
+ * for len too small. */
 size_t   v90m_mem_size(void);
 v90m_t  *v90m_init(void *mem, size_t len, const v90m_cfg *cfg, int *err);
-/* Back to the start of a new call (the line went off-hook), same memory. */
+/* Back to the start of a new call (the line went off-hook), same memory, the
+ * role and everything else from cfg. V90M_OK; or V90M_EINVAL (m or cfg NULL,
+ * a value out of range) or V90M_ENOTSUP, the modem left as it was. */
 int      v90m_reset(v90m_t *m, const v90m_cfg *cfg);
-void     v90m_destroy(v90m_t *m);
+void     v90m_destroy(v90m_t *m);           /* NULL is fine */
 
 /* The line: n received samples in, n samples to send out. Any n, 1
  * included: the result does not depend on how the samples are cut into
@@ -185,14 +203,15 @@ void     v90m_destroy(v90m_t *m);
  *             v90m_g711_decode gives), codewords out; V.90 / V.92 work too
  *   _linear   linear both ways (a PCM modulation then sends the linear value
  *             of its codewords)
- * Return V90M_OK, or V90M_EINVAL. */
+ * Return V90M_OK, or V90M_EINVAL (m NULL, or rx or tx NULL with n > 0). */
 int      v90m_process_g711(v90m_t *m, const uint8_t *rx, uint8_t *tx, size_t n);
 int      v90m_process_lin_rx(v90m_t *m, const int16_t *rx, uint8_t *tx, size_t n);
 int      v90m_process_linear(v90m_t *m, const int16_t *rx, int16_t *tx, size_t n);
 
-/* Ask for a retrain (data mode of V.92, V.90, V.34, V.32bis; originating:
- * V.22bis at 2400 bit/s, V.32bis, V.34, V.90, V.92). V90M_OK or V90M_ESTATE.
- * Originating V.90 / V.92: 70 ms of silence and Tone A, Phase 2 to data mode
+/* Ask for a retrain. Answering: in data mode of V.92, V.90, V.34, V.32bis.
+ * Calling: once connected in V.22bis at 2400 bit/s, V.32bis, V.34, V.90,
+ * V.92. V90M_OK, or V90M_ESTATE (none of those, or one under way).
+ * Calling V.90 / V.92: 70 ms of silence and Tone A, Phase 2 to data mode
  * again (some 7 to 11 s); also during a rate renegotiation; V90M_ESTATE when
  * one is under way or three have run without a minute of data mode between
  * them. A retrain that fails, or one more due past that limit (the far end's,
@@ -202,7 +221,8 @@ int      v90m_retrain(v90m_t *m);
 /* Hang up, telling the far modem where the modulation has a way to (V.90
  * 9.7, V.92 9.11, V.34 11.7, either role): V90M_OK when that has begun
  * (V90M_EV_ENDED follows within a fraction of a second); V90M_ESTATE when
- * there is nothing to send: stop. */
+ * there is nothing to send (V.21, V.22, V.22bis, V.32bis, Bell, or not in
+ * data mode): just stop calling v90m_process_*. */
 int      v90m_cleardown(v90m_t *m);
 
 typedef enum {
@@ -211,15 +231,15 @@ typedef enum {
     V90M_END_LOST,              /* the connection was lost */
     V90M_END_CLEARDOWN_FAR,     /* the far modem cleared down */
     V90M_END_CLEARDOWN_OURS,    /* after v90m_cleardown() */
-    /* originating */
+    /* calling only */
     V90M_END_NO_ANSWER_TONE,    /* no answer tone came */
     V90M_END_NO_JM,             /* ANSam came, but no JM in answer to CM (V.8) */
     V90M_END_NO_COMMON,         /* the answerer has no modulation in common with us */
-    V90M_END_RETRAIN_FAILED     /* (appended) originating V.90 / V.92: a retrain failed, or one
+    V90M_END_RETRAIN_FAILED     /* (appended) calling V.90 / V.92: a retrain failed, or one
                                    more was due past the limit (see v90m_retrain) */
 } v90m_end;
 
-/* Cheap; fine to read after every sample. */
+/* Cheap; fine to read after every sample. Also after the end: end says why. */
 typedef struct {
     int        connected;       /* data mode reached, and kept through retrains */
     int        moving;          /* user data moves both ways now */
@@ -227,7 +247,8 @@ typedef struct {
     v90m_conn  modulation;      /* in force (during a retrain: the one before) */
     int        tx_bps, rx_bps;  /* our transmit / receive rate (rx = tx where symmetric) */
     int        used_v8;         /* the far modem spoke V.8 */
-    int        odp_bypass;      /* V.92 9.3.1: the caller skips V.42's ODP / ADP */
+    int        odp_bypass;      /* answering, V.92 9.3.1: the caller skips V.42's ODP / ADP
+                                   (start the V.42 endpoint without detection); calling: 0 */
     v90m_end   end;
 } v90m_state;
 void     v90m_get_state(const v90m_t *m, v90m_state *st);
@@ -235,11 +256,15 @@ void     v90m_get_state(const v90m_t *m, v90m_state *st);
 typedef struct {
     v90m_conn  modulation;
     int        tx_bps, rx_bps;
-    int        snr_db10;        /* receiver signal to error, 0.1 dB, 0..600; -1 = none */
-    int        rtd;             /* round-trip delay measured in the handshake, samples; -1 = none */
-    int        echo_delay;      /* in use (configured or measured), samples; -1 = none */
+    int        snr_db10;        /* receiver signal to error, 0.1 dB, 0..600; -1 = none (not
+                                   connected, or a modulation without the figure) */
+    int        rtd;             /* round-trip delay measured in the handshake, samples; -1 = none
+                                   (answering: V.34, V.90, V.92; calling: V.32bis, V.34, V.90, V.92) */
+    int        echo_delay;      /* answering V.90 / V.92: in use (configured or measured),
+                                   samples; -1 = none, and always -1 calling */
     unsigned   retrains;        /* begun, this call */
-    unsigned   renegotiations;  /* rate renegotiations (V.90, V.92; V.34 calling), this call */
+    unsigned   renegotiations;  /* rate renegotiations that stopped the data, this call
+                                   (answering: V.90, V.92; calling: V.32bis, V.34, V.90, V.92) */
 } v90m_stats;
 void     v90m_get_stats(const v90m_t *m, v90m_stats *st);
 
@@ -249,11 +274,12 @@ void     v90m_get_stats(const v90m_t *m, v90m_stats *st);
  * v90m_async_putbit as the modem's getbit / putbit with the object as user.
  * Fixed 512-octet queues each way. */
 typedef struct v90m_async v90m_async_t;
+/* create / init: NULL on failure, *err as for v90m_create / v90m_init */
 v90m_async_t *v90m_async_create(int *err);
 size_t        v90m_async_mem_size(void);
 v90m_async_t *v90m_async_init(void *mem, size_t len, int *err);
 void          v90m_async_reset(v90m_async_t *a);
-void          v90m_async_destroy(v90m_async_t *a);
+void          v90m_async_destroy(v90m_async_t *a);     /* NULL is fine */
 int           v90m_async_getbit(void *a);
 void          v90m_async_putbit(void *a, int bit);
 size_t        v90m_async_write(v90m_async_t *a, const uint8_t *buf, size_t n);  /* octets accepted */
@@ -320,11 +346,14 @@ typedef struct {
 } v90m_ec_status;
 
 void        v90m_ec_cfg_default(v90m_ec_cfg *cfg, int originator);
+/* create / init: NULL on failure, *err as for v90m_create / v90m_init (the
+ * configuration's values are not checked); reset: V90M_OK, or V90M_EINVAL
+ * for cfg NULL */
 v90m_ec_t  *v90m_ec_create(const v90m_ec_cfg *cfg, int *err);
 size_t      v90m_ec_mem_size(void);
 v90m_ec_t  *v90m_ec_init(void *mem, size_t len, const v90m_ec_cfg *cfg, int *err);
 int         v90m_ec_reset(v90m_ec_t *e, const v90m_ec_cfg *cfg);
-void        v90m_ec_destroy(v90m_ec_t *e);
+void        v90m_ec_destroy(v90m_ec_t *e);           /* NULL is fine */
 
 int         v90m_ec_tx_bit(v90m_ec_t *e);               /* from the modem's getbit */
 void        v90m_ec_rx_bit(v90m_ec_t *e, int bit);      /* from the modem's putbit */
@@ -340,14 +369,18 @@ int         v90m_ec_tx_busy(const v90m_ec_t *e);        /* a frame is still leav
 
 void        v90m_ec_release(v90m_ec_t *e);              /* orderly: DISC, wait for UA */
 void        v90m_ec_abort(v90m_ec_t *e);                /* the line is gone: stop without a word */
-/* break signals (V.42 12.3.1): opt is one of these */
+/* break signals (V.42 12.3.1): opt is one of these, len10ms the length in
+ * 10 ms units. send_break: 0 when the break is on its way; -1 (not a V90M_*
+ * code) when error control is not up (V90M_EC_CONNECTED) or a break of ours
+ * is still pending. get_break: 1 with *opt and *len10ms when a break came
+ * (in its place among the octets read), else 0. */
 #define V90M_BRK_NONDESTRUCTIVE_INSEQ      0x00
 #define V90M_BRK_NONDESTRUCTIVE_EXPEDITED  0x40
 #define V90M_BRK_DESTRUCTIVE_EXPEDITED     0xC0
 int         v90m_ec_send_break(v90m_ec_t *e, int opt, int len10ms);
 int         v90m_ec_get_break(v90m_ec_t *e, int *opt, int *len10ms);
 
-int         v90m_ec_state(const v90m_ec_t *e);
+int         v90m_ec_state(const v90m_ec_t *e);       /* V90M_EC_DETECT ... */
 void        v90m_ec_get_status(const v90m_ec_t *e, v90m_ec_status *st);
 
 #ifdef __cplusplus

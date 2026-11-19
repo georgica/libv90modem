@@ -1,44 +1,66 @@
 # libv90modem
 
-A voice-band data modem in software: the answering side of V.92, V.90,
-V.34, V.32bis, V.22bis, V.22, V.21, Bell 212A and Bell 103, started by V.8, with V.42 error
-control (LAPM) and V.42bis / V.44 compression. Portable C99, fixed-point in
-the signal path, no allocation after start, no global state. It works at a
-G.711 codec, 8000 samples per second: give it the samples it hears, it gives
-back the samples to send.
+A voice-band data modem in software: V.92, V.90, V.34, V.32bis, V.22bis,
+V.22, V.21, Bell 212A and Bell 103, started by V.8, with V.42 error control
+(LAPM) and V.42bis / V.44 compression. It answers (for V.90 and V.92 as the
+digital, server side) and calls (for V.90 and V.92 as the analogue, client
+side). Portable C99, fixed-point in the signal path, no allocation after
+start, no global state. It works at a G.711 codec, 8000 samples per second:
+give it the samples it hears, it gives back the samples to send.
 
-It was written for v90d, a dial-up server that runs in a
-Grandstream HT802 analogue telephone adapter, from the ITU-T
-recommendations, and has answered real modems there (see the table below).
+It was written for v90d, a dial-up server that runs in a Grandstream HT802
+analogue telephone adapter, from the ITU-T recommendations. The answering
+side has answered real modems there (see "Tried on real modems"); the
+calling side has not yet called one.
 
-**The API is not stable before version 1.0.** This is 0.2.0.
+**The API is not stable before version 1.0.** This is 0.3.0; what changed
+from one version to the next is in `CHANGELOG.md`.
 
 ## Standards
 
-| | implemented | notes |
-|---|---|---|
-| V.8 | answering: ANSam, CM / JM / CJ | callers without V.8 are answered too (V.22bis sequence, V.32bis AA, V.21 after 8 s) |
-| V.21 | yes | 300 bit/s |
-| V.22, V.22bis | yes | 1200 / 2400 bit/s, retrain, guard tone |
-| Bell 103 | answering (`V90M_MOD_BELL103`, not in the defaults); calling: **tried in simulation and against this library's own answerer only** | 300 bit/s; answering a caller without V.8 that sends 1270 Hz; calling on the 2225 Hz Bell answer tone or a carrier in its answer channel |
-| Bell 212A | answering (`V90M_MOD_BELL212A` with V.22, not in the defaults); calling: **tried in simulation and against this library's own answerer only** | 1200 bit/s after 2225 Hz in the V.22bis answer sequence (answering) or on hearing it (calling; falls back to Bell 103 when offered); simulation only |
-| V.32, V.32bis | answering | 4800 to 14400 bit/s |
-| V.34 | answering | Phase 2 to data mode, retrains, rate renegotiation |
-| V.90 | digital (server) side; analogue (client) side: **simulation and own answerer only** | PCM downstream, V.34 upstream; the analogue side measures the DIL (pads, robbed bits), retrains and renegotiates the rate (either end begins them; its receiver asks for them when the line changes) |
-| V.92 | digital (server) side; analogue (client) side: **tried in simulation and against this library's own answerer only** | PCM upstream, full start-up and retrains; the analogue side falls back to V.90 when the answerer does not offer PCM upstream, retrains and renegotiates as in V.90 |
-| V.14 | yes | start-stop characters on the synchronous bit pump |
-| V.42 | yes | LAPM, detection phase, start-stop fallback, breaks |
-| V.42bis, V.44 | yes | V.44 preferred when both ends have it |
+| | answering | calling | notes |
+|---|---|---|---|
+| V.8 | ANSam, CM / JM / CJ | CI (optional), CM / JM / CJ | without V.8: answered with the V.22bis answer sequence, V.32bis AA, V.21 after 8 s; calling after a pre-V.8 answer tone in V.22bis, V.21 or V.32bis (Annex A) |
+| V.21 | yes | yes | 300 bit/s |
+| V.22, V.22bis | yes | yes | 1200 / 2400 bit/s, retrain; guard tone answering |
+| V.32, V.32bis | yes | yes | 4800 to 14400 bit/s, retrain, rate renegotiation |
+| V.34 | yes | yes | Phase 2 to data mode, retrains, rate renegotiation, cleardown |
+| V.90 | digital (server) side | analogue (client) side | PCM downstream, V.34 upstream. Both: retrains and rate renegotiation begun by either end, cleardown. Calling: the DIL measured (pads, robbed bits, the law); its receiver asks for a renegotiation or a retrain when the line changes |
+| V.92 | digital side | analogue side | PCM upstream (24000 to 48000 bit/s) after V.90's start-up, retrains and rate renegotiation as V.90; falls back to V.90 when the other end does not take PCM upstream |
+| Bell 103 | `V90M_MOD_BELL103`, not in the defaults | the same | 300 bit/s FSK; answering a caller without V.8 that sends 1270 Hz; calling on the 2225 Hz Bell answer tone or a carrier in the Bell answer channel |
+| Bell 212A | `V90M_MOD_BELL212A` with V.22, not in the defaults | the same | 1200 bit/s; answering with 2225 Hz after 4 s of an unanswered V.22bis answer sequence; calling on hearing 2225 Hz (Bell 103 when no 1200 bit/s answer comes) |
+| V.14 | yes | yes | start-stop characters on the synchronous bit pump |
+| V.42 | yes | yes | LAPM, detection phase, start-stop fallback, breaks |
+| V.42bis, V.44 | yes | yes | V.44 preferred when both ends have it |
 
-Not implemented:
+### What has been tried where
 
-- Calling against a real modem: V.21, V.22bis, V.32bis, V.34, Bell 103,
-  Bell 212A and the V.90 and V.92 analogue modems call (V.90 / V.92 with
-  retrains and rate renegotiation from either end), but none has been tried
-  against a real modem yet. A rate renegotiation of the analogue side's own
-  is not in the public API (the library does one by itself when its
-  receiver needs it).
-- V.92 quick connect, short Phase 2 and modem on hold.
+- **Answering, against real modems:** V.92, V.90, V.34, V.32bis, V.22bis,
+  V.22, V.21 and Bell 103 on the HT802 (table below). Bell 212A answering
+  only on a test build with the 2225 Hz tone from the start, by a modem
+  that would also have taken V.22; no modem that calls as 212A and nothing
+  else has been on the line.
+- **Calling, in simulation only:** every modulation of the calling side has
+  run against simulated lines and this library's own answerer, never
+  against a real modem or a real server. What it sends has been compared,
+  field by field, with what real callers sent in 106 recorded calls
+  (`test/test_realcheck.c`); that checks the sequences' formats, not how a
+  real answerer responds to them.
+
+### Not implemented, or not checked
+
+- V.92 quick connect, short Phase 2 and modem-on-hold, either role.
+- The Bell 212A calling handshake follows V.22 and what this library's
+  answerer accepts: it has not been checked against a Bell 212A
+  specification document. The 3 s and 6 s fallbacks to Bell 103 are this
+  library's choices.
+- V.8 never falls back to Bell: a caller that has heard ANSam with a V.8
+  modulation on offer goes V.8, and a V.8 exchange with nothing in common
+  ends the call (`V90M_END_NO_COMMON`).
+- Calling against real modems and real servers: untested (above).
+- A rate renegotiation of the calling side's own is not in the public API
+  (the analogue V.90 / V.92 modem does one by itself when its receiver
+  needs it).
 - x2 and K56flex, the two 56k schemes from before V.90: not spoken. A modem
   that has nothing newer connects at V.34. (Neither was published; see
   `DESIGN.md`, 4.2b.)
@@ -47,23 +69,81 @@ Not implemented:
 ## Building
 
 ```
-make                    # build/libv90modem.a, libv90modem.so, libv90modem.pc
-make check              # the simulator suite on the host
-make check-arm          # the same, cross-built and run under qemu-arm (ARM_CC, QEMU)
-make install PREFIX=/usr/local      # make uninstall takes it out; DESTDIR works
-make CC=arm-linux-gcc BUILD=build/arm   # cross-compile: ar, ld, objcopy from the same prefix
+make                    # build/: libv90modem.a, libv90modem.so, libv90modem.pc, the examples
+make check              # the simulator suite on the host, the API test, examples/call_loop,
+                        # the real-modem fixtures, check-symbols
+make check-arm          # the same tests cross-built (ARM_CC) and run under qemu-arm (QEMU),
+                        # PAR (8) programs at a time
+make check-ubsan        # the host suite under clang -fsanitize=undefined
+make install PREFIX=/usr/local      # DESTDIR works; make uninstall takes it out
+make clean
 ```
 
-A program builds with `pkg-config --cflags --libs libv90modem` (or
-`--static` for the static library, which also needs `-lm`). Only
-`v90modem.h` is installed, with the libraries, the `.pc` file and the
-`v90m-replay` tool. The static library exports the `v90m_*` functions and
-nothing else; everything inside it is local.
+`make install` puts `v90modem.h`, the static and shared libraries, the
+`.pc` file and the `v90m-replay` tool under `$(DESTDIR)$(PREFIX)` (`LIBDIR`,
+`INCDIR`, `BINDIR`, `PCDIR` override the parts). A program builds with
+`pkg-config --cflags --libs libv90modem` (or `--static` for the static
+library, which also needs `-lm`). The static library defines the `v90m_*`
+functions and nothing else that a program could clash with: its internals
+are renamed `v90m__i_*` (`make check-symbols`).
 
-`make test-interop SPANDSP=PREFIX` runs V.8 and V.22bis against spandsp
-(host only). `make bench-v90` replays a simulated V.90 call through the
-modem on the host and under qemu, by the internals and by the public API
-(static and shared library): the four transmit hashes must be equal.
+**Cross builds.** Set `CC` (and `BUILD`, to keep the objects apart); `ar`,
+`ld`, `objcopy` and `nm` are taken from the same prefix:
+
+```
+make CC=arm-linux-gcc BUILD=build/arm
+make check-arm ARM_CC=/path/to/arm-linux-gcc QEMU=qemu-arm-static
+```
+
+**Port matrix.** `tools/check-ports.sh [OUT [target ...]]` builds the whole
+suite for each target, runs it there (qemu-user, wine or the host) and
+compares every program's output with host gcc's, line for line: the signal
+path is fixed point, so every target must print the same. Targets: host
+gcc and clang; x86_64, i686, armv5 (uClibc), armv7hf, aarch64, aarch64be,
+mips, mipsel, ppc, ppc64, riscv64 (musl); s390x (glibc); m68k (uClibc);
+win32 (mingw, under wine). The cross compilers are Bootlin's
+"stable-2023.08-1" toolchains under `TOOLCHAINS` (default
+`../toolchains`); a target without its compiler or runner is skipped and
+said so. `OUT` must not be under /tmp. `QUICK="target ..."` skips the slow
+programs of `tools/ports-slow.txt` there, `SKIP="prog ..."` skips programs
+on every target but the reference. Last full run (PROGRESS.md, ports-2):
+every target but m68k identical to host gcc; m68k fails in the V.34
+receiver under qemu-m68k only, which looks like the emulator (no hardware
+to settle it).
+
+`make test-interop SPANDSP=PREFIX` runs V.8 and V.22bis (both roles)
+against spandsp (host only). `make bench-v90` replays a simulated V.90 call
+through the answering modem on the host and under qemu, by the internals
+and by the public API (static and shared library): the transmit hashes must
+be equal. `bench-v90c`, `bench-v92c` and `bench-bell` do the same for the
+calling side.
+
+## Memory and CPU
+
+One modem, either role, takes `v90m_mem_size()` octets, at most
+`V90M_MEM_SIZE` (120 KiB) on every platform: 118816 on x86-64, 118504 on
+ARMv5 (the calling side's state is the larger; the answering side's alone
+is some 104 KiB). A V.42 endpoint takes at most `V90M_EC_MEM_SIZE` (50 KiB;
+49760 octets on x86-64), a start-stop framer `V90M_ASYNC_MEM_SIZE` (2 KiB;
+1064 octets). All three can
+live in memory of the caller's (`v90m_init`, `v90m_ec_init`,
+`v90m_async_init`); nothing is allocated after that.
+
+CPU, as ARM instructions counted under qemu (ARMv5, gcc -O2; cycles on a
+real ARM926 have not been measured): the box v90d runs on, an ARM926EJ-S
+at 400 MHz, runs the answering modem's V.90 data mode at 32 % of its CPU,
+which makes it about 123 M counted instructions a second.
+
+| | M instructions per second of line, data mode | heaviest single tick |
+|---|---|---|
+| answering, V.90 | 39.5 | 87 k |
+| calling, V.90 (0 / 100 ppm clock offset) | 54.6 / 58.8 | 98 k (start of Phase 2) |
+| calling, V.92 (0 / 100 ppm) | 69.4 / 73.9 | 98 k |
+| calling, Bell 103 / Bell 212A | 9.84 / 4.43 | 2.3 k / 2.8 k |
+
+The calling side's retrains and rate renegotiations stay under 98 k a tick
+(a 10 ms block of the box is about 1.23 M). The measurements and how they
+were made are in PROGRESS.md ("cpu").
 
 ## Using it
 
@@ -75,7 +155,7 @@ static void put(void *u, int bit) { }            /* a bit received */
 
 v90m_cfg c;
 v90m_cfg_default(&c);                     /* answer; V.90, V.34, V.32bis, V.22bis, V.22, V.21 */
-c.getbit = get; c.putbit = put;
+c.getbit = get; c.putbit = put;           /* c.role = V90M_ROLE_ORIGINATE to call */
 v90m_t *m = v90m_create(&c, &err);        /* the one allocation (or v90m_init on your memory) */
 
 for (;;) {                                /* 10 ms at a time, or any other block size */
@@ -92,10 +172,13 @@ Data moves as bits: `getbit` and `putbit` are called by the modem, inside
 V.42 endpoint on them (`v90m_ec_*`: `v90m_ec_tx_bit` from `getbit`,
 `v90m_ec_rx_bit` from `putbit`, `v90m_ec_tick` every millisecond, octets in
 and out with `v90m_ec_write` / `v90m_ec_read`), or a start-stop framer
-(`v90m_async_*`) for a caller without error control.
+(`v90m_async_*`) for a modem without error control. The calling side's
+V.90 / V.92 needs its received samples linear (`v90m_process_linear` or
+`v90m_process_lin_rx`); `include/v90modem.h` has the rest.
 
-`examples/answer_file.c` (`make examples`) answers a recorded call and
-prints the connect line:
+Two examples, built by `make`, use the public API only.
+`examples/answer_file.c` answers a recorded call and prints the connect
+line:
 
 ```
 $ build/answer_file -9 -u 33600 cxa.raw
@@ -103,7 +186,24 @@ cxa.raw: 26.4 s, 16-bit linear receive; answer tone at 6.692 s
 CONNECT 50666/25333 V.92 at 24.805 s; SNR 60.0 dB, round trip 263 samples
 ```
 
-## Tested modems
+`examples/call_loop.c` calls this library's own answerer over a 4-wire
+line in memory (`make check` runs it), sends a line of text each way and
+clears down; `-m` picks what the caller offers:
+
+```
+$ build/call_loop
+libv90modem 0.3.0
+caller   CONNECT 40000/50666 V.92
+answerer CONNECT 50666/40000 V.92
+caller   got "hello from the answerer"
+answerer got "hello from the caller"
+caller   SNR 60.0 dB, round trip 2 samples
+answerer ended: far end cleared down
+caller   ended: we cleared down
+line time 12.51 s
+```
+
+## Tried on real modems
 
 Calls made to the library inside v90d on an HT802, with the modems below
 calling; the figures are downstream / upstream bit/s.
@@ -111,14 +211,12 @@ calling; the figures are downstream / upstream bit/s.
 | modem | firmware | date | what connected |
 |---|---|---|---|
 | Conexant CX93001 (USB, V.92) | | 2026-11-15 | every modulation; V.90 49333 to 53333 / 28800; V.92 50666 / 25333 (`AT+PIG=0`); V.34 31200 / 28800 |
-| U.S. Robotics 5686 (56K FAX EXT, V.92) | 5.4.62 | 2026-11-16 | V.90 54666 / 26400; V.92 54666 / 40000 |
+| U.S. Robotics 5686 (56K FAX EXT, V.92) | 5.4.62 | 2026-11-16, 17 | V.90 54666 / 26400; V.92 54666 / 40000; V.22 1200; V.21 and Bell 103 300; Bell 212A 1200 (test build, above) |
 | U.S. Robotics 56K FAX EXT of 1998 (x2, V.90 upgrade) | flash 5.1.4 | 2026-11-16 | V.90 54666 to 56000 / 28800; V.34 28800 when its V.90 start-up failed |
 
-Not tried: any other modem, and the calling side against any real modem.
-The V.90 and V.92 calling sides (the analogue modem) have run in simulation
-only, against this library's own answerer (`test/test_orig_v90.c`,
-`test/test_orig_v92.c`): V.92 tried in simulation and against this
-library's own answerer only.
+Not tried: any other modem, and the calling side against any real modem or
+server. Seven of these calls are kept as fixtures (`test/fixtures/`), which
+`make check` replays.
 
 ## Reporting a bug
 
@@ -130,10 +228,10 @@ format of `tools/README.md` (v90d writes it with `-w FILE`). Then
 v90m-replay [options as the modem was set up] RECORDING
 ```
 
-plays it into the modem and prints what it made of the call, phase by
-phase. Say which modem called (make, model, firmware: `ATI3`, `ATI6`, `ATI7`
-on most), how the library was configured, and what happened. A fix comes
-with that recording as a test fixture (`CONTRIBUTING.md`).
+plays it into the answering modem and prints what it made of the call,
+phase by phase. Say which modem called (make, model, firmware: `ATI3`,
+`ATI6`, `ATI7` on most), how the library was configured, and what happened.
+A fix comes with that recording as a test fixture (`CONTRIBUTING.md`).
 
 ## Licence
 

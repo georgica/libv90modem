@@ -3,7 +3,7 @@ libdir=@LIBDIR@
 includedir=@INCDIR@
 
 Name: libv90modem
-Description: Software voice-band modem: V.92, V.90, V.34, V.32bis, V.22bis, V.22, V.21, V.8, V.42
+Description: Software voice-band modem, answering and calling: V.92, V.90, V.34, V.32bis, V.22bis, V.22, V.21, Bell 212A, Bell 103, V.8, V.42
 Version: @VERSION@
 Libs: -L${libdir} -lv90modem
 Libs.private: -lm

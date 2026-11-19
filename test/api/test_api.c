@@ -23,8 +23,14 @@ static void test_cfg(void)
     v90m_cfg c; v90m_t *m; int err = 99;
     static uint8_t buf[1 << 20] __attribute__((aligned(16)));
 
-    CHECK(strcmp(v90m_version(), "0.2.0") == 0);
-    CHECK_EQ_I(V90M_VERSION_MAJOR * 10000 + V90M_VERSION_MINOR * 100 + V90M_VERSION_PATCH, 200);
+    /* the version: the library's string, the header's numbers, and the two agree */
+    CHECK(strcmp(v90m_version(), "0.3.0") == 0);
+    CHECK_EQ_I(V90M_VERSION_MAJOR * 10000 + V90M_VERSION_MINOR * 100 + V90M_VERSION_PATCH, 300);
+    {
+        char hv[32];
+        snprintf(hv, sizeof hv, "%d.%d.%d", V90M_VERSION_MAJOR, V90M_VERSION_MINOR, V90M_VERSION_PATCH);
+        CHECK(strcmp(v90m_version(), hv) == 0);
+    }
 
     v90m_cfg_default(&c);
     CHECK_EQ_I(c.role, V90M_ROLE_ANSWER);
@@ -112,6 +118,84 @@ static void test_cfg(void)
 }
 
 /* ---- G.711 at the Table 1 scale ---- */
+/* ---- the error returns the header documents, each role, without a call ---- */
+static void test_errors(void)
+{
+    static union { v90m_align a; uint8_t b[V90M_MEM_SIZE + 16]; } mem;
+    static union { v90m_align a; uint8_t b[V90M_EC_MEM_SIZE + 16]; } ecmem;
+    static union { v90m_align a; uint8_t b[V90M_ASYNC_MEM_SIZE + 16]; } amem;
+    v90m_cfg c, bad; v90m_t *m; v90m_ec_cfg ec; v90m_ec_t *e; v90m_async_t *a;
+    v90m_state st; v90m_stats sx; int err, role, opt, len;
+    uint8_t cw[4] = { 0xFF, 0xFF, 0xFF, 0xFF }; int16_t lin[4] = { 0, 0, 0, 0 };
+
+    err = 99; CHECK(v90m_create(NULL, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
+    err = 99; v90m_cfg_default(&c); CHECK(v90m_init(NULL, sizeof mem, &c, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
+    err = 99; CHECK(v90m_init(mem.b, sizeof mem.b, NULL, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
+    for (role = 0; role < 2; role++) {
+        v90m_cfg_default(&c); c.role = role ? V90M_ROLE_ORIGINATE : V90M_ROLE_ANSWER;
+        /* each value out of range: V90M_EINVAL */
+        bad = c; bad.role = (v90m_role)7;  CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
+        bad = c; bad.tx_level = -1;        CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
+        bad = c; bad.max_tx_code = -1;     CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
+        bad = c; bad.max_down_bps = -1;    CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
+        bad = c; bad.max_up_bps = -1;      CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
+        bad = c; bad.echo_delay = -2;      CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
+        bad = c; bad.modulations |= 0x100; CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
+
+        m = v90m_init(mem.b, sizeof mem.b, &c, &err);
+        CHECK(m != NULL); CHECK_EQ_I(err, V90M_OK);
+        if (!m) continue;
+        /* v90m_reset: the same checks as create, and the modem kept as it was */
+        bad = c; bad.tx_level = -1;
+        CHECK_EQ_I(v90m_reset(m, &bad), V90M_EINVAL);
+        CHECK_EQ_I(v90m_reset(m, NULL), V90M_EINVAL);
+        /* the block calls */
+        CHECK_EQ_I(v90m_process_g711(NULL, cw, cw, 4), V90M_EINVAL);
+        CHECK_EQ_I(v90m_process_g711(m, NULL, cw, 4), V90M_EINVAL);
+        CHECK_EQ_I(v90m_process_lin_rx(m, lin, NULL, 4), V90M_EINVAL);
+        CHECK_EQ_I(v90m_process_linear(m, NULL, lin, 4), V90M_EINVAL);
+        CHECK_EQ_I(v90m_process_linear(m, NULL, NULL, 0), V90M_OK);
+        CHECK_EQ_I(v90m_process_g711(m, cw, cw, 4), V90M_OK);
+        /* nothing to retrain or clear down before data mode */
+        CHECK_EQ_I(v90m_retrain(m), V90M_ESTATE);
+        CHECK_EQ_I(v90m_cleardown(m), V90M_ESTATE);
+        /* before a connection: the stats say "none" */
+        v90m_get_state(m, &st);
+        CHECK_EQ_I(st.connected, 0); CHECK_EQ_I(st.odp_bypass, 0); CHECK_EQ_I(st.end, V90M_END_NONE);
+        v90m_get_stats(m, &sx);
+        CHECK_EQ_I(sx.snr_db10, -1); CHECK_EQ_I(sx.rtd, -1); CHECK_EQ_I(sx.echo_delay, -1);
+        CHECK_EQ_I(sx.retrains, 0); CHECK_EQ_I(sx.renegotiations, 0);
+        v90m_destroy(m);
+    }
+    v90m_destroy(NULL);
+
+    /* V.42 */
+    v90m_ec_cfg_default(&ec, 1);
+    err = 99; CHECK(v90m_ec_create(NULL, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
+    err = 99; CHECK(v90m_ec_init(ecmem.b + 1, sizeof ecmem.b - 1, &ec, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
+    err = 99; CHECK(v90m_ec_init(ecmem.b, v90m_ec_mem_size() - 1, &ec, &err) == NULL); CHECK_EQ_I(err, V90M_ENOMEM);
+    e = v90m_ec_init(ecmem.b, sizeof ecmem.b, &ec, &err);
+    CHECK(e != NULL); CHECK_EQ_I(err, V90M_OK);
+    if (e) {
+        CHECK_EQ_I(v90m_ec_reset(e, NULL), V90M_EINVAL);
+        CHECK_EQ_I(v90m_ec_reset(e, &ec), V90M_OK);
+        /* no break before error control is up; none received */
+        CHECK_EQ_I(v90m_ec_send_break(e, V90M_BRK_DESTRUCTIVE_EXPEDITED, 10), -1);
+        CHECK_EQ_I(v90m_ec_get_break(e, &opt, &len), 0);
+        v90m_ec_destroy(e);
+    }
+    v90m_ec_destroy(NULL);
+
+    /* start-stop */
+    err = 99; CHECK(v90m_async_init(NULL, sizeof amem.b, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
+    err = 99; CHECK(v90m_async_init(amem.b + 1, sizeof amem.b - 1, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
+    err = 99; CHECK(v90m_async_init(amem.b, v90m_async_mem_size() - 1, &err) == NULL); CHECK_EQ_I(err, V90M_ENOMEM);
+    a = v90m_async_init(amem.b, sizeof amem.b, &err);
+    CHECK(a != NULL); CHECK_EQ_I(err, V90M_OK);
+    v90m_async_destroy(a);
+    v90m_async_destroy(NULL);
+}
+
 static void test_g711(void)
 {
     int law, c, bad = 0;
@@ -940,6 +1024,7 @@ static void test_bell_originate(void)
 int main(void)
 {
     test_cfg();
+    test_errors();
     test_g711();
     test_call();
     test_blocks();

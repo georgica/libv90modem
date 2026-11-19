@@ -34,7 +34,7 @@ typedef char v90m_check_ec[(SAME(V90M_EC_DETECT, V42EC_DETECT) && SAME(V90M_EC_E
 static int aligned(const void *p) { return ((uintptr_t)p % V90M_ALIGN) == 0; }
 static void seterr(int *err, int e) { if (err) *err = e; }
 
-const char *v90m_version(void) { return "0.2.0"; }
+const char *v90m_version(void) { return "0.3.0"; }
 
 uint8_t v90m_g711_encode(int alaw, int16_t linear) { return pcm_encode(alaw != 0, linear); }
 int16_t v90m_g711_decode(int alaw, uint8_t codeword) { return (int16_t)v90_octet_linear(alaw != 0, codeword); }
@@ -105,8 +105,9 @@ static unsigned modes_of(unsigned mods)
 
 int v90m_reset(v90m_t *m, const v90m_cfg *cfg)
 {
-    int r = check_cfg(cfg), owned;
-    if (r != V90M_OK) return r;
+    int r, owned;
+    if (!m || !cfg) return V90M_EINVAL;
+    if ((r = check_cfg(cfg)) != V90M_OK) return r;
     owned = m->owned;
     /* the code underneath expects zeroed memory before answer_init */
     memset(m, 0, sizeof *m);
@@ -300,7 +301,8 @@ int v90m_retrain(v90m_t *m)
 
 int v90m_cleardown(v90m_t *m)
 {
-    /* V.34 (11.7); V.21, V.22bis and V.32bis have none in data mode */
+    /* V.34 (11.7), V.90 (9.7), V.92 (9.11), either role; V.21, V.22, V.22bis,
+     * V.32bis and Bell have none in data mode */
     if (ORIGINATING(m)) return orig_cleardown(&m->u.o) == 0 ? V90M_OK : V90M_ESTATE;
     return answer_cleardown(&m->u.a) == 0 ? V90M_OK : V90M_ESTATE;
 }

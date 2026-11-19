@@ -2577,3 +2577,87 @@ Open:
   timing loop's DFT (0.9 M) could still be made cheaper exactly.
 - All counts are qemu's instruction counts; cycles on the ARM926 (cache,
   multiply latency) have not been measured on the box.
+
+## release-0.3.0: version, changelog, documents and header reviewed (2026-11-19)
+
+Branch `release-0.3.0` from cpu (e6e03c1). No signal-path code changed.
+
+- Version 0.3.0: header, `v90m_version()`, Makefile (so the .pc file and
+  the shared library's name). test_api checks the string, the header's
+  numbers and that the two agree: 2 failures against 0.2.0, then 0.
+- `CHANGELOG.md` (new): 0.1.0, 0.2.0, 0.3.0 for users of the library,
+  from this file and the history.
+- `README.md` rewritten as one document: the standards table with both
+  roles; what was tried on real modems (answering) and what only in
+  simulation (all of the calling side); building, cross builds, the port
+  matrix; memory (120 KiB bound, 118816 octets on x86-64, 118504 on ARMv5)
+  and the ARMv5 instruction counts of the cpu section; the limitations;
+  examples. Gone: "everything inside [the static library] is local" (it
+  is renamed `v90m__i_*` since ports-2) and the scattered stage notes.
+- `include/v90modem.h`: per field and function, which role it applies to
+  and every error return, checked against api/v90modem.c by a new
+  test_errors in test_api (94 checks). Found:
+  - `v90m_reset(m, NULL)` crashed (create, init and `v90m_ec_reset` give
+    `V90M_EINVAL`): seen failing (SIGSEGV in v90m_reset), now
+    `V90M_EINVAL`. The only code change outside the tests.
+  - Comments that did not match the code, corrected: `v90m_stats.echo_delay`
+    is answering V.90 / V.92 only (always -1 calling); `renegotiations`
+    counts calling V.32bis too and not answering V.34; `odp_bypass` is
+    answering only; `codec_linear_rx` and `max_tx_code` are answering
+    only; the rate ceilings mean send / receive in V.34, V.90 and V.92 in
+    either role (V.92's PCM upstream under max_down when calling); the
+    header named a `v90m_process()` that does not exist and said
+    `v90m_ec_*` make callbacks (they make none); the first line still said
+    Bell was answering only. `v90m_ec_send_break` / `_get_break` return
+    0 / -1 and 1 / 0, not V90M_* codes: documented as they are.
+- `DESIGN.md`: 4.2b moved before 4.2c (the order was 4.2a, 4.2c, 4.2d,
+  4.2b); stale: the symbol hiding (renamed, not localized), the API layer
+  (also `orig`), `v32/` (both roles), 4.2c "no retrain, no renegotiation of
+  our own" (robust 2c), 4.2a's PCM upstream after retrains (answer-fix 2)
+  and the baseline follower (answer-fix 1), where measurements are kept,
+  the `v92 = on` of v90d's config; testing: port matrix, ubsan,
+  realcheck.
+- `examples/call_loop.c` (new): a caller and an answerer back to back
+  through the public API, `-m` for what the caller offers (v92 by
+  default; v90, v34, v32, v22, bell212, bell103 all connect, text both
+  ways, cleardown where there is one). `make` builds the examples now
+  (`all: lib examples`); `make check` runs call_loop (test-examples).
+- `libv90modem.pc.in`: the description names Bell and both roles.
+
+Hygiene: no TODO / FIXME / XXX / `#if 0` in the library. The diagnostic
+prints in modem/p34d.c, modem/v34dx.c and v42/v42_lapm.c are all behind
+`P34D_TRACE` / `V42_XID_TRACE` (p34d's own under the V.42 macro: odd, left
+as it is, signal-path file); the `#ifndef` knobs (`V22_BELL_MS`,
+`V90_MAX_TX_CODE`, `V92_DESIGN_PACE`, `V92_DSN_ECHO_DIV_LIN`, `LOSS_MSE`,
+`V92D_PROBE`) are the documented bench / EXTRA_CPPFLAGS ones. `getenv`
+only in tools and tests. `make clean` leaves nothing (top level and the
+five subdirectories). `make install DESTDIR=... PREFIX=/usr` installs the
+header, `.a`, `.so.0.3.0` with its two links, the .pc file and
+v90m-replay; call_loop built against it with pkg-config, shared and
+`--static`, runs; `make uninstall` removes every file. gcc and clang
+(-std=c99 -O2 -Wall -Wextra -Werror): library, examples, v90m-replay,
+v90m-fields, every rec_* / bench_*, qprof, ber_v90, printf-probe: no
+warning; the header alone also under -pedantic and as C++98.
+
+Checks:
+
+| | result |
+|---|---|
+| `make check` (host, from clean) | ALL HOST CHECKS PASS; 110 count lines, those of cpu (~/c52v/cpuv/check.log) but `api` 326 -> 421 (version +1, test_errors +94); fixtures pass; call_loop V.92 |
+| `make check-arm` (BUILD=build/armchk) | ALL ARM CHECKS PASS; the host's counts but the programs shortened on ARM, as before (orig_retrain 138, test_bench, test_ber, test_call, test_caller, test_startup) |
+| `make check-ubsan` | ALL UBSAN CHECKS PASS, no runtime error |
+| bench-v90 | 8e3136e9 x6 |
+| bench-bell | 48f22641 / fc125ef2, host and qemu-arm |
+| bench-v90c / bench-v92c | fa7486c7 / 22bf87ff, host and qemu-arm |
+| port matrix | not run to the end: stopped by the session for low system memory (swap full) while building; to be run again |
+
+Open, for the owner before 0.3.0:
+- `v90m_ec_send_break` returns -1, the value of `V90M_EINVAL`, where
+  `V90M_ESTATE` is meant; changing it changes the API's values.
+- The answering role takes `modulations` = 0, and `V90M_MOD_V92` without
+  `V90M_MOD_V90`, without complaint; the calling role refuses both.
+- In check_cfg, the calling role's `V90M_ENOTSUP` for "nothing it can do"
+  and for unknown bits can no longer happen (every bit is callable);
+  harmless dead code.
+- DESIGN.md has no section on the V.90 analogue (calling) side, nor on
+  V.21 / V.22bis / V.32bis / V.34 calling: 4.2c leans on it.

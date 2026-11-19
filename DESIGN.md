@@ -1,7 +1,9 @@
 # libv90modem: design
 
 How the modem is built and why. The API is in `include/v90modem.h`; what was
-measured and when is in v90d's `PROGRESS.md`, where this code grew.
+measured and when is in `PROGRESS.md` (the calling side and everything since
+the library got its own repository) and, for the answering side before
+that, in v90d's `PROGRESS.md`, where this code grew.
 
 ## 1. Rules
 
@@ -11,7 +13,8 @@ measured and when is in v90d's `PROGRESS.md`, where this code grew.
   memory of the caller's), no global state: any number of modems in one
   process (two calls at once run on the HT802, one modem per port).
 - Every block builds and passes its tests on x86 and on an ARM926 (cross-built,
-  run under qemu-arm).
+  run under qemu-arm); the port matrix (`tools/check-ports.sh`) runs the
+  whole suite on the other targets and wants the same output from each.
 - Written from the ITU-T recommendations. Reference implementations (spandsp)
   are test peers only: linked into host-only interop tests, never shipped,
   never copied.
@@ -25,7 +28,7 @@ measured and when is in v90d's `PROGRESS.md`, where this code grew.
 |---|---|
 | `api/` | the public API over everything below: configuration, the block calls, events found by reading the modem's state after each sample, stats; start-stop (V.14) and V.42 objects |
 | `modem/` | answering modem: V.8, V.21 and Bell 103, V.22bis/V.22 and Bell 212A, V.14, V.90 Phase 2 (`p2d`), Phases 3/4 and data (`p34d`), upstream receiver (`qamrx`, `ec`, `v34train`); V.34 answering (`p2ans`, `v34mp`, `v34mod`, `v34dx`, `v34ans`); the sequencer `answer`. Calling modem: V.8 (`v8orig`), V.34 (`p2call`, `v34orig`), the V.90 / V.92 analogue modem (`v90a` with `v90arx`, `v90dil`, `v90adec`; for V.92 `pcmtx`, `v92aseq` and `v92/v92_enc`); Bell 212A and 103 (`belltone`, the 2225 Hz answer tone); the sequencer `orig` |
-| `v32/` | V.32bis / V.32 (4800 to 14400 bit/s), answer side |
+| `v32/` | V.32bis / V.32 (4800 to 14400 bit/s), answering (`v32.c`) and calling (`v32_call.c`) |
 | `v34/` | V.34 coding: training point sequences, data encoder and decoder (trellis, shell mapping, non-linear encoder) |
 | `v90/` | V.90 digital transmitter from Phase 3 on (PCM signals, Jd, DIL, MP, data encoder), CP codec |
 | `v92/` | V.92 PCM upstream, digital side: start-up sequences, the receiver for the caller's training signals, the CPd design, the data decoder, Phases 3/4 and data (`v92_p34d`) |
@@ -36,9 +39,11 @@ measured and when is in v90d's `PROGRESS.md`, where this code grew.
 ## 3. The API layer
 
 `api/v90modem.c` adds no signal processing. It maps `v90m_cfg` onto the
-answering modem's configuration, clears the modem's memory before every
-start (the code underneath expects zeroed memory), runs `answer_tick_pcm`,
-`answer_tick_lin` or `answer_tick` once per sample, and after each sample
+answering modem's configuration (`answer`) or the calling modem's (`orig`,
+by `v90m_cfg.role`), clears the modem's memory before every start (the code
+underneath expects zeroed memory), runs `answer_tick_pcm`, `answer_tick_lin`
+or `answer_tick` (calling: `orig_tick`, with the G.711 conversion around it)
+once per sample, and after each sample
 compares the modem's state with the one before to report `V90M_EV_*`
 (connect, rates, data stopped / moving, end) and to count renegotiations.
 The bit callbacks are called by the modem itself, inside that sample, at
@@ -47,8 +52,11 @@ other side sees exactly the timing it would see sample by sample.
 
 Everything but the `v90m_*` functions has hidden visibility: the shared
 library exports nothing else, and the static library is linked into one
-object whose internal symbols are made local (`ld -r`, `objcopy
---localize-hidden`), so a program's own symbols cannot clash with them.
+object (`ld -r`) whose internal symbols are renamed `v90m__i_*`
+(`tools/symmap.sh`, `objcopy --redefine-syms`), so a program's own symbols
+cannot clash with them. Renamed rather than made local: some targets'
+relocations (i686's PC thunks, MIPS's GOT16) cannot reach a local symbol
+the way they reach a global one. `make check-symbols` checks it.
 
 ## 4. The modem
 
@@ -60,7 +68,7 @@ Moved here from v90d's DESIGN.md (section 4 there) with the code.
 
 - V.90 offered by the caller (PCM analogue modem): Phase 2 (`p2d`), then
   Phases 3 and 4 and V.90 data.
-- With V.92 allowed (`v92 = on`): the same Phase 2 says so (INFO0d bit 27);
+- With V.92 allowed (`V90M_MOD_V92`): the same Phase 2 says so (INFO0d bit 27);
   a caller that is V.92 too and selects PCM upstream in its INFO1a gets
   V.92 Phases 3 and 4 and data (`v92/v92_p34d`); every other caller goes
   the V.90 or V.34 way as before. V.8 is the same either way.
@@ -186,8 +194,8 @@ speak).
 - Tone A, or a renegotiation stalled for 6 s, is a retrain: p34d stops in
   `P34_RETRAIN`, `answer` sends 70 ms of silence, runs Phase 2 again from
   Tone B (`p2d_init_retrain`) and then a fresh p34d. `answer.retraining`
-  tells the layer above; `dce` holds V.42 and PPP, timers included, until
-  data mode is back (about 4.3 s in simulation).
+  tells the layer above; `dce` (v90d's driver) holds V.42 and PPP, timers
+  included, until data mode is back (about 4.3 s in simulation).
 - The upstream rate is ours to set (MP). When the receiver's error stays
   above what the rate needs for a second, we renegotiate with a lower
   ceiling; when nothing lower is left, or nothing is received, we retrain.
@@ -203,10 +211,13 @@ from its training signals, design its constellations and filters (CPd) and
 decode. `v92/README.md` has the detail and every reading of the text.
 - `answer` holds `v92d_t` in a union with the V.32bis modem; a call is never
   both.
-- A retrain runs the V.92 Phase 2 again and the caller selects again. When a
-  V.92 start-up never reached data mode, or the receiver gave up in data
-  mode, the retrain's INFO1d withdraws PCM upstream and the call goes on as
-  V.90; `dce` follows the modulation and the rates.
+- A retrain runs the V.92 Phase 2 again and the caller selects again; PCM
+  upstream stays on offer after any retrain of a call that reached V.92
+  data mode, whoever began it. When a V.92 start-up never reached data
+  mode, the V.92 engine failed, or it retrains because the upstream did not
+  hold even the lowest PCM rate (`v92d_t.up_floor`), the retrain's INFO1d
+  withdraws PCM upstream and the call goes on as V.90; `dce` follows the
+  modulation and the rates.
 - Two V.92 modems that both named LAPM in V.8 skip the ODP / ADP of V.42
   (V.92 9.3.1); `dce` then gives the detection phase 5 s for the caller's
   first frame. The server offers V.92 only with V.42 on.
@@ -223,7 +234,29 @@ decode. `v92/README.md` has the detail and every reading of the text.
   the first CPd never carries the acknowledge bit (one that did was
   answered with silence); in data mode the receiver follows the baseline
   under the caller's symbols with each decision's error, because what is
-  left of our own low frequencies wanders there.
+  left of our own low frequencies wanders there. With a G.711 codec on the
+  receive path that step is scaled down where the codec's quantising noise
+  exceeds the line's, and fades out for errors between a quarter and a half
+  of the spacing (`base_step()` in `v92/v92_p34d.c`): the codec's large
+  steps and near-boundary decisions had pushed it the wrong way (bursts of
+  upstream errors at 34666 to 37333 bit/s, PROGRESS.md answer-fix 1).
+
+### 4.2b Not done, maybe later: K56flex and x2
+The two 56k schemes from before V.90 are not spoken; a modem that has
+nothing else gets V.34. Neither has a published specification.
+- K56flex (Rockwell / Lucent) opens with V.8bis, which is an ITU
+  recommendation, and carries its capability in a manufacturer's block
+  there and again in INFO1; after that it is a different downstream from
+  V.90 (fixed training levels and constellation tables, frames of 8
+  symbols with shell mapping, rates in steps of 2000 bit/s), a new engine
+  and not a variant of `v90/`.
+- x2 (U.S. Robotics) seems to be agreed inside the V.34 Phase 2; nothing
+  more is known from published text.
+- What there is beyond that are third parties' descriptions made from
+  closed modem software. Using them would be an exception to "written from
+  the recommendations" that has to be decided and stated, and it needs a
+  modem that speaks nothing newer to test against. Neither is at hand
+  (2026-11-16).
 
 ### 4.2c V.92, analogue (calling) side
 `modem/v90a` with `v92` on (`ORIG_MODE_V92`, `V90M_MOD_V92` calling): Phase
@@ -254,9 +287,10 @@ CPd dictates, at LU = the configured level.
   on. Our own Ru has Sd's period, so Sd is not looked for until Ja.
 - Rate renegotiation begun by the digital modem is followed (Ru on our data
   frame boundary after its Rd-bar); cleardown either way (CPu / CPd with
-  drn = 0). No retrain, no renegotiation of our own, no quick connect, no
-  modem-on-hold. Tried in simulation and against this library's own
-  answerer only.
+  drn = 0). Retrains and rate renegotiations of our own are V.90's (the
+  analogue side's, PROGRESS.md robust 2c), with a fresh PCM upstream after
+  a retrain. No quick connect, no short Phase 2, no modem-on-hold. Tried in
+  simulation and against this library's own answerer only.
 
 ### 4.2d Bell 103 and Bell 212A, calling side
 V.8 cannot offer them (`ORIG_MODE_BELL103` / `ORIG_MODE_BELL212A`,
@@ -289,23 +323,6 @@ called it) accepts. Tried in simulation and against this library's own
 answerer only; a V.21-only answerer with Bell 103 on is not reached (its
 1650 Hz mark is 57 dB down in our Bell receiver).
 
-### 4.2b Not done, maybe later: K56flex and x2
-The two 56k schemes from before V.90 are not spoken; a modem that has
-nothing else gets V.34. Neither has a published specification.
-- K56flex (Rockwell / Lucent) opens with V.8bis, which is an ITU
-  recommendation, and carries its capability in a manufacturer's block
-  there and again in INFO1; after that it is a different downstream from
-  V.90 (fixed training levels and constellation tables, frames of 8
-  symbols with shell mapping, rates in steps of 2000 bit/s), a new engine
-  and not a variant of `v90/`.
-- x2 (U.S. Robotics) seems to be agreed inside the V.34 Phase 2; nothing
-  more is known from published text.
-- What there is beyond that are third parties' descriptions made from
-  closed modem software. Using them would be an exception to "written from
-  the recommendations" that has to be decided and stated, and it needs a
-  modem that speaks nothing newer to test against. Neither is at hand
-  (2026-11-16).
-
 ### 4.3 Fixed-point conventions
 - Samples are 16-bit linear; 0 dBm0 is an RMS of 15770.
 - Phases are 32-bit accumulators; `sintab` has 1024 entries, Q15.
@@ -324,12 +341,16 @@ nothing else gets V.34. Neither has a published specification.
   downstream as an analogue modem's A/D has it) and `test/v90link.h` (a whole
   line between the library's analogue and digital modems). They may use knowledge a
   real modem does not have; they are a test reference, not code to ship.
-- Independent peers (`make test-interop`, host only): spandsp for V.8,
-  V.22bis, V.42 and V.42bis.
+- Independent peers (`make test-interop`, host only): spandsp for V.8 and
+  V.22bis, both roles; V.42 and V.42bis (`v42/`).
 - Lessons that shaped the tests: a wrong-sign timing loop once passed every
   bit-error test because the equaliser hid it, and a delay line that moved
   under the equaliser update only showed for a third of the sub-sample
   alignments. So the tests check loop and equaliser state (tap centre, loop
   frequency, convergence across alignments), not just error counts.
 - Real modems: recordings of real calls replayed with `tools/v90m_replay.c`;
-  a fault found that way comes with its recording as a fixture.
+  a fault found that way comes with its recording as a fixture. The
+  calling side has no real modem to call yet; what it sends is checked
+  field by field against what real callers sent in those recordings
+  (`tools/v90m_fields.c`, `test/test_realcheck.c`).
+- `make check-ubsan`: the host suite with undefined behaviour trapped.

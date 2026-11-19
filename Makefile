@@ -1,12 +1,13 @@
 # libv90modem: build, test, install.
 #
-#   make                 static and shared library, pkg-config file (in $(BUILD))
+#   make                 static and shared library, pkg-config file, examples (in $(BUILD))
 #   make check           the simulator suite on the host
 #   make check-arm       the same, cross-built (ARM_CC) and run under qemu-arm,
 #                        PAR (8) programs at a time (tools/par-run.sh)
 #   make check-ubsan     the host suite with undefined behaviour trapped (clang)
 #   make install         into $(DESTDIR)$(PREFIX); make uninstall takes it out
-#   make examples        examples/answer_file
+#   make examples        examples/answer_file (answering a recording), examples/call_loop
+#                        (calling the library's own answerer; make check runs it)
 #   make bench-v90       record a simulated V.90 call, replay it on the host and
 #                        under qemu, through the internals and the public API
 #   make bench-v90a      the same for the V.90 analogue modem's downstream receiver
@@ -24,7 +25,7 @@
 # test peer and may use double; it is never installed.
 
 NAME     := libv90modem
-VERSION  := 0.2.0
+VERSION  := 0.3.0
 SOVER    := 0
 
 CC       ?= cc
@@ -94,8 +95,8 @@ TESTS    := test_g711 test_noise test_filt test_resamp test_channel test_v21 tes
 API_TESTS := test_api
 SUBS     := v34 v90 v92 v42 v32
 
-.PHONY: test-fixtures all lib dev install uninstall clean check check-arm check-ubsan test test-arm test-api test-interop examples bench-v90 bench-v34 bench-v90a bench-v90c bench-v92c replay
-all: lib
+.PHONY: test-fixtures test-examples all lib dev install uninstall clean check check-arm check-ubsan test test-arm test-api test-interop examples bench-v90 bench-v34 bench-v90a bench-v90c bench-v92c replay
+all: lib examples
 lib: $(STATIC) $(SHARED) $(PCFILE)
 dev: $(DEV)
 
@@ -182,7 +183,7 @@ test-api: $(addprefix $(BUILD)/api_,$(API_TESTS))
 test-api-arm: $(addprefix $(BUILD)/arm/api_,$(API_TESTS))
 	@fail=0; for t in $(API_TESTS); do $(QEMU) $(abspath $(BUILD))/arm/api_$$t || fail=1; done; [ $$fail -eq 0 ]
 
-check: test test-api test-fixtures check-symbols
+check: test test-api test-examples test-fixtures check-symbols
 	@for d in $(SUBS); do echo "== $$d =="; $(MAKE) -s -C $$d BUILD=build test || exit 1; done; echo "ALL HOST CHECKS PASS"
 # recordings of real calls (test/fixtures/fixtures.txt) through the replay tool
 test-fixtures: $(BUILD)/v90m-replay
@@ -209,10 +210,14 @@ test-interop: $(addprefix $(BUILD)/,$(INTEROP))
 	@fail=0; for t in $(INTEROP); do $(abspath $(BUILD))/$$t || fail=1; done; \
 	 if [ $$fail -eq 0 ]; then echo "ALL INTEROP TESTS PASS"; else echo "INTEROP TESTS FAILED"; exit 1; fi
 
-# ---- the example: answer a recorded call through the public API ----
-examples: $(BUILD)/answer_file
-$(BUILD)/answer_file: examples/answer_file.c $(STATIC) include/v90modem.h
+# ---- the examples, through the public API only: answer a recorded call;
+# call the library's own answerer (run by make check) ----
+EXAMPLES := answer_file call_loop
+examples: $(addprefix $(BUILD)/,$(EXAMPLES))
+$(addprefix $(BUILD)/,$(EXAMPLES)): $(BUILD)/%: examples/%.c $(STATIC) include/v90modem.h
 	$(CC) $(CFLAGS) -Iinclude -o $@ $< $(STATIC) $(LDLIBS)
+test-examples: $(BUILD)/call_loop
+	@echo "== examples/call_loop =="; $(abspath $(BUILD))/call_loop
 
 # ---- the replay tool (ships with the library): modem and V.42 only, built
 # from the sources with the trace hooks in ----
