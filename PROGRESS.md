@@ -2077,3 +2077,103 @@ all pass, and the count lines are those of robust 2c's
 comes first now: it runs beside test-arm under -j). Wall time 47 min, on a
 host busy with other runs: the last programs to finish were orig_seeds (33
 min), orig_bell (36) and orig_v92 (41), then the subdirectories.
+
+## answer-fix 1: the V.92 upstream bursts (answering side) (2026-11-19)
+
+robust 2b left open: at the rates CPd picks at the top of a line (34666 to
+37333) the digital modem's PCM upstream receiver had bursts of 30 to 150
+check failures, 2 calls of test_orig_seeds' 54 V.92 calls and 2 of the Te
+sweep's 243. The user allowed the answering side to change for it.
+Harnesses (not in the repository): ~/afix-tmp/h (`er*.c` the
+receiver's input against what our transmitter sent, symbol by symbol;
+`lsq.c` a least-squares fit of the error on v(n); `ex.c` / `ups.c` one call,
+the upstream failures after 11 s; `ts.c` / `sweep92.sh` the Te sweep), and
+an instrumented copy of the tree (~/afix-tmp/inst: our
+transmitter's symbols recorded, the baseline rule switchable).
+
+### Test first
+
+`test/test_orig_seeds.c`: the exception for upstream bursts (under 200
+failures in 10 s passed as "open") is gone; every call must be clean both
+ways. On robust 2c: 3 checks, 1 failure (V.92 2 of 54 bad: robbed bit seed
+105, 45 upstream failures at 37333; 6 dB pad + robbed bit seed 102, 147 at
+37333).
+
+### What was wrong
+
+- **Not the clock.** The ~4.5 s period of the robbed bit seed 105 call is
+  near the 4.17 s in which a 30 ppm line slips one sample, and its three
+  bursts (17.54, 22.01, 25.89 s) did fall within 0.05 of a sample of the
+  slip. But on pad6rb seed 102 (also +30 ppm) the five bursts sit at 0.46,
+  0.79, 0.76, 0.33, 0.28 of it, and over 14 s of data the receiver's
+  error, its symbol error rate and its large errors are flat against the
+  clocks' phase (20 bins). Holding our transmit step at the exact clock
+  ratio changes nothing (SER 2.0e-3 -> 2.3e-3). A coincidence of three.
+- **The raw error.** Our transmitter's symbols against the receiver's
+  slicer: 2.0e-3 symbol errors before the trellis (one every 60 ms), all
+  one point off; error RMS 9.7 at the small points (Gaussian, kurtosis
+  2.9) where the design assumed 7.6 (kappa 7 at 53 units' spacing). Of the
+  excess, a linear fit on v(n) over +-240 symbols takes 9.7 -> 6.6: the
+  residual interference of a channel estimate that is not quite the
+  channel, mostly at lags 90 .. 130 from the symbol. The trellis
+  carries that: what turned errors into bursts was the baseline.
+- **The baseline follower** (v92_p34d, reading 63: an eighth of each
+  decision's error, for the wander a real U.S. Robotics 5686 showed). Each
+  burst began where the baseline had moved: at 17.52 s an error of 127 at
+  the point 4220 (+-128 units off there in about half the cases: the
+  codec's step, nothing to do with the baseline) moved it by 16 units at
+  once, a third of the smallest spacing (53); at 21.99 and 25.88 s errors
+  near the decision boundary moved it by 30 to 40 units over a few ms;
+  with the baseline that far off, decisions at the small points went wrong
+  in runs (each wrong decision moves it further the wrong way), and the
+  trellis gave up. With the
+  follower off the same calls have 3.6 times fewer symbol errors (2.25e-3
+  -> 6.2e-4) and no failures, but the follower is needed for the wander
+  (test_v92call's 25d: 25 Hz, 100 units: 47981 bad bits without it).
+
+Variants tried (two burst calls over 40 s, and test_v92call 25d): clipping
+the error at 16 / 32 / 64 units (73 .. 197 failures left); ignoring points
+beyond 1000 (0 failures on the burst calls, 38328 bad bits on the wander);
+weighting by noise / (noise + q) (the wander fails: the large points no
+longer follow it); scaling by 2 noise / q only where q > 2 noise (95
+failures left on seed 102 at 40 s); that and the taper below (0, 0, and the
+wander clean). Only the combination held all three.
+
+### The fix (v92/v92_p34d.c, `base_step()`)
+
+The baseline's step for a decision is still an eighth of its error, less
+where the error says little about the baseline:
+- where the codec's quantising variance q at the decided point is more than
+  twice the line's noise (TRN1d's), scaled by 2 noise / q;
+- where the error is beyond a quarter of the spacing on its side (the
+  decision may be wrong), falling linearly to nothing at half the spacing.
+With a linear codec (`rx_linear`) the step is the plain eighth, as before:
+no quantiser there, and on v90d's 106 real recordings (all of them linear
+where V.92 data mode is reached) the taper changed the modulus decoder's
+flagged frames both ways (8 recording x configuration pairs one more, 15
+one fewer; no decoded bit changed) and raised the receiver's error by 0.03
+dB: not taken where it was not shown to help. Cost: two binary searches a
+symbol (the point's index, the codec step), with a G.711 codec only.
+
+The rate choice was left alone: the design's noise model is 2 dB short of
+what the residual interference makes at the top rates, but with the
+follower fixed no call of the suites has an upstream error, and a margin
+would lower the rate of every V.92 call, real ones included.
+
+### After
+
+| | robust 2c | answer-fix 1 |
+|---|---|---|
+| test_orig_seeds, V.92 | 3 checks, 1 failure: 2 of 54 calls bad (45, 147 upstream failures) | 3 checks, 0 failures: 0 of 54 |
+| V.92 Te sweep, 9 lines x 27 Te (1000 .. 1130 ms) | 2 of 243 bad (6 dB pad seed 25, pad6rb seed 27) | 0 of 243; every rate, down and up, the same |
+| the two burst calls, 40 s (failures after 11 s) | 403, 334 | 0, 0 |
+| test_v92call | 1054, 0 | 1054, 0; case 19 (the caller's Tone A: what the decoder made of it after the caller left data mode) 1039 -> 1007 "bad" bits; 25d still clean |
+| test_answer_v92 | 231, 0 | 231, 0; the decoder's SNR 0.1 to 0.3 dB higher on each line |
+| test_answer_lin, test_v92real, test_p2_v92 | | identical output |
+| v90d's replay, 106 recordings x 8 configs | | MANIFEST IDENTICAL, 1613 of 1613 |
+| v92 subdirectory (host and armv5) | | all pass, the same count lines |
+| armv5 (qemu, TEST_SHORT), orig_seeds, v92call, answer_v92, v92real, p2_v92 | | all pass; output equal to the host's; v92call and answer_v92 changed as on the host, v92real and p2_v92 identical to before |
+
+The replay and the Te sweep were run on a copy of this tree
+(~/afix-tmp/dev, the same v92_p34d.c) built with the fixes of
+answer-fix 2 and 3 as well; neither touches the data mode receiver.

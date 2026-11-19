@@ -3,18 +3,14 @@
  * interval), V.90 and V.92, 10 s of data each way per call.
  *
  * Checked on every call: data mode reached on both sides and kept, at least
- * 28000 bit/s down (and 24000 up with V.92), the downstream without one
- * failure of the self-synchronising check, and the upstream likewise, with
- * one exception left open: on V.92 the digital modem's PCM upstream receiver
- * (the answerer's, which does not adapt in data mode) sometimes takes one
- * symbol wrong at the rates CPd picks at the top of the line (34666 to 37333
- * bit/s here): a burst of 30 to 50 check failures, recurring about every
- * 4.5 s on that call, our transmit timing steady through it (traced). Such
- * calls are counted and printed, and must stay bursts (under 200 failures in
- * 10 s). See PROGRESS.md, robust 2b. Before that branch's 2b: V.90 1 of 54 calls bad
- * (the 3 dB pad line, seed 103: the receiver lost), V.92 5 of 54 (four on
- * the 6 dB pad + robbed bit line: the answerer retrained at B1u, or
- * upstream errors after our timing moved).
+ * 28000 bit/s down (and 24000 up with V.92), and both directions without one
+ * failure of the self-synchronising check. Before robust 2b: V.90 1 of 54
+ * calls bad (the 3 dB pad line, seed 103: the receiver lost), V.92 5 of 54
+ * (four on the 6 dB pad + robbed bit line: the answerer retrained at B1u, or
+ * upstream errors after our timing moved). Before answer-fix 1, 2 of the
+ * V.92 calls had bursts of upstream check failures at 37333 bit/s: the
+ * digital modem's baseline follower took the codec's quantising error at the
+ * large points for a baseline (PROGRESS.md, answer-fix 1).
  * Host: 108 calls; TEST_SHORT (32-bit ARM under qemu): seed 100. */
 #include <stdio.h>
 #include <inttypes.h>
@@ -45,7 +41,7 @@ int main(void)
 #else
     enum { NS = 6 };
 #endif
-    int v92, i, s, bad[2] = { 0, 0 }, top_bursts = 0, calls = 0;
+    int v92, i, s, bad[2] = { 0, 0 }, calls = 0;
     for (v92 = 0; v92 <= 1; v92++) {
         printf("%s: 9 lines x %d seeds, 10 s of data each way\n", v92 ? "V.92" : "V.90", NS);
         for (i = 0; i < (int)(sizeof LN / sizeof LN[0]); i++) {
@@ -75,10 +71,7 @@ int main(void)
                      && (!v92 || (l->org.modulation == ORIG_MOD_V92 && up >= 24000))
                      && l->down.got - d0 > (int64_t)down * 9 && l->up.got - u0 > (int64_t)up * 9;
                 calls++;
-                if (ok && fu > 0 && v92 && fu < 200) {
-                    top_bursts++;
-                    printf("    %s seed %u: %" PRId64 " upstream check failures at %d bit/s (a burst, open)\n", LN[i].name, (unsigned)seed, fu, up);
-                } else if (!ok || fu > 0) {
+                if (!ok || fu > 0) {
                     bad[v92]++;
                     printf("    %s seed %u: BAD: data %d, %d / %d bit/s, %" PRId64 " / %" PRId64 " check failures down / up\n",
                            LN[i].name, (unsigned)seed, ok, down, up, fd, fu);
@@ -92,7 +85,6 @@ int main(void)
         printf("  %d of %d calls bad\n", bad[v92], 9 * NS);
         CHECK_EQ_I(bad[v92], 0);
     }
-    printf("V.92 calls with an upstream burst: %d of %d\n", top_bursts, 9 * NS);
     CHECK(calls == 18 * NS);
     T_REPORT("orig_seeds");
 }

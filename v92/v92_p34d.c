@@ -340,6 +340,45 @@ static uint32_t qvar(const v92d_t *p, int32_t a)
     return p->cfg.rx_linear ? 0 : v92_dsn_qvar(p->cfg.alaw, a);
 }
 
+/* The baseline follower's step for one decision (Q4; see the data mode
+ * loop in v92d_tick): an eighth of the error e = y - tent, less where the
+ * error says little about the baseline.
+ *   - The codec's quantising error at the point: at a large point its step
+ *     is far more than the noise (+-128 at 4220 on mu-law), and an eighth
+ *     of it moved the baseline by a third of the smallest spacing at once.
+ *     Where the quantiser's variance q is more than twice the noise of the
+ *     line the step is scaled by 2 noise / q.
+ *   - The decision's reliability: an error beyond a quarter of the spacing
+ *     on its side may be a wrong decision, which moves the baseline away
+ *     from the truth and makes the next wrong decision likelier (bursts of
+ *     upstream errors at the top rates, PROGRESS.md answer-fix 1). Its step
+ *     falls linearly to nothing at half the spacing.
+ * Where the errors are small (the baseline followed, the decisions right)
+ * this is the plain eighth. With a linear codec (cfg.rx_linear) it is the
+ * plain eighth always: no quantiser, and on the real calls recorded so (106,
+ * v90d's HT802) the second rule moved the modulus decoder's flagged frames
+ * both ways (8 recordings x configurations one more, 15 one fewer) and
+ * changed no decoded bit: it is not taken where it was not shown to help. */
+static int32_t base_step(const v92d_t *p, int32_t e, int32_t tent)
+{
+    const v92_map_t *m = p->dec.map;
+    int i, eta, lc;
+    int32_t h, a = e < 0 ? -e : e;
+    uint32_t q, nz = p->noise > 0 ? p->noise : 1;
+    int64_t st = (int64_t)e * 2;
+    if (p->cfg.rx_linear) return (int32_t)st;
+    i = p->dec.i_in == 0 ? V92_DFRAME - 1 : p->dec.i_in - 1;            /* the interval of tent */
+    eta = v92_slice(m, i, tent); lc = v92_lc(m, i);
+    q = qvar(p, tent);
+    if (e > 0) h = eta < lc - 1 ? (v92_point(m, i, eta + 1) - tent) / 2 : INT32_MAX;
+    else h = eta > -lc ? (tent - v92_point(m, i, eta - 1)) / 2 : INT32_MAX;
+    if (q > 2 * (uint64_t)nz) st = st * 2 * nz / q;
+    if (h < 2) h = 2;
+    if (a >= h) return 0;
+    if (a > h / 2) st = st * 2 * (h - a) / h;
+    return (int32_t)st;
+}
+
 static void design_start(v92d_t *p)
 {
     v92_dsn_cfg c;
@@ -520,11 +559,11 @@ uint8_t v92d_tick(v92d_t *p, int16_t rxs)
                  * tens of symbols, the points 245 apart; whole runs of symbols
                  * were then decided one point off). Each decision's error moves
                  * the baseline by an eighth: slow against the symbols, fast
-                 * against the wander. A wrong decision moves it by a sixteenth
-                 * of a spacing at most. */
+                 * against the wander; less where the error is the codec's
+                 * quantiser or may be a wrong decision (base_step). */
                 int32_t y = (int32_t)v92_trn_sample(&p->trn, p->data_k++) - (p->base_q4 >> 4), tent;
                 v92_dec_put(&p->dec, y, &tent);
-                p->base_q4 += (y - tent) * 2;
+                p->base_q4 += base_step(p, y - tent, tent);
                 if (p->base_q4 > BASE_MAX_Q4) p->base_q4 = BASE_MAX_Q4;
                 if (p->base_q4 < -BASE_MAX_Q4) p->base_q4 = -BASE_MAX_Q4;
                 if (p->b1_sym >= 0) b1u_lead(p, (int16_t)(y > 32767 ? 32767 : y < -32767 ? -32767 : y));
