@@ -2058,3 +2058,22 @@ comments; modem/p2call, orig, v90a, v90arx are the calling side's.
 - The watch's thresholds (3 dB over for 1 s, 12 dB for 250 ms, 6 dB under
   for 5 s) come from the simulator's lines only.
 - V.92 upstream bursts (2b) unchanged.
+
+## answer-fix 0: check-arm runs its programs in parallel (2026-11-19)
+
+Branch `answer-fix`, from `robust` (6d8e259). The user's standing rule:
+verification is to be quick. `make check-arm` (and the subdirectories'
+`test-arm`) ran their qemu programs one after the other; now
+`tools/par-run.sh` runs them `PAR` at a time (default 8), each one's
+output (stdout and stderr) to `$(BUILD)/arm_log/<name>.log`, and prints
+the logs in the order of `TESTS`, each after its `[arm] name` line, as
+before; the exit status says whether any failed. The builds were already
+parallel under `make -j`. Host `make check` is unchanged (its programs
+print straight to the terminal).
+
+Run once on this tree (`make -j16 check-arm`, armv5, qemu-arm-static):
+all pass, and the count lines are those of robust 2c's
+(~/rb-tmp/check-arm-2c.log), by diff (test-api-arm's line
+comes first now: it runs beside test-arm under -j). Wall time 47 min, on a
+host busy with other runs: the last programs to finish were orig_seeds (33
+min), orig_bell (36) and orig_v92 (41), then the subdirectories.

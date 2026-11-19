@@ -2,7 +2,8 @@
 #
 #   make                 static and shared library, pkg-config file (in $(BUILD))
 #   make check           the simulator suite on the host
-#   make check-arm       the same, cross-built (ARM_CC) and run under qemu-arm
+#   make check-arm       the same, cross-built (ARM_CC) and run under qemu-arm,
+#                        PAR (8) programs at a time (tools/par-run.sh)
 #   make check-ubsan     the host suite with undefined behaviour trapped (clang)
 #   make install         into $(DESTDIR)$(PREFIX); make uninstall takes it out
 #   make examples        examples/answer_file
@@ -173,8 +174,8 @@ test: $(addprefix $(BUILD)/,$(TESTS))
 	 if [ $$fail -eq 0 ]; then echo "ALL TESTS PASS"; else echo "TESTS FAILED"; exit 1; fi
 test-arm: $(addprefix $(BUILD)/arm_,$(TESTS))
 	@echo "== running ARM tests under $(QEMU) =="
-	@fail=0; for t in $(TESTS); do echo "[arm] $$t"; $(QEMU) $(abspath $(BUILD))/arm_$$t || fail=1; done; \
-	 if [ $$fail -eq 0 ]; then echo "ALL ARM TESTS PASS"; else echo "ARM TESTS FAILED"; exit 1; fi
+	@if tools/par-run.sh $(abspath $(BUILD))/arm_log "$(QEMU)" "[arm]" $(addprefix $(abspath $(BUILD))/arm_,$(TESTS)); \
+	 then echo "ALL ARM TESTS PASS"; else echo "ARM TESTS FAILED"; exit 1; fi
 test-api: $(addprefix $(BUILD)/api_,$(API_TESTS))
 	@fail=0; for t in $(API_TESTS); do $(abspath $(BUILD))/api_$$t || fail=1; done; [ $$fail -eq 0 ]
 test-api-arm: $(addprefix $(BUILD)/arm/api_,$(API_TESTS))

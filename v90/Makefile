@@ -38,8 +38,8 @@ $(BUILD)/arm_test_%: test/test_%.c $(LIB_SRC) $(LIB_HDR) $(SUP_SRC) $(SUP_HDR) |
 
 test-arm: $(addprefix $(BUILD)/arm_,$(TESTS))
 	@echo "== running ARM tests under $(QEMU) =="
-	@fail=0; for t in $(TESTS); do echo "[arm] $$t"; $(QEMU) $(abspath $(BUILD))/arm_$$t || fail=1; done; \
-	 if [ $$fail -eq 0 ]; then echo "ALL ARM TESTS PASS"; else echo "ARM TESTS FAILED"; exit 1; fi
+	@if $(CURDIR)/../tools/par-run.sh $(abspath $(BUILD))/arm_log "$(QEMU)" "[arm]" $(addprefix $(abspath $(BUILD))/arm_,$(TESTS)); \
+	 then echo "ALL ARM TESTS PASS"; else echo "ARM TESTS FAILED"; exit 1; fi
 
 clean:
 	rm -rf $(BUILD)
