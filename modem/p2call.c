@@ -568,9 +568,15 @@ void p2call_init_v90(p2call_t *p, const p2call_cfg *cfg)
 void p2call_init_v90_retrain(p2call_t *p, const p2call_cfg *cfg, const info0_t *info0d)
 {
     /* 9.5.2 (V.92 9.7.2): after the 70 ms of silence, Tone A; no INFO0
-     * exchange (the digital modem's p2d_init_retrain sends none either), so
-     * the first Phase 2's INFO0d holds. Then 9.2.2.1.3 on: our reversal
-     * once Tone B is heard and Tone A has run 50 ms. */
+     * exchange (the digital modem's p2d_init_retrain sends none either; 9.7
+     * of V.92 asks for "the full Phase 2", which is full against the short
+     * Phase 2 of 9.4, entered at the tones as V.90's 9.5 enters it, and no
+     * real caller of the recordings sent INFO0a in a retrain), so the first
+     * Phase 2's INFO0d holds. Then 9.2.2.1.3 on: our reversal once Tone B
+     * is heard and Tone A has run 50 ms. A digital modem that sends INFO0d
+     * all the same gets our INFO0a (P2L_A_INFO0: an INFO0d without the
+     * acknowledge bit is one that has not heard ours) and its INFO0d is
+     * the one that holds. */
     p2call_init_v90(p, cfg);
     dpsktx_init(&p->tx, DPSK_FC_A, cfg->level, 1);     /* drop the INFO0a queued */
     p->n_info0c = 0;

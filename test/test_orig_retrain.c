@@ -19,6 +19,8 @@
  *     burst of loud noise): a retrain brings it back
  *   the answerer's engine (p34d / v92d) retrains of its own accord, not
  *     through answer_retrain(): V.92 must come back with PCM upstream
+ *   the answerer retrains with INFO0d in its Phase 2 (a digital modem that
+ *     reads 9.7/V.92's "full Phase 2" so): we answer with INFO0a
  * Then the limits: three retrains in a minute are allowed, a fourth refused,
  * and the receiver lost after them clears the call down (ORIG_END_RETRAIN,
  * the answerer told); a retrain that the answerer never answers ends the call
@@ -33,11 +35,11 @@
 
 static vl_t L;
 
-enum { K_ANS_RETRAIN, K_OUR_RETRAIN, K_NOISE, K_LEVEL, K_PAD, K_RENEG, K_ANS_RENEG, K_WIPE, K_BURST, K_ANS_OWN, K_N };
+enum { K_ANS_RETRAIN, K_OUR_RETRAIN, K_NOISE, K_LEVEL, K_PAD, K_RENEG, K_ANS_RENEG, K_WIPE, K_BURST, K_ANS_OWN, K_ANS_INFO0, K_N };
 static const char *const kname[K_N] = {
     "the answerer retrains", "we retrain", "noise +15 dB", "level -10 dB", "a 6 dB pad put in",
     "we renegotiate, ceiling 40000", "the answerer renegotiates", "receiver wiped", "noise burst 300 ms",
-    "the answerer's own retrain"
+    "the answerer's own retrain", "answerer retrains with INFO0d"
 };
 
 typedef struct {
@@ -47,6 +49,7 @@ typedef struct {
     int64_t bd, fd, bu, fu;     /* 5 s after it: bits and check failures */
     int rt_o, rt_a, rn_o;       /* retrains (as we count them, as the answerer does), renegotiations */
     int rt_ours, mod0, mod1;    /* retrains we began; the modulation before and after */
+    int info0a;                 /* K_ANS_INFO0: the answerer's Phase 2 got our INFO0a */
     int down2, fd2, fu2;        /* K_NOISE, K_RENEG: after the second step */
     int32_t back2_ms;
 } res_t;
@@ -146,6 +149,17 @@ static void run(int v92, int kind, uint32_t seed, res_t *o)
         if (v92) CHECK_EQ_I(v92d_retrain(&l->ans.u.v92), 0);
         else CHECK_EQ_I(p34d_retrain(&l->ans.p34), 0);
         break;
+    case K_ANS_INFO0:
+        /* a digital modem whose retrain is the whole of Phase 2 from INFO0d
+         * on (ours sends no INFO0, 9.7.1.1 read as 9.5.1.1/V.90; a server
+         * may read "the full Phase 2" otherwise): its Phase 2 restarted as
+         * at the start of the call, with INFO0d */
+        CHECK_EQ_I(answer_retrain(&l->ans), 0);
+        while (l->ans.phase != ANS_P2 && l->k < t0 + MS(1000)) vl_tick(l);
+        CHECK_EQ_I(l->ans.phase, ANS_P2);
+        p2d_init(&l->ans.p2, &l->ans.p2cfg);
+        if (v92) p2d_offer_v92(&l->ans.p2, l->ans.pcm_up);
+        break;
     case K_BURST: {
         double n0 = l->ch.nrms;
         l->ch.nrms = l->ch.tone_rms * pow(10, -10 / 20.0);   /* -10 dBm0 */
@@ -157,6 +171,7 @@ static void run(int v92, int kind, uint32_t seed, res_t *o)
     }
     o->back_ms = back(l, t0, 30000);
     o->down1 = l->org.rx_bitrate; o->up1 = l->org.bitrate; o->mod1 = l->org.modulation;
+    o->info0a = l->ans.p2.got0a;
     count(l, &o->bd, &o->fd, &o->bu, &o->fu);
     o->ok = still(l);
     if (kind == K_NOISE || kind == K_RENEG) {
@@ -200,6 +215,12 @@ static void cases(int v92)
         CHECK_EQ_I(o.fu, 0);
         CHECK_EQ_I(o.mod1, o.mod0);                     /* V.92 stays V.92 */
         switch (k) {
+        case K_ANS_INFO0:
+            /* the answerer heard our INFO0a in the retrain's Phase 2 */
+            CHECK_EQ_I(o.info0a, 1);
+            CHECK_EQ_I(o.rt_o, 1); CHECK_EQ_I(o.rt_a, 1); CHECK_EQ_I(o.rt_ours, 0);
+            CHECK(o.back_ms < 12000);
+            break;
         case K_ANS_RETRAIN: case K_OUR_RETRAIN: case K_ANS_OWN:
             CHECK_EQ_I(o.rt_o, 1); CHECK_EQ_I(o.rt_a, 1);
             CHECK_EQ_I(o.rt_ours, k == K_OUR_RETRAIN);

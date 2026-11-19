@@ -148,7 +148,8 @@ void    p2call_init_v90(p2call_t *p, const p2call_cfg *cfg);
  * silence: Tone A at once, no INFO0 exchange (info0d: the digital modem's
  * from the first Phase 2), our reversal once Tone B has been heard and Tone
  * A has run 50 ms. With cfg.v92 and V.92 in info0d, INFO1d / INFO1a of
- * V.92 as in the first Phase 2. */
+ * V.92 as in the first Phase 2. A digital modem that sends INFO0d in its
+ * retrain all the same is answered with INFO0a, and its new INFO0d holds. */
 void    p2call_init_v90_retrain(p2call_t *p, const p2call_cfg *cfg, const info0_t *info0d);
 
 /* The INFO1c decision (Table 15) from snr[], rx_level[], sdr_db10 and the

@@ -2222,3 +2222,67 @@ before. armv5 (qemu, TEST_SHORT: V.90's cases): orig_retrain, answer_v92,
 answer pass. v90d's replay: MANIFEST IDENTICAL, 1613 of 1613 (no
 recorded call has a retrain of v92d's own from data mode; the retrains in
 them are the callers' Tone A, or a start-up that failed).
+
+## answer-fix 3: INFO0 in a retrain's Phase 2 (2026-11-19)
+
+robust 2c's open point: 9.7/V.92 says the modems "proceed in accordance
+with the full Phase 2 start-up procedure" in a retrain, and our answerer
+(p2d_init_retrain) sends no INFO0d then, so our caller sends no INFO0a.
+
+### The text
+
+V.92 (11/2000), 9.7.1.1 (the digital modem begins): silence 70 ms, Tone B,
+detect Tone A, then "condition its receiver to detect a Tone A phase
+reversal and proceed in accordance with the full Phase 2 start-up
+procedure"; 9.7.1.2, 9.7.2.1, 9.7.2.2 the same, from the tones. "Full Phase
+2" is 9.3's title ("Full Phase 2 - Probing/ranging"), against 9.4's "Short
+Phase 2 - Ranging": the retrain is a Phase 2 with probing, not the short
+one, and it is entered at the tones and their reversals, as V.90's 9.5
+enters it at 9.2.1.1.3 (after INFO0). Nothing in 9.7 sends INFO0.
+
+### The recordings
+
+`v90m-fields -9` over all 106 recordings of live-050 (every CRC-clean INFO
+frame the caller sent, every reversal of its tone): 35 of them have a
+second Phase 2 (two INFO1a: a retrain), from U.S. Robotics 5686s (usr*,
+pd_*, pw_*, f*), the 1998 U.S. Robotics (x2b), Conexant (cxfail, exp_*),
+and others (p*a, v92a..e, fin_48000). In none did the caller send INFO0a
+in the retrain: each answered our INFO0-less Tone B with Tone A and its
+reversals (e.g. usr7: retrain at 16.53 s, Tone A reversals at 16.68 and
+17.44 s, INFO1a at 18.20 s; exp_1 waited 2.8 s, then the same). Real
+callers do what our answerer expects. What real digital modems send cannot
+be seen in these recordings (every one is of our answerer).
+
+So the answerer is not wrong and is not changed. The caller must take
+either form, for a server that sends INFO0d all the same.
+
+### Test (a check, not a fix)
+
+`test/test_orig_retrain.c`: a case "answerer retrains with INFO0d": after
+answer_retrain() the answerer's Phase 2 is restarted as at the start of the
+call (p2d_init with INFO0d, V.92 offered as before). Our caller's
+P2L_A_INFO0 takes an INFO0d without the acknowledge bit for one that has not
+heard ours and answers with INFO0a, and the new INFO0d holds. Checked: the
+answerer got INFO0a, data again, 5 s clean both ways, V.92 still V.92. It
+passes as the caller was (V.90 7.9 s, 52000 -> 46666; V.92 9.7 s, 48000 /
+34666 -> 52000 / 34666; on robust 2c's caller the same): only the comments
+of p2call say so now. test_orig_retrain: 276 checks, 0 failures; armv5
+(qemu, TEST_SHORT, V.90's cases with this one): passes. test_p2call,
+test_p2v90, test_p2v92a: pass, unchanged.
+
+### Open (answer-fix)
+
+- The V.92 design's noise model is about 2 dB short at the top upstream
+  rates on the simulator's lines (error RMS 9.7 at the small points, 7.6
+  assumed): residual interference of the channel estimate, at lags 90 ..
+  130. The trellis carries it now that the baseline no longer turns single
+  errors into runs; a margin would lower every V.92 call's rate. Measured
+  on the simulator only.
+- base_step()'s taper is not used with a linear codec: on v90d's real
+  (linear) recordings it changed nothing that was decoded and moved flagged
+  frames both ways. Bursts like the simulator's have not been seen there.
+- What a real digital modem sends in a retrain's Phase 2 is unknown (every
+  recording is of our answerer); our caller takes either form, tried only
+  against our own answerer made to send INFO0d.
+- v92d's own retrain for an upstream that does not hold 24000 still drops
+  PCM upstream for the rest of the call (up_floor), by design.
