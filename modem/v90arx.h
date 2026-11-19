@@ -51,8 +51,8 @@
  * 2 kHz).
  *
  * Nothing here is specified by the Recommendation; it only fixes the
- * signals. Integer only, no allocation, no static state. The computation of
- * the equaliser uses about 11 kbytes of stack.
+ * signals. Integer only, no allocation, no static state. The equaliser's
+ * computation runs a step a symbol (v90arx_dsn_t) and takes little stack.
  */
 #ifndef V90D_MODEM_V90ARX_H
 #define V90D_MODEM_V90ARX_H
@@ -71,6 +71,8 @@
 #define V90ARX_RECALC 2048      /* symbols between computations of the equaliser */
 #define V90ARX_YF    4          /* fraction bits of the equaliser output (Table 1 units) */
 #define V90ARX_NTRAIN 2000      /* default: TRN1d symbols taken as known (TRN1d is >= 2040) */
+
+#define V90ARX_NT    (V90ARX_NF * (V90ARX_NF + 1) / 2)    /* the equaliser's R, packed lower triangle */
 
 /* states */
 #define V90ARX_WAIT  0          /* looking for Sd and its reversal */
@@ -122,6 +124,17 @@ typedef struct {
     int32_t e;                  /* y less the level of the decision, the same units */
 } v90arx_dec_t;
 
+/* The equaliser's design under way (v90arx.c, dsn_start): one step a symbol */
+typedef struct {
+    int      step;              /* 0: none under way */
+    int      a, hs, rs, col;    /* cursor in the window, scales, next Cholesky column */
+    int32_t  hh[V90ARX_NCH];    /* the estimate it is designed from, >> hs */
+    int32_t  G[V90ARX_NT];      /* R, then its Cholesky factor in place */
+    int32_t  z[V90ARX_NF], fs[V90ARX_NF], fn[V90ARX_NF];   /* solutions; fn: the forward taps */
+    uint64_t rc[V90ARX_NF];     /* reciprocals of G's diagonal */
+    int64_t  bias; uint64_t rb; /* the solution's gain on the symbol, its reciprocal */
+} v90arx_dsn_t;
+
 typedef struct {
     v90arx_cfg_t cfg;
     int state;
@@ -145,6 +158,7 @@ typedef struct {
     int32_t level;              /* RMS of Sd at the A/D, A/D units */
     /* training reference, channel estimate */
     v90_scr_t scr; int32_t mref; int16_t L;
+    uint64_t l_rcp;             /* floor((2^64 - 1) / L), for divisions by L */
     int16_t ls[6];              /* UINFO's level by interval on TRN1d (L, or what ls_set found) */
     int64_t ls_num[6], ls_den[6];
     int16_t sb[256];            /* symbol levels (Table 1 units) by m & 255: reference or decided */
@@ -177,6 +191,8 @@ typedef struct {
     int edge;                   /* 1: the band edge's image in the design (v90arx_edge) */
     int thold;                  /* 1: the timing loop stands (v90arx_timing_hold) */
     int redo;                   /* 1: compute the equaliser at the next symbol adapted on */
+    v90arx_dsn_t dsn;           /* the equaliser's design under way */
+    int dsn_ran;                /* 1: a step of it ran in the last v90arx_tick() */
     /* the decisions of the last tick */
     v90arx_dec_t out[2]; int nout;
 } v90arx_t;

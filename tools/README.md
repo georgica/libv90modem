@@ -8,6 +8,7 @@
 | `trace.c`, `trace.h` | the replay's report: the trace hooks of the modem (built with `-DP34D_TRACE`) and the lines printed per phase; v90d's server replay prints the same |
 | `rec_v90.c`, `rec_v34.c` | record a simulated call (`make bench-v90`, `make bench-v34`) |
 | `ber_v90.c` | bit error rate of V.90 over the simulated line |
+| `qprof.c` (`make prof-v90c`, `make prof-v92c`, host only) | ARM instructions per tick and per function, from qemu's log of a bench run with a mark before every tick (`rig/bench_v90c -t`) |
 | `capinfo.py`, `spec.py`, `hdlc.py` | a recording's level per 200 ms; its strongest spectral lines; the HDLC frames in a bit dump |
 | `gen_*.py` | generators of the constant tables in `modem/` |
 

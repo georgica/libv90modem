@@ -102,19 +102,49 @@ static int nearest(const int32_t *t1, int64_t x)
     return lo;
 }
 
+/* nearest(t1, (l << 16) / g) for a level l >= 0, without the division
+ * (ARMv5 divides 64-bit numbers in software, a few hundred instructions;
+ * the analysis does it some 25000 times): with x = floor(L / g), L = l 2^16,
+ * g > 0, t1[i] 2^YF <= x is t1[i] 2^YF g <= L, x <= 0 is L < g, and x
+ * nearer t1[lo + 1] than t1[lo] (2 x > (t1[lo] + t1[lo + 1]) 2^YF) is L >=
+ * ((t1[lo] + t1[lo + 1]) 2^(YF - 1) + 1) g. Table 1 ascends, so the largest
+ * i whose level is not above x is found by walking from *hint (the last
+ * answer: the levels of one interval mostly ascend with the Ucode) as well
+ * as by halving. The same Ucode as nearest(). */
+static int nearest_g(const int32_t *t1, int64_t l, int64_t g, int *hint)
+{
+    int64_t L = l * 65536;
+    int i = *hint;
+    if (g <= 0 || g > INT32_MAX) return nearest(t1, (l << 16) / g);    /* (never: g is near 2^16) */
+    if (L < g) return 0;
+    {
+        int32_t g32 = (int32_t)g;
+        while (i < 127 && (int64_t)(t1[i + 1] * (1 << YF)) * g32 <= L) i++;
+        while (i > 0 && (int64_t)(t1[i] * (1 << YF)) * g32 > L) i--;
+        *hint = i;
+        if (i < 127 && (int64_t)((t1[i] + t1[i + 1]) * (1 << (YF - 1)) + 1) * g32 <= L) i++;
+    }
+    return i;
+}
+
 /* sum of the squared distances of the measured levels (Ucodes from `from`)
- * to g times their nearest Table 1 level; g in Q16 */
-static int64_t snap_cost(const v90dil_res_t *r, const int32_t *t1, int64_t g, int from)
+ * to g times their nearest Table 1 level; g in Q16. The terms are not
+ * negative: once the sum reaches `stop` (>= 0) it is returned as it stands,
+ * which is enough for a caller that only asks whether it stays below. */
+static int64_t snap_cost(const v90dil_res_t *r, const int32_t *t1, int64_t g, int from, int64_t stop)
 {
     int64_t c = 0;
     int s, u;
-    for (s = 0; s < 6; s++)
+    for (s = 0; s < 6; s++) {
+        int hint = 0;
         for (u = from; u < 128; u++) {
             int64_t l = r->lv[s][u], d;
             if (l < 0) continue;
-            d = l - (((int64_t)t1[nearest(t1, (l << 16) / g)] * (1 << YF) * g) >> 16);
+            d = l - (((int64_t)t1[nearest_g(t1, l, g, &hint)] * (1 << YF) * g) >> 16);
             c += d * d >> 8;
         }
+        if (stop >= 0 && c >= stop) return c;
+    }
     return c;
 }
 
@@ -144,17 +174,19 @@ void v90dil_analyse(const v90dil_acc_t *a, int alaw, int uinfo, v90dil_res_t *r)
         /* from Ucode 32: A-law's upper segments are exact doublings of each
          * other, and only its lower ones tell g from 2 g; a near tie goes
          * to the smaller pad */
-        c = snap_cost(r, t1, (tu << 16) / tv, 32);
+        c = snap_cost(r, t1, (tu << 16) / tv, 32, best < 0 ? -1 : best - best / 8);
         if (best < 0 || c < best - best / 8) { best = c; bv = v; }
     }
     g = (tu << 16) / (v90_ucode_linear(alaw, (unsigned)bv) > 0 ? v90_ucode_linear(alaw, (unsigned)bv) : 1);
-    for (s = 0; s < 6; s++)
+    for (s = 0; s < 6; s++) {
+        int hint = 0;
         for (u = 64; u < 128; u++) {
             int64_t l = r->lv[s][u], t;
             if (l < 0) continue;
-            t = (int64_t)t1[nearest(t1, (l << 16) / g)] * (1 << YF);
+            t = (int64_t)t1[nearest_g(t1, l, g, &hint)] * (1 << YF);
             num += (l * t) >> 8; den += (t * t) >> 8;
         }
+    }
     if (den > 0) g = (num << 16) / den;
     r->gain_q16 = (int32_t)g;
     r->uinfo_as = bv;
@@ -172,10 +204,11 @@ void v90dil_analyse(const v90dil_acc_t *a, int alaw, int uinfo, v90dil_res_t *r)
         gs[s] = g;
         for (it = 0; it < 2; it++) {
             int64_t ns = 0, ds = 0, gn;
+            int hint = 0;
             for (u = 64; u < 128; u++) {
                 int64_t l = r->lv[s][u], t;
                 if (l < 0) continue;
-                t = (int64_t)t1[nearest(t1, (l << 16) / gs[s])] * (1 << YF);
+                t = (int64_t)t1[nearest_g(t1, l, gs[s], &hint)] * (1 << YF);
                 ns += (l * t) >> 8; ds += (t * t) >> 8;
             }
             if (ds <= 0) break;
@@ -185,19 +218,21 @@ void v90dil_analyse(const v90dil_acc_t *a, int alaw, int uinfo, v90dil_res_t *r)
             gs[s] = gn;
         }
     }
-    for (s = 0; s < 6; s++)
+    for (s = 0; s < 6; s++) {
+        int hint = 0;
         for (u = 0; u < 128; u++) {
             int64_t l = r->lv[s][u], w, st;
             if (l < 0) continue;
             /* the codeword by the interval's gain; its level by the common
              * one (data mode has no such bias) */
-            w = nearest(t1, (l << 16) / gs[s]);
+            w = nearest_g(t1, l, gs[s], &hint);
             /* where the codec's step is under 32 units the measurement's own
              * noise would pick a neighbour as often: the mean stands */
             st = w < 127 ? t1[w + 1] - t1[w] : 1024;
             if (st * g < ((int64_t)32 << 16)) continue;
             r->lv[s][u] = (int32_t)(((int64_t)t1[w] * (1 << YF) * g + 32768) >> 16);
         }
+    }
     /* A robbed bit takes one interval in six away from the others: where the
      * others agree (their median), it stands off by more than a quarter of
      * the Ucode's step at many Ucodes (mu-law; with a pad in front the

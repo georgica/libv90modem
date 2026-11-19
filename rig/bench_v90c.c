@@ -4,12 +4,16 @@
  * mode, its rates, and the bits it received. A recording of a V.92 call
  * ("V92C0001") is replayed with V.92 on as well (PCM upstream).
  *
- *   bench_v90c RECORDING [-w N]
+ *   bench_v90c RECORDING [-w N] [-t] [-n N]
  *
  * -w N also lists the N ticks that took the longest here (host time), for
  * an instruction count of each under qemu (`make cost-v90c`). For counts
  * per second of line run it under qemu on truncated copies of the recording
- * (the header says where data mode begins). */
+ * (the header says where data mode begins).
+ *
+ * -t calls bench_v90c_mark() before every tick and -n N stops after N
+ * samples: tools/qprof turns qemu's log of such a run into the instructions
+ * of every tick and per function (`make prof-v90c`). */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,6 +40,11 @@ static int get(void *u)
 static void put(void *u, int bit) { (void)bit; ((src_t *)u)->got++; }
 
 static orig_t o;
+/* not inlined (called through a volatile pointer): its address marks the trace */
+volatile int64_t bench_v90c_marked;
+void bench_v90c_mark(int64_t k);
+void bench_v90c_mark(int64_t k) { bench_v90c_marked = k; }
+static void (*volatile mark)(int64_t) = bench_v90c_mark;
 
 #define NW 8
 
@@ -46,15 +55,21 @@ int main(int argc, char **argv)
     src_t s;
     uint32_t hash = 2166136261u, t_rec;
     int64_t k = 0, t_data = -1;
-    int nw = argc > 3 && strcmp(argv[2], "-w") == 0 ? atoi(argv[3]) : 0, i;
+    int nw = 0, tm = 0, i;
+    int64_t nmax = -1;
     double t0, t, wt[NW]; int64_t wk[NW];
     FILE *f;
 
-    if (argc < 2) { fprintf(stderr, "usage: bench_v90c RECORDING [-w N]\n"); return 2; }
+    if (argc < 2) { fprintf(stderr, "usage: bench_v90c RECORDING [-w N] [-t] [-n N]\n"); return 2; }
     f = fopen(argv[1], "rb");
     if (!f || fread(hdr, 1, 12, f) != 12 || (memcmp(hdr, "V90C0001", 8) != 0 && memcmp(hdr, "V92C0001", 8) != 0)) {
         fprintf(stderr, "bench_v90c: not a recording of rec_v90c\n");
         return 1;
+    }
+    for (i = 2; i < argc; i++) {
+        if (strcmp(argv[i], "-w") == 0 && i + 1 < argc) nw = atoi(argv[++i]);
+        else if (strcmp(argv[i], "-n") == 0 && i + 1 < argc) nmax = atoll(argv[++i]);
+        else if (strcmp(argv[i], "-t") == 0) tm = 1;
     }
     t_rec = (uint32_t)hdr[8] | (uint32_t)hdr[9] << 8 | (uint32_t)hdr[10] << 16 | (uint32_t)hdr[11] << 24;
     if (nw > NW) nw = NW;
@@ -67,9 +82,10 @@ int main(int argc, char **argv)
     c.getbit = get; c.putbit = put; c.user = &s;
     orig_init(&o, &c);
     t0 = now();
-    while (fread(b, 1, 2, f) == 2) {
+    while ((nmax < 0 || k < nmax) && fread(b, 1, 2, f) == 2) {
         int16_t rx = (int16_t)(uint16_t)(b[0] | (unsigned)b[1] << 8), tx;
         double ta = nw ? now() : 0;
+        if (tm) mark(k);
         tx = orig_tick(&o, rx);
         if (nw) {
             double d = now() - ta;

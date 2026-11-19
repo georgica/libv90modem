@@ -2313,3 +2313,87 @@ portability fix of ports-2 in v92_p34d.c (et_g's update); answer-fix 3
 changes nothing there. Its HT802 records linear (`rx_linear`), so fix 1's
 step is the old eighth on the box unless the codec runs G.711; fix 2 acts
 on any V.92 call v92d retrains of its own accord.
+
+## cpu 1: the calling side's ARM cost, bit-exact part (2026-11-19)
+
+The box's budget (v90d-split HARDWARE.md, PROGRESS.md): DVF9918, ARM926EJ-S
+at 400 MHz, no divide, no FPU. The answering modem's V.90 data mode is 39.5 M
+ARM instructions per second of line under qemu and 32 % of the CPU on the
+box, so the box is about 123 M qemu-counted instructions a second (1 % =
+1.23 M): 15.4 k per sample, 1.23 M per 10 ms block. v90d serves the line in
+blocks of 80 samples (10 ms), driver latency 240 samples (30 ms): what
+matters for a long tick is the block it lands in. The answering modem's own
+heaviest tick (`bench_v90`'s 40 s V.90 call, counted with tools/qprof): 173 k,
+then 158 k, 144 k, 110 k; its V.34 receiver's periodic ticks 87 k.
+
+How it is measured now: `make prof-v90c` / `prof-v92c` (PPM=0 or 100):
+rec_v90c records a call with 4 s of data mode, bench_v90c `-t` replays it
+under qemu (`-d in_asm,exec,nochain`, no single-instruction blocks) calling
+a mark before every tick, tools/qprof turns the log into the instructions of
+every tick and, over seconds 2 to 3 of data mode, per function. Checked
+against `-one-insn-per-tb` on 2000 samples: 640601 against 640775.
+One run of a whole call takes a minute or two (cost-v90c's per-tick runs
+took longer each). The bench's own loop (fread, the hash) is in the counts
+as it was in cost-v90c's, about 1 M a second.
+
+Profile at the start (answer-fix, seconds 2 to 3 of data mode, M ARM
+instructions a second):
+
+| | V.90 0 ppm | V.90 100 ppm | V.92 0 ppm | V.92 100 ppm |
+|---|---|---|---|---|
+| total | 78.8 | 89.4 | 104.1 | 114.0 |
+| v90arx_tick (equaliser 48 + 128 taps, its LMS, interpolator 2 x 64, Sd) | 28.6 | 28.6 | 28.6 | 28.6 |
+| estimate (channel estimate, 128 taps, NLMS, two 64-bit divisions a symbol) | 27.5 | 27.5 | 27.5 | 27.5 |
+| v92_enc_symbol (precoder and prefilter, LZ1 / LP1 / LZ2 / LP2) | | | 19.0 | 19.0 |
+| dfe_design (the equaliser computed again, every 2048 / 512 symbols) and its 64-bit divisions (__udivmoddi4) | 4 | 17 | 7 | 16 |
+| pcmtx_out (the upstream interpolator, 2 x 64 taps a sample) | | | 5.6 | 5.6 |
+| ec_tick (96 taps) | 4.4 | 4.4 | 4.4 | 4.4 |
+
+The heaviest ticks: 9.30 M at the end of the DIL (v90dil_analyse: 41 gain
+candidates x 576 measurements, each a 64-bit division and a binary search);
+0.90 M each time the equaliser is computed (0.55 M of it 64-bit division);
+0.59 to 0.90 M the CP design.
+
+What changed (none of it changes a result; every bench hash and the test
+output of every caller program tried stays as it was):
+- `estimate`: the two loops over the symbol ring in two runs that do not
+  wrap, four taps a pass; the update without a 64-bit product per tap (es =
+  256 q + rr: (es s) >> 8 = q s + ((rr s) >> 8), low 32 bits); the division
+  by L by L's reciprocal (`l_rcp`, set once).
+- `equalise`, `produce`, `ec_tick`, `pcmtx_out`, `v92_enc_symbol` (hdot16 /
+  hdot32): four taps a pass, rings read in two runs instead of an index mask
+  per tap, products accumulated one by one (gcc's SMLAL into one sum).
+- The equaliser's design (dsn_start / dsn_step, run whole by dsn_now here):
+  R built along its diagonals in 32 bits, the Cholesky factor, z and f
+  multiplied 32 by 32 bits (bounded under 2^29 / 2^30; checked, and a value
+  that does not fit is a failed design: none can), every division by
+  G's diagonal and by the bias through a reciprocal (`sdiv_rcp`: the high
+  word of |n| rcp is the quotient or one less), so 50 64-bit divisions
+  instead of 1400. The band edge's image as one value per diagonal.
+- The DIL analysis: `nearest_g` finds nearest(t1, (l << 16) / g) without
+  the division (t1[i] 2^4 <= floor(L / g) is t1[i] 2^4 g <= L, and the same
+  for the rounding), walking from the last answer; checked against nearest()
+  on 4e7 random (l, g) pairs, both laws: no difference. A gain candidate's
+  cost stops being summed once it can no longer win (its terms are not
+  negative).
+- `V90M_MEM_SIZE` 112 -> 120 KiB: `v90arx_t` holds the design's working
+  state (`v90arx_dsn_t`, 6216 octets: R / G packed, the estimate taken,
+  solutions) so that the next commit can spread it over symbols; `orig_t`
+  109920 -> 116160 octets on x86-64 (115880 on ARM); `answer_t` unchanged.
+- `rig/bench_v90c` -t / -n, tools/qprof.c, `make prof-v90c` / `prof-v92c`.
+
+After (same recordings, M a second, % of the box at 123 M):
+
+| | V.90 0 ppm | V.90 100 ppm | V.92 0 ppm | V.92 100 ppm |
+|---|---|---|---|---|
+| data mode, before | 78.8 (64 %) | 89.4 (72 %) | 104.1 (84 %) | 114.0 (92 %) |
+| data mode, after | 54.5 (44 %) | 59.0 (48 %) | 69.5 (56 %) | 73.7 (60 %) |
+| heaviest tick, before | 9.30 M (DIL) | 9.27 M | 9.30 M | 9.30 M |
+| heaviest tick, after | 1.14 M (DIL) | 1.17 M | 1.14 M | 1.15 M |
+| then | 0.62 M (CP design), 0.39 M (equaliser) | 0.90 M, 0.40 M | 0.72 M, 0.40 M | 0.59 M, 0.40 M |
+
+Unchanged: bench-v90c 695b27e5 and bench-v92c 506f2bcc (host and qemu-arm);
+the replays at 0 ppm f3111e17 / ca4ae751; test_v90arx, v90arx_robust,
+v90dil, v90a, pcmtx, v92a, orig_v90, orig_v92 print byte for byte what
+answer-fix's build prints; bench-v90 8e3136e9 x6 (ec.c is the answerer's
+too: the same sums).

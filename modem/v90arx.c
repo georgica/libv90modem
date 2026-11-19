@@ -68,6 +68,7 @@ void v90arx_init(v90arx_t *r, const v90arx_cfg_t *cfg)
     v92_p6_init(&r->sd);
     r->L = (int16_t)v90_ucode_linear(cfg->alaw, (unsigned)cfg->uinfo);
     if (r->L < 1) r->L = 1;             /* mu-law Ucode 0: it divides */
+    r->l_rcp = UINT64_MAX / (uint64_t)r->L;
     for (i = 0; i < 6; i++) r->ls[i] = r->L;
     /* until told otherwise: the two points of UINFO (TRN1d, Jd, Jd') */
     for (i = 0; i < 6; i++) {
@@ -103,16 +104,75 @@ int32_t v90arx_ppm_q8(const v90arx_t *r)
 
 /* ---- training ------------------------------------------------------------ */
 
+/* The estimator's two loops over the symbol ring sb[] (256, indexed by
+ * symbol & 255) taken newest first from m0: in two runs that do not wrap,
+ * four taps a pass (ARMv5: no index arithmetic per tap). The same integer
+ * sums as one loop over (m0 - j) & 255. */
+static int64_t dot_sb(const int32_t *h, const int16_t *sb, int32_t m0)
+{
+    int64_t acc = 0;
+    int i0 = (int)(m0 & 255), j = 0, n1 = i0 + 1 < V90ARX_NCH ? i0 + 1 : V90ARX_NCH;
+    const int16_t *s = sb + i0;
+    for (; j + 4 <= n1; j += 4, s -= 4)
+        { acc += (int64_t)h[j] * s[0]; acc += (int64_t)h[j + 1] * s[-1]; acc += (int64_t)h[j + 2] * s[-2]; acc += (int64_t)h[j + 3] * s[-3]; }
+    for (; j < n1; j++, s--) acc += (int64_t)h[j] * s[0];
+    s = sb + i0 - j + 256;
+    for (; j + 4 <= V90ARX_NCH; j += 4, s -= 4)
+        { acc += (int64_t)h[j] * s[0]; acc += (int64_t)h[j + 1] * s[-1]; acc += (int64_t)h[j + 2] * s[-2]; acc += (int64_t)h[j + 3] * s[-3]; }
+    for (; j < V90ARX_NCH; j++, s--) acc += (int64_t)h[j] * s[0];
+    return acc;
+}
+
+/* h[j] += (int32_t)((es * sb[(m0 - j) & 255]) >> 8), without a 64-bit
+ * product per tap: es = 256 q + rr (q = es >> 8, 0 <= rr < 256), so
+ * (es s) >> 8 = q s + ((rr s) >> 8) exactly, and its low 32 bits are those
+ * of (uint32)q * s plus the small term (wrapping as the 64-bit sum's low
+ * word does). */
+#define UPD1(jj, ss) do { int32_t s_ = (ss); \
+        h[jj] = (int32_t)((uint32_t)h[jj] + q * (uint32_t)s_ + (uint32_t)((rr * s_) >> 8)); } while (0)
+static void upd_sb(int32_t *h, const int16_t *sb, int32_t m0, int64_t es)
+{
+    uint32_t q = (uint32_t)(uint64_t)(es >> 8);
+    int32_t rr = (int32_t)(es & 255);
+    int i0 = (int)(m0 & 255), j = 0, n1 = i0 + 1 < V90ARX_NCH ? i0 + 1 : V90ARX_NCH;
+    const int16_t *s = sb + i0;
+    for (; j + 4 <= n1; j += 4, s -= 4) { UPD1(j, s[0]); UPD1(j + 1, s[-1]); UPD1(j + 2, s[-2]); UPD1(j + 3, s[-3]); }
+    for (; j < n1; j++, s--) UPD1(j, s[0]);
+    s = sb + i0 - j + 256;
+    for (; j + 4 <= V90ARX_NCH; j += 4, s -= 4) { UPD1(j, s[0]); UPD1(j + 1, s[-1]); UPD1(j + 2, s[-2]); UPD1(j + 3, s[-3]); }
+    for (; j < V90ARX_NCH; j++, s--) UPD1(j, s[0]);
+}
+#undef UPD1
+
+/* n / L (truncated, as C divides) by L's reciprocal: L is fixed for the
+ * call (UINFO's level), and ARMv5 divides 64-bit numbers in software, some
+ * 200 to 300 instructions. With R = floor((2^64 - 1) / L) the high word of
+ * |n| R is the quotient or one less (|n| < 2^63); the remainder decides. */
+static uint64_t mulhi64(uint64_t u, uint64_t v)
+{
+    uint32_t u0 = (uint32_t)u, u1 = (uint32_t)(u >> 32), v0 = (uint32_t)v, v1 = (uint32_t)(v >> 32);
+    uint64_t p00 = (uint64_t)u0 * v0, p01 = (uint64_t)u0 * v1, p10 = (uint64_t)u1 * v0, p11 = (uint64_t)u1 * v1;
+    uint64_t mid = (p00 >> 32) + (uint32_t)p01 + (uint32_t)p10;
+    return p11 + (p01 >> 32) + (p10 >> 32) + (mid >> 32);
+}
+static int64_t div_l(const v90arx_t *r, int64_t n)
+{
+    uint64_t u = n < 0 ? (uint64_t)0 - (uint64_t)n : (uint64_t)n, q, d = (uint64_t)r->L;
+    q = mulhi64(u, r->l_rcp);
+    if (u - q * d >= d) q++;
+    return n < 0 ? -(int64_t)q : (int64_t)q;
+}
+
 /* NLMS step of the channel estimate on sample k: q(k) = sum h[j] s(k + LEAD - j) / L,
  * s the symbols' levels in Table 1 units (known, or decided), pd their mean
  * square; mu = 2^-g */
 static void estimate(v90arx_t *r, int32_t k, int64_t pd, int g)
 {
-    int64_t acc = 0, es;
+    int64_t acc, es;
     int32_t e, m0 = k + V90ARX_LEAD;
     int j;
-    for (j = 0; j < V90ARX_NCH; j++) acc += (int64_t)r->h[j] * r->sb[(m0 - j) & 255];
-    e = (int32_t)r->qb[k & 255] - asr64(acc / r->L, 16);
+    acc = dot_sb(r->h, r->sb, m0);
+    e = (int32_t)r->qb[k & 255] - asr64(div_l(r, acc), 16);
     if (e > 8191) e = 8191;
     if (e < -8191) e = -8191;
     /* once converged, an error beyond 4 sigma is an impairment of one symbol
@@ -127,15 +187,14 @@ static void estimate(v90arx_t *r, int32_t k, int64_t pd, int g)
         int s;
         for (j = 0; j < V90ARX_NCH; j++) c[(m0 - j) % 6] += (int64_t)r->h[j] * r->sb[(m0 - j) & 255];
         for (s = 0; s < 6; s++) {
-            int32_t u = asr64(c[s] / r->L, 16);
+            int32_t u = asr64(div_l(r, c[s]), 16);
             r->ls_num[s] += (int64_t)e * u; r->ls_den[s] += (int64_t)u * u;
         }
     }
     if (pd < ((int64_t)r->L * r->L >> 6)) pd = (int64_t)r->L * r->L >> 6;
     if (pd < 1) pd = 1;
     es = (int64_t)e * r->L * ((int64_t)1 << 24) / ((int64_t)V90ARX_NCH * pd) >> g;
-    for (j = 0; j < V90ARX_NCH; j++)
-        r->h[j] += (int32_t)((es * r->sb[(m0 - j) & 255]) >> 8);
+    upd_sb(r->h, r->sb, m0, es);
     r->res += (((int64_t)e * e) - r->res) / 64;
     r->nest++;
 }
@@ -225,7 +284,8 @@ static int find_cursor(v90arx_t *r)
  * solved by Cholesky in fixed point: R scaled to (2^26, 2^28], its factor
  * G in Q14, z in Q30, f in Q32 (see below). s2 is the estimator's residual,
  * but not less than 2^-18 of the largest diagonal (it bounds the condition).
- * About 18000 64-bit multiplies and 1200 divisions. */
+ * About 18000 multiplies (32 by 32 bits while the factor fits, as it does)
+ * and 50 divisions (the rest by reciprocals). */
 #define NT ((V90ARX_NF * (V90ARX_NF + 1)) / 2)
 #define TRI(i, j) ((i) * ((i) + 1) / 2 + (j))
 
@@ -243,11 +303,12 @@ static int find_cursor(v90arx_t *r)
  * power the channel estimate has there (the image is weaker than the band
  * it mirrors: G.712's codec filters fall from 14 dB at 4 kHz to 32 dB at
  * 4.6 kHz), each over its 46.875 Hz, added to R as
- *   R_ij += sum_k w P_k cos(2 pi f_k (i - j)),  w = 2 46.875 / 8000 / 4.
- * hh and R in the units of dfe_design. */
-static void edge_image(const int32_t *hh, int64_t *A)
+ *   R_ij += sum_k w P_k cos(2 pi f_k (i - j)),  w = 2 46.875 / 8000 / 4,
+ * the same on each diagonal of R: v[i - j]. hh and R in the units of the
+ * design (dsn_start). */
+static void edge_image(const int32_t *hh, int64_t *v)
 {
-    int k, j, i, d;
+    int k, j, d;
     int64_t P[4];
     for (k = 0; k < 4; k++) {
         int64_t xr = 0, xi = 0;
@@ -260,111 +321,217 @@ static void edge_image(const int32_t *hh, int64_t *A)
         xr /= 32768; xi /= 32768;               /* |X| <= 2^27 */
         P[k] = (xr * xr + xi * xi) * 3 / 1024;  /* w = 3 / 1024 */
     }
+    /* the same on every entry of diagonal d of R (i - j = d) */
     for (d = 0; d < V90ARX_NF; d++) {
-        int64_t v = 0;
-        for (k = 0; k < 4; k++) v += (P[k] / 32768) * sintab[((490 + 6 * k) * d + SIN_N / 4) & SIN_MASK];
-        for (i = d; i < V90ARX_NF; i++) A[TRI(i, i - d)] += v;
+        v[d] = 0;
+        for (k = 0; k < 4; k++) v[d] += (P[k] / 32768) * sintab[((490 + 6 * k) * d + SIN_N / 4) & SIN_MASK];
     }
 }
-static int dfe_design(v90arx_t *r)
-{
-    int64_t A[NT], z[V90ARX_NF], fs[V90ARX_NF], mx = 0, dmax = 0, s2, bias = 0, t;
-    int32_t hh[V90ARX_NCH];
-    int a = V90ARX_DFF + r->cpk, i, j, k, hs = 0, rs, e1;
 
+/* n / d as C divides (truncated), d > 0, by d's reciprocal rcp = floor((2^64
+ * - 1) / d): ARMv5 divides 64-bit numbers in software (some 200 to 300
+ * instructions); this is a few multiplies. The high word of |n| rcp is the
+ * quotient or one less; the remainder decides. */
+static int64_t sdiv_rcp(int64_t n, uint64_t d, uint64_t rcp)
+{
+    uint64_t u = n < 0 ? (uint64_t)0 - (uint64_t)n : (uint64_t)n, q = mulhi64(u, rcp);
+    if (u - q * d >= d) q++;
+    return n < 0 ? -(int64_t)q : (int64_t)q;
+}
+
+static int fits32(int64_t v) { return v >= INT32_MIN && v <= INT32_MAX; }
+
+/* sum of a[k] b[k], k < n, four a pass */
+static int64_t dot32(const int32_t *a, const int32_t *b, int n)
+{
+    int64_t q = 0;
+    int k = 0;
+    for (; k + 4 <= n; k += 4) {
+        q += (int64_t)a[k] * b[k]; q += (int64_t)a[k + 1] * b[k + 1];
+        q += (int64_t)a[k + 2] * b[k + 2]; q += (int64_t)a[k + 3] * b[k + 3];
+    }
+    for (; k < n; k++) q += (int64_t)a[k] * b[k];
+    return q;
+}
+
+/* The design in steps (dsn_start, dsn_step; dsn_now runs them all):
+ *
+ *   start   the estimate taken (hh); R built along its diagonals from its
+ *           first column (R(i+1, j+1) = R(i, j) - h[a-i] h[a-j]), the band
+ *           edge, the load s2, scaled, into G (32 bits: the largest
+ *           diagonal is under 2^28, and |R_ij| under it)
+ *   chol    Cholesky in place, columns by the step's budget: G in Q14
+ *           (|G_ij| <= sqrt(2^28 R_ii) <= 2^28)
+ *   solve   z, f, the bias, the forward taps
+ *   fb      the feedback taps; both sets go in
+ *
+ * A value that does not fit 32 bits (none can, by the bounds above) ends
+ * the job as a failed design. */
+#define DSN_IDLE  0
+#define DSN_CHOL  1
+#define DSN_SOLVE 2
+#define DSN_FB    3
+#define DSN_BUDGET 9000                         /* Cholesky: multiplies (and 12 a division) per step */
+
+static int32_t hh_at(const v90arx_dsn_t *q, int u) { return u >= 0 && u < V90ARX_NCH ? q->hh[u] : 0; }
+
+/* the job's first step: 0, or -1 (no design) */
+static int dsn_start(v90arx_t *r)
+{
+    v90arx_dsn_t *q = &r->dsn;
+    int64_t c0[V90ARX_NF], dg[V90ARX_NF], ev[V90ARX_NF], mx = 0, dmax = 0, s2;
+    int a = V90ARX_DFF + r->cpk, i, j, d, hs = 0, rs;
+    const int32_t *hh = q->hh;
+
+    q->step = DSN_IDLE;
     for (j = 0; j < V90ARX_NCH; j++) { int64_t v = r->h[j] < 0 ? -(int64_t)r->h[j] : r->h[j]; if (v > mx) mx = v; }
     while ((mx >> hs) >= (1 << 20)) hs++;
     /* rounded, not truncated: the channel has a null at DC, and the many
      * small taps of its tail, each a half step low, add up to a false DC
      * response the solution is very sensitive to (seen at 6 km) */
-    for (j = 0; j < V90ARX_NCH; j++) hh[j] = hs ? (int32_t)(((int64_t)r->h[j] + (1 << (hs - 1))) >> hs) : r->h[j];
-#define HH(u) ((u) >= 0 && (u) < V90ARX_NCH ? (int64_t)hh[u] : 0)
-    /* first column, then R(i+1, j+1) = R(i, j) - h[a-i] h[a-j] */
+    for (j = 0; j < V90ARX_NCH; j++) q->hh[j] = hs ? (int32_t)(((int64_t)r->h[j] + (1 << (hs - 1))) >> hs) : r->h[j];
+    /* first column */
     for (i = 0; i < V90ARX_NF; i++) {
         int64_t acc = 0;
         int u;
-        for (u = 0; u <= a - i && u + i < V90ARX_NCH; u++) acc += HH(u) * HH(u + i);
-        A[TRI(i, 0)] = acc;
+        for (u = 0; u <= a - i && u + i < V90ARX_NCH; u++) acc += (int64_t)hh[u] * hh[u + i];
+        c0[i] = acc;
     }
-    for (j = 0; j + 1 < V90ARX_NF; j++)
-        for (i = j; i + 1 < V90ARX_NF; i++)
-            A[TRI(i + 1, j + 1)] = A[TRI(i, j)] - HH(a - i) * HH(a - j);
+    /* the diagonal: R(i, i) = R(0, 0) - sum_{k < i} h[a-k]^2 */
+    dg[0] = c0[0];
+    for (i = 1; i < V90ARX_NF; i++) { int32_t x = hh_at(q, a - (i - 1)); dg[i] = dg[i - 1] - (int64_t)x * x; }
     /* the residual, in hh^2: h is Q16, hh = h >> hs (up to 2^20, so that
      * the small taps keep their precision: R up to 2^47) */
     s2 = r->res;
     s2 = 16 - hs >= 0 ? s2 << (2 * (16 - hs)) : s2 >> (2 * (hs - 16));
-    for (i = 0; i < V90ARX_NF; i++) if (A[TRI(i, i)] > dmax) dmax = A[TRI(i, i)];
-    if (r->edge) edge_image(hh, A);
+    for (i = 0; i < V90ARX_NF; i++) if (dg[i] > dmax) dmax = dg[i];
+    if (r->edge) edge_image(hh, ev); else for (d = 0; d < V90ARX_NF; d++) ev[d] = 0;
     if (s2 < (dmax >> 18)) s2 = dmax >> 18;
     if (s2 < 1) s2 = 1;
-    for (i = 0; i < V90ARX_NF; i++) A[TRI(i, i)] += s2;
     dmax += s2;
     /* scale: the largest diagonal to (2^26, 2^28], by an even shift */
     rs = 0;
     while ((dmax >> rs) > ((int64_t)1 << 28)) rs += 2;
     while (rs > -28 && (rs >= 0 ? dmax >> rs : dmax << -rs) <= ((int64_t)1 << 26)) rs -= 2;
-    for (i = 0; i < NT; i++) A[i] = rs > 0 ? (A[i] + ((int64_t)1 << (rs - 1))) >> rs : A[i] * ((int64_t)1 << -rs);
-    /* Cholesky, in place: G in Q14 */
-    for (j = 0; j < V90ARX_NF; j++) {
-        int64_t d = A[TRI(j, j)] * ((int64_t)1 << 28);
-        for (k = 0; k < j; k++) d -= A[TRI(j, k)] * A[TRI(j, k)];
-        if (d <= 0) return -1;
-        A[TRI(j, j)] = isqrt64(d);
-        for (i = j + 1; i < V90ARX_NF; i++) {
-            t = A[TRI(i, j)] * ((int64_t)1 << 28);
-            for (k = 0; k < j; k++) t -= A[TRI(i, k)] * A[TRI(j, k)];
-            A[TRI(i, j)] = t / A[TRI(j, j)];
+    /* R along each diagonal d, from R(d, 0), plus the band edge, the load
+     * on the main one, scaled */
+    for (d = 0; d < V90ARX_NF; d++) {
+        int64_t v = c0[d];
+        for (j = 0; j + d < V90ARX_NF; j++) {
+            int64_t e;
+            if (j > 0) v -= (int64_t)hh_at(q, a - (j - 1 + d)) * hh_at(q, a - (j - 1));
+            e = v + ev[d] + (d == 0 ? s2 : 0);
+            e = rs > 0 ? (e + ((int64_t)1 << (rs - 1))) >> rs : e * ((int64_t)1 << -rs);
+            if (!fits32(e)) return -1;
+            q->G[TRI(j + d, j)] = (int32_t)e;
         }
     }
-    /* G z = p, G' f = z; p in hh >> rs/2, with 8 more fraction bits (the
-     * window's oldest positions see nothing of the current symbol but the
-     * precursor taps, which are tiny, and their p, divided by the load
-     * alone, would be all rounding). z'z = f'p, the MMSE gain, is at
-     * most 1, so z in Q30 cannot overflow. |f| <= |z| / sqrt(least
-     * eigenvalue) <= 2^-4 (the load is at least 2^8) and a column of G is
-     * at most sqrt(trace) <= 2^16.8, so with f in Q32 a product in the back
-     * substitution stays under 2^59 */
-    for (i = 0; i < V90ARX_NF; i++) {
-        int64_t p = HH(a - i);
-        p = rs > 16 ? (p + (1 << (rs / 2 - 9))) >> (rs / 2 - 8) : p * ((int64_t)1 << (8 - rs / 2));
-        t = p * ((int64_t)1 << 36);
-        for (k = 0; k < i; k++) t -= A[TRI(i, k)] * z[k];
-        z[i] = t / A[TRI(i, i)];
-    }
-    for (i = V90ARX_NF - 1; i >= 0; i--) {
-        t = z[i] * 65536;
-        for (k = i + 1; k < V90ARX_NF; k++) t -= A[TRI(k, i)] * fs[k];
-        fs[i] = t / A[TRI(i, i)];
-    }
-    /* f p, the gain the MMSE solution leaves on the symbol (just under 1),
-     * Q32: divided out, so the output is unbiased */
-    for (i = 0; i < V90ARX_NF; i++) {
-        int64_t p = HH(a - i);
-        p = rs > 16 ? (p + (1 << (rs / 2 - 9))) >> (rs / 2 - 8) : p * ((int64_t)1 << (8 - rs / 2));
-        bias += (fs[i] * p) >> 8;
-    }
-    bias >>= 12;                                         /* Q20 */
-    if (bias <= 0) return -1;
-    /* f_true = fs 2^e1, e1 = 16 - hs - rs/2: taps Q20 for an output of L in Q YF */
-    e1 = 16 - hs - rs / 2;
-    for (i = 0; i < V90ARX_NF; i++) {
-        int64_t v = fs[i] * r->L / bias;                 /* fs L / bias, Q12 */
-        int sh = e1 + 20 + V90ARX_YF - 12;
-        v = sh >= 0 ? v * ((int64_t)1 << sh) : v >> -sh;
-        if (v > 0x7fffffff) v = 0x7fffffff;
-        if (v < -0x7fffffff) v = -0x7fffffff;
-        r->f[i] = (int32_t)v;
-    }
-    /* b_j = sum f_true h_true / bias = sum fs hh 2^(-rs/2) / bias, Q16 */
-    for (j = 0; j < V90ARX_NB; j++) {
-        int64_t acc = 0;
-        for (i = 0; i < V90ARX_NF; i++) acc += fs[i] * HH(a - i + 1 + j);
-        acc = rs > 0 ? (acc + (1 << (rs / 2 - 1))) >> (rs / 2) : acc * ((int64_t)1 << (-rs / 2));
-        acc = acc * 16 / bias;                           /* Q32 / Q20 -> Q16 */
-        r->b[j] = (int32_t)(acc > 0x7fffffff ? 0x7fffffff : acc < -0x7fffffff ? -0x7fffffff : acc);
-    }
-#undef HH
+    q->a = a; q->hs = hs; q->rs = rs; q->col = 0;
+    q->step = DSN_CHOL;
     return 0;
+}
+
+/* the next step: 0 more to come, 1 done (the taps are in), -1 failed */
+static int dsn_step(v90arx_t *r)
+{
+    v90arx_dsn_t *q = &r->dsn;
+    int i, j, k, a = q->a;
+    if (q->step == DSN_CHOL) {
+        int32_t *G = q->G;
+        int32_t budget = DSN_BUDGET;
+        for (j = q->col; j < V90ARX_NF && budget > 0; j++) {
+            int64_t d = (int64_t)G[TRI(j, j)] * ((int64_t)1 << 28) - dot32(&G[TRI(j, 0)], &G[TRI(j, 0)], j), g;
+            if (d <= 0) { q->step = DSN_IDLE; return -1; }
+            g = isqrt64(d);                          /* d < 2^57: g < 2^29 */
+            G[TRI(j, j)] = (int32_t)g;
+            q->rc[j] = UINT64_MAX / (uint64_t)g;
+            for (i = j + 1; i < V90ARX_NF; i++) {
+                int64_t t = (int64_t)G[TRI(i, j)] * ((int64_t)1 << 28) - dot32(&G[TRI(i, 0)], &G[TRI(j, 0)], j);
+                t = sdiv_rcp(t, (uint64_t)g, q->rc[j]);
+                if (!fits32(t)) { q->step = DSN_IDLE; return -1; }
+                G[TRI(i, j)] = (int32_t)t;
+            }
+            budget -= (V90ARX_NF - j) * (j + 12);
+        }
+        q->col = j;
+        if (j == V90ARX_NF) q->step = DSN_SOLVE;
+        return 0;
+    }
+    if (q->step == DSN_SOLVE) {
+        const int32_t *G = q->G;
+        int rs = q->rs, e1;
+        int64_t bias = 0;
+        /* G z = p, G' f = z; p in hh >> rs/2, with 8 more fraction bits (the
+         * window's oldest positions see nothing of the current symbol but the
+         * precursor taps, which are tiny, and their p, divided by the load
+         * alone, would be all rounding). z'z = f'p, the MMSE gain, is at
+         * most 1, so z in Q30 cannot overflow. |f| <= |z| / sqrt(least
+         * eigenvalue) <= 2^-4 (the load is at least 2^8), f in Q32 */
+        for (i = 0; i < V90ARX_NF; i++) {
+            int64_t p = hh_at(q, a - i), t;
+            p = rs > 16 ? (p + (1 << (rs / 2 - 9))) >> (rs / 2 - 8) : p * ((int64_t)1 << (8 - rs / 2));
+            t = p * ((int64_t)1 << 36) - dot32(&G[TRI(i, 0)], q->z, i);
+            t = sdiv_rcp(t, (uint64_t)G[TRI(i, i)], q->rc[i]);
+            if (!fits32(t)) { q->step = DSN_IDLE; return -1; }
+            q->z[i] = (int32_t)t;
+        }
+        for (i = V90ARX_NF - 1; i >= 0; i--) {
+            int64_t t = (int64_t)q->z[i] * 65536;
+            for (k = i + 1; k < V90ARX_NF; k++) t -= (int64_t)G[TRI(k, i)] * q->fs[k];
+            t = sdiv_rcp(t, (uint64_t)G[TRI(i, i)], q->rc[i]);
+            if (!fits32(t)) { q->step = DSN_IDLE; return -1; }
+            q->fs[i] = (int32_t)t;
+        }
+        /* f p, the gain the MMSE solution leaves on the symbol (just under 1),
+         * Q32: divided out, so the output is unbiased */
+        for (i = 0; i < V90ARX_NF; i++) {
+            int64_t p = hh_at(q, a - i);
+            p = rs > 16 ? (p + (1 << (rs / 2 - 9))) >> (rs / 2 - 8) : p * ((int64_t)1 << (8 - rs / 2));
+            bias += ((int64_t)q->fs[i] * p) >> 8;
+        }
+        bias >>= 12;                                         /* Q20 */
+        if (bias <= 0) { q->step = DSN_IDLE; return -1; }
+        q->bias = bias;
+        q->rb = UINT64_MAX / (uint64_t)bias;
+        /* f_true = fs 2^e1, e1 = 16 - hs - rs/2: taps Q20 for an output of L in Q YF */
+        e1 = 16 - q->hs - rs / 2;
+        for (i = 0; i < V90ARX_NF; i++) {
+            int64_t v = sdiv_rcp((int64_t)q->fs[i] * r->L, (uint64_t)bias, q->rb);     /* fs L / bias, Q12 */
+            int sh = e1 + 20 + V90ARX_YF - 12;
+            v = sh >= 0 ? v * ((int64_t)1 << sh) : v >> -sh;
+            if (v > 0x7fffffff) v = 0x7fffffff;
+            if (v < -0x7fffffff) v = -0x7fffffff;
+            q->fn[i] = (int32_t)v;
+        }
+        q->step = DSN_FB;
+        return 0;
+    }
+    if (q->step == DSN_FB) {
+        int rs = q->rs;
+        /* b_j = sum f_true h_true / bias = sum fs hh 2^(-rs/2) / bias, Q16 */
+        for (j = 0; j < V90ARX_NB; j++) {
+            int64_t acc = 0;
+            int c = a + 1 + j, lo = c - (V90ARX_NCH - 1), hi = c;   /* hh[c - i] for i in lo .. hi */
+            if (lo < 0) lo = 0;
+            if (hi > V90ARX_NF - 1) hi = V90ARX_NF - 1;
+            for (i = lo; i <= hi; i++) acc += (int64_t)q->fs[i] * q->hh[c - i];
+            acc = rs > 0 ? (acc + (1 << (rs / 2 - 1))) >> (rs / 2) : acc * ((int64_t)1 << (-rs / 2));
+            acc = sdiv_rcp(acc * 16, (uint64_t)q->bias, q->rb);   /* Q32 / Q20 -> Q16 */
+            r->b[j] = (int32_t)(acc > 0x7fffffff ? 0x7fffffff : acc < -0x7fffffff ? -0x7fffffff : acc);
+        }
+        memcpy(r->f, q->fn, sizeof r->f);
+        q->step = DSN_IDLE;
+        return 1;
+    }
+    return -1;
+}
+
+/* the whole design at once: 0, or -1 (no design) */
+static int dsn_now(v90arx_t *r)
+{
+    int d = dsn_start(r);
+    while (d == 0) d = dsn_step(r);
+    return d > 0 ? 0 : -1;
 }
 
 /* ---- the slicer ------------------------------------------------------------ */
@@ -417,8 +584,15 @@ static void equalise(v90arx_t *r, int32_t k, int16_t q)
     if (m < 0) return;
     x = &r->x[r->xpos]; dl = &r->d[r->dpos];
 
-    for (i = 0; i < V90ARX_NF; i++) acc += (int64_t)r->f[i] * x[i];
-    for (i = 0; i < V90ARX_NB; i++) acc2 += (int64_t)r->b[i] * dl[i];
+    /* four taps a pass (NF and NB are multiples of 4) */
+    for (i = 0; i < V90ARX_NF; i += 4) {
+        acc += (int64_t)r->f[i] * x[i]; acc += (int64_t)r->f[i + 1] * x[i + 1];
+        acc += (int64_t)r->f[i + 2] * x[i + 2]; acc += (int64_t)r->f[i + 3] * x[i + 3];
+    }
+    for (i = 0; i < V90ARX_NB; i += 4) {
+        acc2 += (int64_t)r->b[i] * dl[i]; acc2 += (int64_t)r->b[i + 1] * dl[i + 1];
+        acc2 += (int64_t)r->b[i + 2] * dl[i + 2]; acc2 += (int64_t)r->b[i + 3] * dl[i + 3];
+    }
     y = asr64(acc, 20) - asr64(acc2, 16 - V90ARX_YF);
 
     if (r->have_next && m >= r->next_m) { r->cons = r->next; r->have_next = 0; }
@@ -467,19 +641,19 @@ static void equalise(v90arx_t *r, int32_t k, int16_t q)
             /* 32 bits, as always; with a wild error (es far out) the
              * product overflows and wraps, as it always did, now defined:
              * unsigned arithmetic, two's complement back */
-            for (i = 0; i < V90ARX_NF; i++) {
-                int32_t d = (int32_t)((uint32_t)es * (uint32_t)x[i] + (uint32_t)half) >> sh;
-                /* (a lost receiver's taps run to the end of the range: the
-                 * step wraps there as well, defined; the retrain follows) */
-                r->f[i] = (int32_t)((uint32_t)r->f[i] - (uint32_t)d);
-            }
+            /* (a lost receiver's taps run to the end of the range: the
+             * step wraps there as well, defined; the retrain follows) */
+#define FUPD(ii) r->f[ii] = (int32_t)((uint32_t)r->f[ii] - (uint32_t)((int32_t)((uint32_t)es * (uint32_t)x[ii] + (uint32_t)half) >> sh))
+            for (i = 0; i < V90ARX_NF; i += 4) { FUPD(i); FUPD(i + 1); FUPD(i + 2); FUPD(i + 3); }
+#undef FUPD
         }
         es = (int32_t)(((int64_t)ec * r->kb) >> 16);
         {
             int sh = r->shb + g;
             int32_t half = (int32_t)1 << (sh - 1);
-            for (i = 0; i < V90ARX_NB; i++)
-                r->b[i] = (int32_t)((uint32_t)r->b[i] + (uint32_t)((int32_t)((uint32_t)es * (uint32_t)dl[i] + (uint32_t)half) >> sh));
+#define BUPD(ii) r->b[ii] = (int32_t)((uint32_t)r->b[ii] + (uint32_t)((int32_t)((uint32_t)es * (uint32_t)dl[ii] + (uint32_t)half) >> sh))
+            for (i = 0; i < V90ARX_NB; i += 4) { BUPD(i); BUPD(i + 1); BUPD(i + 2); BUPD(i + 3); }
+#undef BUPD
         }
     }
     {
@@ -515,7 +689,7 @@ static void equalise(v90arx_t *r, int32_t k, int16_t q)
         if (off > (ONE32 >> 14)) rc >>= 1;          /* 61 ppm */
         if (!gate) estimate(r, m - V90ARX_LEAD, r->state == V90ARX_TRAIN ? (int64_t)r->L * r->L : r->pd >> 8, 2);
         if (++r->tblk >= TBLK) { r->tblk = 0; if (!r->thold) timing(r); else r->slew = 0; }
-        if (r->state == V90ARX_DD && (r->neq % rc == 0 || r->redo)) { r->redo = 0; (void)dfe_design(r); }
+        if (r->state == V90ARX_DD && (r->neq % rc == 0 || r->redo)) { r->redo = 0; (void)dsn_now(r); r->dsn_ran = 1; }
     }
 
     if (r->nout >= 2) return;
@@ -662,7 +836,8 @@ static void process(v90arx_t *r, int16_t q)
         if (r->nest == LS_TO) ls_set(r);
         if (r->nest == V90ARX_EST0) {
             int i;
-            if (find_cursor(r) != 0 || dfe_design(r) != 0) { r->state = V90ARX_FAIL; return; }
+            r->dsn_ran = 1;
+            if (find_cursor(r) != 0 || dsn_now(r) != 0) { r->state = V90ARX_FAIL; return; }
             r->pq = 0;
             for (i = 1; i <= 64; i++) { int32_t v = r->qb[(k - i) & 255]; r->pq += ((int64_t)v * v << 8) / 64; }
             r->pd = (int64_t)r->L * r->L << 8;
@@ -688,12 +863,11 @@ static void produce(v90arx_t *r)
     int32_t a = (int32_t)((f >> 12) & 0x7fff);  /* between branches p and p + 1, Q15 */
     const int16_t *h0 = v34_interp[p], *h1 = v34_interp[p + 1];
     int64_t acc0 = 0, acc1 = 0, v;
-    int i, idx = r->rpos - 1;
-    for (i = 0; i < V34_IN; i++) {
-        int32_t s = r->ring[(idx - i) & 63];
-        acc0 += s * h0[i];
-        acc1 += s * h1[i];
-    }
+    int i, idx = (r->rpos - 1) & 63;
+    const int16_t *s = r->ring + idx;
+    /* ring[(idx - i) & 63], newest first, in the two runs that do not wrap */
+    for (i = 0; i <= idx; i++, s--) { acc0 += *s * h0[i]; acc1 += *s * h1[i]; }
+    for (s = r->ring + 63; i < V34_IN; i++, s--) { acc0 += *s * h0[i]; acc1 += *s * h1[i]; }
     v = acc0 + (((acc1 - acc0) * a) >> 15);     /* Q14 */
     process(r, sat16((v * r->gain) >> 26));
 }
@@ -716,6 +890,7 @@ int v90arx_tick(v90arx_t *r, int16_t rx, int16_t tx)
 {
     int16_t x = ec_tick(&r->ec, tx, rx, r->ec_mu);
     int i;
+    r->dsn_ran = 0;
     r->eout = x;
     r->nout = 0;
     r->ring[r->rpos] = x;

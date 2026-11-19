@@ -12,6 +12,7 @@
 #   make bench-v90a      the same for the V.90 analogue modem's downstream receiver
 #   make bench-v90c      the same for the whole V.90 calling modem (orig, v90a)
 #   make bench-v92c      ... and for it in V.92 (PCM upstream); cost-v92c counts
+#   make prof-v90c       per tick and per function ARM instruction counts (prof-v92c, PPM=)
 #   make bench-bell      the calling modem in Bell 103 and Bell 212A; cost-bell counts
 #   make test-interop    against spandsp (SPANDSP=its install prefix), host only
 #
@@ -385,6 +386,25 @@ cost-v92c: $(BUILD)/rec_v90c $(BUILD)/bench_v90c $(BUILD)/bench_v90c.arm
 	   b=$$($(CNT) $(abspath $(BUILD))/bench_v90c.arm $(BUILD)/v92c_t.b 2>&1 | grep -c '^Trace'); \
 	   echo "V.92 caller, 100 ppm: tick $$t ($$((t / 8)) ms): $$((b - a)) ARM instructions"; \
 	 done
+# prof-v90c / prof-v92c: the cost of every tick and the profile, from one qemu
+# run each (much faster than cost-*: no -one-insn-per-tb). rec_v90c records a
+# call at PPM (default 100) with 4 s of data mode; bench_v90c -t replays it
+# up to 3 s into data mode, calling a mark before every tick; tools/qprof
+# turns qemu's log (blocks as translated, each block as run) into the
+# instructions of each tick (the heaviest listed) and per function over
+# seconds 2 to 3 of data mode. QPROF_TB=N lists the N heaviest blocks too.
+PPM ?= 100
+.PHONY: prof-v90c prof-v92c
+prof-v90c prof-v92c: $(BUILD)/rec_v90c $(BUILD)/bench_v90c.arm $(BUILD)/qprof
+	@r=$(BUILD)/$@_$(PPM).rec; \
+	 $(abspath $(BUILD))/rec_v90c $(PPM) 4 $$r $(if $(filter prof-v92c,$@),v92) > /dev/null; \
+	 d=$$(od -An -tu4 -j8 -N4 $$r | tr -d ' '); \
+	 pc=$$(nm $(BUILD)/bench_v90c.arm | sed -n 's/^\([0-9a-f]*\) T bench_v90c_mark$$/\1/p'); \
+	 $(QEMU) -d in_asm,exec,nochain -D /dev/stdout $(abspath $(BUILD))/bench_v90c.arm $$r -t -n $$((d + 24000)) 2>/dev/null \
+	 | $(abspath $(BUILD))/qprof $$pc $$((d + 16000)) $$((d + 24000)) -top 12 $(if $(QPROF_TB),-tb $(QPROF_TB))
+$(BUILD)/qprof: tools/qprof.c
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -o $@ $<
 # ---- the caller in Bell 103 and Bell 212A: rec_bell records a call against
 # the library's answerer, bench_bell replays it into the caller alone (hash on
 # the host and under qemu); cost-bell counts the ARM instructions of the

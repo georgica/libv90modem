@@ -52,11 +52,14 @@ int16_t pcmtx_out(const pcmtx_t *t)
     if (p >= PCMTX_IP) { p = PCMTX_IP - 1; f = 0x8000; }
     if (t->wide) { h0 = v34_interp[p]; h1 = v34_interp[p + 1]; }
     else { h0 = pcmtx_interp[p]; h1 = pcmtx_interp[p + 1]; }
-    base = t->pos - 1 - j;
-    for (i = 0; i < PCMTX_IN; i++) {
-        int32_t s = t->ring[(base - i) & (PCMTX_RING - 1)];
-        acc0 += s * h0[i];
-        acc1 += s * h1[i];
+    base = (t->pos - 1 - j) & (PCMTX_RING - 1);
+    /* ring[(base - i) & (RING - 1)], newest first, in the two runs that do
+     * not wrap */
+    {
+        const int16_t *s = t->ring + base;
+        int n1 = base + 1 < PCMTX_IN ? base + 1 : PCMTX_IN;
+        for (i = 0; i < n1; i++, s--) { acc0 += *s * h0[i]; acc1 += *s * h1[i]; }
+        for (s = t->ring + PCMTX_RING - 1; i < PCMTX_IN; i++, s--) { acc0 += *s * h0[i]; acc1 += *s * h1[i]; }
     }
     v = acc0 + (((acc1 - acc0) * f) >> 15);     /* Q14 */
     v = (v + 8192) >> 14;
