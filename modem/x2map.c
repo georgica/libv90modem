@@ -27,9 +27,10 @@ static const uint8_t *recv_list(const x2map_t *m)
     return m->levels_a ? x2_levels_a : x2_pad_recv[m->pad_mode];
 }
 
+/* a bank for the index (1 only so far), in levels A as in the data levels */
 static int valid(const x2map_t *m)
 {
-    return m->levels_a || (m->index == 1 && m->pad_mode >= 0 && m->pad_mode <= 2);
+    return m->index == 1 && (m->levels_a || (m->pad_mode >= 0 && m->pad_mode <= 2));
 }
 
 /* The position of the free sign: the largest level, of equal levels the

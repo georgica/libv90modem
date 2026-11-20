@@ -141,6 +141,15 @@ int main(void)
     CHECK_EQ_I(x2map_bits(&m), 24);
     x2map_init(&m, 2, 0, 0);
     CHECK_EQ_I(x2map_bits(&m), 0);
+    /* no bank for index 2 in levels A either: no bits, a frame of zeros,
+       nothing to unframe */
+    x2map_init(&m, 2, 0, 1);
+    CHECK_EQ_I(x2map_bits(&m), 0);
+    memset(bits, 0, sizeof bits);
+    x2map_frame(&m, bits, out);
+    CHECK(out[0] == 0xff && out[1] == 0xff && out[2] == 0xff && out[3] == 0xff && out[4] == 0xff && out[5] == 0xff);
+    out[0] = out[1] = out[2] = out[3] = out[4] = out[5] = 0xa5;
+    CHECK_EQ_I(x2map_unframe(&m, out, back), -1);
 
     /* all digits 3: equal levels; the signs go to positions 0..4 (the first
        of equals), the free sign to 5. Signs 11111 from last = 1: - + - + - */

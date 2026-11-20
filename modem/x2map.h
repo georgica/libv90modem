@@ -35,7 +35,7 @@ typedef struct {
 void x2map_init(x2map_t *m, int index, int pad_mode, int levels_a);
 
 /* bits per frame, B + MD (24 at index 1); 0 for a bank that does not
- * exist yet */
+ * exist yet (any other index, in levels A as in the data levels) */
 int x2map_bits(const x2map_t *m);
 
 /* one frame from x2map_bits(m) scrambled bits; six 0xff (zero) for a bank
