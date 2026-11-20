@@ -880,3 +880,55 @@ numbered line about every second). **Observed**:
   courier-emu's own x2 results (`docs/imodem-analog-x2-20261003.md`,
   "53333/x2") are the Courier's CONNECT figure and one message at the
   start-up's rate, before any rate change, as ours are.
+
+Looking for a setup in which the emulated Courier decodes x2 above index 1
+(x2 8b, follow-up, 2026-11-20). **Observed**, unless marked otherwise:
+
+- D-Modem's documented setup (its `docs/x2-upgrade-details.md` 6.4,
+  `docs/dsp/x2-details.md`): courier-emu's
+  `tools/probe_v90modem_closed_loop.py analog` with `courier_peer`, `--fast`,
+  `COURIER_AT='ATS30=1X1S54=0S58=48&A3&B1Q0&U26&N39DT5551234'`, lines "6 to
+  14 dB down", and an option `COURIER_INT0_TOUT` (the frame interrupt
+  following the DSP's timer). `COURIER_AT`, `COURIER_NVRAM` and
+  `COURIER_INT0_TOUT` are not in courier-emu as published (`main` is
+  186d653, ours; its one other branch is merged into it), so D-Modem ran a
+  modified copy that we cannot reproduce. Otherwise the probe is our
+  harness: the same ROM, NVRAM fixture, `--tick-ms 5`, 20 ms frames and
+  BearerLineLink's AC01 levels (-5.86 / -5.54 dB, ours). D-Modem's own
+  Courier emulator (`half_courier`, IDSDL302) does not finish V.34
+  training between two Couriers (its `docs/interop-details.md`), so it was
+  not tried for x2.
+- The clock: the line is sample-locked. The bridge answers each frame
+  with as many samples as it received; courier-emu stores the frame's
+  instruction stamp (`peer_instructions`) and clocks nothing by it, so
+  the stamp (x2 3's 920 ppm) cannot offset the line. The Courier's codec
+  runs at 9600.000 Hz in data mode (MCLK 3.456 MHz, 4200 DSP cycles at
+  40.32 MHz a sample), and both of courier-emu's conversions (codec to
+  line, and the 128-tap reconstruction from line to codec) use that
+  rate: exactly 6 codec samples to 5 line samples. ATI11's -112 / +159
+  ppm are the Courier's estimates, not an offset of the line. courier-emu's
+  only offset setting, `COURIER_LINE_SKEW_PPM`, is 0 by default; +112 or
+  -112 (Python frame path) ends our calls in the start-up (x2 failed at
+  33.7 s); 0 on that path reproduces 0 of 615.
+- Other settings, our server, PAD=0, `-k 4` (a loss in the scratch
+  bridge, after the codec gain):
+
+| Setting | rate(s) asked | after the change |
+| --- | --- | --- |
+| line 3 dB down | 54666 | 0 of 615 I frames acknowledged |
+| line 6 dB down | 52000, then 53333 | 15 of 265; ended (x2 failed) at 68.4 s, V.42 down |
+| line 8 dB down | 52000, 53333, 54666 | 0 of 716, 1 REJ |
+| line 10 dB down | (its rate change 6.5 s into data) | we end the call (x2 failed); not traced |
+| INT0 at 2700 Hz (`--frame-hz`, measured 2401) | 54666 | 1 of 721, 1 REJ |
+| INT0 at 2900 Hz | 54666 | the upstream lost after the change (V.42 down at 54.9 s) |
+| INT0 at 3200 or 4800 Hz | | the Courier stops before it dials |
+
+  D-Modem's server without error control: line 6 dB down, 52000 then
+  53333 then 54666, 1 of some 71 lines intact after the change; 10 dB
+  down, 52000, 3 of some 72. The AT settings of courier-emu's probe
+  (`ATX1S27=1S54=0S58=48&A3&B1Q0&U26&N39`) end both servers' calls in the
+  start-up.
+- No setup found carries data above index 1 to the emulated Courier, from
+  any server. The bridge is not at fault (its line is exact), so it is
+  unchanged.
+

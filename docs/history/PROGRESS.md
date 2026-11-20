@@ -3079,3 +3079,18 @@ reproduced at PAD=0: 0 of 615); it cannot pass on this emulator. What
 would: a check against a Courier that decodes the I-modem after its rate
 change (another emulator setting, or a real modem), or an acceptance that
 rests on the octets being the I-modem's, which this branch now shows.
+
+Follow-up (a bounded search for a setup that passes; x2-facts.md
+"Harness", the last part). D-Modem's documented courier-emu setup used a
+locally modified courier-emu (`COURIER_AT`, `COURIER_NVRAM`,
+`COURIER_INT0_TOUT` are not in the published one) and lines 6 to 14 dB
+down; the rest is our harness. Our bridge's clock is not off: the line is
+sample-locked (equal sample counts each frame; the stamp clocks nothing;
+the Courier's codec at exactly 9600 Hz, 6 to 5), so the Courier's -112 /
++159 ppm are its own estimates, and courier-emu's one offset setting is
+already zero (+-112 ppm breaks the start-up). Lines 3, 6, 8 and 10 dB down,
+and the Courier's INT0 at 2700 to 4800 Hz, pass no data after the rate
+change, for us (best: 15 of 265 I frames at 52000, 6 dB down) or for
+D-Modem (best: 3 of some 72 lines). Nothing passed in the time box; the
+bridge is unchanged and the acceptance check still fails at every pad.
+
