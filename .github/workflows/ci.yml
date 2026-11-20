@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  host:
+    name: host (${{ matrix.cc }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang
+        if: matrix.cc == 'clang'
+        run: sudo apt-get update && sudo apt-get install -y clang
+      - name: Build
+        run: make -j"$(nproc)" CC=${{ matrix.cc }}
+      - name: make check
+        run: make CC=${{ matrix.cc }} check
+      - name: Install, then build the example with pkg-config
+        run: |
+          make CC=${{ matrix.cc }} install PREFIX="$RUNNER_TEMP/inst"
+          export PKG_CONFIG_PATH="$RUNNER_TEMP/inst/lib/pkgconfig"
+          ${{ matrix.cc }} -std=c99 -Wall -Wextra -Werror -o "$RUNNER_TEMP/call_loop" examples/call_loop.c \
+            $(pkg-config --cflags --libs --static libv90modem)
+          "$RUNNER_TEMP/call_loop"
+
+  ubsan:
+    name: host, undefined behaviour trapped (clang)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang
+        run: sudo apt-get update && sudo apt-get install -y clang
+      - name: make check-ubsan
+        run: make check-ubsan
+
+  arm:
+    name: ARMv5 under qemu (short tests)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the cross compiler and qemu
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-linux-gnueabi libc6-dev-armel-cross qemu-user-static
+      - name: make check-arm
+        # armel: ARMv5T, soft float, like the ARM926 the library was measured on
+        run: PAR="$(nproc)" make check-arm ARM_CC=arm-linux-gnueabi-gcc QEMU=qemu-arm-static
+
+  win32:
+    name: win32 (mingw, build only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install mingw
+        run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-i686
+      - name: Build the static library and the example
+        run: |
+          make -j"$(nproc)" BUILD=build/w32 CC=i686-w64-mingw32-gcc \
+            CFLAGS="-std=c99 -O2 -Wall -Wextra -Werror -D__USE_MINGW_ANSI_STDIO=1 -msse2 -mfpmath=sse" \
+            build/w32/libv90modem.a
+          i686-w64-mingw32-gcc -std=c99 -Wall -Wextra -Werror -Iinclude -o build/w32/call_loop.exe \
+            examples/call_loop.c build/w32/libv90modem.a
