@@ -242,6 +242,22 @@ static void start_v34_call(answer_t *a)
     a->phase = ANS_V34; a->t = 0;
 }
 
+/* The x2 client's marker ended Phase 2 (p2ans P2N_X2): its symbol rate and
+ * carrier, and the round trip, from there; silent until its J. A marker x2d
+ * cannot serve ends the call, said as x2's. */
+static void start_x2(answer_t *a)
+{
+    x2d_cfg c;
+    memset(&c, 0, sizeof c);
+    c.marker = a->v34.p2.x2_marker;
+    c.rtd = a->v34.p2.rtd;
+    c.echo_delay = a->echo_delay;
+    c.max_up_rate = a->max_up;
+    c.getbit = a->cfg.getbit; c.putbit = a->cfg.putbit; c.user = a->cfg.user;
+    a->phase = ANS_X2; a->t = 0; a->pcm = 0x7f;
+    if (x2d_init(&a->u.x2, &c) != 0) { a->x2_failed = 1; fail(a); }
+}
+
 /* V.8 selected V.34 as the data mode: INFO0a starts right after the 75 ms
  * of silence that v8ans has just finished (V.34 11.2.1.2.1) */
 static void start_v34(answer_t *a)
@@ -484,7 +500,7 @@ int16_t answer_tick(answer_t *a, int16_t rx)
             if (a->v34.state == V34A_DATA && ++a->rt_clock >= MS(60000)) { a->rt_clock = 0; if (a->rt_recent > 0) a->rt_recent--; }
         }
         if (a->v34.state == V34A_X2) {           /* the client's x2 marker */
-            a->phase = ANS_X2; a->t = 0; tx = 0;
+            start_x2(a); tx = 0;
             break;
         }
         if (a->v34.state == V34A_ENDED) {
@@ -516,13 +532,26 @@ int16_t answer_tick(answer_t *a, int16_t rx)
         a->retraining = a->u.v32.retraining; a->retrains = a->u.v32.retrains;
         break;
 
-    case ANS_X2:
-        /* The x2 start-up (PCM training) is not there yet. There is no
-         * known way back to V.34 once the marker came (design "Calls made
-         * in the design"): the call ends, said as x2's. */
-        a->x2_failed = 1;
-        fail(a);
+    case ANS_X2: {
+        x2d_t *d = &a->u.x2;
+        a->pcm = x2d_tick(d, rx);
+        tx = (int16_t)v90_octet_linear(0, a->pcm);
+        if (d->state == X2D_ENDED) {
+            /* there is no way back to V.34 once the marker came (design
+             * "Calls made in the design"): a start-up that did not reach
+             * data mode is said as x2's */
+            if (!a->connected) a->x2_failed = 1;
+            if (d->error == X2D_ERR_HANGUP) a->cleared = 2;
+            fail(a); tx = 0;
+        } else if (d->state == X2D_DATA) {
+            a->connected = 1; a->modulation = ANS_MOD_X2;
+            a->bitrate = x2d_down_rate(d); a->rx_bitrate = x2d_up_rate(d);
+            a->retraining = 0;
+        } else if (a->connected) {
+            a->retraining = 1;              /* the client's rate change: no data moves up */
+        }
         break;
+    }
 
     case ANS_FAILED:
         break;
@@ -539,7 +568,7 @@ uint8_t answer_tick_lin(answer_t *a, int16_t rx)
 {
     int alaw = a->p2cfg.alaw;
     int16_t tx = answer_tick(a, rx);
-    if (a->phase == ANS_P3 || a->phase == ANS_V90 || a->phase == ANS_P3X || a->phase == ANS_V92) return a->pcm;
+    if (a->phase == ANS_P3 || a->phase == ANS_V90 || a->phase == ANS_P3X || a->phase == ANS_V92 || a->phase == ANS_X2) return a->pcm;
     return pcm_encode(alaw, tx);
 }
 
@@ -572,6 +601,7 @@ int answer_snr_db10(const answer_t *a)
         break;
     }
     case ANS_MOD_V34: num = 65536; den = a->v34.dx.rx.mse; break;
+    case ANS_MOD_X2: num = 65536; den = a->u.x2.rx.mse; break;           /* the V.34 upstream */
     case ANS_MOD_V22: case ANS_MOD_V22BIS:
         /* 4096 = one unit squared; the points (1 and 3 units on each axis)
          * have a mean power of 10, and the four of 1200 bit/s have just that */
@@ -587,6 +617,7 @@ int answer_rtd(const answer_t *a)
     if (!a->connected) return -1;
     switch (a->modulation) {
     case ANS_MOD_V90: case ANS_MOD_V92: return a->p2.rtd;
+    case ANS_MOD_X2: return a->v34.p2.rtd;
     /* V.34 after V.90 Phase 2 has that Phase 2's figure */
     case ANS_MOD_V34: return a->v8.selected == V8_SEL_V90 ? a->p2.rtd : a->v34.p2.rtd;
     default: return -1;
@@ -597,6 +628,7 @@ int answer_cleardown(answer_t *a)
 {
     if (a->phase == ANS_V34) return v34ans_cleardown(&a->v34);
     if (a->phase == ANS_V92) return v92d_cleardown(&a->u.v92);
+    if (a->phase == ANS_X2) return x2d_cleardown(&a->u.x2);
     if (a->phase != ANS_V90) return -1;
     return p34d_cleardown(&a->p34);
 }
@@ -615,6 +647,7 @@ int answer_moving(const answer_t *a)
     if (!a->connected || a->retraining) return 0;
     if (a->phase == ANS_V90) return a->p34.tx_ready && a->p34.rx_ready;
     if (a->phase == ANS_V92) return a->u.v92.tx_ready && a->u.v92.rx_ready;
+    if (a->phase == ANS_X2) return a->u.x2.state == X2D_DATA;
     return 1;
 }
 

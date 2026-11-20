@@ -1,0 +1,109 @@
+/* Test peer: an x2 client (U.S. Robotics, 1997) calling our answerer, written
+ * from docs/history/x2-facts.md as the Courier does it (and D-Modem's client,
+ * docs/dsp/x2-details.md "The client"): it checks that our pieces fit
+ * together; it does not prove x2.
+ *
+ *   V.8 as a V.34 caller (sim/v8call: CM with V.34, no PCM, the PSTN access
+ *   octet), V.34 Phase 2 (sim/p2c) up to the server's L1; marker_ms after
+ *   that L1 began, the marker (4d: high carrier, index 6, 3200 baud) in
+ *   place of our L1, L2 and INFO1c; 70 ms later V.34's S, S-bar, PP, TRN
+ *   and J (16 points) with GPA, at 3200 baud on the high carrier; J until
+ *   the server's preamble has been there 150 ms, then quiet; at its J words
+ *   (the 20367th octet of its script) S, S-bar, TRN (512 symbols on 4
+ *   points, then 16, 5120 in all), our MP until its record has been
+ *   decoded, one MP', E, then V.34 data (B1 first; GPA, expanded shaping,
+ *   64 states, non-linear encoding) at the highest rate of up_mask.
+ *
+ * Downstream it takes the server's octets as they leave it (ideal: no
+ * analogue line, no equaliser), passes them through the network's digital
+ * pad of pad_mode (docs/history/x2-facts.md "Pads"), and decodes the
+ * script: the preamble, TRN and J words, the ones, the alignment, the sync
+ * frames (levels A), the records, the start segment and the data (the data
+ * levels of the MP's index and pad, x2map_unframe), each checked against
+ * the facts. Test side. */
+#ifndef V90D_SIM_X2CALL_H
+#define V90D_SIM_X2CALL_H
+#include <stdint.h>
+#include "v8call.h"
+#include "p2c.h"
+#include "../modem/dpsk.h"
+#include "../modem/v34mod.h"
+#include "../modem/x2map.h"
+#include "../v34/v34.h"
+#include "../v90/v90_scr.h"
+
+/* where the client falls silent for good (cfg.silent; the tests of the
+ * server's time limits) */
+enum { X2C_SIL_NONE, X2C_SIL_MARKER, X2C_SIL_J, X2C_SIL_MP, X2C_SIL_DATA };
+
+typedef struct {
+    int level;              /* nominal transmit RMS, sample units */
+    int pad_mode;           /* the network's digital pad on the downstream: 0 none, 1 3 dB,
+                               2 6 dB; reported in the MP as measured. 3 and above: reported
+                               (no such pad is applied) */
+    int max_index;          /* MP word 0 bits 2..5: the downstream rate index asked for */
+    uint16_t up_mask;       /* MP word 1: the upstream rates (bit n - 1 for n x 2400 bit/s) */
+    int marker_ms;          /* after the server's L1 began; 0 = 170 */
+    int silent;             /* X2C_SIL_*: go quiet after the marker, after J, after 4 MPs,
+                               or 1 s into data mode */
+    int  (*getbit)(void *user);
+    void (*putbit)(void *user, int bit);
+    void *user;
+} x2call_cfg;
+
+typedef enum {
+    X2C_V8, X2C_P2, X2C_MARKER, X2C_P3, X2C_QUIET, X2C_P4, X2C_MP, X2C_E, X2C_DATA, X2C_ENDED
+} x2c_state;
+
+/* what the client found in the server's script */
+typedef struct {
+    int  not_x2;            /* the server's INFO0a had neither bit 23 nor 24 */
+    long pre_bad;           /* preamble octets other than the facts' (behind the pad) */
+    long trn_bad;           /* TRN octets off level, or descrambled zeros */
+    int  jw_good;           /* J words 09B0 (of 99) */
+    int  jw_last;           /* the 100th was 099F */
+    long ones_bad, align_bad;
+    long sync_frames, sync_bad;     /* frames of ones before the first record; others */
+    int  rec_good, rec_bad; /* records F33C 7FFF 0000, others (CRC or words) */
+    long start_ones, start_bad;     /* the start segment's frames in the data levels */
+    long data_frames, data_lost;    /* data frames; ones that did not decode */
+    int  data_up;           /* our upstream in data (after B1) */
+} x2call_seen;
+
+typedef struct {
+    x2call_cfg   cfg;
+    x2c_state    state;
+    int32_t      now, t;
+    v8call_t     v8;
+    p2c_t        p2;
+    int32_t      mark_at;           /* when the marker goes out */
+    dpsktx_t     mk; uint8_t mkbits[64]; int nmk; int32_t mk_off;
+    /* upstream */
+    v34mod_t     mod;
+    int          sig; int32_t sn;   /* signal and symbol count in it */
+    v34_tmod_t   tmod; int32_t g16;
+    uint8_t      mpbits[112]; int mpn, mp_count, mp_ack;
+    v34_params_t tpar; v34_tx_t vtx; int32_t tx_dg;
+    int          up_rate;
+    int          quiet;             /* cfg.silent has struck */
+    /* downstream */
+    int16_t      ra[256];           /* octet received -> levels A octet sent, -1 none */
+    int32_t      k;                 /* octets since the preamble began, -1 before */
+    int32_t      j_from;            /* our J began (the preamble is looked for from here) */
+    v90_scr_t    dscr;              /* GPC descrambler */
+    unsigned     jw;                /* the J word being collected */
+    x2map_t      map;
+    uint8_t      fr[X2MAP_N]; int fpos;
+    uint8_t      rb[96]; int rn, rones;     /* a record being collected */
+    int          e_sent, in_start, in_data; int32_t start_n;
+    x2call_seen  seen;
+} x2call_t;
+
+void         x2call_init(x2call_t *c, const x2call_cfg *cfg);
+/* one octet from the server in (as it left it), one line sample out */
+int16_t      x2call_tick(x2call_t *c, uint8_t octet_from_server);
+x2c_state    x2call_state(const x2call_t *c);
+/* the network's pad on one octet (the facts' model) */
+uint8_t      x2call_pad(uint8_t octet, int pad_mode);
+
+#endif

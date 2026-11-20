@@ -2,7 +2,9 @@
 
 `make test-x2-courier COURIER_EMU=<dir> [PAD=0|3|6] [MODS=x2]` has an
 emulated Courier, running original USR firmware, dial our answering modem
-and reports what both ends reached. It is a local tool: nothing of
+and reports what both ends reached. With `MODS=x2` our modem offers x2
+(`V90M_MOD_X2`) and the run passes when the Courier's CONNECT line and its
+ATI11 say x2. It is a local tool: nothing of
 courier-emu or of any firmware image is in this repository, and the target
 is not part of `make check`. Without `COURIER_EMU` it prints
 `COURIER_EMU not set` and exits 0.

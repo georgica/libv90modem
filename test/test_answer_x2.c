@@ -9,9 +9,18 @@
  *     x2.
  *   - The same caller on an A-law line: not one transmit sample differs.
  *   - A caller whose CM has PCM (V.90): not one transmit sample differs.
- *   - A V.34 caller that sends the x2 marker in place of its L1 / L2: the
- *     call is x2 (ANS_X2) and, until the x2 start-up exists, ends with
- *     x2_failed. */
+ *   - A V.34 caller that sends the x2 marker in place of its L1 / L2 and
+ *     then nothing: the call is x2 (ANS_X2) and ends with x2_failed.
+ * And x2 itself, against the simulated client (sim/x2call) over a digital
+ * link (our octets through the network's pad to it, its samples back
+ * through a mu-law codec with our own echo and noise):
+ *   - behind no pad, 3 dB and 6 dB: x2 at 32000 down and 24000 up, the
+ *     client's checks of our script clean, 100000 random bits each way
+ *     equal end to end;
+ *   - an MP asking for an index we have no bank for, or reporting a pad we
+ *     have no levels for: the call ends, x2_failed (plan, Review Focus 4);
+ *   - the client silent after its marker, after its J, after its MP, in
+ *     data: the call ends within 10 s, with an end reason (Review Focus 5). */
 #include <stdio.h>
 #include <string.h>
 #include "test.h"
@@ -21,6 +30,8 @@
 #include "../sim/p2a.h"
 #include "../sim/channel.h"
 #include "../sim/g711.h"
+#include "../sim/x2call.h"
+#include "../sim/noise.h"
 #include "line34.h"
 
 #define FS 8000
@@ -181,6 +192,171 @@ static void v90_call(unsigned modes)
     }
 }
 
+/* ---- x2 against the simulated client ---- */
+
+/* random bits, the same sequence at the far end: xorshift32 */
+typedef struct { uint32_t tx, rx; long n, bad; } rbits_t;
+static int rnext(uint32_t *s) { *s ^= *s << 13; *s ^= *s >> 17; *s ^= *s << 5; return (int)(*s & 1); }
+static void r_check(rbits_t *r, int bit)
+{
+    if (rnext(&r->rx) != (bit & 1)) r->bad++;
+    r->n++;
+}
+
+#define XD 4096
+static x2call_t X; static rbits_t DN, UP;
+/* downstream: our getbit to the client's putbit; upstream the other way */
+static int s_get(void *u) { (void)u; return rnext(&DN.tx); }
+static void s_put(void *u, int bit) { (void)u; r_check(&UP, bit); }
+static int c_get(void *u) { (void)u; return rnext(&UP.tx); }
+static void c_put(void *u, int bit) { (void)u; r_check(&DN, bit); }
+typedef struct {
+    int ok;                     /* both in data mode */
+    int down, up, mod;
+    long x2_at, quiet_at, end_at;   /* samples: ANS_X2, the client's silence, ANS_FAILED; -1 none */
+    int error, x2_failed, connected_once;
+} x2_outcome;
+
+/* One x2 call: the client with pad (0, 1, 2; 3 reported only), the index it
+ * asks for, its upstream mask and where it falls silent; for up to secs of
+ * line, or data_bits each way once both are in data mode. */
+static void x2_call(int pad, int index, uint16_t up_mask, int silent, int echo_delay, int secs, long data_bits, x2_outcome *o)
+{
+    static uint8_t down[XD]; static int16_t up[XD]; static double dl[XD];
+    const int d_ac = 37, d_ca = 41;     /* one-way delays, samples */
+    /* our echo off the line's hybrid comes back this late: behind a driver's
+     * buffers when we are not told (echo_delay -1: x2d measures it) */
+    const int e = echo_delay < 0 ? 300 : echo_delay;
+    answer_cfg ac; x2call_cfg xc; rng_t rng;
+    uint8_t arx = 0xff;
+    long n;
+    memset(o, 0, sizeof *o);
+    o->x2_at = o->quiet_at = o->end_at = -1;
+    memset(down, 0x7f, sizeof down); memset(up, 0, sizeof up); memset(dl, 0, sizeof dl);
+    memset(&DN, 0, sizeof DN); memset(&UP, 0, sizeof UP);
+    DN.tx = DN.rx = 0x2468ace1u; UP.tx = UP.rx = 0x13579bdfu;
+    rng_seed(&rng, 4242);
+    memset(&ac, 0, sizeof ac);
+    ac.level = 3000; ac.modes = ANS_MODE_V90 | V8_MOD_V34 | V8_MOD_V22 | V8_MOD_V21 | ANS_MODE_X2;
+    ac.getbit = s_get; ac.putbit = s_put; ac.user = NULL;
+    answer_init(&A, &ac);
+    answer_v90_line(&A, echo_delay, 0, 0);
+    memset(&xc, 0, sizeof xc);
+    xc.level = 3000; xc.pad_mode = pad; xc.max_index = index; xc.up_mask = up_mask; xc.silent = silent;
+    xc.getbit = c_get; xc.putbit = c_put; xc.user = NULL;
+    x2call_init(&X, &xc);
+    for (n = 0; n < 8000L * secs; n++) {
+        int i = (int)(n & (XD - 1));
+        double v;
+        uint8_t atx = answer_tick_pcm(&A, arx);
+        down[i] = atx;
+        dl[i] = (double)ulaw_to_linear(atx);
+        up[i] = x2call_tick(&X, down[(n - d_ac) & (XD - 1)]);
+        /* what reaches us: the client, our own echo off the line's hybrid, noise */
+        v = 0.5 * up[(n - d_ca) & (XD - 1)]
+            + 0.12 * dl[(n - e - 2) & (XD - 1)] + 0.08 * dl[(n - e - 4) & (XD - 1)] - 0.05 * dl[(n - e - 9) & (XD - 1)]
+            + 2.0 * rng_gauss(&rng);
+        arx = linear_to_ulaw((int32_t)lround(v));
+        if (A.phase == ANS_X2 && o->x2_at < 0) o->x2_at = n;
+        if (X.quiet && o->quiet_at < 0) o->quiet_at = n;
+        if (A.connected && A.modulation == ANS_MOD_X2) o->connected_once = 1;
+        if (A.phase == ANS_FAILED) { o->end_at = n; break; }
+        if (data_bits && A.connected && x2call_state(&X) == X2C_DATA && DN.n >= data_bits && UP.n >= data_bits) break;
+    }
+    o->ok = A.connected && A.phase == ANS_X2 && x2call_state(&X) == X2C_DATA;
+    o->down = A.bitrate; o->up = A.rx_bitrate; o->mod = A.modulation;
+    o->error = A.u.x2.error; o->x2_failed = A.x2_failed;
+}
+
+static void x2_report(const char *what, const x2_outcome *o)
+{
+    const x2call_seen *s = &X.seen;
+    printf("  x2 %s: %s %d / %d bit/s; down %ld bits %ld bad, up %ld bits %ld bad\n", what,
+           o->ok ? "data" : "NO DATA", o->down, o->up, DN.n, DN.bad, UP.n, UP.bad);
+    printf("     pad mode %d in the MP and the mapper; echo delay %d; upstream SNR %.1f dB\n",
+           A.u.x2.pad_mode, A.u.x2.ecd.delay, answer_snr_db10(&A) / 10.0);
+    printf("     client saw: preamble %ld bad, TRN %ld bad, J words %d + %d, ones %ld bad, alignment %ld bad,\n"
+           "     sync %ld frames (%ld bad), records %d (%d bad), start %ld (%ld bad), data frames %ld (%ld lost)\n",
+           s->pre_bad, s->trn_bad, s->jw_good, s->jw_last, s->ones_bad, s->align_bad, s->sync_frames, s->sync_bad,
+           s->rec_good, s->rec_bad, s->start_ones, s->start_bad, s->data_frames, s->data_lost);
+}
+
+/* the client's script checks, clean */
+static void x2_seen_clean(void)
+{
+    const x2call_seen *s = &X.seen;
+    CHECK_EQ_I(s->not_x2, 0);
+    CHECK_EQ_I(s->pre_bad, 0); CHECK_EQ_I(s->trn_bad, 0);
+    CHECK_EQ_I(s->jw_good, 99); CHECK_EQ_I(s->jw_last, 1);
+    CHECK_EQ_I(s->ones_bad, 0); CHECK_EQ_I(s->align_bad, 0);
+    CHECK(s->sync_frames >= 1667); CHECK_EQ_I(s->sync_bad, 0);
+    CHECK(s->rec_good >= 1); CHECK_EQ_I(s->rec_bad, 0);
+    CHECK_EQ_I(s->start_ones, 680); CHECK_EQ_I(s->start_bad, 0);
+    CHECK_EQ_I(s->data_lost, 0);
+}
+
+static void x2_tests(void)
+{
+    static const char *const pad_name[3] = { "no pad", "3 dB pad", "6 dB pad" };
+    x2_outcome o;
+    int pad;
+
+    /* 1. x2 at 32000 down, 24000 up (the Courier's mask, 03FE), behind each pad */
+    for (pad = 0; pad < 3; pad++) {
+        x2_call(pad, 1, 0x03FE, X2C_SIL_NONE, pad == 0 ? -1 : 0, 40, 100000, &o);
+        x2_report(pad_name[pad], &o);
+        CHECK(o.ok);
+        CHECK_EQ_I(o.mod, ANS_MOD_X2); CHECK_EQ_I(o.mod, 10 /* V90M_CONN_X2 */);
+        CHECK_EQ_I(o.down, 32000); CHECK_EQ_I(o.up, 24000);
+        CHECK_EQ_I(o.x2_failed, 0);
+        CHECK_EQ_I(A.u.x2.pad_mode, pad); CHECK_EQ_I(A.u.x2.tx.map.pad_mode, pad);
+        if (pad == 0) CHECK(A.u.x2.ecd.delay > 300 - 24 && A.u.x2.ecd.delay <= 300 + 2);   /* measured */
+        x2_seen_clean();
+        CHECK(DN.n >= 100000); CHECK_EQ_I(DN.bad, 0);
+        CHECK(UP.n >= 100000); CHECK_EQ_I(UP.bad, 0);
+        CHECK(answer_snr_db10(&A) > 200);
+    }
+
+    /* 2. the MP asks for index 5 (we have a bank for 1 only: 0x0002), or
+     *    reports a pad of mode 3: the call ends, as x2's, soon after it */
+    {
+        static const struct { int pad, index, err; const char *what; } no[] = {
+            { 0, 5, X2D_ERR_RATE, "MP asks for index 5" }, { 3, 1, X2D_ERR_PAD, "MP reports pad mode 3" } };
+        int j;
+        for (j = 0; j < 2; j++) {
+            x2_call(no[j].pad, no[j].index, 0x03FE, X2C_SIL_NONE, 0, 30, 0, &o);
+            printf("  x2 %s: ended %.2f s after the marker, error %d, x2_failed %d, %d MPs sent\n", no[j].what,
+                   (o.end_at - o.x2_at) / 8000.0, o.error, o.x2_failed, X.mp_count);
+            CHECK(o.x2_at > 0); CHECK(o.end_at > o.x2_at);
+            CHECK_EQ_I(A.phase, ANS_FAILED); CHECK_EQ_I(o.x2_failed, 1); CHECK_EQ_I(o.connected_once, 0);
+            CHECK_EQ_I(o.error, no[j].err);
+            CHECK(X.mp_count >= 2 && X.mp_count <= 4);     /* at its second MP */
+            CHECK_EQ_I(X.seen.rec_good, 0);
+        }
+    }
+
+    /* 3. the client falls silent after its marker, after its J, after its
+     *    MP, in data mode: the call ends within 10 s, with a reason */
+    {
+        static const struct { int sil, err; const char *what; } q[] = {
+            { X2C_SIL_MARKER, X2D_ERR_NO_J, "after its marker" }, { X2C_SIL_J, X2D_ERR_NO_S4, "after its J" },
+            { X2C_SIL_MP, X2D_ERR_NO_E, "after its MP" }, { X2C_SIL_DATA, X2D_ERR_CARRIER, "in data mode" } };
+        int j;
+        for (j = 0; j < 4; j++) {
+            x2_call(0, 1, 0x03FE, q[j].sil, 0, 40, 0, &o);
+            printf("  x2 client silent %s: the call ended %.2f s later, error %d, x2_failed %d\n", q[j].what,
+                   (o.end_at - o.quiet_at) / 8000.0, o.error, o.x2_failed);
+            CHECK(o.quiet_at > 0); CHECK(o.end_at > o.quiet_at);
+            CHECK(o.end_at - o.quiet_at <= 8000L * 10);
+            CHECK_EQ_I(A.phase, ANS_FAILED);
+            CHECK_EQ_I(o.error, q[j].err);
+            /* the end reason: x2's before data mode, the connection lost in it */
+            CHECK_EQ_I(o.x2_failed, q[j].sil != X2C_SIL_DATA);
+            CHECK_EQ_I(o.connected_once, q[j].sil == X2C_SIL_DATA);
+        }
+    }
+}
+
 int main(void)
 {
     const unsigned base = ANS_MODE_V90 | V8_MOD_V34 | V8_MOD_V22 | V8_MOD_V21;
@@ -231,15 +407,15 @@ int main(void)
     CHECK(same_tx(ntx < n0 ? ntx : n0));
     printf("  V.90 caller, x2 offered: %ld samples sent, %s\n", ntx, same_tx(ntx < n0 ? ntx : n0) ? "all as without x2" : "SOME DIFFER");
 
-    /* 4. an x2 client's marker (4d) 170 ms after our L1 began: ANS_X2, and
-     *    until the x2 start-up is there, the end, said as x2's */
+    /* 4. an x2 client's marker (4d) 170 ms after our L1 began, and then
+     *    nothing: ANS_X2, and the end, said as x2's */
     {
         long t, x2_at = -1;
         slot = 0; mk_at = 170;
         dpsktx_init(&MK, DPSK_FC_B, 3000, 0);
         nmk = p2ans_x2_info_frame(0x4d, mkbits);
         start(base | ANS_MODE_X2, 1, 1);
-        for (t = 0; t < 8000L * 12 && A.phase != ANS_FAILED; t++) {
+        for (t = 0; t < 8000L * 14 && A.phase != ANS_FAILED; t++) {
             run(1);
             if (A.phase == ANS_X2 && x2_at < 0) x2_at = L.n;
         }
@@ -250,5 +426,7 @@ int main(void)
         CHECK_EQ_I(A.phase, ANS_FAILED); CHECK_EQ_I(A.x2_failed, 1); CHECK_EQ_I(A.connected, 0);
         mk_at = 0;
     }
+
+    x2_tests();
     T_REPORT("answer_x2");
 }

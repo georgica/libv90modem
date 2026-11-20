@@ -19,7 +19,7 @@ budget=${COURIER_INSTRUCTIONS:-400000000}
 limit=${TIMEOUT:-3600}
 
 case ${PAD:-0} in 0|3|6) ;; *) echo "x2-peer: PAD=${PAD} (0, 3 or 6)"; exit 1;; esac
-case ${MODS:-} in ''|none) ;; *) echo "x2-peer: MODS=${MODS}: x2 is not available in the answering modem yet"; exit 1;; esac
+case ${MODS:-} in ''|none|x2) ;; *) echo "x2-peer: MODS=${MODS} ('', none or x2)"; exit 1;; esac
 [ -x "$emu/courier" ] || { echo "x2-peer: no courier-emu at $emu"; exit 1; }
 [ -f "$rom" ] || { echo "x2-peer: no ROM image $rom"; exit 1; }
 mkdir -p "$out"
@@ -62,9 +62,11 @@ open(sys.argv[2], "w").write(text)
 EOF
 tr -d '\r' < "$out/courier-serial.txt" | sed -n 's/^/courier: /p' | grep -v '^courier: *$'
 echo "x2-peer: Courier exit $theirs, bridge exit $ours"
-# x2 not offered: the Courier must say V34
-want='CONNECT.*V34'
-if [ $ours -eq 0 ] && grep -q "$want" "$out/courier-serial.txt"; then
+# x2 not offered: the Courier must say V34; offered: x2 on its CONNECT line
+# and in its ATI11
+if [ "${MODS:-}" = x2 ]; then want='CONNECT.*/[Xx]2'; else want='CONNECT.*V34'; fi
+if [ $ours -eq 0 ] && grep -q "$want" "$out/courier-serial.txt" \
+   && { [ "${MODS:-}" != x2 ] || grep -q 'Modulation.*[Xx]2' "$out/courier-serial.txt"; }; then
     echo "x2-peer: PASS (both sides in data mode)"
     exit 0
 fi

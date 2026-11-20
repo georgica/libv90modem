@@ -181,6 +181,12 @@ client's J; then it sends, in G.711 octets, without a gap:
   the client.
 - TRN has a fixed length because the client starts its Phase 4 on the J
   words. **RE (D-Modem)**.
+- The client sends its J until our preamble has been there about 150 ms
+  (the Courier's), then is quiet until our J words. **RE (D-Modem)**,
+  x2-details.md "The client: Phase 3", and `dsp/v34_x2.h`'s server
+  ("the client quiet after its J"). Our echo canceller trains on our TRN
+  in that quiet (`modem/x2d`); the Courier calls of "Harness" show it is
+  there.
 
 The preamble's 22 octets (**RE (D-Modem)**, `dsp/x2.cpp` line 28;
 rule **RE (courier-emu)**):
@@ -266,6 +272,16 @@ Sequence (**RE (D-Modem)**): the client sends Phase 4 (S, S-bar, TRN at 4
 then 16 points), its MP until our record has been decoded, then MP', then
 E, then V.34 data. The server sends sync frames until the MP, then its
 record, whole records, until E, then the start segment.
+
+- The client's MP, MP' and E are on 16 points: E is five symbols of four
+  ones. **RE (D-Modem)**, x2-details.md "Phase 4" ("E (20 ones, 5
+  symbols)"); **RE (courier-emu)**, `docs/x2-courier-mp-fields.md`: the
+  Courier sets its flag `006F` bit 9 when the J words it received are
+  `09B0`, and with it E's ones go to "the same AF7D scrambler/16-point
+  transmitter used by MP".
+- After E the client sends V.34's B1, then data. **RE (courier-emu)**,
+  `artifacts/x2-upstream-b1-20261005` (B1 acquired from a Courier
+  recording, with expanded shaping and 64 states).
 
 ## Mapping
 
@@ -531,6 +547,34 @@ The Courier's timing offset (-112 ppm) and carrier offset (159 ppm) did not
 change when the bridge's instruction stamp was corrected (it ran 920 ppm
 slow): the stamp does not clock the Courier, and the offsets are the
 emulator's (or the Courier's estimate), not the line's. Open as well.
+
+x2 offered (`MODS=x2`), 2026-11-20, this library at x2 6 (`modem/x2d`,
+32000 down only): at each pad the Courier takes x2, and the call reaches
+data mode both ways with V.42 LAPM up.
+
+| | PAD=0 | PAD=3 | PAD=6 |
+| --- | --- | --- | --- |
+| ours | CONNECT 32000/24000 x2 at 30.40 s | the same | the same |
+| the Courier's CONNECT | `48000/ARQ/x2/LAPM/V42BIS` | `50666/ARQ/x2/LAPM/V42BIS` | `48000/ARQ/x2/LAPM/V42BIS` |
+| ATI11 Modulation | `x2/V.34+` | `x2/V.34+` | `x2/V.34+` |
+| ATI11 Symbol Rate, Trellis, Nonlinear, Shaping | `8000/3200`, `NONE/64S-4D`, `NONE/ON`, `OFF/ON` | the same | the same |
+| ATI11 Recv Level, SNR | 21.4 dBm, 56.3 dB | 20.7, 56.2 | 21.2, 56.0 |
+| ATI11 x2 Status | `0000; 0000-0000-0000-0000-0000-0000; 01,00 4539;01` | `0001; 1000-1000-1000-1000-1000-1000; ...` | `0010; 1000-...; ...` |
+| our level in data mode, before / after the pad | -16.5 / -16.5 dBm0 | -13.6 / -16.6 | -10.4 / -16.5 |
+
+- The Courier's upstream is as "Upstream" says: 3200 baud, 64 states,
+  non-linear encoding, shaping; at 24000 (its mask `03FE`).
+- Its CONNECT figure is not our downstream rate (index 1: 32000 payload,
+  33333 as USR prints it): 48000 and 50666 here, against the same
+  downstream. Presumably what its own measurement of the line allows
+  (courier-emu: its MP keeps a measured ceiling and asks for index 1 at
+  start-up). Not settled.
+- The first field of x2 Status follows the pad (`0000`, `0001`, `0010`):
+  presumably the pad it measured, as its MP reports it.
+- 12.1 s after our CONNECT (12.6 s after the start segment's data levels
+  began; D-Modem: 12.66 s) the Courier stopped its upstream data and sent
+  S: its rate change ("Rate change"). This version does not answer it;
+  our call ended 6 s later, and the Courier hung up 36 s after that.
 
 Without a V.42 endpoint on our side (the first try) the
 Courier printed only `NO CARRIER`: it cleared down 6.4 s after V.34 data

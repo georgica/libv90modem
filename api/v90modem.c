@@ -345,6 +345,7 @@ void v90m_get_stats(const v90m_t *m, v90m_stats *st)
         st->rtd = a->connected ? answer_rtd(a) : -1;
         if (a->modulation == ANS_MOD_V92 || a->phase == ANS_P3X || a->phase == ANS_V92) st->echo_delay = a->u.v92.ecd.delay;
         else if (a->modulation == ANS_MOD_V90 || a->phase == ANS_P3 || a->phase == ANS_V90) st->echo_delay = a->p34.ecd.delay;
+        else if (a->modulation == ANS_MOD_X2 || a->phase == ANS_X2) st->echo_delay = a->u.x2.ecd.delay;
         else st->echo_delay = -1;
         st->retrains = (unsigned)a->retrains;
     }

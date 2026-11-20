@@ -33,7 +33,7 @@
  * text once it is up and counts what arrives.
  *   -p PAD   the digital pad on our transmit path: 0 (default), 3 or 6 dB
  *   -m MODS  the modulations to offer beyond the defaults: "" or "none"
- *            (default); "x2" is not available yet
+ *            (default), or "x2" (V90M_MOD_X2)
  *   -s SEC   give up after SEC seconds of line (default 600)
  * The log goes to stdout. Exit status 0 when our modem reached data mode
  * and its V.42 endpoint got data moving (LAPM or start-stop), 1 otherwise, 2 on a usage or socket error. */
@@ -51,9 +51,10 @@
 
 enum { CALL_IDLE, CALL_SEIZED, CALL_RINGING, CALL_ANSWERED, CALL_CLEARED };
 static const char *const call_name[] = { "idle", "seized", "ringing", "answered", "cleared" };
-static const char *const conn_name[] = { "none", "V.21", "V.22", "V.22bis", "V.90", "V.34", "V.32bis", "V.92", "Bell 103", "Bell 212A" };
+static const char *const conn_name[] = { "none", "V.21", "V.22", "V.22bis", "V.90", "V.34", "V.32bis", "V.92", "Bell 103", "Bell 212A",
+                                         "x2" };
 static const char *const end_name[] = { "none", "start-up failed", "line lost", "far end cleared down", "we cleared down",
-                                        "no answer tone", "no JM", "nothing in common", "retrain failed" };
+                                        "no answer tone", "no JM", "nothing in common", "retrain failed", "x2 failed" };
 
 #define HDR      9          /* <IBBBH */
 #define MAXN     4096       /* samples in a frame, at most */
@@ -196,8 +197,8 @@ int main(int argc, char **argv)
         fprintf(stderr, "usage: x2-bridge SOCKET [-p 0|3|6] [-m MODS] [-s SECONDS]\n");
         return 2;
     }
-    if (*mods && strcmp(mods, "none")) {
-        fprintf(stderr, "x2-bridge: MODS=%s: x2 is not available in the answering modem yet\n", mods);
+    if (*mods && strcmp(mods, "none") && strcmp(mods, "x2")) {
+        fprintf(stderr, "x2-bridge: MODS=%s: \"\", \"none\" or \"x2\"\n", mods);
         return 2;
     }
     sock = argv[1];
@@ -210,6 +211,8 @@ int main(int argc, char **argv)
     cfg.getbit = get_bit;
     cfg.putbit = put_bit;
     cfg.on_event = on_event;
+    if (!strcmp(mods, "x2"))
+        cfg.modulations |= V90M_MOD_X2;
     modem = ec ? v90m_create(&cfg, &err) : NULL;
     if (!modem) {
         fprintf(stderr, "x2-bridge: v90m_create: %d\n", err);
@@ -217,7 +220,8 @@ int main(int argc, char **argv)
     }
     if ((fd = line_open(sock, 120)) < 0)
         return 2;
-    printf("x2-bridge: %s, pad %d dB, offering the defaults (x2 not offered)\n", v90m_version(), pad);
+    printf("x2-bridge: %s, pad %d dB, offering the defaults%s\n", v90m_version(), pad,
+           cfg.modulations & V90M_MOD_X2 ? " and x2" : " (x2 not offered)");
     memset(tx_lin, 0, sizeof tx_lin);
 
     for (;;) {

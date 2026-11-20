@@ -9,6 +9,7 @@
 #include "test.h"
 /* the simulator's calling modem (dev archive) */
 #include "callpeer.h"
+#include "x2call.h"
 
 static uint32_t fnv(uint32_t h, const void *p, size_t n)
 {
@@ -1053,6 +1054,63 @@ static void test_bell_originate(void)
     }
 }
 
+/* ---- x2: the simulated client (sim/x2call) calls the library ---- */
+static int x2_ev[8], x2_nev;
+static void x2_on_event(void *user, v90m_event ev) { (void)user; if (x2_nev < 8) x2_ev[x2_nev] = (int)ev; x2_nev++; }
+static int ones_get(void *u) { (void)u; return 1; }
+static void bits_put(void *u, int b) { (void)u; (void)b; }
+
+static void test_x2(void)
+{
+    static x2call_t x;
+    static uint8_t down[64];
+    x2call_cfg xc; v90m_cfg c; v90m_state st; v90m_stats sx;
+    v90m_t *m; int err;
+    long n, data_at = -1;
+    uint8_t rx = 0xff, tx;
+
+    v90m_cfg_default(&c);
+    c.modulations |= V90M_MOD_X2;
+    c.getbit = ones_get; c.putbit = bits_put; c.on_event = x2_on_event;
+    m = v90m_create(&c, &err);
+    CHECK(m != NULL);
+    if (!m) return;
+    memset(&xc, 0, sizeof xc);
+    xc.level = 3000; xc.max_index = 1; xc.up_mask = 0x03FE;
+    xc.getbit = ones_get; xc.putbit = bits_put;
+    x2call_init(&x, &xc);
+    memset(down, 0x7f, sizeof down);
+    for (n = 0; n < 8000L * 20; n++) {
+        int16_t s;
+        v90m_process_g711(m, &rx, &tx, 1);
+        down[n & 63] = tx;
+        s = x2call_tick(&x, down[(n - 30) & 63]);
+        rx = v90m_g711_encode(0, (int16_t)(s / 2));
+        v90m_get_state(m, &st);
+        if (st.connected && data_at < 0) data_at = n;
+        if (data_at >= 0 && n == data_at + 8000) {
+            /* x2 has no cleardown signal: we go silent, the call ends as ours */
+            v90m_get_stats(m, &sx);
+            printf("  API x2 call: mod %d, %d / %d bit/s, SNR %.1f dB, rtd %d, echo delay %d\n", st.modulation,
+                   st.tx_bps, st.rx_bps, sx.snr_db10 / 10.0, sx.rtd, sx.echo_delay);
+            CHECK_EQ_I(st.modulation, V90M_CONN_X2); CHECK_EQ_I(sx.modulation, V90M_CONN_X2);
+            CHECK_EQ_I(st.tx_bps, 32000); CHECK_EQ_I(st.rx_bps, 24000);
+            CHECK_EQ_I(st.moving, 1); CHECK_EQ_I(st.used_v8, 1); CHECK_EQ_I(st.end, V90M_END_NONE);
+            CHECK(sx.snr_db10 > 200); CHECK(sx.rtd > 0); CHECK(sx.echo_delay >= 0);
+            CHECK_EQ_I(v90m_cleardown(m), V90M_OK);
+        }
+        if (st.end != V90M_END_NONE) break;
+    }
+    v90m_get_state(m, &st);
+    CHECK(data_at > 0);
+    CHECK_EQ_I(st.end, V90M_END_CLEARDOWN_OURS);
+    CHECK(x2_nev >= 3);
+    CHECK_EQ_I(x2_ev[0], V90M_EV_CONNECTED); CHECK_EQ_I(x2_ev[1], V90M_EV_DATA_MOVING);
+    CHECK_EQ_I(x2_ev[x2_nev - 1], V90M_EV_ENDED);
+    CHECK_EQ_I(v90m_cleardown(m), V90M_ESTATE);           /* over: nothing to send */
+    v90m_destroy(m);
+}
+
 int main(void)
 {
     test_cfg();
@@ -1064,5 +1122,6 @@ int main(void)
     test_originate();
     test_bell();
     test_bell_originate();
+    test_x2();
     T_REPORT("api");
 }

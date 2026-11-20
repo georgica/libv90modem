@@ -2732,3 +2732,117 @@ of the recordings is an x2 caller, so no marker was taken.
 `make check-arm` (armv5 uclibc, qemu): ALL ARM CHECKS PASS. test_answer_x2
 was run in full (46 checks). It now has a TEST_SHORT version for ARM that
 leaves out the access-octet call and the A-law pair: 30 checks, 3.4 s.
+
+## x2 6: training, records and data at 32000; a simulated client; the emulated Courier (2026-11-20)
+
+The client's marker now leads to the x2 start-up and data mode at rate
+index 1 (32000 down), V.34 up. The facts are docs/history/x2-facts.md
+"Phase 3 script", "Records", "Mapping", "Free sign", "Pads", "Upstream".
+
+- `modem/x2tx`: the server's script, octet by octet: 20 x 7f, the
+  preamble (from its rule: Barker-11 signs, the 0712 magnitudes; checked
+  against the facts' 22 octets), TRN (GPC from 0, b1 / 31), the J words
+  (09B0 x 99, 099F), the ones (c1 / 41), the alignment, sync frames of
+  ones in levels A (1667 at least, until the client's MP), our record
+  F33C 7FFF 0000 padded to 4 frames (whole records, until its E), the
+  start (1 + 680 frames of ones), data. GPC runs on through every mapped
+  frame (not the alignment).
+- `modem/x2d`, modelled on p34d, one sample in, one octet out: the
+  client's V.34 Phase 3 (sdet, PP and 512 TRN symbols known, 4-point
+  decisions, J of either kind twice) -> our script; the echo canceller
+  learns on our TRN while the client is quiet (it stops its J 150 ms into
+  our preamble: a fact added to "Phase 3 script"), the echo delay measured
+  first when not given; sres on its Phase 4 S; 16-point decisions (the
+  equaliser learns only from decisions near a point, so TRN's 4-point
+  start does not pull it); its MP (an x2 record of 4 words) taken when two
+  in a row agree: the index must be in X2D_RATE_MASK (0x0002), the pad 0..2,
+  the upstream the highest of its word 1 at most 28800 that v34/ takes
+  with GPA, expanded shaping, 64 states and non-linear encoding; E (20
+  ones) -> B1 and data through qamrx + v34/. Each wait has a limit; after
+  the marker every failure ends the call. The client's S in data mode is
+  X2D_RENEG, not answered yet: the call ends 6 s later (x2 7).
+- `modem/answer`: ANS_X2 runs x2d in `u` (with V.32bis and V.92: 20 KB of
+  45; answer_t unchanged, V90M_MEM_SIZE unchanged); data mode is
+  ANS_MOD_X2 with x2d's rates; an end before data mode is x2_failed
+  (V90M_END_X2_FAILED); answer_cleardown in x2 data mode goes silent
+  (cleared = 2, V90M_END_CLEARDOWN_OURS); SNR, rtd, echo delay, moving.
+- `sim/x2call`: the client, from the facts: V.8 and Phase 2 (v8call with
+  jm_flip, p2c) to our L1, the marker 4d 170 ms after it began, Phase 3
+  (TRN 6400, J on 16 points until our preamble has run 150 ms), Phase 4 at
+  our J words (TRN 512 on 4 points then 16, 5120 in all), its MP until our
+  record decodes, one MP', E, B1, data. Downstream it passes our octets
+  through the pad model and checks every segment.
+- The Task 4 review's minors (commit c85b990): the marker in the first
+  Phase 2 only; its 800 ms counted to the frame's start (and through a
+  return to Tone A after an unanswered L2); V8_SEL_V34; self_retrain
+  through x2_stop.
+- tools: `rec_x2` (a recording of a sim call), `bench_v90 -x`, `make
+  bench-x2`, `make cost-x2`; the x2-peer bridge and run.sh take MODS=x2.
+
+Tests (each seen failing first: test_x2tx against a stub x2tx, 2027 of
+2034 checks failed; test_answer_x2's and test_api's x2 calls against an
+x2d that ends at once, as Task 4's ANS_X2 did: 56 and 5 failures):
+
+    test_x2tx:     50 checks, 0 failures (every segment, records, start, 48000 data bits)
+    test_answer_x2: 172 checks, 0 failures
+      x2 no pad: data 32000 / 24000 bit/s; down 118512 bits 0 bad, up 100020 bits 0 bad
+         pad mode 0 in the MP and the mapper; echo delay 295; upstream SNR 36.6 dB
+         client saw: preamble 0 bad, TRN 0 bad, J words 99 + 1, ones 0 bad, alignment 0 bad,
+         sync 1667 frames (0 bad), records 14 (0 bad), start 680 (0 bad), data frames 4938 (0 lost)
+      x2 3 dB pad, 6 dB pad: the same (pad mode 1, 2; echo delay given 0; SNR 34.9, 33.8 dB)
+      x2 MP asks for index 5: ended 6.47 s after the marker, error 5, x2_failed 1, 4 MPs sent
+      x2 MP reports pad mode 3: ended 6.47 s after the marker, error 6, x2_failed 1, 4 MPs sent
+      x2 client silent after its marker: the call ended 5.93 s later, error 2, x2_failed 1
+      x2 client silent after its J: the call ended 3.02 s later, error 3, x2_failed 1
+      x2 client silent after its MP: the call ended 6.61 s later, error 8, x2_failed 1
+      x2 client silent in data mode: the call ended 0.53 s later, error 10, x2_failed 0
+    test_api: the x2 call through the public API: V90M_CONN_X2, 32000 / 24000,
+      SNR 38.1 dB, events CONNECTED, DATA_MOVING ... ENDED, v90m_cleardown -> CLEARDOWN_OURS
+    test_p2ans: the marker refused in a retrain, taken 15 ms before the
+      deadline (sent 945 ms after L1 began), refused 5 ms after it
+
+The echo canceller carries the upstream: frozen (a diagnostic build, not
+kept), the no-pad call never got the client's MP (SNR -0.1 dB).
+
+The emulated Courier (`make test-x2-courier MODS=x2`, courier-emu
+186d653f5624, its 4.03 board ROM) at each pad: PASS. Ours `CONNECT
+32000/24000 x2` at 30.40 s of line, V.42 LAPM at 32.88 s; the Courier
+`CONNECT 48000/ARQ/x2/LAPM/V42BIS` (PAD=3: 50666), ATI11 `Modulation
+x2/V.34+`, `Trellis Code NONE/64S-4D`, `Nonlinear Encoding NONE/ON`,
+`Shaping OFF/ON`, SNR 56 dB, x2 Status `0000` / `0001` / `0010` by pad.
+12.1 s into data mode the Courier began its rate change, which this
+version does not answer: our end came 6 s later. Details and what is not
+settled: x2-facts.md "Harness". No difference from the simulated client
+showed.
+
+CPU (`make bench-x2`, `make cost-x2`; ARMv5 gcc -O2 under qemu): the
+recording of a sim call (tools/rec_x2, 40 s, data mode from 10.73 s)
+replays on the host and on ARM with the same transmit hash (37c3e5f5),
+713400 bits up, 0 bad. Instructions per second of line in data mode
+(seconds 15 to 16 of each call, counted as cost-v34 does):
+
+| | M instructions / s | of the box (123 M = 100 %) |
+|---|---|---|
+| V.90 data mode (rec_v90: 50666 / 28800) | 38.9 | 32 % |
+| x2 data mode (rec_x2: 32000 / 24000) | 80.4 | 65 % |
+
+x2's data mode costs 206 % of V.90's, against the plan's "no more than
+V.90's". The cost is the upstream the client dictates (x2-facts.md
+"Upstream", as the Courier's ATI11 confirms): 64-state trellis, non-linear
+encoding, expanded shaping; V.90's upstream is 16 states, linear, minimum
+shaping, which p34d asks for in its MP and x2 has no way to ask. A scratch
+build of client and server with 16 states, linear and minimum shaping
+(not kept) costs the same as V.90 on the host bench (0.2 % of the host
+against 0.4 % with the Courier's options, 3 runs each). One x2 call fits
+the box; two at once would not.
+
+`make check`: ALL HOST CHECKS PASS. `PAR=16 make check-arm` (armv5
+uclibc, qemu): ALL ARM CHECKS PASS; arm_test_x2tx 50 checks,
+arm_test_answer_x2 156 (its x2 cases all run on ARM, about 8 s, and print
+the host's lines exactly; only the older TEST_SHORT block is left out),
+arm_test_p2ans 255, api 458. clang -fsanitize=undefined builds of
+test_x2tx and test_answer_x2 print what gcc's do.
+
+Replay proof (every live-050 recording, 106; v90m-replay at 109c2d0
+against this branch; flags "", "-9", "-x", "-x -9"): all four
+comparisons identical, .bits included.

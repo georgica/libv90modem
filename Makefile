@@ -10,6 +10,7 @@
 #                        (calling the library's own answerer; make check runs it)
 #   make bench-v90       record a simulated V.90 call, replay it on the host and
 #                        under qemu, through the internals and the public API
+#   make bench-x2        the same for x2 (a call of the simulated client); cost-x2 counts
 #   make bench-v90a      the same for the V.90 analogue modem's downstream receiver
 #   make bench-v90c      the same for the whole V.90 calling modem (orig, v90a)
 #   make bench-v92c      ... and for it in V.92 (PCM upstream); cost-v92c counts
@@ -17,7 +18,7 @@
 #   make bench-bell      the calling modem in Bell 103 and Bell 212A; cost-bell counts
 #   make test-interop    against spandsp (SPANDSP=its install prefix), host only
 #   make test-x2-courier an emulated USR Courier calls our answerer (COURIER_EMU=courier-emu
-#                        checkout, PAD=0|3|6; tools/x2-peer/README.md), host only
+#                        checkout, PAD=0|3|6, MODS=x2; tools/x2-peer/README.md), host only
 #
 # Cross-compiling: set CC (and BUILD to keep the objects apart), e.g.
 #   make CC=arm-linux-gcc BUILD=build/arm
@@ -78,13 +79,13 @@ DEV      := $(BUILD)/$(NAME)-dev.a
 
 # ---- the simulator and the test suite ----
 SIM_SRC  := sim/g711.c sim/noise.c sim/filt.c sim/resamp.c sim/channel.c sim/v8call.c sim/callpeer.c sim/p2a.c sim/qammod.c \
-            sim/p34a.c v90/test/v90_dec.c sim/p2c.c sim/v34peer.c sim/v32call.c sim/v32line.c sim/v92chan.c sim/v92a.c sim/v92call.c sim/dschan.c
+            sim/p34a.c v90/test/v90_dec.c sim/p2c.c sim/v34peer.c sim/v32call.c sim/v32line.c sim/v92chan.c sim/v92a.c sim/v92call.c sim/dschan.c sim/x2call.c
 SIM_OBJ  := $(patsubst %.c,$(BUILD)/obj/%.o,$(SIM_SRC))
 MODEM_SRC := modem/v21.c modem/ansam.c modem/v8msg.c modem/async.c modem/v8rx.c modem/v8ans.c \
              modem/scramble.c modem/v22tx.c modem/v22rx.c modem/v22bis.c modem/v14.c modem/answer.c \
              modem/info.c modem/dpsk.c modem/probe.c modem/p2d.c modem/qamrx.c modem/ec.c modem/ecdly.c modem/tonedet.c modem/v34train.c modem/p34d.c modem/pcmenc.c \
              modem/v34mp.c modem/p2ans.c modem/v34mod.c modem/v34dx.c modem/v34ans.c modem/anstone.c modem/v8orig.c modem/orig.c modem/p2call.c modem/v34orig.c modem/v90arx.c modem/v90adec.c modem/v90dil.c modem/v90a.c modem/pcmtx.c modem/v92aseq.c modem/belltone.c \
-             modem/x2rec.c modem/x2map.c modem/x2tab.c \
+             modem/x2rec.c modem/x2map.c modem/x2tab.c modem/x2tx.c modem/x2d.c \
              $(wildcard v90/*.c) $(wildcard v34/*.c) $(wildcard v32/*.c) $(wildcard v92/*.c)
 T_SRC    := $(SIM_SRC) $(MODEM_SRC)
 HDRS     := $(wildcard modem/*.h sim/*.h test/*.h v90/*.h v34/*.h v92/*.h v90/test/v90_dec.h)
@@ -93,7 +94,7 @@ TESTS    := test_g711 test_noise test_filt test_resamp test_channel test_v21 tes
             test_v22tx test_v22rx test_v22bis test_v14 test_answer test_info test_dpsk test_probe test_p2 test_qamrx test_ec test_ecdly test_v34train test_sres test_answer_v90 test_p34 test_pcmenc \
             test_v34mp test_p2ans test_v34mod test_v34dx test_v34call test_answer_v34 test_answer_v32 test_answer_v90_v34 \
             test_p2_v92 test_v92call test_answer_v92 test_v92real test_answer_lin \
-            test_anstone test_v8orig test_orig test_orig_v32 test_p2call test_orig_v34 test_v90arx test_v90arx_robust test_v90adec test_v90dil test_p2v90 test_v90a test_orig_v90 test_orig_v90_te test_orig_seeds test_orig_retrain test_pcmtx test_v92aseq test_p2v92a test_v92a test_orig_v92 test_belltone test_orig_bell test_realcheck test_x2_pad test_answer_x2 test_x2rec test_x2map
+            test_anstone test_v8orig test_orig test_orig_v32 test_p2call test_orig_v34 test_v90arx test_v90arx_robust test_v90adec test_v90dil test_p2v90 test_v90a test_orig_v90 test_orig_v90_te test_orig_seeds test_orig_retrain test_pcmtx test_v92aseq test_p2v92a test_v92a test_orig_v92 test_belltone test_orig_bell test_realcheck test_x2_pad test_answer_x2 test_x2rec test_x2map test_x2tx
 # the public API, against the library as it is installed
 API_TESTS := test_api
 SUBS     := v34 v90 v92 v42 v32
@@ -280,6 +281,30 @@ $(BUILD)/bench_api.so: rig/bench_api.c $(SHARED)
 $(BUILD)/bench_api.arm: rig/bench_api.c include/v90modem.h
 	$(MAKE) -s BUILD=$(BUILD)/arm CC=$(ARM_CC) $(BUILD)/arm/$(NAME).a
 	$(ARM_CC) $(CFLAGS) -Iinclude -static -o $@ $< $(BUILD)/arm/$(NAME).a $(LDLIBS)
+
+# ---- x2 answering: the same with a call of the simulated x2 client
+# (tools/rec_x2, replayed by bench_v90 -x); cost-x2 counts ARM instructions
+# per second of data mode for x2 and for V.90, as cost-v34 does ----
+X2_REC := $(BUILD)/x2_call.rec
+bench-x2: $(BUILD)/rec_x2 $(BUILD)/bench_v90 $(BUILD)/bench_v90.arm
+	$(abspath $(BUILD))/rec_x2 40 0 $(X2_REC) | tail -2
+	$(abspath $(BUILD))/bench_v90 -x $(X2_REC)
+	$(QEMU) $(abspath $(BUILD))/bench_v90.arm -x $(X2_REC)
+$(BUILD)/rec_x2: tools/rec_x2.c $(SIM_SRC) $(MODEM_SRC) $(HDRS)
+	@mkdir -p $(BUILD)
+	$(CC) $(T_CFLAGS) -o $@ tools/rec_x2.c $(SIM_SRC) $(MODEM_SRC) $(LDLIBS)
+.PHONY: bench-x2 cost-x2
+cost-x2: bench-x2 bench-v90
+	@head -c $$((8000 * 15)) $(X2_REC) > $(BUILD)/x2_a.rec; head -c $$((8000 * 16)) $(X2_REC) > $(BUILD)/x2_b.rec; \
+	 head -c $$((8000 * 15)) $(V90_REC) > $(BUILD)/v90_c.rec; head -c $$((8000 * 16)) $(V90_REC) > $(BUILD)/v90_d.rec; \
+	 for r in x2_a x2_b v90_c v90_d; do \
+	   case $$r in x2*) x=-x;; *) x=;; esac; \
+	   ( $(CNT) $(abspath $(BUILD))/bench_v90.arm $$x $(BUILD)/$$r.rec 2>&1 | grep -c '^Trace' > $(BUILD)/$$r.cnt ) & \
+	 done; wait; \
+	 a=$$(cat $(BUILD)/x2_a.cnt); b=$$(cat $(BUILD)/x2_b.cnt); c=$$(cat $(BUILD)/v90_c.cnt); d=$$(cat $(BUILD)/v90_d.cnt); \
+	 echo "x2 data mode: $$((b - a)) ARM instructions per second of line (second 15 to 16 of the call)"; \
+	 echo "V.90 data mode: $$((d - c)) ARM instructions per second of line (second 15 to 16 of the call)"; \
+	 echo "ratio x2 / V.90: $$(( (b - a) * 100 / (d - c) )) %"
 
 # ---- V.34 answering: record a simulated call, replay it on host and ARM ----
 V34_REC ?= $(BUILD)/v34_call.rec

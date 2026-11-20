@@ -16,8 +16,10 @@
  * x2 (ANS_MODE_X2, with V8_MOD_V34, on a mu-law line): offered to a caller
  * whose CM offers V.34 and no PCM, in its JM (modem/v8ans) and its INFO0a
  * (modem/p2ans). A client that sends the x2 marker after our L1 makes the
- * call x2 (ANS_X2); one that does not gets V.34 as it would without x2.
- * Other callers see nothing of it.
+ * call x2 (ANS_X2: modem/x2d, PCM downstream, V.34 upstream); one that does
+ * not gets V.34 as it would without x2. Other callers see nothing of it.
+ * After the marker there is no way back to V.34: an x2 start-up that does
+ * not reach data mode ends the call with x2_failed.
  * One sample in, one sample out. The data interface is a bit pump: getbit is
  * called for every transmitted line bit, putbit for every received one, once
  * the connection is up. Characters travel start-stop framed in that bit stream
@@ -32,6 +34,7 @@
 #include "p2d.h"
 #include "p34d.h"
 #include "v34ans.h"
+#include "x2d.h"
 #include "../v32/v32.h"
 #include "../v92/v92_p34d.h"
 
@@ -48,7 +51,7 @@ typedef enum {
     ANS_V32_SIL,         /* a caller without V.8 sent AA during our answer tone: 75 ms of silence, then ANS_V32 */
     ANS_P3X,             /* V.92 Phases 3 and 4 with PCM upstream: training (v92/v92_p34d) */
     ANS_V92,             /* V.92 data mode, its rate renegotiations included; retrains: ANS_RETRAIN */
-    ANS_X2               /* x2: the client sent the marker. For now the call ends here (x2_failed) */
+    ANS_X2               /* x2: the client sent the marker; its start-up and data mode (u.x2) */
 } ans_phase;
 
 /* in answer_cfg.modes, next to the V8_MOD_ bits (which fit 16 bits): offer
@@ -110,11 +113,12 @@ typedef struct {
     info0_t    info0a;       /* the caller's INFO0a from V.90 Phase 2 (a retrain's has none) */
     p34d_t     p34;
     v34ans_t   v34;
-    /* V.32bis and V.92 never meet in one call (V.92 needs the PCM mode of
-     * V.8, V.32 is what V.8 selects without it or a caller without V.8 asks
-     * for with AA, and no phase leads back to V.8): they share their storage.
-     * u.v92 holds a call's V.92 engine from ANS_P3X on. */
-    union { v32_t v32; v92d_t v92; } u;
+    /* V.32bis, V.92 and x2 never meet in one call (V.92 needs the PCM mode of
+     * V.8, x2 a CM without it and V.34 selected, V.32 is what V.8 selects
+     * without V.34 or a caller without V.8 asks for with AA, and no phase
+     * leads back to V.8): they share their storage. u.v92 holds a call's
+     * V.92 engine from ANS_P3X on, u.x2 the x2 engine from ANS_X2 on. */
+    union { v32_t v32; v92d_t v92; x2d_t x2; } u;
     v32_aadet_t aadet;       /* 1800 Hz from the caller while the answer tone runs */
     uint8_t    pcm;          /* the codeword of this sample while V.90 runs */
     v21mod_t   fmod; v21demod_t fdem; arx_t uart;
@@ -139,7 +143,7 @@ typedef struct {
     /* x2 */
     int        x2_offered;   /* ANS_MODE_X2 with V.34, on a mu-law line */
     int        x2_failed;    /* the client sent the x2 marker and the x2 start-up did not
-                                complete: there is no way back to V.34, the call ended */
+                                reach data mode: there is no way back to V.34, the call ended */
 } answer_t;
 
 void    answer_init(answer_t *a, const answer_cfg *cfg);

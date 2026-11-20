@@ -1,0 +1,171 @@
+/* x2's training script. See x2tx.h.
+ *
+ * The segments, their lengths, levels and order are docs/history/x2-facts.md
+ * "Phase 3 script": our disassembly of the I-modem's DSP (Ie030002, the
+ * script at c915-c935), which D-Modem (https://github.com/D-Modem/D-Modem,
+ * docs/dsp/x2-details.md "Phase 3") and courier-emu
+ * (https://github.com/cryan209/courier-emu, its server script) agree with.
+ * Facts only; no code of either. */
+#include <string.h>
+#include "x2tx.h"
+#include "x2rec.h"
+
+#define POS   0x80              /* bit 7 of a mu-law octet: positive */
+#define SIL   0x7f
+#define LV_TRN  0xb1            /* TRN and J words: 3772 linear */
+#define LV_ONES 0xc1            /* ones: 1820 linear, 6.3 dB below */
+#define LV_PRE0 0xab            /* the preamble's two levels */
+#define LV_PRE1 0xbd
+#define PRE_SIGNS 0x05b8        /* 11 bits LSB first, 1 negative (Barker 11) */
+#define PRE_MAGS  0x0712        /* 11 bits LSB first, 0 LV_PRE0, complemented each other 11 */
+#define JW_WORD   0x09B0
+#define JW_LAST   0x099F
+#define JW_BITS   12
+
+static const uint8_t align_tab[X2MAP_N] = { 0x9e, 0x28, 0xa1, 0x21, 0xa8, 0x1e };
+
+/* octet k (0..351) of the 16 periods of the preamble */
+static uint8_t pre_octet(int k)
+{
+    int j = k % 11, odd = (k / 11) & 1;
+    uint8_t lv = (((PRE_MAGS >> j) & 1) ^ odd) ? LV_PRE1 : LV_PRE0;
+    return ((PRE_SIGNS >> j) & 1) ? (uint8_t)(lv & 0x7f) : lv;
+}
+
+/* a scrambled bit sent at a level: positive for a scrambled 0 */
+static uint8_t sbit(x2tx_t *t, int bit, uint8_t lv)
+{
+    return (uint8_t)(lv ^ (v90_scramble_gpc(&t->scr, bit) << 7));
+}
+
+static void enter(x2tx_t *t, x2tx_seg s) { t->seg = s; t->n = 0; t->fpos = X2MAP_N; }
+
+void x2tx_init(x2tx_t *t)
+{
+    static const uint16_t w[3] = { X2TX_REC_W0, X2TX_REC_W1, X2TX_REC_W2 };
+    memset(t, 0, sizeof *t);
+    v90_scr_init(&t->scr);
+    x2map_init(&t->map, 1, 0, 1);
+    /* our record, the acknowledge set (we send it once the client's MP is
+     * in), padded with zeros to 4 frames */
+    (void)x2rec_build(w, 3, 1, t->rec);
+    t->index = 1; t->pad_mode = 0;
+    enter(t, X2TX_SILENCE);
+}
+
+void x2tx_start(x2tx_t *t)
+{
+    if (t->seg == X2TX_SILENCE) enter(t, X2TX_LEAD);
+}
+
+void x2tx_data(x2tx_t *t, int index, int pad_mode, x2tx_getbit_fn getbit, void *user)
+{
+    t->index = index; t->pad_mode = pad_mode;
+    t->getbit = getbit; t->user = user;
+}
+
+void x2tx_go(x2tx_t *t) { t->go = 1; }
+
+int x2tx_rate(const x2tx_t *t)
+{
+    x2map_t m;
+    x2map_init(&m, t->index, t->pad_mode, 0);
+    return x2map_bits(&m) * 8000 / X2MAP_N;
+}
+
+/* the next frame of the mapped segments; returns 1, or 0 when the segment
+ * is over before it */
+static int next_frame(x2tx_t *t)
+{
+    uint8_t bits[64];
+    int nb, k;
+    switch (t->seg) {
+    case X2TX_SYNC:
+        if (t->go && t->n >= X2TX_SYNC_MIN) {
+            t->go = 0; t->rec_frame = 0; t->records = 0;
+            enter(t, X2TX_REC);
+            return next_frame(t);
+        }
+        nb = x2map_bits(&t->map);
+        for (k = 0; k < nb; k++) bits[k] = 1;
+        break;
+    case X2TX_REC:
+        if (t->rec_frame == 0) {
+            if (t->go) {
+                t->go = 0;
+                enter(t, X2TX_START);
+                return next_frame(t);
+            }
+            t->records++;
+        }
+        nb = x2map_bits(&t->map);
+        for (k = 0; k < nb; k++) bits[k] = t->rec[t->rec_frame * nb + k];
+        t->rec_frame = (t->rec_frame + 1) & 3;
+        break;
+    case X2TX_START:
+        if (t->n >= X2TX_START_FRAMES * X2MAP_N) { enter(t, X2TX_DATA); return next_frame(t); }
+        if (t->n == 0) {
+            t->map.levels_a = 1;
+        } else if (t->n == X2MAP_N) {
+            /* the data levels from the start's second frame; the signs and
+             * the running sum carry on */
+            t->map.levels_a = 0; t->map.index = t->index; t->map.pad_mode = t->pad_mode;
+        }
+        nb = x2map_bits(&t->map);
+        for (k = 0; k < nb; k++) bits[k] = 1;
+        break;
+    default:    /* X2TX_DATA */
+        nb = x2map_bits(&t->map);
+        for (k = 0; k < nb; k++) bits[k] = t->getbit ? (uint8_t)(t->getbit(t->user) & 1) : 1;
+        break;
+    }
+    for (k = 0; k < nb; k++) bits[k] = (uint8_t)v90_scramble_gpc(&t->scr, bits[k]);
+    x2map_frame(&t->map, bits, t->frame);
+    t->fpos = 0;
+    return 1;
+}
+
+uint8_t x2tx_tick(x2tx_t *t)
+{
+    uint8_t o;
+    switch (t->seg) {
+    case X2TX_SILENCE:
+        return SIL;
+    case X2TX_LEAD:
+        o = SIL;
+        if (++t->n == X2TX_LEAD_N) enter(t, X2TX_PRE);
+        return o;
+    case X2TX_PRE:
+        /* 16 periods, then the first 11 octets with the sign turned */
+        o = t->n < 352 ? pre_octet(t->n) : (uint8_t)(pre_octet(t->n - 352) ^ POS);
+        if (++t->n == X2TX_PRE_N) enter(t, X2TX_TRN);
+        return o;
+    case X2TX_TRN:
+        o = sbit(t, 1, LV_TRN);
+        if (++t->n == X2TX_TRN_N) enter(t, X2TX_JW);
+        return o;
+    case X2TX_JW: {
+        int w = t->n / JW_BITS;
+        o = sbit(t, (((w < 99 ? JW_WORD : JW_LAST) >> (t->n % JW_BITS)) & 1), LV_TRN);
+        if (++t->n == X2TX_JW_N) enter(t, X2TX_ONES);
+        return o;
+    }
+    case X2TX_ONES:
+        o = sbit(t, 1, LV_ONES);
+        if (++t->n == X2TX_ONES_N) enter(t, X2TX_ALIGN);
+        return o;
+    case X2TX_ALIGN:
+        o = align_tab[(t->n % X2MAP_N + t->n / X2MAP_N) % X2MAP_N];
+        if (++t->n == X2TX_ALIGN_N) {
+            /* the first sync frame: the differential sign positive, the
+             * running sum from zero */
+            x2map_init(&t->map, 1, 0, 1);
+            enter(t, X2TX_SYNC);
+        }
+        return o;
+    default:
+        if (t->fpos == X2MAP_N) (void)next_frame(t);
+        t->n++;
+        return t->frame[t->fpos++];
+    }
+}

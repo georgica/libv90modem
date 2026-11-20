@@ -83,8 +83,12 @@ which makes it about 123 M counted instructions a second.
 ## Not implemented
 
 - V.92 quick connect, short Phase 2 and modem-on-hold, either role.
-- x2 and K56flex, the 56k schemes from before V.90: neither has a published
-  specification; a modem with nothing newer connects at V.34 (`DESIGN.md`,
+- K56flex, and most of x2, the 56k schemes from before V.90: neither has a
+  published specification. x2's answering (server) side is there at 32000
+  down (rate index 1, the only level bank so far), from the facts in
+  `docs/history/x2-facts.md`; the client's rate change in data mode is not
+  answered yet (the call ends 6 s after it begins), and there is no x2
+  calling side. A modem with nothing newer connects at V.34 (`DESIGN.md`,
   4.2b).
 - Fax (V.17, V.29, V.27ter), V.23, half-duplex V.34.
 - A public call for a rate renegotiation of the calling side's own: the
