@@ -3032,3 +3032,50 @@ no octet arrives as, and checks that mode 2's received lists equal mode
 when pointed at mode 1); `test_answer_x2`'s comments give the second rate
 change as `reneg_ms` (12.7 s) into the first one's data, not 3 s; x2-facts
 "Records" puts our `0001` record in the past.
+
+## x2 8b: the Courier's data after its rate change, debugged (2026-11-20; BLOCKED, release held)
+
+x2 9 found that the emulated Courier decodes our downstream at index 1
+(32000) and not after its rate change (54666 at PAD=0 and 6, 52000 at
+PAD=3). x2 8b looked for the cause in our octets and found none: the same
+Courier fails alike on D-Modem's server and on the I-modem's own firmware,
+whose octets are ours. The fault is the emulated Courier (or the harness's
+line model, which every server shares), not our mapper, banks or rate
+change. Per the brief, no library code was changed to suit it.
+
+The evidence (x2-facts.md "Oracle: D-Modem's mapper" and "Harness", the
+last part; the runs are scratch, outside the repository):
+
+- **Mapper and banks.** D-Modem's `X2Map`, built and run as a black box,
+  and our `x2map_frame` give identical octets at all 15 rate indices in
+  pad modes 0, 1 and 2 (20000 frames from each of three seeds): no first
+  differing frame. The I-modem's 106 570 data frames at index 14, as it
+  sent them to the Courier, decode with our lists and give LAPM frames
+  with good FCS.
+- **Rate change and start-up.** On the line, our octets equal D-Modem's
+  and the I-modem's from the preamble through the sync frames and records,
+  and through the marker, the 43 records and the 682 frames of ones of the
+  rate change; only the free sign of data-level frames differs (it differs
+  between the I-modem and D-Modem too, and the client does not check it).
+- **The Courier.** With the same settings and line, after the change:
+  ours 0 of 615 I frames acknowledged, and without error control 0 of some
+  73 text lines intact; D-Modem 0 of 72 lines (PAD=0), 10 of 71 (PAD=3,
+  52000), 0 of 68 (PAD=6), and with V.42 only the lines of its first
+  second; the I-modem's 34 short I frames (429 octets) needed 1 to 19
+  transmissions each, one 10-octet frame 15.8 s. Before the change all
+  three deliver everything.
+
+Test (independent vectors, no fix behind it): `test_x2map` holds our
+mapper to D-Modem's output at indices 1, 8, 12 and 14 in each pad mode
+(frames 0, 1 and 3999 and an FNV-1a of 4000 frames, from the oracle run,
+kept as data); `x2map: D-Modem's mapper's octets (oracle run) at 12 of 12
+rate/pad pairs`. It passes on the current code, since the mapper is right.
+Its teeth: with the free sign's tie rule turned (`<` for `<=`) 12 of 12
+pairs fail; with positions 0 and 1 sharing a list, the 8 pairs whose
+lists differ by position fail. Index 1's octets are unchanged.
+
+`make test-x2-courier MODS=x2` still fails at every pad (x2 9's figures,
+reproduced at PAD=0: 0 of 615); it cannot pass on this emulator. What
+would: a check against a Courier that decodes the I-modem after its rate
+change (another emulator setting, or a real modem), or an acceptance that
+rests on the octets being the I-modem's, which this branch now shows.

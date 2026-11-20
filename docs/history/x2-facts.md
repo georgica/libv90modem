@@ -335,6 +335,28 @@ At index 1 (32000 bit/s): B = 19, MD = 5, 9 levels in each position.
   either image (**our disassembly**: no such 9-word run in Ie030002 or
   QF060003); the bank constructor builds it.
 
+## Oracle: D-Modem's mapper
+
+D-Modem's mapper (`X2Map`, its `dsp/x2.cpp` and `dsp/x2_tables.cpp` at the
+commit of "Tags and sources"; unchanged at `c06a380d`) was built and run as
+a black box outside the repository (x2 8b, 2026-11-20); none of its code is
+here. **Observed (oracle run)**:
+
+- Given the same bits (xorshift32, GPC from state 0, `last` positive and
+  the running sum zero at the first frame), its octets and those of our
+  `x2map_frame` are identical at all 15 rate indices in pad modes 0, 1 and
+  2, for 20000 frames from each of three seeds: the digit order, the list
+  of each position, the sign positions, the differential signs, the free
+  sign and the octets sent behind each pad.
+- `test/test_x2map.c` keeps its output for indices 1, 8, 12 and 14 in each
+  mode (frames 0, 1 and 3999 and an FNV-1a of 4000 frames) as data, so
+  that our mapper is held to it independently of our own unframe.
+- The I-modem's own octets (Ie030002 in courier-emu's I-modem pair, the
+  run of "Harness", x2 8b) agree as well: its 106 570 data frames at
+  index 14 each decode with our index 14 lists (`x2map_unframe`), and,
+  descrambled, give HDLC frames with good FCS (its LAPM I frames). Its
+  free sign in the data levels differs from ours, as "Free sign" says.
+
 ## Free sign
 
 The sixth sign carries no data; the client does not check it. **RE
@@ -809,9 +831,52 @@ figures in two runs.
   40), between stretches of octets that look like the text bit-shifted
   (start-stop resynchronising after an error). So the errors are frequent
   but not total: most of a frame's worth of bits get through between them.
-- Not settled: whether our banks or mapping differ from what the Courier
+- Not settled at x2 9 (settled by x2 8b, below: the emulated Courier,
+  not our octets): whether our banks or mapping differ from what the Courier
   decodes at these indices, or the emulated line or DSP cannot carry
   them. Our simulated client decodes with our own mapper and banks
   (`x2call_level`, `x2map_unframe`), so its bit-exact runs cannot show a
   mismatch with a real client. Index 1 (32000) is the only rate shown to
   carry data to the Courier.
+
+The same Courier against two other servers (x2 8b, 2026-11-20): to tell our
+downstream from the emulator, the Courier of these runs (the same
+courier-emu, ROM, NVRAM, AT settings, 20 ms frames and BearerLineLink
+levels) was given D-Modem's x2 server (`dsp/test/courier_peer` at
+`c06a380d`, built outside the repository) through a scratch copy of
+`run.sh`'s exchange, and the I-modem itself (Ie030002, courier-emu's
+`tools/probe_imodem_analog_pair.py` with its working settings,
+`X1S27=1S54=0S58=48&A3&B1Q0&U26&N39` / `S54=0S58=48&A3&B1Q0`, sending a
+numbered line about every second). **Observed**:
+
+- The line octets: ours equal D-Modem's from the preamble through the
+  alignment, the sync frames and the records (0 of 28 719 + 9 960 + 678
+  octets differ), and from the marker of the rate change to the first data
+  frame (863 frames) except the free sign of 102 frames (D-Modem does not
+  reset its running sum at the marker). Against the I-modem's: the same
+  from the preamble to the sync frames, and the 863 frames of its rate
+  change differ only in the free sign of 219. Marker, records and start
+  are at the same frames in all three (the marker, then 182 frames to the
+  new levels, 681 frames of ones).
+- The Courier decodes none of the three at the rate it asks for:
+
+| Server | PAD | after the change | what the Courier decoded after it |
+| --- | --- | --- | --- |
+| ours, V.42 | 0 | 54666 | 0 of 615 I frames (128 octets) acknowledged |
+| ours, no error control | 0 | 54666 | 0 of some 73 text lines intact (11 of 11 before) |
+| D-Modem, V.42 | 0 | 54666 | the 2 lines sent in its first second; none in the 72 s after |
+| D-Modem, no error control | 0 | 54666 | 0 of some 72 lines intact (11 of 11 before) |
+| D-Modem, no error control | 3 | 52000 | 10 of some 71 lines intact (11 of 11 before) |
+| D-Modem, no error control | 6 | 54666 | 0 of some 68 lines intact (11 of 11 before) |
+| the I-modem, V.42 | 0 | 54666 | its 34 I frames after the change (3 to 64 octets, 429 in all) were each sent 1 to 19 times; its I frame 50 (10 octets) was first acknowledged 15.8 s after its data began; its own terminal says NO CARRIER |
+
+  The text that does arrive after the change is mostly corrupt in the
+  same way for D-Modem as for ours (runs of correct text between
+  bit-shifted stretches). With the same octets from three servers, the
+  original among them, failing alike, the emulated Courier of this
+  harness does not decode x2 above index 1 reliably; the fault is not in
+  our mapper, banks or rate change. Not looked into: why (the codec's
+  8000-to-9600 Hz reconstruction, the levels, the emulator's timing).
+  courier-emu's own x2 results (`docs/imodem-analog-x2-20261003.md`,
+  "53333/x2") are the Courier's CONNECT figure and one message at the
+  start-up's rate, before any rate change, as ours are.
