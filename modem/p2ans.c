@@ -27,7 +27,11 @@ static const int8_t TOP[6] = { 9, 10, 10, 12, 13, 14 };
  * Courier, whose CRC is 24dd. */
 #define X2_PAYLOAD (7 + 16)             /* the bits after the sync */
 #define X2_INDEX_PCM 6
-#define X2_WINDOW MS(160 + 800)         /* from the start of our L1 */
+#define X2_WINDOW MS(160 + 800)         /* from the start of our L1 to the start of the frame */
+/* from the start of a frame (its lead-in) at our input to its DPSK_EV_FRAME:
+ * 2 + 4 + 8 + 23 bits at 600 bit/s, and the receiver's own delay (5 ms,
+ * test_p2ans) */
+#define X2_FRAME_SPAN ((2 + 4 + 8 + X2_PAYLOAD) * 40 / 3 + 40)
 
 int p2ans_x2_info_frame(uint8_t marker7, uint8_t *bits)
 {
@@ -98,6 +102,7 @@ static void common_init(p2ans_t *p, const p2ans_cfg *cfg)
     proberx_init(&p->prx);
     p->tone_since = -1;
     p->x2_marker = -1; p->x2_until = -1;
+    p->x2_hunt = cfg->x2;
 }
 
 /* the marker receiver stops: the hunt is INFO0c's again, as without x2 */
@@ -115,8 +120,9 @@ static int x2_marker(p2ans_t *p, int ev)
 {
     int k, m = 0;
     if (p->x2_until < 0) return 0;
-    if (p->now > p->x2_until) { x2_stop(p); return 0; }
-    if (!(ev & DPSK_EV_FRAME)) return 0;
+    /* a frame that began by the deadline may end after it */
+    if (p->now > p->x2_until + X2_FRAME_SPAN) { x2_stop(p); return 0; }
+    if (!(ev & DPSK_EV_FRAME) || p->now - X2_FRAME_SPAN > p->x2_until) return 0;
     for (k = 0; k < 7; k++) m |= p->rx.frame[k] << k;
     if (((m >> 1) & 7) != X2_INDEX_PCM) return 0;
     p->x2_marker = m;
@@ -135,6 +141,7 @@ void p2ans_init(p2ans_t *p, const p2ans_cfg *cfg)
 void p2ans_init_retrain(p2ans_t *p, const p2ans_cfg *cfg, const info0_t *info0c)
 {
     common_init(p, cfg);
+    p->x2_hunt = 0;                 /* the marker comes in the first Phase 2 only */
     p->info0c = *info0c;
     p->got0c = 1;
     dpsktx_on(&p->tx);
@@ -143,7 +150,8 @@ void p2ans_init_retrain(p2ans_t *p, const p2ans_cfg *cfg, const info0_t *info0c)
 /* a retrain we begin ourselves (11.5.2.1): silence, then as the retrain entry */
 static void self_retrain(p2ans_t *p, int why)
 {
-    p->x2_until = -1;
+    x2_stop(p);
+    p->x2_hunt = 0;                 /* the marker comes in the first Phase 2 only */
     if (p->retrains >= P2N_MAX_RETRAINS) { fail(p, why); return; }
     p->retrains++;
     dpsktx_off(&p->tx);
@@ -156,9 +164,10 @@ static void restart_tones(p2ans_t *p)
 {
     p->restarts++;
     p->probing = 0;
-    p->x2_until = -1;
     dpsktx_on(&p->tx);
-    dpskrx_expect(&p->rx, INFO_PAYLOAD(INFO0A_BITS));
+    /* (L2 unanswered comes 760 ms after our L1 began, before the marker's
+     * time is up: the INFO0c hunt comes back when it is, x2_stop) */
+    if (p->x2_until < 0) dpskrx_expect(&p->rx, INFO_PAYLOAD(INFO0A_BITS));
     p->tone_since = -1;
     go(p, P2N_INFO0);
 }
@@ -290,11 +299,14 @@ int16_t p2ans_tick(p2ans_t *p, int16_t x)
     int ev = dpskrx_tick(&p->rx, x);
     int32_t out;
 
-    /* x2: from our L1 until the caller's L1 / L2 are analysed */
+    /* x2: from our L1 until the caller's L1 / L2 are analysed (or Tone A
+     * again after an unanswered L2). The frames the receiver finds meanwhile
+     * are the marker's length: nothing for the V.34 states to look at. */
     if (p->x2_until >= 0) {
         if (p->state == P2N_L1 || p->state == P2N_L2 || p->state == P2N_TONE50 || p->state == P2N_REV_TAIL
-            || p->state == P2N_WAIT_BREV2 || p->state == P2N_PROBE_RX) {
+            || p->state == P2N_WAIT_BREV2 || p->state == P2N_PROBE_RX || p->state == P2N_INFO0) {
             if (x2_marker(p, ev)) ev = 0;
+            ev &= ~DPSK_EV_FRAME;
         } else {
             x2_stop(p);
         }
@@ -355,7 +367,7 @@ int16_t p2ans_tick(p2ans_t *p, int16_t x)
             proberx_init(&p->prx);
             p->tone_blocks = 0;
             p->probing = 1;
-            if (p->cfg.x2) {
+            if (p->x2_hunt) {
                 /* the marker begins 170 to 260 ms after the start of our L1;
                  * accepted until 800 ms after its end (x2-facts.md) */
                 p->x2_until = p->now + X2_WINDOW;

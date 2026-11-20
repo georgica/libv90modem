@@ -16,10 +16,11 @@
  *
  * x2 (cfg.x2; docs/history/x2-facts.md "Phase 2 marker"): INFO0a says
  * max_sr_diff = 4 and cme, which a U.S. Robotics x2 client reads as an x2
- * server; from the start of our L1 a receiver hunts for the client's marker,
+ * server; from the start of our L1 (in the first Phase 2 of the call, not in
+ * a retrain's) a receiver hunts for the client's marker,
  * one INFO frame with 7 bits (p2ans_x2_info_frame), sent in place of its L1,
- * L2 and INFO1c. One that checks out and carries 6 in bits 1..3 by 960 ms
- * after the start of our L1 (800 ms after its end) ends Phase 2 in P2N_X2:
+ * L2 and INFO1c. One that checks out, carries 6 in bits 1..3 and begins by
+ * 960 ms after the start of our L1 (800 ms after its end) ends Phase 2 in P2N_X2:
  * silent, x2_marker set. Anything else, and the V.34 path goes on as it
  * would without x2: L2 is sent as ever while the receiver listens.
  *
@@ -98,7 +99,9 @@ typedef struct {
     int         tx_pwr_red;         /* power reduction, dB */
     int         md_len;             /* the caller's MD, units of 35 ms */
     int         x2_marker;          /* the marker's 7 bits (0x00..0x7f) in P2N_X2, else -1 */
-    int32_t     x2_until;           /* the marker receiver runs until this sample; -1 = off */
+    int32_t     x2_until;           /* a marker frame may begin until this sample; -1 = off */
+    int         x2_hunt;            /* cfg.x2 in the first Phase 2 of the call: not in a
+                                       retrain's (p2ans_init_retrain, or one begun here) */
 } p2ans_t;
 
 void    p2ans_init(p2ans_t *p, const p2ans_cfg *cfg);

@@ -464,6 +464,32 @@ int main(void)
                 CHECK(same);
             }
         }
+        /* the 800 ms after the end of L1 count to the start of the marker
+         * frame (its lead-in), not to its end: one that begins just inside
+         * them is taken though it ends some 70 ms after them, one that begins
+         * just after them is not (the frame reaches us 7 ms after it is sent) */
+        s.mk_bad = 0; s.mk_body = 0x4d; s.seconds = 4; ac.x2 = 1; g_slot = 0;
+        s.mk_at = 160 + 800 - 15;
+        run(&s, &r, &ac, &cc);
+        printf("  p2ans x2 marker sent %d ms after L1 began: state %d\n", s.mk_at, (int)r.a.state);
+        CHECK_EQ_I(r.a.state, P2N_X2); CHECK_EQ_I(r.a.x2_marker, 0x4d);
+        s.mk_at = 160 + 800 + 5;
+        run(&s, &r, &ac, &cc);
+        printf("  p2ans x2 marker sent %d ms after L1 began: state %d\n", s.mk_at, (int)r.a.state);
+        CHECK(r.a.state != P2N_X2); CHECK_EQ_I(r.a.x2_marker, -1);
+        /* only in the first Phase 2 of a call: in a retrain's (11.5.2) the
+         * same marker is nothing, and the samples are as without x2 */
+        s.mk_at = 170; s.retrain = 1;
+        ac.x2 = 1; g_slot = 0; run(&s, &r, &ac, &cc);
+        ac.x2 = 0; g_slot = 1; run(&s, &r0, &ac, &cc);
+        same = r0.ntx == r.ntx;
+        for (k = 0; k < r.ntx && k < r0.ntx; k++) if (txlog[0][k] != txlog[1][k]) same = 0;
+        printf("  p2ans x2 marker in a retrain: state %d, %s\n", (int)r.a.state,
+               same ? "the same samples as without x2" : "SAMPLES DIFFER");
+        CHECK(r.l1_at > 0);
+        CHECK(r.a.state != P2N_X2); CHECK_EQ_I(r.a.x2_marker, -1);
+        CHECK_EQ_I(r.a.state, r0.a.state);
+        CHECK(same);
         s = keep;
         ac.x2 = 0; g_slot = 0;
     }

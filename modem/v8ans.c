@@ -29,7 +29,7 @@ int v8ans_x2(const v8ans_t *v) { return v->x2; }
  * bit (the Courier's CM ends 0d, the I-modem's JM 8d: RE (courier-emu)). */
 static void x2_jm(v8ans_t *v)
 {
-    v->x2 = v->x2_offer && v->selected == 1 && (v->cm.modes & V8_MOD_V34)
+    v->x2 = v->x2_offer && v->selected == V8_SEL_V34 && (v->cm.modes & V8_MOD_V34)
             && !(v->cm.has_pcm && (v->cm.pcm & V8_PCM_ANALOG));
     if (!v->x2 || !v->cm.has_access) return;
     v->jm.has_access = 1;

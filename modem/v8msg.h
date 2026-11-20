@@ -73,6 +73,7 @@ void v8_build_jm(const v8_menu_t *cm, const v8_menu_t *local, v8_menu_t *jm);
 /* Modulation selected by a JM (V.8 7.4): V8_SEL_V90 if PCM operation applies,
  * else the Table 4 item number (1..12) of the lowest common mode, 0 if none. */
 #define V8_SEL_V90 100
+#define V8_SEL_V34 1            /* Table 4 item 1: V.34 */
 int v8_selected(const v8_menu_t *jm);
 
 #endif
