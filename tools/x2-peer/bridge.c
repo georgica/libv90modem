@@ -39,6 +39,9 @@
  *            once data moves again, write KB KiB of incompressible octets
  *            to the V.42 endpoint (a burst) and follow the Courier's
  *            acknowledgements (default 0: none)
+ *   -r       strict: with -k, the bursts after rate changes must be
+ *            acknowledged too (no server passes this on the published
+ *            courier-emu: README.md)
  * With -k, each burst is logged when the Courier has acknowledged all of it
  * (v90m_ec_tx_idle): its I frames, the 20 ms line frames in which the
  * acknowledged count advanced (the Courier's N(R)s), and the errors visible
@@ -48,8 +51,10 @@
  * Courier's decoding) are shown and not counted as errors.
  * The log goes to stdout. Exit status 0 when our modem reached data mode
  * and its V.42 endpoint got data moving (LAPM or start-stop) and, with -k,
- * there was a rate change and every burst was acknowledged with none of
- * those errors; 1 otherwise, 2 on a usage or socket error. */
+ * the control burst was acknowledged with none of those errors (the bursts
+ * after rate changes are logged as information); with -k and -r, there was
+ * also a rate change and every burst was acknowledged cleanly. 1 otherwise,
+ * 2 on a usage or socket error. */
 #include <errno.h>
 #include <math.h>
 #include <stdint.h>
@@ -91,7 +96,7 @@ static double line_s(void) { return frames * (double)FRAME / RATE; }
 
 /* the bursts after rate changes (-k) */
 static long burst_len;              /* octets in a burst, 0: none */
-static int changes, burst_want, bursts, bursts_ok, bursts_bad;
+static int changes, burst_want, bursts, bursts_ok, bursts_bad, control_ok, strict;
 static struct {
     int on;
     long left;                      /* octets still to write */
@@ -174,6 +179,8 @@ static void burst_tick(void)
                "in %ld line frames; %lu sent again, %lu REJ, %lu violations, %lu T401, %lu bad frames received%s\n",
                line_s(), bursts, line_s() - burst.t0, burst_len, i, i - re, burst.adv, re, rej, vio, t401, bad,
                clean ? "" : " (ERRORS)");
+        if (clean && !changes)
+            control_ok = 1;
         if (clean)
             bursts_ok++;
         else
@@ -296,8 +303,13 @@ int main(int argc, char **argv)
     v90m_cfg cfg;
     v90m_state st;
 
-    for (i = 2; i + 1 < argc; i += 2) {
-        if (!strcmp(argv[i], "-p"))
+    for (i = 2; i < argc; i += 2) {
+        if (!strcmp(argv[i], "-r")) {   /* the one option with no value */
+            strict = 1;
+            i--;
+        } else if (i + 1 >= argc)
+            break;
+        else if (!strcmp(argv[i], "-p"))
             pad = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "-m"))
             mods = argv[i + 1];
@@ -309,7 +321,7 @@ int main(int argc, char **argv)
             break;
     }
     if (argc < 2 || i != argc || (pad != 0 && pad != 3 && pad != 6) || seconds <= 0 || burst_len < 0) {
-        fprintf(stderr, "usage: x2-bridge SOCKET [-p 0|3|6] [-m MODS] [-s SECONDS] [-k KB]\n");
+        fprintf(stderr, "usage: x2-bridge SOCKET [-p 0|3|6] [-m MODS] [-s SECONDS] [-k KB] [-r]\n");
         return 2;
     }
     if (*mods && strcmp(mods, "none") && strcmp(mods, "x2")) {
@@ -454,11 +466,16 @@ int main(int argc, char **argv)
         burst_show(&s, "not acknowledged at the end");
     }
     if (burst_len > 0) {
-        printf("ours: %d rate changes, %d bursts: %d acknowledged cleanly, %d with errors, %d not acknowledged\n",
-               changes, bursts, bursts_ok, bursts_bad, bursts - bursts_ok - bursts_bad);
+        printf("ours: %d rate changes, %d bursts: %d acknowledged cleanly, %d with errors, %d not acknowledged;"
+               " the control %s; %s\n",
+               changes, bursts, bursts_ok, bursts_bad, bursts - bursts_ok - bursts_bad,
+               control_ok ? "acknowledged" : "NOT acknowledged",
+               strict ? "strict: every burst must be acknowledged" : "the bursts after rate changes are information");
     }
     v90m_ec_destroy(ec);
-    if (burst_len > 0 && (changes == 0 || bursts < 2 || bursts_ok != bursts))
+    if (burst_len > 0 && !control_ok)
+        return 1;
+    if (burst_len > 0 && strict && (changes == 0 || bursts < 2 || bursts_ok != bursts))
         return 1;
     return was_connected && ec_up ? 0 : 1;
 }

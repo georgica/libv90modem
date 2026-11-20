@@ -4,8 +4,9 @@
 emulated Courier, running original USR firmware, dial our answering modem
 and reports what both ends reached. With `MODS=x2` our modem offers x2
 (`V90M_MOD_X2`) and the run passes when the Courier's CONNECT line and its
-ATI11 say x2 and the Courier acknowledges the V.42 data we send it after
-its rate change (below). It is a local tool: nothing of
+ATI11 say x2 and the Courier acknowledges the V.42 data we send it at the
+start-up rate (32000). What happens to the data after its rate change is
+printed as information; `STRICT_RENEG=1` makes it a condition (below). It is a local tool: nothing of
 courier-emu or of any firmware image is in this repository, and the target
 is not part of `make check`. Without `COURIER_EMU` it prints
 `COURIER_EMU not set` and exits 0.
@@ -50,10 +51,31 @@ in its checkout, `artifacts/courier-board-21210-capture-403/courier-board.rom`
   saw; every 2 s while it waits, and at the end if it never completed.
 - The report shows the Courier's terminal (its `CONNECT` line and `ATI11`)
   and our state. Exit 0 when both reached data mode and, with `MODS=x2`,
-  there was a rate change and every burst was acknowledged with nothing
-  sent again, no REJ, no violation and no T401 expiry.
+  the control burst was acknowledged with nothing sent again, no REJ, no
+  violation and no T401 expiry. With `STRICT_RENEG=1` (bridge `-r`) there
+  must also have been a rate change and every burst after one must be
+  acknowledged the same way.
+
+## Why the strict check is opt-in
+
+On the published courier-emu (186d653, the 403 board image) **no x2
+server passes `STRICT_RENEG=1`**: not ours, not D-Modem's, not the USR
+I-modem's own firmware (Ie030002). About 12 s into data the Courier asks
+for a higher index (12 to 14); after that each server's data decodes for
+about a second and then mostly fails. Ours: 0 of 615, 1 of 658 and 0 of
+600 I frames acknowledged at PAD=0, 3 and 6. Our octets match D-Modem's
+mapper exactly at every index and pad mode, and the I-modem's line octets
+in the whole rate change apart from the free sign; the I-modem's index 14
+frames decode with our lists into LAPM frames with a good FCS. The bridge
+is sample-locked (it answers each frame with as many samples as it got),
+and no Courier setting, line level or frame rate tried made any server
+pass. D-Modem reports lines getting through with courier-emu changes it
+has not published. So the failure is the emulator's, and only a real
+Courier can show the rates above 32000. The details are in
+`docs/history/x2-facts.md` "Harness" and "Oracle: D-Modem's mapper".
 
 Logs: `build/x2-peer/` (`bridge.log`, `courier.json`, `courier-serial.txt`,
 `courier.log`). Other knobs: `COURIER_INSTRUCTIONS` (the Courier's budget,
 default 400M: the call ends there, at 116 s of line, some 35 s of wall
-time), `TIMEOUT` (wall seconds, default 3600), `KB` (0: no bursts).
+time), `TIMEOUT` (wall seconds, default 3600), `KB` (0: no bursts),
+`STRICT_RENEG` (0 default, 1 strict).

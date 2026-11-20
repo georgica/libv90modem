@@ -18,7 +18,8 @@
 #   make bench-bell      the calling modem in Bell 103 and Bell 212A; cost-bell counts
 #   make test-interop    against spandsp (SPANDSP=its install prefix), host only
 #   make test-x2-courier an emulated USR Courier calls our answerer (COURIER_EMU=courier-emu
-#                        checkout, PAD=0|3|6, MODS=x2; tools/x2-peer/README.md), host only
+#                        checkout, PAD=0|3|6, MODS=x2, STRICT_RENEG=1; tools/x2-peer/README.md),
+#                        host only
 #
 # Cross-compiling: set CC (and BUILD to keep the objects apart), e.g.
 #   make CC=arm-linux-gcc BUILD=build/arm
@@ -378,12 +379,13 @@ $(BUILD)/bench_v90a.arm: rig/bench_v90a.c $(MODEM_SRC) $(HDRS)
 COURIER_EMU ?=
 PAD  ?= 0
 MODS ?=
+STRICT_RENEG ?= 0
 $(BUILD)/x2-bridge: tools/x2-peer/bridge.c $(STATIC) include/v90modem.h
 	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L -Iinclude -o $@ $< $(STATIC) $(LDLIBS)
 test-x2-courier:
 	@if [ -z "$(COURIER_EMU)" ]; then echo "COURIER_EMU not set"; exit 0; fi; \
 	$(MAKE) -s $(BUILD)/x2-bridge && \
-	COURIER_EMU="$(COURIER_EMU)" PAD="$(PAD)" MODS="$(MODS)" sh tools/x2-peer/run.sh $(abspath $(BUILD))/x2-bridge $(abspath $(BUILD))/x2-peer
+	COURIER_EMU="$(COURIER_EMU)" PAD="$(PAD)" MODS="$(MODS)" STRICT_RENEG="$(STRICT_RENEG)" sh tools/x2-peer/run.sh $(abspath $(BUILD))/x2-bridge $(abspath $(BUILD))/x2-peer
 
 clean:
 	rm -rf $(BUILD)
