@@ -32,7 +32,7 @@ jobs:
           export PKG_CONFIG_PATH="$RUNNER_TEMP/inst/lib/pkgconfig"
           ${{ matrix.cc }} -std=c99 -Wall -Wextra -Werror -o "$RUNNER_TEMP/call_loop" examples/call_loop.c \
             $(pkg-config --cflags --libs --static libv90modem)
-          "$RUNNER_TEMP/call_loop"
+          LD_LIBRARY_PATH="$RUNNER_TEMP/inst/lib" "$RUNNER_TEMP/call_loop"
 
   ubsan:
     name: host, undefined behaviour trapped (clang)
