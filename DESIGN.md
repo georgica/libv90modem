@@ -1,9 +1,10 @@
 # libv90modem: design
 
 How the modem is built and why. The API is in `include/v90modem.h`; what was
-measured and when is in `PROGRESS.md` (the calling side and everything since
-the library got its own repository) and, for the answering side before
-that, in v90d's `PROGRESS.md`, where this code grew.
+measured and when is in `docs/history/PROGRESS.md` (the calling side and
+everything since the library got its own repository) and, for the
+answering side before that, in v90d's `PROGRESS.md`, where this code grew.
+User documentation is in `docs/`.
 
 ## 1. Rules
 
@@ -143,13 +144,13 @@ Receive chain for the upstream signal:
   taken as the change from sample to sample: a modem's line transformer
   can return our low frequencies as a tail of tens of milliseconds, larger
   in sum than the start of the echo, and that tail moved the peak (a
-  U.S. Robotics 5686; PROGRESS.md, 2026-11-16).
+  U.S. Robotics 5686; v90d's PROGRESS.md, 2026-11-16).
 - Adaptive filters round their updates. Truncation is a steady pull on every
   tap that takes a minute or an hour to show.
 - TRN2d is sent for 1200 data frames (0.9 s) before MP, and Tone A is
   listened for through Phase 4 as in data mode: a U.S. Robotics 56K of 1998
   gave the start-up up with 0.3 s of TRN2d and asked for a retrain that
-  went unheard (PROGRESS.md, 2026-11-16).
+  went unheard (v90d's PROGRESS.md, 2026-11-16).
 - The caller falls silent twice (during TRN1d / Jd and, with a DIL, again
   until it has seen enough of it) and comes back with S. Its clock has
   drifted and its carrier phase is anybody's guess, but the line is the
@@ -228,7 +229,7 @@ decode. `v92/README.md` has the detail and every reading of the text.
   time (one step every 4 samples on the unit then, 2 now), z2(64) kept at zero, the
   first data frame after E2u judged before B1u is counted, no assumed
   first state in the trellis decoder.
-- What a second one (U.S. Robotics 5686) needed, PROGRESS.md of 2026-11-16:
+- What a second one (U.S. Robotics 5686) needed, v90d's PROGRESS.md of 2026-11-16:
   it waits 3.8 s for SUVd and 3.5 s more for CPd, so the design takes one
   step every 2 samples and SUVd goes out 2.5 s into Phase 4 at the latest;
   the first CPd never carries the acknowledge bit (one that did was
@@ -239,7 +240,8 @@ decode. `v92/README.md` has the detail and every reading of the text.
   exceeds the line's, and fades out for errors between a quarter and a half
   of the spacing (`base_step()` in `v92/v92_p34d.c`): the codec's large
   steps and near-boundary decisions had pushed it the wrong way (bursts of
-  upstream errors at 34666 to 37333 bit/s, PROGRESS.md answer-fix 1).
+  upstream errors at 34666 to 37333 bit/s, `docs/history/PROGRESS.md`
+  answer-fix 1).
 
 ### 4.2b Not done, maybe later: K56flex and x2
 The two 56k schemes from before V.90 are not spoken; a modem that has
@@ -258,7 +260,257 @@ nothing else gets V.34. Neither has a published specification.
   modem that speaks nothing newer to test against. Neither is at hand
   (2026-11-16).
 
-### 4.2c V.92, analogue (calling) side
+### 4.2c V.90 and V.92, analogue (calling) side
+`modem/orig` runs the call from the moment the far end has answered
+(dialling and call progress are the owner's): V.8, then, when JM selects
+PCM, `modem/v90a`: Phase 2 (`p2call`), Phases 3 and 4, data. Downstream
+is the PCM receiver (`v90arx`) with the DIL (`v90dil`) and the data
+decoder (`v90adec`); upstream is V.34's transmitter (`v34mod`, the blocks
+of the V.34 caller) in V.90, PCM in V.92 (below and 4.2d). One linear
+sample in, one out, 8 kHz on our own clock, which the A/D and the D/A
+share. Nothing in the receiver is specified by the Recommendation, only
+the signals. Tried in simulation and against this library's own answerer
+only; what it sends is checked field by field against real callers'
+recordings (`test/test_realcheck.c`).
+
+**V.8, originating** (`v8orig`, `anstone`):
+- The answer tone detector brings 2100 Hz to baseband in blocks of 5 ms;
+  a block is tone when its 2100 Hz component holds half of its power and is
+  above -43 dBm0. The 15 Hz part of the envelope over windows of 200 ms
+  (three periods) tells ANSam (above 0.12 of the mean) from ANS (below
+  0.06); two windows that agree decide.
+- CI, when asked for, is sent ON for 3 sequences and OFF for 1 s, and the
+  tone is listened for only while CI is off, where our own echo is not in
+  the way.
+- ANS: no CM (V.8 7.2), the pre-V.8 ways of `modem/orig.h`. ANSam: Te (1 s)
+  of silence, CM on V.21(L) until two identical JM on V.21(H), CJ at the
+  next octet boundary, 75 ms. No tone in 10 s, or no JM in 5 s of CM, ends
+  the call.
+- The JM receiver reads idle mark while 2100 Hz is heard: it took part of
+  the answer tone for a character and lost the first JM (V.8 8.1.2). CM
+  carries the PSTN access category whenever it carries the PCM one, as
+  every real V.90 / V.92 caller's CM does (V.8 6.3).
+
+**Phase 2** (`p2call_init_v90`, V.90 9.2.2) is V.34's *answer* procedure
+with V.90's INFO sequences, a second set of states in `p2call` sharing the
+V.34 caller's helpers: INFO0a and Tone A; the digital modem's INFO0d and
+Tone B; the reversals that measure the round trip (RTDEa); our L1 / L2
+while the digital modem is silent; its L1 / L2, analysed as for V.34's
+INFO1c; INFO1d; INFO1a (Table 10: UINFO 90, even so that a robbed bit
+leaves its codeword alone; MD 22 x 35 ms; of 3000 and 3200 symbols a
+second, the upstream rate INFO1d projects most for). V.92 (`cfg.v92`)
+sets INFO0a bit 26 and, when INFO0d bit 27 and INFO1d bit 70 allow it,
+sends INFO1a of Table 18 (PCM upstream: all four filter sections, the
+longest filters, no MD; an MD there is counted in units of 276 symbols,
+which the digital modem waited out). Phase 2 also measures our clock
+against the network's from the digital modem's L2: each tone turns from
+20 ms block to block by its frequency times the offset, and a weighted
+least squares over the tones with 20 dB SNR gives the offset within 0.1
+ppm on the test lines. Recovery 9.2.2.2.1 to .3; no INFO1d ends the call.
+
+**The echo canceller** learns on MD (V.90): MD is manufacturer defined
+and the digital modem is silent through it, so it is white noise at the
+transmit level for 770 ms, the only wideband signal we send while the
+downstream is silent (L1 / L2 is a comb of 25 lines and would leave the
+canceller wrong between them); ERLE 62 to 73 dB at its end. V.92 learns on
+TRN1u instead (4.2d). Its reference delay is `echo_delay`, fixed, not
+measured (-1 is taken as 0).
+
+**Phase 3** (9.3.2): S, S-bar, MD, S, S-bar, PP, TRN, then Ja with the DIL
+descriptor until Sd-bar is heard; the receiver learns the clock and the
+channel on Sd and TRN1d; Jd; S until Jd', S-bar; the DIL, measured while
+we are silent; S, S-bar. Then Phase 4 (9.4.2): CPt until Ri-bar, SCR while
+TRN2d shows the noise with CPt's constellations, CP, CP' once MP is in, E
+once MP' or Ed is in; downstream Ri, Ri-bar, TRN2d, MP, MP', Ed, B1d.
+
+**The PCM downstream receiver** (`v90arx`, integer only):
+
+```
+ A/D samples, our clock -> echo canceller (ec, our transmit as reference)
+   -> fractional interpolator on to the network's 8 kHz clock (v34_interp)
+   -> AGC, set once from Sd
+   -> decision feedback equaliser: 48 forward taps (32 ahead of the cursor)
+      on network-rate samples, 128 feedback taps on decided levels
+   -> slicer: the nearest point of the constellation of the symbol's data
+      frame interval -> Ucode, sign, error
+```
+
+- The clock is measured over Sd: Sd repeats every 6 symbols, so on our
+  clock its 1333 Hz line turns by -2 pi times the offset from one period to
+  the next (each period against the one 16 before); it is set before TRN1d
+  begins. The far end is not trusted: the tangent is clamped to 1, the step
+  to 1000 ppm, the slew to 500 ppm, and the interpolator makes at most 3
+  outputs per input sample.
+- TRN1d is a known binary signal. A 128-tap NLMS estimate of the channel
+  runs on it for 1700 symbols, and the equaliser is computed from the
+  estimate (the MMSE decision feedback equaliser, by a fixed-point Cholesky
+  solution) rather than trained: LMS alone needed about 3 s to reach -45 dB
+  on a line that passes little below 200 Hz and above 3.7 kHz.
+- Then decision directed: the estimate goes on (its input is the symbol
+  stream, white, so it follows every part of the band equally fast), the
+  equaliser is computed from it again every 2048 symbols (1024 above 30
+  ppm, 512 above 61 ppm) and LMS refines it in between. A second order loop
+  steers the interpolator's step, with a slow phase slew, from how far the
+  estimate has moved (the phase of its DFT at 1 and 2 kHz).
+- Symbols whose error exceeds 4 sigma, and every symbol of an interval
+  whose error stands 9 dB above the best interval's, are left out of the
+  adaptation: a robbed bit or a pad moves points by a step, which no linear
+  equaliser learns. Their levels come from the DIL.
+- The band edge. Our A/D is not locked to the network, so what the line
+  passes above about 3.8 kHz aliases with a phase that turns with the clock
+  offset: a slowly changing channel at the band edge. An MMSE equaliser
+  designed from an estimate 64 ms old amplified that band as if it stood
+  still, and the receiver collapsed (0 km, 100 ppm). From Ri-bar on
+  (`v90arx_edge()`) the design takes the image in as interference of
+  unknown phase: a quarter of the power the estimate has at 3828, 3875,
+  3922 and 3969 Hz. The DIL is measured with the plain equaliser.
+- Behind a 6 dB pad UINFO 90 is a codeword a robbed bit changes, so in one
+  interval in six TRN1d is not +-L; each interval's UINFO level is fitted
+  from the estimate's residual partway through TRN1d (`ls_set`), and the
+  estimate settles on that. The symbols the estimate is computed against
+  are written also while the receiver is held, so it does not resume on
+  stale ones.
+- The equaliser's design is spread over ticks: a job of one step a symbol
+  (start, fill of R, Cholesky by a budget of 9000 multiplies a step,
+  solve, feedback taps), 8 symbols in all; the estimate goes on meanwhile.
+  A tick in which the receiver took a design step takes no step of v90a's
+  own jobs.
+
+**The DIL** (`v90dil`, V.90 8.3.1, 8.4.1). We ask for every Ucode 0..119,
+one 18-symbol segment each: UINFO three times positive, then 15 training
+symbols, the first positive too. That opening is Ri's (UINFO + + + - -
+-), so when the digital modem ends the DIL with Ri at a segment boundary
+the fourth symbol tells the two apart while the decision feedback still
+holds nothing wrong. The order is 0 2 4 ... 118 119 117 ... 3 1: what the
+equaliser leaves of a segment at the largest level lies on the next
+symbols, and with 119 before 0 it biased Ucodes 0 to 6 by up to 160 units,
+enough for CP to take a false level for its smallest point. Ucodes 120..127
+are left out: in runs of 15 they overload the receiver's 16-bit input, and
+the constellations, which use only measured Ucodes, do not need them at
+-12 dBm0. Four passes (at least 8 measurements per interval and Ucode,
+about 1.1 s); the receiver is held through the first and learns on the
+measured levels after it (held for the whole DIL, it lost 0 km, 100 ppm
+lines).
+
+**The DIL's analysis.** The equaliser output of every DIL symbol, sign
+taken off, is summed per interval and Ucode. Each mean is the level that
+Ucode arrives at, and a pad, a robbed bit and the codec's law all show in
+it; but the DIL's repetitive patterns bias the means by up to 0.8 %, two to
+six times the noise in data mode, so each is snapped to a Table 1 level
+under one gain, where the codec's step there is 32 units or more. The gain
+comes from the codeword UINFO arrives as (searched over 15 dB, refined by
+least squares); the codeword of each mean is picked with its interval's
+own gain (within 3 % of the common one: the intervals next to the REF
+symbols are biased differently, and a common gain picked a neighbour now
+and then under a pad), and the level written is the common gain's. Robbed
+intervals (mu-law) are those departing from the median of the six at a
+quarter or more of Ucodes 64..127. Without the measured levels a pad or a
+robbed bit cost 9 to 16 kbit/s in simulation, and a 3 dB pad did not
+connect.
+
+**CPt and CP.** Sr = 0 (no spectral shaping asked for), ld = 0, one
+constellation per interval. Points are picked from the bottom up among the
+measured levels, each at least d = z sigma above the one before and the
+first d / 2 from zero, sigma that interval's noise; for a given K the
+moduli are the least whose product reaches 2^K, added where they cost least
+power; z is then raised as far as the power limit allows (Table 15 less 0.1
+dB, 8.5.2's weighted power rounded up). The highest K whose largest z
+reaches 12 wins (2 Q(6) = 2e-9 for Gaussian noise); CPt wants 20, with K
+at most 16. CP's sigma squared is twice what TRN2d shows, measured over
+4000 symbols of SCR after Ri-bar: data mode shows 2 to 4 dB more error than
+TRN2d with CPt's sparser points, and with TRN2d's figure alone an A-law
+line ran with bit errors. The analysis (one gain candidate a step, one
+interval a step) and the designs (one trial constellation set a step) are
+jobs spread over some 60 ticks after the DIL; where a result is wanted
+before its job is done (our S-bar before CPt, Ri-bar, our SCR's 2 s) the
+rest runs then.
+
+**Data mode.** `v90adec` undoes the digital modem's encoder (5.4
+backwards: labels, R0, the bits; the signs for every Sr without the
+shaper's filter, see its header). Rd is recognised as two frames of each
+interval's largest point + + + - - - (or the inverse), and delivery runs
+two frames late so that Rd is never handed on as data.
+
+**V.92's PCM upstream.** The decision to use it is Phase 2's (above). In
+Phases 3 and 4 the sequences are V.92's (the header of the V.92 block in
+`v90a.c` has the order), with SUVd, CPd and Ed taken out of the TRN2d
+descrambler by `v92aseq` a data frame at a time: CPd may be some 20000
+bits, so it is read word by word with the CRC running along and no bit
+kept. CPd dictates the upstream: `v92/v92_enc`, the analogue transmitter as
+a bit-exact model of what V.92 6.4 defines (scrambler, modulus encoder,
+precoder filter and prefilter, inverse map, convolutional encoder), sends
+of each equivalence class the member that minimises |x(n)| (what 8.8.3's
+NOTE tells the digital modem to assume), keeps x(n) and v(n) with 8
+fractional bits, and scales the prefilter output by CPd's gain to LU, the
+configured level. The symbols are made on the network clock as the
+receiver keeps it and carried on to our D/A clock by `pcmtx`; why, and the
+echo canceller's training on TRN1u, are in 4.2d. Because the upstream runs
+on the receiver's clock, V.92 holds the receiver's timing loop from the DIL
+to Ri-bar (`v90arx_timing_hold()`; the clock came from L2): the DIL's
+patterns, on levels still being measured, walked it by a hundredth of a
+sample, and our symbols moved while the digital modem measured them for
+CPd. V.90 leaves the loop free: its clock comes from Sd (up to 1.6 ppm off)
+and nothing follows the loop.
+
+**Retrains** (V.90 9.5, V.92 9.7), either end, from Phase 3 on:
+- The digital modem's is 70 ms of silence and Tone B: more than 50 ms of
+  Tone B, seen by `modem/tonedet` on what the echo canceller leaves. Ours
+  (`v90m_retrain`) is 70 ms of silence and Tone A.
+- Either way: 70 ms of silence from us, then Phase 2 again without INFO0
+  (`p2call_init_v90_retrain`), the first INFO0d kept. 9.7/V.92 says the
+  modems "proceed in accordance with the full Phase 2 start-up procedure":
+  that is 9.3's Phase 2 with probing, not the short one, entered at the
+  tones and their reversals; nothing in 9.7 sends INFO0. This library's
+  answerer sends none, and in 35 recorded calls with a retrain no real
+  caller sent INFO0a. A digital modem that sends INFO0d all the same is
+  answered with INFO0a (tried against our own answerer made to do so).
+- Then Phases 3 and 4 with everything fresh, `v90a` re-initialised in
+  place (receiver, DIL, canceller, V.92's `pcmtx`) but the call's counts,
+  the clock and the first INFO0d. A rate renegotiation without Ed (9.6.2)
+  and a Phase 3 or 4 that fails once the call has carried data are retrains
+  too; a retrain's Phase 2 that fails ends the call.
+- The limit is the answering side's: 3 retrains without a minute of data
+  mode between them, one forgotten per minute. Past it a retrain the far end
+  asks for, or one that fails, ends the call, and one our receiver needs is
+  a cleardown (CP / CPu with drn = 0): `V90M_END_RETRAIN_FAILED`.
+- In simulation a retrain took 7.4 to 7.6 s from the event to data both
+  ways in V.90 and 8.3 to 10.6 s in V.92.
+
+**Rate renegotiation.** The digital modem's is followed (V.90: S, S-bar,
+CP as Phase 4 from CP on; V.92: Ru on our data frame boundary after its
+Rd-bar). Ours (V.90 9.6.2.1: S, S-bar, SCR until the digital modem's TRN2d
+has shown 4000 symbols of noise, then a CP designed on it; V.92 9.8.2.1:
+Ru, Ru-bar, TRN2u, SUVu, a CPu designed the same way) is begun by the
+receiver's watch (there is no public call for it), never with the request
+for silence (our canceller needs no new training). V.92's Phase 4 flags are cleared at its start (left set,
+they sent E2u at once and the answerer failed B1u).
+
+**The receiver's watch**, once a data frame: the sum over the six
+intervals of the receiver's error against the noise CP was designed for.
+On the test lines data mode shows 0.20 to 0.97 of it. 6 dB over is already
+too late (the decision feedback is going: at noise +15 dB the ratio sat at
+4 with no error for 2.5 s, then an avalanche), so:
+- 3 dB over for 1 s: a renegotiation down when only the noise rose; a
+  retrain when the equaliser's input power moved 3 dB (a level or pad
+  change: the DIL no longer holds) or a renegotiation for the line ended
+  within 5 s;
+- 12 dB over for 250 ms (the receiver lost): a retrain; meanwhile V.92's
+  timing loop is held (our PCM upstream runs on it, and a lost receiver
+  dragged it) and Rd is not believed; after a collapse the loop stays held
+  until the error is back within twice the design's;
+- 6 dB under for 5 s after the watch took the rate down: a renegotiation
+  back up, once.
+On those test lines, 72 calls, it began neither a retrain nor a
+renegotiation. Its thresholds come from the simulator's lines only.
+
+**Cost** (qemu-counted ARMv5 instructions, README "Memory and CPU"): data
+mode 54.6 / 58.8 M a second for V.90 at 0 / 100 ppm, 69.4 / 73.9 M for
+V.92, the equaliser and its adaptation the largest part; the heaviest tick
+98 k, once the equaliser design, the DIL's analysis and the CPt / CP
+designs were spread over ticks (the DIL's end alone was 9.3 M in one
+sample before).
+
+### 4.2d V.92, analogue (calling) side: the PCM upstream
 `modem/v90a` with `v92` on (`ORIG_MODE_V92`, `V90M_MOD_V92` calling): Phase
 2 says V.92 in INFO0a and selects PCM upstream in INFO1a (Table 18: all four
 filter sections, the longest filters, no MD) when INFO0d and INFO1d allow
@@ -288,11 +540,11 @@ CPd dictates, at LU = the configured level.
 - Rate renegotiation begun by the digital modem is followed (Ru on our data
   frame boundary after its Rd-bar); cleardown either way (CPu / CPd with
   drn = 0). Retrains and rate renegotiations of our own are V.90's (the
-  analogue side's, PROGRESS.md robust 2c), with a fresh PCM upstream after
-  a retrain. No quick connect, no short Phase 2, no modem-on-hold. Tried in
+  analogue side's, 4.2c; `docs/history/PROGRESS.md` robust 2c), with a
+  fresh PCM upstream after a retrain. No quick connect, no short Phase 2, no modem-on-hold. Tried in
   simulation and against this library's own answerer only.
 
-### 4.2d Bell 103 and Bell 212A, calling side
+### 4.2e Bell 103 and Bell 212A, calling side
 V.8 cannot offer them (`ORIG_MODE_BELL103` / `ORIG_MODE_BELL212A`,
 `V90M_MOD_BELL103` / `V90M_MOD_BELL212A` calling; off by default), so they
 are what a caller does when no V.8 comes about. The Bell answer tone is

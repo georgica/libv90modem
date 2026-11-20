@@ -941,7 +941,7 @@ differ in places where two members are almost equally good.
 
 ## Stage 5: a second V.92 modem (U.S. Robotics 5686)
 
-Measurements and test output: PROGRESS.md, 2026-11-16. The modem asks for
+Measurements and test output: v90d's PROGRESS.md, 2026-11-16. The modem asks for
 PCM upstream without being told to. What it needed, as readings:
 
 60. The echo delay is searched on the change from sample to sample (as in
@@ -964,7 +964,7 @@ PCM upstream without being told to. What it needed, as readings:
     whole runs of symbols a point off (100 units, points 245 apart).
     (Later, with a G.711 codec only: less where the codec's step at the
     point is more than the noise, or the error may be a wrong decision;
-    the simulator's bursts at the top rates, ../PROGRESS.md answer-fix 1.)
+    the simulator's bursts at the top rates, ../docs/history/PROGRESS.md answer-fix 1.)
 
 Not a reading: for a while the refusals of reading 62 were taken for a
 limit on the transmit power asked for. Designs at 0.84 to 1.02 of the
@@ -979,5 +979,5 @@ default 33600; CONNECT after 22 to 25 s; five calls of five each.
 
 * The CX93001 on the line against readings 60 to 63: V.92 in about 6
   calls of 7. In the one failure that was recorded its transmit clock was
-  58 ppm off ours during the second TRN1u (PROGRESS.md); the call retrains
+  58 ppm off ours during the second TRN1u (v90d's PROGRESS.md); the call retrains
   to V.90. A receiver that follows such a caller is not there.

@@ -16,6 +16,87 @@ calling side has not yet called one.
 **The API is not stable before version 1.0.** This is 0.3.0; what changed
 from one version to the next is in `CHANGELOG.md`.
 
+## How to use
+
+```
+make                    # build/libv90modem.a, .so, libv90modem.pc, the examples
+make check              # the test suite on the host
+make install PREFIX=/usr/local
+cc -std=c99 prog.c $(pkg-config --cflags --libs libv90modem)
+```
+
+A complete program: an answering modem with V.92 on offer, G.711
+codewords in on stdin and out on stdout, 10 ms a block; it polls the
+state for the connection, rate changes and the end. Replace the `fread` /
+`fwrite` with your codec.
+
+```c
+#include <stdio.h>
+#include <v90modem.h>
+
+static int  get_bit(void *user) { (void)user; return 1; }      /* the next bit to send */
+static void put_bit(void *user, int bit) { (void)user; (void)bit; }   /* a bit received */
+
+int main(void)
+{
+    v90m_cfg cfg;
+    v90m_state st, was = { 0 };
+    uint8_t rx[80], tx[80];             /* 10 ms of G.711 codewords each way */
+    int err;
+    v90m_t *m;
+
+    v90m_cfg_default(&cfg);             /* answering; V.90, V.34, V.32bis, V.22bis, V.22, V.21 */
+    cfg.role = V90M_ROLE_ANSWER;        /* or V90M_ROLE_ORIGINATE, see below */
+    cfg.modulations |= V90M_MOD_V92;
+    cfg.getbit = get_bit;
+    cfg.putbit = put_bit;
+    if (!(m = v90m_create(&cfg, &err))) { fprintf(stderr, "error %d\n", err); return 1; }
+
+    while (fread(rx, 1, sizeof rx, stdin) == sizeof rx) {       /* what the line brought */
+        v90m_process_g711(m, rx, tx, sizeof rx);
+        fwrite(tx, 1, sizeof tx, stdout);                       /* what to send */
+        fflush(stdout);
+        v90m_get_state(m, &st);
+        if (st.connected && !was.connected)
+            fprintf(stderr, "CONNECT %d/%d, modulation %d\n", st.tx_bps, st.rx_bps, (int)st.modulation);
+        else if (st.connected && (st.tx_bps != was.tx_bps || st.rx_bps != was.rx_bps))
+            fprintf(stderr, "rates now %d/%d\n", st.tx_bps, st.rx_bps);
+        if (st.end != V90M_END_NONE) { fprintf(stderr, "ended: %d\n", (int)st.end); break; }
+        was = st;
+    }
+    v90m_destroy(m);
+    return 0;
+}
+```
+
+The data moves as bits: `getbit` and `putbit` are called from inside
+`v90m_process_*` for every bit sent and received once connected (here
+ones go out and what arrives is dropped).
+
+- **Answering or calling.** `V90M_ROLE_ANSWER` is the called modem, for
+  V.90 and V.92 the digital (server) side; it has answered real modems.
+  `V90M_ROLE_ORIGINATE` calls once the far end has answered (dialling and
+  call progress are the program's), for V.90 and V.92 as the analogue
+  (client) side, and needs its received samples linear there
+  (`v90m_process_linear` or `v90m_process_lin_rx`). The calling side has
+  been tried in simulation and against this library's own answerer only,
+  never against a real modem or server.
+- **Error control** is a separate object on the bit pump: a V.42 endpoint
+  (`v90m_ec_*`: LAPM with V.42bis or V.44, start-stop fallback) fed from
+  `getbit` / `putbit` and ticked every millisecond, or a start-stop framer
+  (`v90m_async_*`) for a modem without error control.
+
+The rest, with a complete answering and calling program each:
+[docs/getting-started.md](docs/getting-started.md); every call and field:
+[docs/api.md](docs/api.md).
+
+## Documentation
+
+[`docs/`](docs/README.md) has the user documentation: getting started, the
+line interface, the answering and calling roles, error control, the API
+reference, testing, and the known limits. `DESIGN.md` is how the modem is
+built and why; `docs/history/` keeps the development logs.
+
 ## Standards
 
 | | answering | calling | notes |
@@ -106,10 +187,10 @@ win32 (mingw, under wine). The cross compilers are Bootlin's
 `../toolchains`); a target without its compiler or runner is skipped and
 said so. `OUT` must not be under /tmp. `QUICK="target ..."` skips the slow
 programs of `tools/ports-slow.txt` there, `SKIP="prog ..."` skips programs
-on every target but the reference. Last full run (PROGRESS.md, ports-2):
-every target but m68k identical to host gcc; m68k fails in the V.34
-receiver under qemu-m68k only, which looks like the emulator (no hardware
-to settle it).
+on every target but the reference. Last full run
+(`docs/history/PROGRESS.md`, ports-2): every target but m68k identical to
+host gcc; m68k fails in the V.34 receiver under qemu-m68k only, which looks
+like the emulator (no hardware to settle it).
 
 `make test-interop SPANDSP=PREFIX` runs V.8 and V.22bis (both roles)
 against spandsp (host only). `make bench-v90` replays a simulated V.90 call
@@ -143,38 +224,9 @@ which makes it about 123 M counted instructions a second.
 
 The calling side's retrains and rate renegotiations stay under 98 k a tick
 (a 10 ms block of the box is about 1.23 M). The measurements and how they
-were made are in PROGRESS.md ("cpu").
+were made are in `docs/history/PROGRESS.md` ("cpu").
 
-## Using it
-
-```c
-#include <v90modem.h>
-
-static int  get(void *u) { return 1; }           /* the next bit to send */
-static void put(void *u, int bit) { }            /* a bit received */
-
-v90m_cfg c;
-v90m_cfg_default(&c);                     /* answer; V.90, V.34, V.32bis, V.22bis, V.22, V.21 */
-c.getbit = get; c.putbit = put;           /* c.role = V90M_ROLE_ORIGINATE to call */
-v90m_t *m = v90m_create(&c, &err);        /* the one allocation (or v90m_init on your memory) */
-
-for (;;) {                                /* 10 ms at a time, or any other block size */
-    uint8_t rx[80], tx[80];
-    read_codec(rx, 80);
-    v90m_process_g711(m, rx, tx, 80);
-    write_codec(tx, 80);
-    v90m_get_state(m, &st);               /* or an on_event callback */
-}
-```
-
-Data moves as bits: `getbit` and `putbit` are called by the modem, inside
-`v90m_process_*`, for every bit it sends and receives once connected. Put a
-V.42 endpoint on them (`v90m_ec_*`: `v90m_ec_tx_bit` from `getbit`,
-`v90m_ec_rx_bit` from `putbit`, `v90m_ec_tick` every millisecond, octets in
-and out with `v90m_ec_write` / `v90m_ec_read`), or a start-stop framer
-(`v90m_async_*`) for a modem without error control. The calling side's
-V.90 / V.92 needs its received samples linear (`v90m_process_linear` or
-`v90m_process_lin_rx`); `include/v90modem.h` has the rest.
+## Examples
 
 Two examples, built by `make`, use the public API only.
 `examples/answer_file.c` answers a recorded call and prints the connect

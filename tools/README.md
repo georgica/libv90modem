@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | `v90m_replay.c` (`make replay`, installed as `v90m-replay`) | plays a recorded call into the answering modem and reports what it made of it |
-| `v90m_fields.c` (`make build/v90m-fields`, not installed) | what the caller of a recorded call sent, field by field: the answering modem run as `v90m-replay` runs it, the library's V.21 and Phase 2 receivers on the caller's signal, the caller's level per state; each sequence's bits rebuilt with the caller's builders and compared (PROGRESS.md, "realcheck") |
+| `v90m_fields.c` (`make build/v90m-fields`, not installed) | what the caller of a recorded call sent, field by field: the answering modem run as `v90m-replay` runs it, the library's V.21 and Phase 2 receivers on the caller's signal, the caller's level per state; each sequence's bits rebuilt with the caller's builders and compared (`docs/history/PROGRESS.md`, "realcheck") |
 | `rec_orig.c` (`make build/rec_orig`, host only) | a simulated call of the library's caller recorded at the answerer in the format above, the answerer set up as `v90m-replay` sets it up: `v90m-fields` reads it as it reads a real one |
 | `trace.c`, `trace.h` | the replay's report: the trace hooks of the modem (built with `-DP34D_TRACE`) and the lines printed per phase; v90d's server replay prints the same |
 | `rec_v90.c`, `rec_v34.c` | record a simulated call (`make bench-v90`, `make bench-v34`) |
