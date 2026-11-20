@@ -119,10 +119,13 @@ typedef enum {
  * and no PCM: the JM and INFO0a of an x2 server. A caller that does not
  * take it up gets V.34 as without x2; other callers see nothing of it. A
  * client that does take it up (its marker after our L1) has no way back to
- * V.34: if the x2 start-up does not reach data mode, the call ends with
- * V90M_END_X2_FAILED. In data mode (V90M_CONN_X2) tx_bps is the downstream
- * payload rate (32000 in this version) and rx_bps the client's V.34
- * upstream; USR's CONNECT figure is one step of 1333 above the first. */
+ * V.34: if the x2 start-up does not reach data mode, or a rate change the
+ * client asks for in data mode cannot be served (only 32000 can) or does
+ * not complete, the call ends with V90M_END_X2_FAILED. In data mode
+ * (V90M_CONN_X2) tx_bps is the downstream payload rate (32000 in this
+ * version) and rx_bps the client's V.34 upstream (it may change in the
+ * client's rate change); USR's CONNECT figure is one step of 1333 above
+ * the first. */
 #define V90M_MOD_X2       0x0100u
 
 /* the modulation of a connection (v90m_state.modulation) */
@@ -254,7 +257,8 @@ typedef enum {
     V90M_END_RETRAIN_FAILED,    /* (appended) calling V.90 / V.92: a retrain failed, or one
                                    more was due past the limit (see v90m_retrain) */
     V90M_END_X2_FAILED          /* (appended) answering: the client took up x2 (its marker
-                                   came) and the x2 start-up did not complete */
+                                   came) and the x2 start-up, or a rate change of
+                                   the client's, did not complete */
 } v90m_end;
 
 /* Cheap; fine to read after every sample. Also after the end: end says why. */

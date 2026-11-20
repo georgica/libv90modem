@@ -378,6 +378,33 @@ Client-initiated only; the server never sends the marker first. **RE
   (12.66 s, frames from the start segment); D-Modem waits for the MP and
   sends its own only 16000 frames later if none came. Our design answers
   the MP only. **RE (D-Modem)**.
+- The client's TRN in a rate change is 512 symbols on 4 points; its MP
+  follows, then (after our first record) MP' and E, and its upstream goes
+  on at 28800. **RE (D-Modem)**, x2-details.md "Our renegotiation"
+  (D-Modem's client does it as the Courier).
+- The rate change's MP is on **4 points**, not 16 as the start-up's (the
+  start-up's 16 points follow from our J words, "Records"). The emulated
+  Courier, 2026-11-20 ("Harness"): 16-point decisions after its S-bar found
+  no MP in 6 s; 4-point decisions found `0378 1FFE 0000 0500` twice, the
+  first some 80 ms after its S was detected. MP' and E on 4 points as well:
+  **assumed** (the Courier never got that far with us, see "Harness").
+- After E, B1 and then data, as at the start-up: **assumed** (the start-up's
+  B1 is RE (courier-emu)); `modem/x2d` checks B1 there as at the start-up.
+  The Courier runs of "Harness" show whether that holds.
+- Behind a pad (**derived**, our choice): the marker's octets are the
+  largest level of the data levels in use as sent, so that the client
+  receives them as `a5`/`25` (index 1: `9d` behind 3 dB, `95` behind 6 dB);
+  the records go in the start-up's data levels for the MP's pad, which are
+  levels B as received. D-Modem's client looks for "each position at its
+  largest level" and "the levels the start-up's" (x2-details.md "Our
+  renegotiation"); the I-modem's octets behind a pad in a rate change are
+  not published.
+- Our record in the rate change carries our word 1 (`0001`, "Records"),
+  not the I-modem's `7FFF`, as at the start-up.
+- The 43 records are sent whatever the client does; the server does not
+  wait for its E before the start segment (the I-modem's fixed 182
+  frames). `modem/x2d` ends the call when the client is not back in data
+  mode 6 s after its S.
 
 ## Pads
 
@@ -501,6 +528,9 @@ takes what the mask says.
 - The meaning of the server record's `7FFF 0000` and of word 0's other bits:
   sent as the I-modem sends them.
 - The client's full retrain during x2: unknown; the design clears down.
+- A rate change to an index we have no bank for, or with MD other than 5:
+  we clear down (V90M_END_X2_FAILED), as at the start-up, never answer
+  with another rate.
 - A-law: no client is known to have done it; not offered.
 - Robbed bits: no MP field for them is known; not handled.
 
@@ -594,6 +624,35 @@ data mode both ways with V.42 LAPM up.
   began; D-Modem: 12.66 s) the Courier stopped its upstream data and sent
   S: its rate change ("Rate change"). This version does not answer it;
   our call ended 6 s later, and the Courier hung up 36 s after that.
+
+The Courier's rate change, x2d answering it (2026-11-20, this library at
+x2 7; the same bridge, courier-emu and ROM as above; `X2D_TRACE` builds for
+the MP words, which print each MP x2d decodes):
+
+| | PAD=0 | PAD=3 | PAD=6 |
+| --- | --- | --- | --- |
+| its S (x2d's clock, from the marker) | 19.72 s | 19.72 s | 29.47 s |
+| its MP, 4 points, twice | `0378 1FFE 0000 0500` | `0B70 1FFE 8888 0588` | `1378 1FFE 8888 0588` |
+| index asked for (word 0 bits 2-5) | 14 (54666) | 12 (52000) | 14 (54666) |
+| pad reported, MD | 0, 5 | 1, 5 | 2, 5 |
+| x2d | X2D_ERR_RATE 94 ms after its S: we clear down, V90M_END_X2_FAILED ("ours: ended: x2 failed") | the same | the same |
+| the Courier | on hook 47.1 s after our clear down; nothing more on its terminal (it is in command mode after `ATI11`) | the same | the same |
+
+(On the bridge's line clock our CONNECT is at 30.40 s in every run and
+the data stop at 42.50 s, 42.50 s and 52.24 s: the Courier's rate change
+12.1 s into data at PAD=0 and 3, 21.8 s at PAD=6; not looked into.)
+
+- The rate change's MP is on 4 points ("Rate change"). With 16-point
+  decisions (the start-up's) x2d found no MP and ended the call 6 s later
+  (X2D_ERR_RENEG); that was the first run of x2 7.
+- The Courier asks for index 14 (12 behind 3 dB), above our record's word
+  1 (`0001`, index 1 only). That is the rate its own measurement allows
+  (its CONNECT figure, 48000 / 50666, is not it either): word 1 of our
+  record does not bound its request. Until the banks of later work, x2d
+  clears down there, as the design says; the call does not go on.
+- Not seen yet against the Courier: our answer (marker, records, start),
+  its MP' and E on 4 points, B1 after E, its upstream at 28800. The
+  simulated client (sim/x2call) does all of these from the facts.
 
 Without a V.42 endpoint on our side (the first try) the
 Courier printed only `NO CARRIER`: it cleared down 6.4 s after V.34 data

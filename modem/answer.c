@@ -539,8 +539,10 @@ int16_t answer_tick(answer_t *a, int16_t rx)
         if (d->state == X2D_ENDED) {
             /* there is no way back to V.34 once the marker came (design
              * "Calls made in the design"): a start-up that did not reach
-             * data mode is said as x2's */
-            if (!a->connected) a->x2_failed = 1;
+             * data mode, or a rate change of the client's that did not
+             * complete, is said as x2's; in data mode only the line's loss
+             * and our cleardown end the call */
+            if (!a->connected || (d->error != X2D_ERR_CARRIER && d->error != X2D_ERR_HANGUP)) a->x2_failed = 1;
             if (d->error == X2D_ERR_HANGUP) a->cleared = 2;
             fail(a); tx = 0;
         } else if (d->state == X2D_DATA) {

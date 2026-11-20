@@ -185,6 +185,77 @@ int main(void)
                 }
                 printf("  x2tx data: %ld bits, %ld wrong; %d bit/s\n", nb, errs, x2tx_rate(&T));
                 CHECK_EQ_I(notdata, 0); CHECK_EQ_I(errs, 0); CHECK_EQ_I(nb, 48000); CHECK_EQ_I(x2tx_rate(&T), 32000);
+
+                /* the client's rate change (x2-facts.md "Rate change"): its MP
+                 * (x2tx_data with the index it asks for, x2tx_go) three octets
+                 * into a data frame. That frame ends with data; then 8 frames
+                 * a5 a5 a5 25 25 25 and one 25 25 25 a5 a5 a5, no differential
+                 * signs; GPC from zero and the sign positive; our record in
+                 * levels B, 10 times 733C and 33 times F33C; one frame of ones
+                 * in levels B, 681 of ones at the new rate; data, the owner's
+                 * bits on from where they stopped. */
+                {
+                    static const uint8_t mk[2][6] = { { 0xa5, 0xa5, 0xa5, 0x25, 0x25, 0x25 },
+                                                      { 0x25, 0x25, 0x25, 0xa5, 0xa5, 0xa5 } };
+                    x2map_t mr;
+                    uint8_t rb[96]; uint16_t w[3];
+                    long mbad = 0, nak = 0, ack = 0, rbad = 0, order = 0, pad_bad = 0, ones_b = 0, ones_n = 0;
+                    int r, j;
+                    x2tx_data(&T, 1, 0, src_get, NULL);
+                    for (i = 0; i < 3; i++) fr[i] = x2tx_tick(&T);
+                    x2tx_go(&T);
+                    for (; i < 6; i++) fr[i] = x2tx_tick(&T);
+                    n = x2map_unframe(&mb, fr, bits);
+                    for (i = 0; i < n; i++) {
+                        keep ^= keep << 13; keep ^= keep >> 17; keep ^= keep << 5;
+                        if (v90_descramble_gpc(&D, bits[i]) != (int)(keep & 1)) errs++;
+                    }
+                    CHECK_EQ_I(n, 24);
+                    for (f = 0; f < 9; f++)
+                        for (i = 0; i < 6; i++) if (x2tx_tick(&T) != mk[f == 8][i]) mbad++;
+                    v90_scr_init(&D); x2map_init(&mr, 1, 0, 0);
+                    for (r = 0; r < 43; r++) {
+                        for (j = 0; j < 4; j++) {
+                            for (i = 0; i < 6; i++) fr[i] = x2tx_tick(&T);
+                            if (x2map_unframe(&mr, fr, bits) != 24) { rbad++; continue; }
+                            for (i = 0; i < 24; i++) rb[j * 24 + i] = (uint8_t)v90_descramble_gpc(&D, bits[i]);
+                        }
+                        if (x2rec_parse(rb, 96, w, 3) == 3 && (w[0] & 0x7fff) == 0x733C && w[1] == X2TX_REC_W1 && w[2] == 0) {
+                            if (w[0] >> 15) ack++;
+                            else { nak++; if (ack) order++; }
+                        } else {
+                            rbad++;
+                        }
+                        for (i = X2REC_BITS(3); i < 96; i++) if (rb[i]) pad_bad++;
+                    }
+                    for (f = 0; f < 1 + X2TX_START_FRAMES; f++) {
+                        for (i = 0; i < 6; i++) fr[i] = x2tx_tick(&T);
+                        if (f == 0) CHECK_EQ_I(T.seg, X2TX_START);
+                        if (f == 1) mr.index = 1;         /* the rate asked for: index 1, levels B again */
+                        n = x2map_unframe(&mr, fr, bits);
+                        for (i = 0, k = 0; i < n; i++) k += v90_descramble_gpc(&D, bits[i]);
+                        if (n == 24 && k == 24) { if (f == 0) ones_b++; else ones_n++; }
+                    }
+                    for (f = 0, nb = 0; f < 1000; f++) {
+                        for (i = 0; i < 6; i++) fr[i] = x2tx_tick(&T);
+                        if (T.seg != X2TX_DATA) notdata++;
+                        n = x2map_unframe(&mr, fr, bits);
+                        if (n != 24) { errs += 24; continue; }
+                        for (i = 0; i < n; i++) {
+                            keep ^= keep << 13; keep ^= keep >> 17; keep ^= keep << 5;
+                            if (v90_descramble_gpc(&D, bits[i]) != (int)(keep & 1)) errs++;
+                            nb++;
+                        }
+                    }
+                    printf("  x2tx rate change: marker %ld bad; records %ld 733C then %ld F33C (%ld bad);"
+                           " ones %ld + %ld frames; data %ld bits on, %ld wrong; %d bit/s\n",
+                           mbad, nak, ack, rbad, ones_b, ones_n, nb, errs, x2tx_rate(&T));
+                    CHECK_EQ_I(mbad, 0);
+                    CHECK_EQ_I(nak, 10); CHECK_EQ_I(ack, 33); CHECK_EQ_I(rbad, 0); CHECK_EQ_I(order, 0); CHECK_EQ_I(pad_bad, 0);
+                    CHECK_EQ_I(ones_b, 1); CHECK_EQ_I(ones_n, X2TX_START_FRAMES);
+                    CHECK_EQ_I(notdata, 0); CHECK_EQ_I(nb, 24000); CHECK_EQ_I(errs, 0);
+                    CHECK_EQ_I(x2tx_rate(&T), 32000);
+                }
             }
         }
     }

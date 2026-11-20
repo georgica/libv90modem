@@ -13,6 +13,12 @@
  *   points, then 16, 5120 in all), our MP until its record has been
  *   decoded, one MP', E, then V.34 data (B1 first; GPA, expanded shaping,
  *   64 states, non-linear encoding) at the highest rate of up_mask.
+ *   reneg_ms into data mode, its rate change (docs/history/x2-facts.md
+ *   "Rate change"; D-Modem's client, x2-details.md "Our renegotiation"):
+ *   S, S-bar, TRN (512 symbols on 4 points), its MP (reneg_index,
+ *   reneg_mask) on 4 points (the Courier's) until the server's record has
+ *   been decoded, one MP', E (4 points), then V.34 data again (B1 first) at the highest rate of
+ *   reneg_mask; the data bits run on from where they stopped.
  *
  * Downstream it takes the server's octets as they leave it (ideal: no
  * analogue line, no equaliser), passes them through the network's digital
@@ -20,7 +26,11 @@
  * script: the preamble, TRN and J words, the ones, the alignment, the sync
  * frames (levels A), the records, the start segment and the data (the data
  * levels of the MP's index and pad, x2map_unframe), each checked against
- * the facts. Test side. */
+ * the facts. In a rate change, from its MP on: the server's marker (8
+ * frames +++--- at the largest level, one ---+++), its records in levels B
+ * from a fresh descrambler and sign, a frame of ones in levels B, 681 at the
+ * new rate, then data again; a marker frame before its MP is counted.
+ * Test side. */
 #ifndef V90D_SIM_X2CALL_H
 #define V90D_SIM_X2CALL_H
 #include <stdint.h>
@@ -46,13 +56,20 @@ typedef struct {
     int marker_ms;          /* after the server's L1 began; 0 = 170 */
     int silent;             /* X2C_SIL_*: go quiet after the marker, after J, after 4 MPs,
                                or 1 s into data mode */
+    int md;                 /* MP word 3's high byte, the downstream signs MD; 0 = 5 */
+    int reneg_ms;           /* a rate change this long into data mode; 0 = none */
+    int reneg_index;        /* ... its MP's rate index */
+    uint16_t reneg_mask;    /* ... its upstream rates (the Courier's 1FFE) */
+    int reneg_md;           /* ... its MD; 0 = 5 */
     int  (*getbit)(void *user);
     void (*putbit)(void *user, int bit);
     void *user;
 } x2call_cfg;
 
 typedef enum {
-    X2C_V8, X2C_P2, X2C_MARKER, X2C_P3, X2C_QUIET, X2C_P4, X2C_MP, X2C_E, X2C_DATA, X2C_ENDED
+    X2C_V8, X2C_P2, X2C_MARKER, X2C_P3, X2C_QUIET, X2C_P4, X2C_MP, X2C_E, X2C_DATA,
+    X2C_RENEG,              /* its rate change: from its S to its E (then X2C_E, X2C_DATA) */
+    X2C_ENDED
 } x2c_state;
 
 /* what the client found in the server's script */
@@ -68,6 +85,15 @@ typedef struct {
     long start_ones, start_bad;     /* the start segment's frames in the data levels */
     long data_frames, data_lost;    /* data frames; ones that did not decode */
     int  data_up;           /* our upstream in data (after B1) */
+    /* the rate change */
+    long mark_early;        /* marker frames (+++---) before its MP */
+    long mark_frames;       /* +++--- frames after its MP */
+    int  mark_last;         /* the ---+++ frame came */
+    long mark_bad;          /* other frames in the marker */
+    int  rr_nak, rr_ack;    /* records 733C / F33C 0001 0000 in levels B */
+    int  rr_bad, rr_order;  /* others; a 733C after an F33C */
+    int  rr_ones;           /* the frame of ones in levels B after them */
+    long rstart_ones, rstart_bad;   /* the 681 frames at the new rate */
 } x2call_seen;
 
 typedef struct {
@@ -86,6 +112,9 @@ typedef struct {
     v34_params_t tpar; v34_tx_t vtx; int32_t tx_dg;
     int          up_rate;
     int          quiet;             /* cfg.silent has struck */
+    int32_t      data_at;           /* when data mode began (-1 not yet) */
+    int          renegs;            /* rate changes begun */
+    int          reneg_due, reneg_mp;   /* time for one; its first MP has gone out */
     /* downstream */
     int16_t      ra[256];           /* octet received -> levels A octet sent, -1 none */
     int32_t      k;                 /* octets since the preamble began, -1 before */
@@ -95,7 +124,8 @@ typedef struct {
     x2map_t      map;
     uint8_t      fr[X2MAP_N]; int fpos;
     uint8_t      rb[96]; int rn, rones;     /* a record being collected */
-    int          e_sent, in_start, in_data; int32_t start_n;
+    int          e_sent, in_start, in_data; int32_t start_n, start_len;
+    int          rr;                /* the rate change downstream: 1 the marker, 2 the records */
     x2call_seen  seen;
 } x2call_t;
 

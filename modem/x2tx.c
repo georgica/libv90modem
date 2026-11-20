@@ -9,6 +9,7 @@
 #include <string.h>
 #include "x2tx.h"
 #include "x2rec.h"
+#include "x2tab.h"
 
 #define POS   0x80              /* bit 7 of a mu-law octet: positive */
 #define SIL   0x7f
@@ -47,8 +48,10 @@ void x2tx_init(x2tx_t *t)
     v90_scr_init(&t->scr);
     x2map_init(&t->map, 1, 0, 1);
     /* our record, the acknowledge set (we send it once the client's MP is
-     * in), padded with zeros to 4 frames */
+     * in), padded with zeros to 4 frames; without it for a rate change's
+     * first ten */
     (void)x2rec_build(w, 3, 1, t->rec);
+    (void)x2rec_build(w, 3, 0, t->rec0);
     t->index = 1; t->pad_mode = 0;
     enter(t, X2TX_SILENCE);
 }
@@ -103,9 +106,15 @@ static int next_frame(x2tx_t *t)
         t->rec_frame = (t->rec_frame + 1) & 3;
         break;
     case X2TX_START:
-        if (t->n >= X2TX_START_FRAMES * X2MAP_N) { enter(t, X2TX_DATA); return next_frame(t); }
+        /* the start-up's: one frame in levels A, 680 in the data levels; a
+         * rate change's: one in levels B (the map is there already), 681 */
+        if (t->n >= (X2TX_START_FRAMES + t->again) * X2MAP_N) {
+            t->again = 0;
+            enter(t, X2TX_DATA);
+            return next_frame(t);
+        }
         if (t->n == 0) {
-            t->map.levels_a = 1;
+            if (!t->again) t->map.levels_a = 1;
         } else if (t->n == X2MAP_N) {
             /* the data levels from the start's second frame; the signs and
              * the running sum carry on */
@@ -114,7 +123,47 @@ static int next_frame(x2tx_t *t)
         nb = x2map_bits(&t->map);
         for (k = 0; k < nb; k++) bits[k] = 1;
         break;
+    case X2TX_MARK: {
+        /* the largest level of the data levels in use, as sent (index 1:
+         * the client receives a5 behind each pad); not scrambled, no
+         * differential signs */
+        uint8_t hi = x2_pad_sent[t->map.pad_mode][0], lo = (uint8_t)(hi & 0x7f);
+        int f = (int)(t->n / X2MAP_N);
+        if (f == X2TX_MARK_FRAMES) {
+            v90_scr_init(&t->scr);
+            x2map_init(&t->map, 1, t->pad_mode, 0);     /* levels B, the sign positive */
+            t->rec_frame = 0; t->records = 0;
+            enter(t, X2TX_RREC);
+            return next_frame(t);
+        }
+        for (k = 0; k < X2MAP_N; k++)
+            t->frame[k] = ((k < 3) == (f < X2TX_MARK_FRAMES - 1)) ? hi : lo;
+        t->fpos = 0;
+        return 1;
+    }
+    case X2TX_RREC: {
+        const uint8_t *rec;
+        if (t->rec_frame == 0) {
+            if (t->records == X2TX_RREC_N) {
+                t->again = 1;
+                enter(t, X2TX_START);
+                return next_frame(t);
+            }
+            t->records++;
+        }
+        rec = t->records <= X2TX_RREC_NAK ? t->rec0 : t->rec;
+        nb = x2map_bits(&t->map);
+        for (k = 0; k < nb; k++) bits[k] = rec[t->rec_frame * nb + k];
+        t->rec_frame = (t->rec_frame + 1) & 3;
+        break;
+    }
     default:    /* X2TX_DATA */
+        if (t->go) {
+            /* the client's rate change: its MP is in */
+            t->go = 0;
+            enter(t, X2TX_MARK);
+            return next_frame(t);
+        }
         nb = x2map_bits(&t->map);
         for (k = 0; k < nb; k++) bits[k] = t->getbit ? (uint8_t)(t->getbit(t->user) & 1) : 1;
         break;

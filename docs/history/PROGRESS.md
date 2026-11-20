@@ -2858,3 +2858,64 @@ and the check of the client's MP agree (the 0x0002 / bit n above is
 superseded). x2-facts.md "Records" has the runs; 48000 and 50666 are the
 rates of index 9 and 11. test_x2tx pins the word; test_answer_x2's record
 check in sim/x2call follows.
+
+## x2 7: the client's rate change (2026-11-20)
+
+x2d now answers a rate change of the client's (docs/history/x2-facts.md
+"Rate change"). It no longer ends the call 6 s after the client's S.
+
+- `modem/x2d`: when the client's S comes in data mode (X2D_RENEG), the
+  data stops going up and goes on down. sres_resume follows its S-bar. Then
+  come 4-point decisions (RX_RN) on its TRN and its MP, which is checked as
+  at the start-up. After its MP (never before), `x2tx_data` and `x2tx_go`
+  start our answer. Its E leads to B1 and data at the new upstream rate,
+  and then back to X2D_DATA with the rates taken again. The limit is 6 s
+  from its S (X2D_ERR_RENEG).
+- `modem/x2tx`: `x2tx_go` in data mode starts a rate change after the
+  frame being sent. It sends 8 frames +++--- and one ---+++ at the largest
+  level of the data levels in use, as sent (a5 / 25 as received). Then
+  GPC restarts from zero with the sign positive, and our record goes out
+  in levels B, 10 times as 733C and 33 times as F33C. Then one frame of
+  ones in levels B, 681 at the new rate, and data from the owner's next
+  bit.
+- The Task 6 review's minors: `x2d_cleardown` now works in X2D_RENEG too.
+  The MP's MD (word 3, high byte) must be 5, in the first MP and in a rate
+  change's alike; any other value gives X2D_ERR_RATE.
+- `modem/answer`: an end after data mode other than carrier loss or our
+  cleardown counts as x2_failed (V90M_END_X2_FAILED). That covers a rate
+  change we cannot serve or that does not complete.
+- `sim/x2call`: `reneg_ms` gives the rate change: S, S-bar, TRN of 512
+  symbols, its MP (reneg_index, reneg_mask, reneg_md) and MP' and E, all
+  on 4 points, then B1 and data. Downstream, the sim checks our marker,
+  records, ones and data frame by frame, and counts any marker frame
+  before its MP. `md` sets the first MP's MD.
+- The emulated Courier's rate-change MP is on 4 points, not 16. Found
+  with an `X2D_TRACE` build (an fprintf trace, off by default, as p34d's
+  V42_XID_TRACE). It asks for index 14 (12 behind 3 dB), above our
+  mask, so we clear down, as the design says until there are more banks.
+  Recorded in x2-facts.md "Rate change" and "Harness".
+
+Tests (each seen failing first):
+
+    test_x2tx: 66 checks, 0 failures
+      x2tx rate change: marker 0 bad; records 10 733C then 33 F33C (0 bad); ones 1 + 681 frames; data 24000 bits on, 0 wrong; 32000 bit/s
+    test_answer_x2: 303 checks, 0 failures
+      x2 MP has MD 6: ended 6.47 s after the marker, error 5, x2_failed 1, 4 MPs sent
+      x2 rate change, no pad (and 3 dB): data 32000 / 28800 bit/s; x2d saw the client's S 0.020 s after it began, data again 0.92 s after it
+         client saw: marker 8 + 1 (0 bad, 0 before its MP), records 10 733C then 33 F33C (0 bad), ones 1 + 681 (0 bad), data frames 19017 (0 lost)
+         down 456408 bits 0 bad (50016 after the change); up 369156 bits 0 bad (53256 after), the client's S: 300 bits lost, 0 extra
+      x2 rate change asks for index 5 / has MD 6: ended 0.27 s after the client's S, error 5, x2_failed 1
+      x2 rate change and our cleardown in it: ended 0.02 s after the client's S, error 12, cleared 2
+
+The upstream loses the 300 bits that are still in our receiver's
+decision delay when the client's S begins. The test resumes its check
+from the client's next bit, and V.42 recovers such a loss. On TEST_SHORT
+(ARM under qemu) the rate change comes 2 s into data and runs behind no
+pad only.
+
+The Courier (`make test-x2-courier MODS=x2`, PAD=0 / 3 / 6): each run
+passes the start-up as before (CONNECT 32000/24000 x2, V.42 LAPM). Its
+rate change asks for index 14 / 12 / 14 with mask 1FFE. We clear down
+94 ms after its S ("ended: x2 failed"), and the Courier goes on hook 47 s
+later. The call does not go on past the Courier's rate change until the
+banks for its index exist (the bank task).

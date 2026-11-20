@@ -19,7 +19,8 @@
  * call x2 (ANS_X2: modem/x2d, PCM downstream, V.34 upstream); one that does
  * not gets V.34 as it would without x2. Other callers see nothing of it.
  * After the marker there is no way back to V.34: an x2 start-up that does
- * not reach data mode ends the call with x2_failed.
+ * not reach data mode, or a client's rate change that does not get back to
+ * it, ends the call with x2_failed.
  * One sample in, one sample out. The data interface is a bit pump: getbit is
  * called for every transmitted line bit, putbit for every received one, once
  * the connection is up. Characters travel start-stop framed in that bit stream
@@ -143,7 +144,8 @@ typedef struct {
     /* x2 */
     int        x2_offered;   /* ANS_MODE_X2 with V.34, on a mu-law line */
     int        x2_failed;    /* the client sent the x2 marker and the x2 start-up did not
-                                reach data mode: there is no way back to V.34, the call ended */
+                                reach data mode, or a rate change of its own did not get
+                                back to it: there is no way back to V.34, the call ended */
 } answer_t;
 
 void    answer_init(answer_t *a, const answer_cfg *cfg);

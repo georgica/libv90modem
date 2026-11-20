@@ -20,7 +20,15 @@
  *   - an MP asking for an index we have no bank for, or reporting a pad we
  *     have no levels for: the call ends, x2_failed (plan, Review Focus 4);
  *   - the client silent after its marker, after its J, after its MP, in
- *     data: the call ends within 10 s, with an end reason (Review Focus 5). */
+ *     data: the call ends within 10 s, with an end reason (Review Focus 5);
+ *   - an MP with other downstream signs than MD = 5: the call ends;
+ *   - the client's rate change 12.7 s into data (docs/history/x2-facts.md
+ *     "Rate change"), asking for index 1 with the mask 1FFE: we answer
+ *     after its MP (no marker frame before it), it checks our answer frame
+ *     by frame, and the call goes on at 32000 down, 28800 up, the bits end
+ *     to end; one asking for an index without a bank, or other MD, ends
+ *     the call (x2_failed: V90M_END_X2_FAILED); our cleardown during it
+ *     ends the call as ours. */
 #include <stdio.h>
 #include <string.h>
 #include "test.h"
@@ -205,16 +213,45 @@ static void r_check(rbits_t *r, int bit)
 
 #define XD 4096
 static x2call_t X; static rbits_t DN, UP;
+/* the client's rate change, for the next x2_call (which clears it): ms
+ * into data mode (0 none), its index, mask and MD (0: 5); md0 the first
+ * MP's MD; hangup: our cleardown once x2d is in the rate change */
+static struct { int ms, index, md, md0, hangup; uint16_t mask; } RN;
+/* the upstream across the client's rate change: its V.34 stops where it
+ * is (its last bits, still in our receiver's decision delay, do not come,
+ * or its S comes out as bits before we have seen it). The bits it took
+ * from its source up to its S (at, st the generator after them) are
+ * checked as they come; those past them before its E are counted (extra);
+ * from its new data on, the check goes on from at (lost: those of the
+ * first that never came). */
+static struct { int armed, done; uint32_t st; long at, lost, extra; } UG;
+static long up_taken;
 /* downstream: our getbit to the client's putbit; upstream the other way */
 static int s_get(void *u) { (void)u; return rnext(&DN.tx); }
-static void s_put(void *u, int bit) { (void)u; r_check(&UP, bit); }
-static int c_get(void *u) { (void)u; return rnext(&UP.tx); }
+static void s_put(void *u, int bit)
+{
+    (void)u;
+    if (UG.armed) {
+        if (x2call_state(&X) != X2C_RENEG) {
+            UG.armed = 0; UG.done = 1;
+            UG.lost = UG.at - UP.n; UP.rx = UG.st;
+        } else if (UP.n >= UG.at) {
+            UG.extra++;
+            return;
+        }
+    }
+    r_check(&UP, bit);
+}
+static int c_get(void *u) { (void)u; up_taken++; return rnext(&UP.tx); }
 static void c_put(void *u, int bit) { (void)u; r_check(&DN, bit); }
 typedef struct {
     int ok;                     /* both in data mode */
     int down, up, mod;
     long x2_at, quiet_at, end_at;   /* samples: ANS_X2, the client's silence, ANS_FAILED; -1 none */
     int error, x2_failed, connected_once;
+    long rn_at, rn_seen, rn_back;   /* the client's S, x2d's X2D_RENEG, back in X2D_DATA; -1 none */
+    long dn0, up0;              /* bits checked each way at the client's S */
+    int cd_ret;                 /* answer_cleardown in the rate change */
 } x2_outcome;
 
 /* One x2 call: the client with pad (0, 1, 2; 3 reported only), the index it
@@ -232,6 +269,8 @@ static void x2_call(int pad, int index, uint16_t up_mask, int silent, int echo_d
     long n;
     memset(o, 0, sizeof *o);
     o->x2_at = o->quiet_at = o->end_at = -1;
+    o->rn_at = o->rn_seen = o->rn_back = o->dn0 = o->up0 = -1; o->cd_ret = 1;
+    memset(&UG, 0, sizeof UG); up_taken = 0;
     memset(down, 0x7f, sizeof down); memset(up, 0, sizeof up); memset(dl, 0, sizeof dl);
     memset(&DN, 0, sizeof DN); memset(&UP, 0, sizeof UP);
     DN.tx = DN.rx = 0x2468ace1u; UP.tx = UP.rx = 0x13579bdfu;
@@ -244,6 +283,8 @@ static void x2_call(int pad, int index, uint16_t up_mask, int silent, int echo_d
     memset(&xc, 0, sizeof xc);
     xc.level = 3000; xc.pad_mode = pad; xc.max_index = index; xc.up_mask = up_mask; xc.silent = silent;
     xc.getbit = c_get; xc.putbit = c_put; xc.user = NULL;
+    xc.md = RN.md0;
+    xc.reneg_ms = RN.ms; xc.reneg_index = RN.index; xc.reneg_mask = RN.mask; xc.reneg_md = RN.md;
     x2call_init(&X, &xc);
     for (n = 0; n < 8000L * secs; n++) {
         int i = (int)(n & (XD - 1));
@@ -260,9 +301,23 @@ static void x2_call(int pad, int index, uint16_t up_mask, int silent, int echo_d
         if (A.phase == ANS_X2 && o->x2_at < 0) o->x2_at = n;
         if (X.quiet && o->quiet_at < 0) o->quiet_at = n;
         if (A.connected && A.modulation == ANS_MOD_X2) o->connected_once = 1;
+        if (X.renegs && o->rn_at < 0) {
+            /* the client's S: it has taken its last upstream bit */
+            o->rn_at = n; o->dn0 = DN.n; o->up0 = UP.n;
+            UG.armed = 1; UG.st = UP.tx; UG.at = up_taken;
+        }
+        if (A.phase == ANS_X2 && A.u.x2.state == X2D_RENEG && o->rn_seen < 0) {
+            o->rn_seen = n;
+            if (RN.hangup) o->cd_ret = answer_cleardown(&A);
+        }
+        if (o->rn_seen >= 0 && o->rn_back < 0 && A.phase == ANS_X2 && A.u.x2.state == X2D_DATA) o->rn_back = n;
         if (A.phase == ANS_FAILED) { o->end_at = n; break; }
-        if (data_bits && A.connected && x2call_state(&X) == X2C_DATA && DN.n >= data_bits && UP.n >= data_bits) break;
+        if (data_bits && A.connected && x2call_state(&X) == X2C_DATA && DN.n >= data_bits && UP.n >= data_bits) {
+            if (!RN.ms) break;
+            if (o->rn_back >= 0 && UG.done && DN.n - o->dn0 >= data_bits && UP.n - o->up0 >= data_bits) break;
+        }
     }
+    memset(&RN, 0, sizeof RN);
     o->ok = A.connected && A.phase == ANS_X2 && x2call_state(&X) == X2C_DATA;
     o->down = A.bitrate; o->up = A.rx_bitrate; o->mod = A.modulation;
     o->error = A.u.x2.error; o->x2_failed = A.x2_failed;
@@ -317,13 +372,17 @@ static void x2_tests(void)
         CHECK(answer_snr_db10(&A) > 200);
     }
 
-    /* 2. the MP asks for index 5 (we have a bank for 1 only: 0x0002), or
-     *    reports a pad of mode 3: the call ends, as x2's, soon after it */
+    /* 2. the MP asks for index 5 (we have a bank for 1 only: 0x0001), or
+     *    reports a pad of mode 3, or other downstream signs than MD = 5 (our
+     *    banks' MD, x2-facts.md "Banks"): the call ends, as x2's, soon after
+     *    it */
     {
-        static const struct { int pad, index, err; const char *what; } no[] = {
-            { 0, 5, X2D_ERR_RATE, "MP asks for index 5" }, { 3, 1, X2D_ERR_PAD, "MP reports pad mode 3" } };
+        static const struct { int pad, index, md, err; const char *what; } no[] = {
+            { 0, 5, 0, X2D_ERR_RATE, "MP asks for index 5" }, { 3, 1, 0, X2D_ERR_PAD, "MP reports pad mode 3" },
+            { 0, 1, 6, X2D_ERR_RATE, "MP has MD 6" } };
         int j;
-        for (j = 0; j < 2; j++) {
+        for (j = 0; j < 3; j++) {
+            RN.md0 = no[j].md;
             x2_call(no[j].pad, no[j].index, 0x03FE, X2C_SIL_NONE, 0, 30, 0, &o);
             printf("  x2 %s: ended %.2f s after the marker, error %d, x2_failed %d, %d MPs sent\n", no[j].what,
                    (o.end_at - o.x2_at) / 8000.0, o.error, o.x2_failed, X.mp_count);
@@ -353,6 +412,78 @@ static void x2_tests(void)
             /* the end reason: x2's before data mode, the connection lost in it */
             CHECK_EQ_I(o.x2_failed, q[j].sil != X2C_SIL_DATA);
             CHECK_EQ_I(o.connected_once, q[j].sil == X2C_SIL_DATA);
+        }
+    }
+
+    /* 4. the client's rate change 12.7 s into data mode (D-Modem's client;
+     *    the Courier's is 12.1 s), asking for index 1 with its mask 1FFE:
+     *    our answer after its MP and not before, as the facts give it,
+     *    checked by the client frame by frame; then 32000 down and 28800
+     *    up. The downstream bits run on end to end; the upstream ones up to
+     *    the client's S and from its new data on (see UG). Behind no pad
+     *    and 3 dB (TEST_SHORT: no pad, 2 s into data). */
+    for (pad = 0; pad < 2; pad++) {
+        const x2call_seen *s = &X.seen;
+#ifdef TEST_SHORT
+        if (pad) break;
+        RN.ms = 2000;
+#else
+        RN.ms = 12700;
+#endif
+        RN.index = 1; RN.mask = 0x1FFE;
+        x2_call(pad, 1, 0x03FE, X2C_SIL_NONE, pad == 0 ? -1 : 0, 40, 50000, &o);
+        printf("  x2 rate change, %s: %s %d / %d bit/s; x2d saw the client's S %.3f s after it began, data again %.2f s after it\n",
+               pad_name[pad], o.ok ? "data" : "NO DATA", o.down, o.up,
+               o.rn_seen < 0 ? -1.0 : (o.rn_seen - o.rn_at) / 8000.0, o.rn_back < 0 ? -1.0 : (o.rn_back - o.rn_at) / 8000.0);
+        printf("     client saw: marker %ld + %d (%ld bad, %ld before its MP), records %d 733C then %d F33C (%d bad),"
+               " ones %d + %ld (%ld bad), data frames %ld (%ld lost)\n",
+               s->mark_frames, s->mark_last, s->mark_bad, s->mark_early, s->rr_nak, s->rr_ack, s->rr_bad,
+               s->rr_ones, s->rstart_ones, s->rstart_bad, s->data_frames, s->data_lost);
+        printf("     down %ld bits %ld bad (%ld after the change); up %ld bits %ld bad (%ld after),"
+               " the client's S: %ld bits lost, %ld extra\n",
+               DN.n, DN.bad, DN.n - o.dn0, UP.n, UP.bad, UP.n - o.up0, UG.lost, UG.extra);
+        CHECK(o.ok); CHECK_EQ_I(X.renegs, 1);
+        CHECK_EQ_I(o.down, 32000); CHECK_EQ_I(o.up, 28800);
+        CHECK_EQ_I(o.x2_failed, 0); CHECK_EQ_I(A.u.x2.state, X2D_DATA);
+        CHECK(o.rn_seen > o.rn_at); CHECK(o.rn_back > o.rn_seen);
+        x2_seen_clean();
+        CHECK_EQ_I(s->mark_early, 0);
+        CHECK_EQ_I(s->mark_frames, 8); CHECK_EQ_I(s->mark_last, 1); CHECK_EQ_I(s->mark_bad, 0);
+        CHECK_EQ_I(s->rr_nak, 10); CHECK_EQ_I(s->rr_ack, 33); CHECK_EQ_I(s->rr_bad, 0); CHECK_EQ_I(s->rr_order, 0);
+        CHECK_EQ_I(s->rr_ones, 1); CHECK_EQ_I(s->rstart_ones, 681); CHECK_EQ_I(s->rstart_bad, 0);
+        CHECK_EQ_I(A.u.x2.pad_mode, pad); CHECK_EQ_I(A.u.x2.tx.map.pad_mode, pad);
+        CHECK_EQ_I(DN.bad, 0); CHECK(o.dn0 > 0); CHECK(DN.n - o.dn0 >= 50000);
+        CHECK_EQ_I(UP.bad, 0); CHECK(o.up0 > 0); CHECK(UP.n - o.up0 >= 50000);
+        CHECK_EQ_I(UG.done, 1); CHECK(UG.lost >= 0 && UG.lost <= 512); CHECK(UG.extra <= 512);
+    }
+
+    /* 5. a rate change we cannot serve: an index without a bank (5), or
+     *    other MD: the call ends at its MP, said as x2's
+     *    (V90M_END_X2_FAILED); no marker of ours. Our cleardown in a rate
+     *    change: the call ends at once, as ours. */
+    {
+        static const struct { int index, md, hangup, err; const char *what; } rq[] = {
+            { 5, 0, 0, X2D_ERR_RATE, "asks for index 5" }, { 1, 6, 0, X2D_ERR_RATE, "has MD 6" },
+            { 1, 0, 1, X2D_ERR_HANGUP, "and our cleardown in it" } };
+        int j;
+        for (j = 0; j < 3; j++) {
+            RN.ms = 1000; RN.index = rq[j].index; RN.mask = 0x1FFE; RN.md = rq[j].md; RN.hangup = rq[j].hangup;
+            x2_call(0, 1, 0x03FE, X2C_SIL_NONE, 0, 40, 0, &o);
+            printf("  x2 rate change %s: ended %.2f s after the client's S, error %d, x2_failed %d, cleared %d,"
+                   " marker frames %ld + %ld\n", rq[j].what, o.rn_at < 0 || o.end_at < 0 ? -1.0 : (o.end_at - o.rn_at) / 8000.0,
+                   o.error, o.x2_failed, A.cleared, X.seen.mark_early, X.seen.mark_frames);
+            CHECK_EQ_I(X.renegs, 1); CHECK(o.rn_at > 0); CHECK(o.rn_seen > o.rn_at);
+            CHECK_EQ_I(A.phase, ANS_FAILED); CHECK_EQ_I(o.connected_once, 1);
+            CHECK_EQ_I(o.error, rq[j].err);
+            CHECK(o.end_at > o.rn_at && o.end_at - o.rn_at <= 8000L * 2);
+            CHECK_EQ_I(X.seen.mark_early, 0); CHECK_EQ_I(X.seen.mark_frames, 0);
+            if (rq[j].hangup) {
+                CHECK_EQ_I(o.cd_ret, 0); CHECK_EQ_I(A.cleared, 2); CHECK_EQ_I(o.x2_failed, 0);
+                CHECK(o.end_at - o.rn_seen <= 1);
+            } else {
+                CHECK_EQ_I(o.x2_failed, 1);
+                CHECK(X.mp_count >= 2);
+            }
         }
     }
 }

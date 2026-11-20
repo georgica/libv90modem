@@ -6,6 +6,12 @@
  * courier-emu (https://github.com/cryan209/courier-emu). Facts only; no code
  * of either. The receive parts are p34d's. */
 #include <string.h>
+#ifdef X2D_TRACE
+#include <stdio.h>
+#define TR(...) fprintf(stderr, __VA_ARGS__)
+#else
+#define TR(...) ((void)0)
+#endif
 #include "x2d.h"
 #include "x2rec.h"
 #include "v34mp.h"
@@ -16,6 +22,7 @@
 
 #define TRN_KNOWN      512      /* symbols of the client's TRN used as a known reference (as p34d) */
 #define MP_WORDS       4
+#define MP_MD          5        /* the downstream signs (MP word 3's high byte) of every bank ("Banks") */
 #define MP_BITS        X2REC_BITS(MP_WORDS)
 #define E_ONES         20
 
@@ -31,15 +38,16 @@
 #define T_MP_MS        6000     /* its S-bar to its MP: its TRN is some 1.6 s */
 #define T_E_MS         6000     /* our first record to its E */
 #define T_B1_MS        3000     /* its E to B1 received and our start segment sent */
-#define T_RENEG_MS     6000
+#define T_RENEG_MS     6000     /* the client's S in data mode to data again */
 #define CD_LOSS_SYMS   1600     /* about half a second without signal in data mode */
 #define Q_BAD_SYMS     3200
 #define Q_DEAD_MSE     (65536 / 8)  /* -9 dB: nothing is being received */
 
-enum { RX_WAIT_S, RX_KNOWN, RX_J, RX_SRES, RX_P4, RX_DATA, RX_IDLE };
+enum { RX_WAIT_S, RX_KNOWN, RX_J, RX_SRES, RX_P4, RX_RN, RX_DATA, RX_IDLE };
 
 static void end(x2d_t *d, int err)
 {
+    TR("X2D %.3f end %d (state %d, rxmode %d)\n", d->now / 8000.0, err, (int)d->state, d->rxmode);
     d->state = X2D_ENDED; d->error = err; d->t = 0;
     d->tx_ready = d->rx_ready = 0;
     d->rxmode = RX_IDLE;
@@ -73,7 +81,7 @@ int x2d_up_rate(const x2d_t *d) { return d->state == X2D_DATA || d->state == X2D
 
 int x2d_cleardown(x2d_t *d)
 {
-    if (d->state != X2D_DATA) return -1;
+    if (d->state != X2D_DATA && d->state != X2D_RENEG) return -1;
     end(d, X2D_ERR_HANGUP);
     return 0;
 }
@@ -102,6 +110,7 @@ static int pick_up_rate(x2d_t *d, uint16_t w1)
 static void on_mp(x2d_t *d, const uint16_t *w)
 {
     int k, same = d->cand_ok;
+    TR("X2D %.3f MP %04X %04X %04X %04X (state %d)\n", d->now / 8000.0, w[0], w[1], w[2], w[3], (int)d->state);
     for (k = 0; k < MP_WORDS; k++) {
         uint16_t a = (uint16_t)(k == 0 ? w[k] & 0x7fff : w[k]), b = (uint16_t)(k == 0 ? d->cand[k] & 0x7fff : d->cand[k]);
         if (a != b) same = 0;
@@ -113,14 +122,18 @@ static void on_mp(x2d_t *d, const uint16_t *w)
     d->index = x2_mp_rate(w[0]);
     d->pad_mode = x2_mp_pad(w[0]);
     /* the exact index asked for, and only one we have a bank for ("Rate
-     * change": a client given another rate's levels hangs up) */
+     * change": a client given another rate's levels hangs up), with the
+     * banks' MD */
     if (d->index < 1 || !((X2D_RATE_MASK >> (d->index - 1)) & 1)) { end(d, X2D_ERR_RATE); return; }
+    if (x2_mp_md(w[3]) != MP_MD) { end(d, X2D_ERR_RATE); return; }
     if (d->pad_mode > 2) { end(d, X2D_ERR_PAD); return; }
     d->up_rate = pick_up_rate(d, w[1]);
     if (!d->up_rate) { end(d, X2D_ERR_UP); return; }
     d->got_mp = 1;
     x2tx_data(&d->tx, d->index, d->pad_mode, d->cfg.getbit, d->cfg.user);
-    x2tx_go(&d->tx);                            /* our record after the sync frames */
+    /* our record after the sync frames; in a rate change, our marker after
+     * the data frame being sent ("Rate change": never before its MP) */
+    x2tx_go(&d->tx);
 }
 
 /* ---- upstream data mode ---- */
@@ -193,6 +206,7 @@ static void seq_bit(x2d_t *d, int bit)
         /* inside a record a zero breaks every run at 16 */
         if (++d->ones == E_ONES && d->got_mp && !d->got_e) {
             d->got_e = 1;
+            TR("X2D %.3f E\n", d->now / 8000.0);
             rx_begin_data(d);
         }
         return;
@@ -201,6 +215,21 @@ static void seq_bit(x2d_t *d, int bit)
         memset(d->fbuf, 1, 17); d->fbuf[17] = 0; d->fn = 18;
     }
     d->ones = 0;
+}
+
+/* The client's S in data mode: its rate change ("Rate change"). Its S,
+ * S-bar, TRN and MP as in its Phase 4; our answer after the MP (on_mp); its
+ * E, and its V.34 data at the new upstream rate (rx_begin_data). The
+ * carrier is locked: S is believed at once (as p34d). */
+static void reneg_begin(x2d_t *d)
+{
+    d->rx_ready = d->tx_ready = 0;
+    d->got_mp = d->got_e = 0; d->cand_ok = 0;
+    d->fn = d->ones = 0;
+    sres_resume(&d->sres);
+    d->rxmode = RX_SRES;
+    TR("X2D %.3f S in data mode\n", d->now / 8000.0);
+    enter(d, X2D_RENEG);
 }
 
 /* ---- one received symbol ---- */
@@ -237,16 +266,37 @@ static void rx_symbol(x2d_t *d)
     }
 
     case RX_SRES:
-        if (sres_symbol(&d->sres, r)) {
-            /* TRN (4 points, then 16), the MP and E on 16 points (the J
-             * words: our disassembly's "0343 must equal 09B0", courier-emu);
-             * the descrambler finds its way within 23 bits */
-            v34_tdem_init(&d->tdem, V34_GPA, 16);
-            d->fn = d->ones = 0;
-            d->rxmode = RX_P4;
-            d->t_mark = d->now;
+        if (!sres_symbol(&d->sres, r)) break;
+        d->fn = d->ones = 0;
+        if (d->state == X2D_RENEG) {
+            /* a rate change: its TRN, MP, MP' and E on 4 points (the
+             * Courier's: x2-facts.md "Rate change") */
+            v34_tdem_init(&d->tdem, V34_GPA, 4);
+            TR("X2D %.3f S-bar ended (rate change)\n", d->now / 8000.0);
+            d->rxmode = RX_RN;
+            break;
         }
+        /* TRN (4 points, then 16), the MP and E on 16 points (the J
+         * words: our disassembly's "0343 must equal 09B0", courier-emu);
+         * the descrambler finds its way within 23 bits */
+        v34_tdem_init(&d->tdem, V34_GPA, 16);
+        TR("X2D %.3f S-bar ended\n", d->now / 8000.0);
+        d->rxmode = RX_P4;
+        d->t_mark = d->now;
         break;
+
+    case RX_RN: {
+        /* 4-point decisions on what follows the client's S-bar in a rate
+         * change. The equaliser stays as data mode left it (the signal's
+         * scale is not data's); carrier and timing follow */
+        v34_pt_t pt; unsigned bits;
+        dr = r->zr < 0 ? -QRX_REF : QRX_REF; di = r->zi < 0 ? -QRX_REF : QRX_REF;
+        qamrx_update(r, dr, di, QRX_CARRIER | QRX_TIMING, 12);
+        pt.re = (int16_t)(dr < 0 ? -V34_ONE : V34_ONE); pt.im = (int16_t)(di < 0 ? -V34_ONE : V34_ONE);
+        bits = v34_tdem_put(&d->tdem, pt);
+        for (k = 0; k < 2 && d->rxmode == RX_RN; k++) seq_bit(d, (int)((bits >> k) & 1));
+        break;
+    }
 
     case RX_P4: {
         /* 16-point decisions. The 4-point part of TRN lands between them
@@ -278,6 +328,7 @@ static void rx_symbol(x2d_t *d)
         dr = (int32_t)(((int64_t)sent.re * g) / 512); di = (int32_t)(((int64_t)sent.im * g) / 512);
         qamrx_update(r, dr, di, QRX_EQ | QRX_CARRIER | QRX_TIMING | QRX_DENSE, 13);
         if (!d->rx_ready && d->vrx.b1_bits >= d->vpar.map.N) {
+            TR("X2D %.3f B1 %d of %d bits wrong\n", d->now / 8000.0, (int)d->vrx.b1_errors, (int)d->vrx.b1_bits);
             if (d->vrx.b1_errors * 8 > d->vrx.b1_bits) { end(d, X2D_ERR_B1); return; }
             d->rx_ready = 1;
         }
@@ -352,7 +403,7 @@ uint8_t x2d_tick(x2d_t *d, int16_t rxs)
         if (d->rxmode == RX_DATA && d->state == X2D_DATA) {
             /* the client's S in data mode: its rate change (facts "Rate change") */
             (void)sdet_tick(&d->sdet, x);
-            if (d->sdet.present >= SDET_PRESENT) { d->rx_ready = 0; enter(d, X2D_RENEG); }
+            if (d->sdet.present >= SDET_PRESENT) reneg_begin(d);
         }
     }
 
@@ -385,7 +436,14 @@ uint8_t x2d_tick(x2d_t *d, int16_t rxs)
         }
         break;
     case X2D_RENEG:
-        if (d->t > MS(T_RENEG_MS)) end(d, X2D_ERR_RENEG);
+        /* our answer is out once x2tx is back in data with no change pending */
+        if (d->got_mp && d->tx.seg == X2TX_DATA && !d->tx.go) d->tx_ready = 1;
+        if (d->tx_ready && d->rx_ready) {
+            d->down_rate = x2tx_rate(&d->tx);
+            enter(d, X2D_DATA);
+        } else if (d->t > MS(T_RENEG_MS)) {
+            end(d, X2D_ERR_RENEG);
+        }
         break;
     default:
         break;

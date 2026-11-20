@@ -16,6 +16,16 @@
  *   start      681 frames of ones: one in levels A, then 680 in the data levels
  *   data       mapped frames of the owner's bits
  *
+ * A rate change of the client's ("Rate change"): x2tx_data() with the index
+ * its MP asks for, then x2tx_go(), in data mode; after the frame being sent:
+ *   marker     8 frames +++--- and one ---+++ at the largest level of the
+ *              data levels, no differential signs
+ *   records    GPC from zero, the sign positive: our record in levels B
+ *              (index 1's data levels), 10 times without the acknowledge
+ *              (733C), 33 times with it
+ *   start      682 frames of ones: one in levels B, then 681 in the new data levels
+ *   data       on from the owner's next bit
+ *
  * GPC runs on from TRN's first octet through every mapped frame (not the
  * alignment). Fixed-point, no allocation. */
 #ifndef V90D_MODEM_X2TX_H
@@ -26,7 +36,8 @@
 
 typedef enum {
     X2TX_SILENCE, X2TX_LEAD, X2TX_PRE, X2TX_TRN, X2TX_JW, X2TX_ONES, X2TX_ALIGN,
-    X2TX_SYNC, X2TX_REC, X2TX_START, X2TX_DATA
+    X2TX_SYNC, X2TX_REC, X2TX_START, X2TX_DATA,
+    X2TX_MARK, X2TX_RREC        /* a rate change's marker and records */
 } x2tx_seg;
 
 /* segment lengths in octets (the facts' table) */
@@ -39,6 +50,9 @@ typedef enum {
 #define X2TX_SYNC_MIN 10002     /* octets of sync frames at least */
 #define X2TX_START_FRAMES 681
 #define X2TX_REC_BITS 96        /* our record, padded with zeros to 4 frames */
+#define X2TX_MARK_FRAMES 9      /* a rate change: the marker's frames (8 + 1) */
+#define X2TX_RREC_NAK 10        /* ... our records without the acknowledge, */
+#define X2TX_RREC_N   43        /* ... of all (x2-facts.md "Rate change") */
 /* our record's words: word 0 and 2 as the I-modem sends them (word 0 bit
  * 15 the acknowledge); word 1 the downstream rate indices we have level
  * banks for, bit n - 1 for index n as in the MP's word 1 (the I-modem's
@@ -54,11 +68,12 @@ typedef int (*x2tx_getbit_fn)(void *user);
 typedef struct {
     x2tx_seg  seg;
     int32_t   n;                /* octets sent in this segment */
-    int       go;               /* leave SYNC / REC at the next chance */
+    int       go;               /* leave SYNC / REC / DATA at the next chance */
+    int       again;            /* the start segment is a rate change's */
     v90_scr_t scr;              /* GPC */
     x2map_t   map;
     uint8_t   frame[X2MAP_N]; int fpos;     /* the frame being sent */
-    uint8_t   rec[X2TX_REC_BITS];
+    uint8_t   rec[X2TX_REC_BITS], rec0[X2TX_REC_BITS];    /* with the acknowledge, without */
     int       rec_frame;        /* frame of the record being sent, 0..3 */
     int32_t   records;          /* records begun */
     int       index, pad_mode;  /* the data levels (x2tx_data) */
@@ -74,7 +89,8 @@ void     x2tx_start(x2tx_t *t);
  * before the start segment */
 void     x2tx_data(x2tx_t *t, int index, int pad_mode, x2tx_getbit_fn getbit, void *user);
 /* SYNC: on to our record once 1667 frames are out; REC: on to the start
- * segment after the record being sent */
+ * segment after the record being sent; DATA: a rate change, to the levels
+ * of the last x2tx_data(), after the frame being sent */
 void     x2tx_go(x2tx_t *t);
 uint8_t  x2tx_tick(x2tx_t *t);
 /* frames of 6 octets per second times the bits of each: the data rate in

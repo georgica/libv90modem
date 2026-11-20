@@ -14,14 +14,20 @@
  *   encoding), through qamrx and v34/ as in p34d.
  *
  * The client's MP decides: the downstream rate index it asks for (only an
- * index we have a bank for, X2D_RATE_MASK, which our record names), the
- * digital pad it measured (0, 3 or 6 dB), and the upstream rates it can
- * send (the highest, at most
- * 28800, is taken). Anything else ends the call: once the marker has come
- * there is no way back to V.34. So does a client that goes silent, at any
- * point, within the time limits below (all well under 10 s). A client's
- * rate change in data mode (its S) is X2D_RENEG; this version does not
- * answer it and ends the call when its time is up.
+ * index we have a bank for, X2D_RATE_MASK, which our record names, with
+ * MD = 5 signs), the digital pad it measured (0, 3 or 6 dB), and the
+ * upstream rates it can send (the highest, at most 28800, is taken).
+ * Anything else ends the call: once the marker has come there is no way
+ * back to V.34. So does a client that goes silent, at any point, within the
+ * time limits below (all well under 10 s).
+ *
+ * A client's rate change in data mode (x2-facts.md "Rate change"): its S
+ * (X2D_RENEG; the data stops up, goes on down), S-bar, a short TRN and its
+ * MP, on 4 points (not 16 as at the start-up), checked as at the start-up;
+ * after the data frame being sent our
+ * marker, our records in levels B, the start segment at the new rate
+ * (x2tx); its E, B1 and data at its new upstream rate -> X2D_DATA. Never a
+ * marker of ours before its MP.
  *
  * Fixed-point, no allocation. */
 #ifndef V90D_MODEM_X2D_H
@@ -63,7 +69,7 @@ typedef enum {
     X2D_REC,        /* our record until the client's E */
     X2D_START,      /* the start segment down, B1 up */
     X2D_DATA,       /* data both ways */
-    X2D_RENEG,      /* the client's S in data mode: its rate change (not answered yet) */
+    X2D_RENEG,      /* the client's S in data mode: its rate change, to data again */
     X2D_ENDED       /* silent; error says why */
 } x2d_state;
 
@@ -73,13 +79,13 @@ enum {
     X2D_ERR_NO_J,       /* the client's Phase 3 (S ... J) did not come */
     X2D_ERR_NO_S4,      /* nor its Phase 4 */
     X2D_ERR_NO_MP,      /* nor its MP */
-    X2D_ERR_RATE,       /* its MP asks for a rate index we have no bank for */
+    X2D_ERR_RATE,       /* its MP asks for a rate index (or MD) we have no bank for */
     X2D_ERR_PAD,        /* ... or reports a pad we have no levels for */
     X2D_ERR_UP,         /* ... or no upstream rate we can receive */
     X2D_ERR_NO_E,       /* no E after our record */
     X2D_ERR_B1,         /* B1 not received in time, or wrong */
     X2D_ERR_CARRIER,    /* the upstream signal lost in data mode */
-    X2D_ERR_RENEG,      /* a rate change of the client's, which this version does not answer */
+    X2D_ERR_RENEG,      /* a rate change of the client's not back in data mode in time */
     X2D_ERR_HANGUP      /* we cleared down (x2d_cleardown) */
 };
 
@@ -125,9 +131,9 @@ uint8_t  x2d_tick(x2d_t *d, int16_t rx);
 /* bit/s in data mode (and in a rate change), else 0: down is ours */
 int      x2d_down_rate(const x2d_t *d);
 int      x2d_up_rate(const x2d_t *d);
-/* From data mode: x2 has no cleardown signal of its own; we go silent and
- * the call ends (X2D_ENDED, X2D_ERR_HANGUP). Returns 0, or -1 when not in
- * data mode. */
+/* From data mode or a rate change: x2 has no cleardown signal of its own;
+ * we go silent and the call ends (X2D_ENDED, X2D_ERR_HANGUP). Returns 0,
+ * or -1 in any other state. */
 int      x2d_cleardown(x2d_t *d);
 
 #endif
