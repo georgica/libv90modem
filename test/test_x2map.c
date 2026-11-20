@@ -205,7 +205,28 @@ static void banks(void)
         }
     printf("x2map: 45 banks, %ld entries not as the facts, %ld mode 1 levels no octet arrives as;"
            " %ld frames, %ld not as the model or not back\n", bad, odd, frames, wrong);
-    CHECK_EQ_I(bad, 0); CHECK(odd > 0); CHECK_EQ_I(wrong, 0); CHECK_EQ_I(frames, 45 * 2000);
+    CHECK_EQ_I(bad, 0); CHECK_EQ_I(odd, 49); CHECK_EQ_I(wrong, 0); CHECK_EQ_I(frames, 45 * 2000);
+
+    /* x2-facts.md "Banks": mode 2 receives mode 0's lists, position for
+       position (and sends other octets for them) */
+    {
+        int diff = 0;
+        for (n = 1; n <= 15; n++) {
+            x2map_t m0, m2;
+            x2map_init(&m0, n, 0, 0);
+            x2map_init(&m2, n, 2, 0);
+            for (p = 0; p < 6; p++) {
+                const uint8_t *rv0, *sn0, *rv2, *sn2;
+                int c0 = x2map_list(&m0, p, &rv0, &sn0), c2 = x2map_list(&m2, p, &rv2, &sn2);
+                if (c0 != c2 || memcmp(rv0, rv2, (size_t)c0) != 0) {
+                    diff++;
+                    printf("  index %d position %d: mode 2 receives other levels than mode 0\n", n, p);
+                }
+            }
+        }
+        printf("x2map: mode 2's received lists as mode 0's at %d of 90 positions\n", 90 - diff);
+        CHECK_EQ_I(diff, 0);
+    }
 
     /* where the lists differ, the levels decide, not the digits: index 12
        in mode 0, all digits 0 are 9e at position 0 and 9f at the others;

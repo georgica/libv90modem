@@ -23,11 +23,11 @@
  *     data: the call ends within 10 s, with an end reason (Review Focus 5);
  *   - an MP with other downstream signs than MD = 5: the call ends;
  *   - the client's rate change 12.7 s into data (docs/history/x2-facts.md
- *     "Rate change"), asking for index 8 with the mask 1FFE, and 3 s after
- *     it another, for index 14, behind no pad, 3 dB and 6 dB: we answer
- *     after its MP (no marker frame before it), it checks our answer frame
- *     by frame, and the call goes on at 46666 and then 54666 down, 28800
- *     up, the bits end to end; one asking for an index without a bank (0),
+ *     "Rate change"), asking for index 8 with the mask 1FFE, and another,
+ *     for index 14, 12.7 s into the first one's data (reneg_ms again),
+ *     behind no pad, 3 dB and 6 dB: we answer after its MP (no marker
+ *     frame before it), it checks our answer frame by frame, and the call
+ *     goes on at 46666 and then 54666 down, 28800 up, the bits end to end; one asking for an index without a bank (0),
  *     or other MD, ends the call (x2_failed: V90M_END_X2_FAILED); our
  *     cleardown during it ends the call as ours. */
 #include <stdio.h>
@@ -427,9 +427,9 @@ static void x2_tests(void)
 
     /* 4. the client's rate change 12.7 s into data mode (D-Modem's client;
      *    the Courier's is 12.1 s), asking for index 8 with its mask 1FFE,
-     *    and 3 s after it another, for index 14: our answer after each MP
-     *    and not before, as the facts give it, checked by the client frame
-     *    by frame; then 46666 and 54666 down, 28800 up. The downstream bits
+     *    and 12.7 s into its data (reneg_ms again) another, for index 14:
+     *    our answer after each MP and not before, as the facts give it,
+     *    checked by the client frame by frame; then 46666 and 54666 down, 28800 up. The downstream bits
      *    run on end to end; the upstream ones up to each of the client's S
      *    and from its new data on (see UG). Behind each pad (TEST_SHORT: no
      *    pad, 2 s into data, 2 s apart). */

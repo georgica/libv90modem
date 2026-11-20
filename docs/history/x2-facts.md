@@ -272,8 +272,8 @@ Our record's word 1 (**derived**, and the Courier runs of "Harness"):
 the I-modem's `7FFF` has one bit for each of the 15 rate indices, which
 makes word 1 the likeliest place for the downstream rates the server
 offers. The design asks our record to name only the indices we have banks
-for; we send `0001`: bit n - 1 for index n, as in the MP's word 1 (its
-upstream mask). Against the emulated Courier (2026-11-20, PAD=0):
+for; from x2 6 to x2 7 we sent `0001`: bit n - 1 for index n, as in the
+MP's word 1 (its upstream mask). Against the emulated Courier (2026-11-20, PAD=0):
 - `0001`: as with `7FFF` in every respect: CONNECT 48000 (50666 at
   PAD=3), V.42 up, its rate change 12.1 s into data mode.
 - `0002`: the Courier never prints CONNECT; our data mode starts, V.42
