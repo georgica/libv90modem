@@ -18,16 +18,18 @@
  *   S, S-bar, TRN (512 symbols on 4 points), its MP (reneg_index,
  *   reneg_mask) on 4 points (the Courier's) until the server's record has
  *   been decoded, one MP', E (4 points), then V.34 data again (B1 first) at the highest rate of
- *   reneg_mask; the data bits run on from where they stopped.
+ *   reneg_mask; the data bits run on from where they stopped. With
+ *   reneg_index2, a second one as the first, reneg_ms after its data.
  *
  * Downstream it takes the server's octets as they leave it (ideal: no
  * analogue line, no equaliser), passes them through the network's digital
  * pad of pad_mode (docs/history/x2-facts.md "Pads"), and decodes the
  * script: the preamble, TRN and J words, the ones, the alignment, the sync
  * frames (levels A), the records, the start segment and the data (the data
- * levels of the MP's index and pad, x2map_unframe), each checked against
+ * levels of the MP's index and pad, x2map_unframe; each octet taken as the
+ * level whose octet sent arrives as it, x2call_level), each checked against
  * the facts. In a rate change, from its MP on: the server's marker (8
- * frames +++--- at the largest level, one ---+++), its records in levels B
+ * frames +++--- with each position at its largest level, one ---+++), its records in levels B
  * from a fresh descrambler and sign, a frame of ones in levels B, 681 at the
  * new rate, then data again; a marker frame before its MP is counted.
  * Test side. */
@@ -61,6 +63,8 @@ typedef struct {
     int reneg_index;        /* ... its MP's rate index */
     uint16_t reneg_mask;    /* ... its upstream rates (the Courier's 1FFE) */
     int reneg_md;           /* ... its MD; 0 = 5 */
+    int reneg_index2;       /* a second rate change, reneg_ms after the first's data, asking
+                               for this index (same mask and MD); 0 = none */
     int  (*getbit)(void *user);
     void (*putbit)(void *user, int bit);
     void *user;
@@ -90,9 +94,9 @@ typedef struct {
     long mark_frames;       /* +++--- frames after its MP */
     int  mark_last;         /* the ---+++ frame came */
     long mark_bad;          /* other frames in the marker */
-    int  rr_nak, rr_ack;    /* records 733C / F33C 0001 0000 in levels B */
+    int  rr_nak, rr_ack;    /* records 733C / F33C 7FFF 0000 in levels B */
     int  rr_bad, rr_order;  /* others; a 733C after an F33C */
-    int  rr_ones;           /* the frame of ones in levels B after them */
+    int  rr_ones;           /* the frames of ones in levels B after them (one each) */
     long rstart_ones, rstart_bad;   /* the 681 frames at the new rate */
 } x2call_seen;
 
@@ -115,6 +119,8 @@ typedef struct {
     int32_t      data_at;           /* when data mode began (-1 not yet) */
     int          renegs;            /* rate changes begun */
     int          reneg_due, reneg_mp;   /* time for one; its first MP has gone out */
+    int          rr_base;           /* the server's records counted before this rate change */
+    int          rr_acked;          /* an F33C has come in this rate change */
     /* downstream */
     int16_t      ra[256];           /* octet received -> levels A octet sent, -1 none */
     int32_t      k;                 /* octets since the preamble began, -1 before */
@@ -135,5 +141,12 @@ int16_t      x2call_tick(x2call_t *c, uint8_t octet_from_server);
 x2c_state    x2call_state(const x2call_t *c);
 /* the network's pad on one octet (the facts' model) */
 uint8_t      x2call_pad(uint8_t octet, int pad_mode);
+/* the level (as received, its sign o's) that the client takes octet o
+ * arriving at position pos for, in the data levels of m: the one whose
+ * octet sent arrives as o behind m's pad. Two levels of the Quad's mode 1
+ * lists (e2, f1) are sent as octets that the pad model delivers one code
+ * off them (x2-facts.md "Banks"); a client knows what arrives for each
+ * level. o itself when none does (and in levels A). */
+uint8_t      x2call_level(const x2map_t *m, int pos, uint8_t o);
 
 #endif

@@ -1,13 +1,16 @@
-/* x2's downstream mapper at rate index 1 (modem/x2map, modem/x2tab;
- * docs/history/x2-facts.md, "Mapping", "Free sign", "Pads"). Against a
- * plain model of the facts written here, from sim/g711's decoder; the pad
- * octets against tools/x2_pad.c's rule. */
+/* x2's downstream mapper (modem/x2map, modem/x2tab, modem/x2bank;
+ * docs/history/x2-facts.md, "Mapping", "Free sign", "Pads", "Banks").
+ * Against a plain model of the facts written here, from sim/g711's decoder;
+ * index 1's pad octets against tools/x2_pad.c's rule; every bank (rate
+ * index 1..15, pad mode 0..2) against the facts' B and level counts, and
+ * each through frame and unframe. */
 #include <inttypes.h>
 #include <string.h>
 #include "test.h"
 #include "g711.h"
 #include "x2map.h"
 #include "x2tab.h"
+#include "x2call.h"
 #include "../tools/x2_pad.h"
 
 /* the facts' lists, as published ("Mapping", "Pads") */
@@ -112,6 +115,114 @@ static int run(int lev_a, int pad, int n, int *nneg)
     return bad;
 }
 
+/* ---- every bank (x2-facts.md "Banks") ---- */
+
+/* B per rate index; levels per position, the first and then the others, in
+ * pad modes 0, 1 and 2 */
+static const int f_b[15] = { 19, 22, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37 };
+static const int f_cnt[3][15][2] = {
+    { { 9, 9 }, { 12, 13 }, { 18, 18 }, { 21, 20 }, { 27, 22 }, { 28, 25 }, { 28, 29 }, { 32, 32 },
+      { 41, 35 }, { 42, 40 }, { 47, 45 }, { 50, 51 }, { 52, 62 }, { 64, 64 }, { 82, 70 } },
+    { { 9, 9 }, { 12, 13 }, { 18, 18 }, { 28, 19 }, { 19, 26 }, { 23, 26 }, { 27, 29 }, { 38, 31 },
+      { 32, 40 }, { 42, 40 }, { 47, 45 }, { 55, 50 }, { 58, 57 }, { 70, 63 }, { 72, 72 } },
+    { { 9, 9 }, { 12, 13 }, { 18, 18 }, { 21, 20 }, { 27, 22 }, { 28, 25 }, { 28, 29 }, { 32, 32 },
+      { 41, 35 }, { 42, 40 }, { 47, 45 }, { 50, 51 }, { 52, 62 }, { 64, 64 }, { 82, 70 } },
+};
+
+/* the facts' mapper with the bank's lists: the digits in mixed radix, the
+ * free sign at the largest level received (the last of equals), the MD
+ * signs on the others in position order */
+static void ref_bank(ref_t *r, const x2map_t *m, const uint8_t *bits, uint8_t out[6])
+{
+    const uint8_t *rv[6], *sn[6];
+    uint64_t x = 0;
+    int b = x2map_bits(m) - 5, d[6], i, k, fr = 0, neg;
+    int32_t sum = 0;
+    for (k = 0; k < b; k++) x |= (uint64_t)bits[5 + k] << k;
+    for (i = 0; i < 6; i++) {
+        int n = x2map_list(m, i, &rv[i], &sn[i]);
+        d[i] = (int)(x % (uint64_t)n); x /= (uint64_t)n;
+    }
+    for (i = 1; i < 6; i++) if (rv[i][d[i]] <= rv[fr][d[fr]]) fr = i;
+    for (i = 0, k = 0; i < 6; i++) {
+        if (i == fr) continue;
+        r->last ^= bits[k++];
+        out[i] = r->last ? sn[i][d[i]] : (uint8_t)(sn[i][d[i]] & 0x7f);
+        sum += ulaw_to_linear(out[i]);
+    }
+    neg = r->rds + sum > 0;
+    out[fr] = neg ? (uint8_t)(sn[fr][d[fr]] & 0x7f) : sn[fr][d[fr]];
+    r->rds += sum + ulaw_to_linear(out[fr]);
+}
+
+/* each bank: its B and level counts; each list sorted, the octets sent
+ * arriving behind the pad as the levels (but for the two of mode 1 no
+ * octet arrives as); enough digits for B bits; frames as the model's,
+ * and back through the pad and unframe */
+static void banks(void)
+{
+    int mode, n, p, i, f, k;
+    long bad = 0, odd = 0, wrong = 0, frames = 0;
+    for (mode = 0; mode < 3; mode++)
+        for (n = 1; n <= 15; n++) {
+            x2map_t m, u;
+            ref_t r = { 1, 0 };
+            const uint8_t *rv, *sn;
+            double prod = 1;
+            int short_of = 0;
+            x2map_init(&m, n, mode, 0);
+            if (x2map_bits(&m) != f_b[n - 1] + 5) { bad++; printf("  index %d mode %d: %d bits\n", n, mode, x2map_bits(&m)); continue; }
+            for (p = 0; p < 6; p++) {
+                int c = x2map_list(&m, p, &rv, &sn);
+                if (c != f_cnt[mode][n - 1][p > 0]) { bad++; short_of = 1; continue; }
+                prod *= c;
+                for (i = 0; i < c; i++) {
+                    if (!(rv[i] & 0x80) || !(sn[i] & 0x80) || (i && rv[i] <= rv[i - 1])) bad++;
+                    if (mode == 0 ? sn[i] != rv[i] : pad_apply(sn[i], mode) != rv[i]) {
+                        /* x2-facts.md "Banks": received e2 sent dc, received
+                           f1 sent ed, in mode 1 only */
+                        if (mode == 1 && ((rv[i] == 0xe2 && sn[i] == 0xdc) || (rv[i] == 0xf1 && sn[i] == 0xed))) odd++;
+                        else bad++;
+                    }
+                }
+            }
+            if (short_of) continue;     /* (not the lists to frame with) */
+            if (prod < (double)((uint64_t)1 << f_b[n - 1])) bad++;
+            x2map_init(&u, n, mode, 0);
+            for (f = 0; f < 2000; f++) {
+                uint8_t bits[64], back[64], out[6], want[6], rx[6];
+                int nb = x2map_bits(&m), ok;
+                for (k = 0; k < nb; k++) bits[k] = (uint8_t)(xs32() & 1);
+                x2map_frame(&m, bits, out);
+                ref_bank(&r, &m, bits, want);
+                ok = memcmp(out, want, 6) == 0;
+                for (i = 0; i < 6; i++) rx[i] = x2call_level(&u, i, pad_apply(out[i], mode));
+                ok &= x2map_unframe(&u, rx, back) == nb && memcmp(back, bits, (size_t)nb) == 0;
+                if (!ok) wrong++;
+                frames++;
+            }
+            if (m.rds != r.rds) wrong++;
+        }
+    printf("x2map: 45 banks, %ld entries not as the facts, %ld mode 1 levels no octet arrives as;"
+           " %ld frames, %ld not as the model or not back\n", bad, odd, frames, wrong);
+    CHECK_EQ_I(bad, 0); CHECK(odd > 0); CHECK_EQ_I(wrong, 0); CHECK_EQ_I(frames, 45 * 2000);
+
+    /* where the lists differ, the levels decide, not the digits: index 12
+       in mode 0, all digits 0 are 9e at position 0 and 9f at the others;
+       the free sign goes to position 0 (the largest level), the signs
+       11111 to 1..5: - + - + - */
+    {
+        x2map_t m;
+        uint8_t bits[64], out[6];
+        x2map_init(&m, 12, 0, 0);
+        memset(bits, 0, sizeof bits);
+        for (k = 0; k < 5; k++) bits[k] = 1;
+        x2map_frame(&m, bits, out);
+        CHECK(out[1] == 0x1f && out[2] == 0x9f && out[3] == 0x1f && out[4] == 0x9f && out[5] == 0x1f);
+        CHECK_EQ_I(out[0], 0x9e);
+    }
+}
+
 int main(void)
 {
     x2map_t m, u;
@@ -119,30 +230,40 @@ int main(void)
     uint8_t bits[24], back[24], out[6], want[6];
     int i, f, nneg, bad;
 
-    /* the tables: as the facts publish them; the pad octets as
-       tools/x2_pad.c derives them from the levels received */
+    /* the tables: as the facts publish them; index 1's octets sent behind
+       each pad as tools/x2_pad.c derives them from the levels received */
     CHECK(memcmp(x2_levels_a, f_lev_a, 9) == 0);
-    CHECK(memcmp(x2_levels_b, f_lev_b, 9) == 0);
-    CHECK(memcmp(x2_pad_recv[0], f_lev_b, 9) == 0);
-    CHECK(memcmp(x2_pad_recv[1], f_recv3, 9) == 0);
-    CHECK(memcmp(x2_pad_recv[2], f_lev_b, 9) == 0);
-    CHECK(memcmp(x2_pad_sent[0], f_lev_b, 9) == 0);
-    CHECK(memcmp(x2_pad_sent[1], f_sent3, 9) == 0);
-    CHECK(memcmp(x2_pad_sent[2], f_sent6, 9) == 0);
-    for (bad = 0, f = 0; f < 3; f++) for (i = 0; i < 9; i++) {
-        if (x2_pad_sent[f][i] != x2_pad_octet(x2_pad_recv[f][i], f)) bad++;
-        if (pad_apply(x2_pad_sent[f][i], f) != x2_pad_recv[f][i]) bad++;
+    {
+        static const uint8_t *const f_recv[3] = { f_lev_b, f_recv3, f_lev_b };
+        static const uint8_t *const f_sent[3] = { f_lev_b, f_sent3, f_sent6 };
+        const uint8_t *rv, *sn;
+        int p;
+        for (bad = 0, f = 0; f < 3; f++) {
+            x2map_init(&m, 1, f, 0);
+            for (p = 0; p < 6; p++) {
+                if (x2map_list(&m, p, &rv, &sn) != 9) { bad++; continue; }
+                if (memcmp(rv, f_recv[f], 9) != 0 || memcmp(sn, f_sent[f], 9) != 0) bad++;
+                for (i = 0; i < 9; i++) {
+                    if (sn[i] != x2_pad_octet(rv[i], f)) bad++;
+                    if (pad_apply(sn[i], f) != rv[i]) bad++;
+                }
+            }
+        }
+        CHECK_EQ_I(bad, 0);
     }
-    CHECK_EQ_I(bad, 0);
 
     x2map_init(&m, 1, 0, 0);
     CHECK_EQ_I(x2map_bits(&m), 24);
     x2map_init(&m, 1, 0, 1);
     CHECK_EQ_I(x2map_bits(&m), 24);
-    x2map_init(&m, 2, 0, 0);
+    x2map_init(&m, 0, 0, 0);
     CHECK_EQ_I(x2map_bits(&m), 0);
-    /* no bank for index 2 in levels A either: no bits, a frame of zeros,
-       nothing to unframe */
+    x2map_init(&m, 16, 0, 0);
+    CHECK_EQ_I(x2map_bits(&m), 0);
+    x2map_init(&m, 1, 3, 0);
+    CHECK_EQ_I(x2map_bits(&m), 0);
+    /* levels A are index 1's (the start-up's) alone: none at index 2, no
+       bits, a frame of zeros, nothing to unframe */
     x2map_init(&m, 2, 0, 1);
     CHECK_EQ_I(x2map_bits(&m), 0);
     memset(bits, 0, sizeof bits);
@@ -260,5 +381,6 @@ int main(void)
         printf("x2map: data levels, running sum within +-%" PRId64 " from 500 frames after the switch\n", peak);
     }
 
+    banks();
     T_REPORT("test_x2map");
 }

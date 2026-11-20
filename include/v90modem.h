@@ -120,12 +120,13 @@ typedef enum {
  * take it up gets V.34 as without x2; other callers see nothing of it. A
  * client that does take it up (its marker after our L1) has no way back to
  * V.34: if the x2 start-up does not reach data mode, or a rate change the
- * client asks for in data mode cannot be served (only 32000 can) or does
- * not complete, the call ends with V90M_END_X2_FAILED. In data mode
- * (V90M_CONN_X2) tx_bps is the downstream payload rate (32000 in this
- * version) and rx_bps the client's V.34 upstream (it may change in the
- * client's rate change); USR's CONNECT figure is one step of 1333 above
- * the first. */
+ * client asks for in data mode cannot be served (an index outside 1..15,
+ * a pad other than none, 3 or 6 dB) or does not complete, the call ends
+ * with V90M_END_X2_FAILED. In data mode (V90M_CONN_X2) tx_bps is the
+ * downstream payload rate (32000 to 56000: what the client asks for, at
+ * the start-up and in each rate change) and rx_bps the client's V.34
+ * upstream (it may change in the client's rate change); USR's CONNECT
+ * figure is one step of 1333 above it. */
 #define V90M_MOD_X2       0x0100u
 
 /* the modulation of a connection (v90m_state.modulation) */

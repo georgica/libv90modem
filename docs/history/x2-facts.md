@@ -264,7 +264,7 @@ place of the next sync. **RE (D-Modem, courier-emu)**. Fields (**RE
 
 The server's record: 3 words `F33C 7FFF 0000` (bit 15 of word 0 the
 acknowledge; `733C` without it), padded with zeros to 96 bits (4 frames of
-24 bits); the meaning of the other bits is not known. We send word 1 as `0001`: see "Our record's word 1" below. **RE (D-Modem,
+24 bits); the meaning of the other bits is not known. We send word 1 as the indices we have banks for: see "Our record's word 1" below. **RE (D-Modem,
 courier-emu)**. The words are not in the DSP image (the host supplies
 them); **our disassembly** found no `f33c`/`733c` word there.
 
@@ -284,6 +284,8 @@ does with the field is not confirmed: its CONNECT figure and its rate
 change do not move with it. 48000 and 50666 are exactly the rates of
 index 9 and index 11 ("Banks"), so the rate change presumably asks for one
 of those from what it measured itself, not from our record.
+Since x2 8 we have banks for all 15 indices in each pad mode ("Banks"), so
+word 1 is `7FFF`, the I-modem's.
 
 Sequence (**RE (D-Modem)**): the client sends Phase 4 (S, S-bar, TRN at 4
 then 16 points), its MP until our record has been decoded, then MP', then
@@ -360,7 +362,10 @@ Client-initiated only; the server never sends the marker first. **RE
    frame clock:
    - 8 frames `a5 a5 a5 25 25 25` and 1 frame `25 25 25 a5 a5 a5`, with no
      differential signs (`a5`: the largest level of index 1; at another
-     current rate its largest level, e.g. `9e`/`9f` at 52000);
+     current rate its largest level, e.g. `9e`/`9f` at 52000). Each
+     position is at the largest level of its own list: at 52000 position
+     0's list begins at `9e`, the others' at `9f` ("Banks"; **derived**,
+     and D-Modem's client looks for "each position at its largest level");
    - the scrambler reset to 0 and `last` to positive;
    - its record in levels B (the start-up's data levels, at every rate),
      10 times `733C 7FFF 0000` and 33 times `F33C 7FFF 0000` (4 frames
@@ -386,21 +391,25 @@ Client-initiated only; the server never sends the marker first. **RE
   start-up's 16 points follow from our J words, "Records"). The emulated
   Courier, 2026-11-20 ("Harness"): 16-point decisions after its S-bar found
   no MP in 6 s; 4-point decisions found `0378 1FFE 0000 0500` twice, the
-  first some 80 ms after its S was detected. MP' and E on 4 points as well:
-  **assumed** (the Courier never got that far with us, see "Harness").
-- After E, B1 and then data, as at the start-up: **assumed** (the start-up's
-  B1 is RE (courier-emu)); `modem/x2d` checks B1 there as at the start-up.
-  The Courier runs of "Harness" show whether that holds.
-- Behind a pad (**derived**, our choice): the marker's octets are the
-  largest level of the data levels in use as sent, so that the client
-  receives them as `a5`/`25` (index 1: `9d` behind 3 dB, `95` behind 6 dB);
-  the records go in the start-up's data levels for the MP's pad, which are
-  levels B as received. D-Modem's client looks for "each position at its
-  largest level" and "the levels the start-up's" (x2-details.md "Our
-  renegotiation"); the I-modem's octets behind a pad in a rate change are
-  not published.
-- Our record in the rate change carries our word 1 (`0001`, "Records"),
-  not the I-modem's `7FFF`, as at the start-up.
+  first some 80 ms after its S was detected. Its MP' and E are on 4 points
+  as well, and B1 follows E, then data, as at the start-up: the Courier
+  runs of x2 8 ("Harness"; `modem/x2d` decoded its MP' and E on 4 points and
+  checked its B1).
+- Behind a pad (**derived**, our choice): from the client's MP on,
+  everything we send is for the pad **that MP** reports. The marker is
+  each position's largest level at the rate in use, as sent for that pad
+  (so that the client receives it as that level: index 1 `a5` sent as `9d`
+  behind 3 dB, `95` behind 6 dB); the records go in index 1's levels for
+  it (levels B as received); the new rate's levels are for it. At the
+  Courier the rate change's MP reports the start-up's pad; if one reported
+  another, the latest report wins (`test/test_x2tx.c`: a rate change from
+  index 14 with no pad to index 8 with an MP reporting 6 dB: marker `8d`
+  / `8e`, index 14's largest levels sent for 6 dB). D-Modem's client looks
+  for "each position at its largest level" and "the levels the start-up's"
+  (x2-details.md "Our renegotiation"); the I-modem's octets behind a pad in
+  a rate change are not published.
+- Our record in the rate change carries our word 1 ("Records"), as at
+  the start-up: `7FFF` since x2 8.
 - The 43 records are sent whatever the client does; the server does not
   wait for its E before the start segment (the I-modem's fixed 182
   frames). `modem/x2d` ends the call when the client is not back in data
@@ -475,14 +484,82 @@ x2-details.md "The rate change", and `dsp/x2_tables.cpp`:
   octets; the other nine were only compared with the Quad's mapper. The
   level counts per position differ in modes 1 and 2 (e.g. mode 1, n = 4:
   28, then 19). **RE (D-Modem)**.
-- For the later bank work (**derived**, our check of the pad model over all
-  of D-Modem's published mode 1 and 2 pairs, by a script outside the
-  repository): every mode 2 entry is reachable by the model; 15 mode 1
-  entries are not (received `e2` sent `dc`, received `f1` sent `ed`, in
-  several banks), so those must come from the Quad. The smaller-magnitude
-  rule for two candidates holds at index 1 but not in every bank (mode 1:
-  46 entries take the other candidate; mode 2: 25). A bank rule has to be
-  found or the bank taken as data, as the design says.
+- Our check of the pad model over all of D-Modem's published mode 1 and
+  2 pairs (**derived**; `test/test_x2map.c` does it again on our tables):
+  every mode 2 entry is reachable by the model; in mode 1 two levels are
+  not: received `e2` sent `dc`, received `f1` sent `ed`, in the banks of
+  indices 5, 6, 11, 12, 14 and 15 (15 entries over the distinct lists, 49
+  over the positions). The model delivers `dc` as `e1` and `ed` as `f0`
+  (linear 492 x 0.708 = 348.3 and 164 x 0.708 = 116.1, each just past the
+  decision boundary, 348 and 116, on the louder side); no octet arrives as
+  `e2` or `f1`. The I-modem
+  sends the Quad's octets behind 3 dB at indices 1 and 14 (**RE
+  (D-Modem)**), so these are what servers sent; the network's real 3 dB pad
+  presumably differs from the model at these two codes. We send them as
+  the Quad does. The simulated client (`sim/x2call`, `x2call_level`) takes
+  each octet for the level whose octet sent arrives as it, as a client that
+  knows what arrives for each level. The smaller-magnitude rule for two
+  candidates holds at index 1 but not in every bank (mode 1: 46 entries
+  take the other candidate; mode 2: 25).
+
+Levels per position in modes 1 and 2 (**RE (D-Modem)**, read from its
+published banks; mode 2 receives mode 0's lists, position for position, and
+sends other octets for them):
+
+| n | mode 1 | mode 2 |
+| --- | --- | --- |
+| 1 | 9 each | 9 each |
+| 2 | 12, then 13 | 12, then 13 |
+| 3 | 18 each | 18 each |
+| 4 | 28, then 19 | 21, then 20 |
+| 5 | 19, then 26 | 27, then 22 |
+| 6 | 23, then 26 | 28, then 25 |
+| 7 | 27, then 29 | 28, then 29 |
+| 8 | 38, then 31 | 32 each |
+| 9 | 32, then 40 | 41, then 35 |
+| 10 | 42, then 40 | 42, then 40 |
+| 11 | 47, then 45 | 47, then 45 |
+| 12 | 55, then 50 | 50, then 51 |
+| 13 | 58, then 57 | 52, then 62 |
+| 14 | 70, then 63 | 64 each |
+| 15 | 72 each | 82, then 70 |
+
+In every bank positions 1 to 5 share one list; position 0 may have its
+own (in mode 0 and 2, index 7's first position has index 6's). Mode 2
+index 8 has one received list for all six positions but sends another
+octet for one of its levels at position 0 than at the others.
+
+Where our banks come from (x2 8, 2026-11-20):
+
+- **No rule found.** The design asks for a rule from the mu-law levels,
+  the pad and the power limit that reproduces the published mode 0 banks
+  for 1, 8, 11, 12, 13 and 14. In the upper segments the lists use every
+  code from the top down, at the bottom a minimum spacing; but where they
+  change between the two the lists skip codes irregularly (index 9's later
+  positions, index 14's first position, which has one level fewer in the
+  middle and one more at the top than the others). A greedy ladder (from
+  the smallest level, each next level the first code at least d above the
+  last, one d per list) reproduces 17 of the 30 mode 0 lists, among them
+  both lists of 1, 8, 11 and 13 and the later positions' of 12 and 14, but
+  not the first position's of 12 or 14; from the top down, 5. Index 12's
+  and 14's first lists are I-modem line lists, so that is not enough.
+  **derived** (a scratch script, not kept).
+- **Not stored in the firmware.** The Quad's constructor (QF060003; its
+  callers C862, C9BF, C761, C92A as courier-emu's
+  `docs/x2-rate-and-data-handoff.md` and its mapper notes name them)
+  builds the banks at run time from the record and a nine-entry
+  constructor table (levels A, or the louder table that `d241` also holds
+  in the I-modem); our scan of QF060003 found none of the lists of indices
+  8, 11, 12 or 14 as bytes or as words. So they cannot be read from the
+  image without running the constructor, which is what D-Modem did.
+- **So the banks are included as data**: `modem/x2bank.c`, generated by
+  `tools/gen_x2_banks.py` from D-Modem's published values
+  (`dsp/x2_tables.cpp` at the commit of "Tags and sources", outside the
+  repository; its numbers only, in our own layout), with the checks of this
+  section (B, MD, mode 0's counts, index 1 = levels B, sorted lists, enough
+  digits). `docs/limits.md` "Included tables (x2)" lists them. Index 1's
+  octets sent behind the pads equal the pad rule's (`tools/x2_pad.c`;
+  `test/test_x2map.c`).
 
 ## Upstream
 
@@ -528,9 +605,10 @@ takes what the mask says.
 - The meaning of the server record's `7FFF 0000` and of word 0's other bits:
   sent as the I-modem sends them.
 - The client's full retrain during x2: unknown; the design clears down.
-- A rate change to an index we have no bank for, or with MD other than 5:
-  we clear down (V90M_END_X2_FAILED), as at the start-up, never answer
-  with another rate.
+- A rate change to an index we have no bank for (since x2 8 only index 0
+  is left: D-Modem saw a Courier ask for "rate 0" once), with MD other than
+  5 or a pad mode above 2: we clear down (V90M_END_X2_FAILED), as at the
+  start-up, never answer with another rate.
 - A-law: no client is known to have done it; not offered.
 - Robbed bits: no MP field for them is known; not handled.
 
@@ -650,9 +728,41 @@ the data stop at 42.50 s, 42.50 s and 52.24 s: the Courier's rate change
   (its CONNECT figure, 48000 / 50666, is not it either): word 1 of our
   record does not bound its request. Until the banks of later work, x2d
   clears down there, as the design says; the call does not go on.
-- Not seen yet against the Courier: our answer (marker, records, start),
-  its MP' and E on 4 points, B1 after E, its upstream at 28800. The
-  simulated client (sim/x2call) does all of these from the facts.
+- Not seen yet against the Courier at x2 7: our answer (marker, records,
+  start), its MP' and E on 4 points, B1 after E, its upstream at 28800.
+  The x2 8 runs below show all of them.
+
+The Courier's rate change followed (2026-11-20, this library at x2 8:
+banks for indices 1 to 15 in each pad mode, our record's word 1 `7FFF`;
+the same bridge, courier-emu and ROM; a normal and an `X2D_TRACE` bridge at
+each pad, all six runs alike):
+
+| | PAD=0 | PAD=3 | PAD=6 |
+| --- | --- | --- | --- |
+| ours, start | CONNECT 32000/24000 x2 at 30.40 s, V.42 LAPM at 32.88 s | the same | the same |
+| the Courier's CONNECT | `48000/ARQ/x2/LAPM/V42BIS` | `50666/...` | `48000/...` |
+| its rate change (data stopped) | 42.50 s | 42.50 s | 42.50 s |
+| its MP, then MP' (4 points) | `0378`, `8378` `1FFE 0000 0500` | `0B70`, `8B70` `1FFE 8888 0588` | `1378`, `9378` `1FFE 8888 0588` |
+| E, B1 (x2d) | 4 points; B1 0 of 1152 bits wrong | 48 wrong | 48 wrong |
+| ours after it | **54666/28800** at 43.24 s | **52000/28800** at 43.24 s | **54666/28800** at 43.24 s |
+| its second rate change | none by the budget's end | 111.56 s: `0B74` (index 13), **53333/28800** at 112.32 s (B1 57 wrong) | none |
+| at 116.08 s (the budget) | x2 54666/28800, V.42 up | x2 53333/28800, V.42 up | x2 54666/28800, V.42 up |
+| our level, before / after the pad | -12.2 / -12.2 dBm0 | -8.8 / -11.8 | -6.1 / -12.2 |
+
+- The Courier's rate changes are followed to the rate each asks for: 14 at
+  PAD=0 and 6, 12 and then 13 at PAD=3. Each takes 0.74 s from the stop of
+  its upstream to data again both ways.
+- Its MP' and E in a rate change are on 4 points, and B1 follows E: the
+  assumptions of "Rate change" hold at the Courier.
+- After the change the call stays up to the budget's end (73 s at the new
+  rate), V.42 up, the Courier's terminal quiet (it is in command mode after
+  `ATI11`, typed before the change). A Courier given the wrong levels
+  renegotiates within 3 s and hangs up (**RE (D-Modem)**); this one did
+  not, and at PAD=3 its next rate change, 68 s later, asked for a higher
+  index. That is the evidence that it decodes our new rate; its own counts
+  are not read.
+- At PAD=6 its rate change now came 12.1 s into data as at the others (x2
+  7: 21.8 s); not looked into.
 
 Without a V.42 endpoint on our side (the first try) the
 Courier printed only `NO CARRIER`: it cleared down 6.4 s after V.34 data

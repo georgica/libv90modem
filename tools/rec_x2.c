@@ -4,7 +4,10 @@
  * pad, its samples back through a mu-law codec with our own echo and
  * noise), and the codewords the answering modem receives go to a file.
  *
- *   rec_x2 [SECONDS [PAD [FILE]]]      (defaults 40, 0, /dev/null)
+ *   rec_x2 [SECONDS [PAD [FILE [INDEX]]]]   (defaults 40, 0, /dev/null, 1)
+ *
+ * INDEX is the downstream rate index the client asks for (1: 32000, 15:
+ * 56000).
  *
  * Prints the transmit hash the bench compares with, and what the call did. */
 #include <string.h>
@@ -29,6 +32,7 @@ int main(int argc, char **argv)
     static prbs dsrc, dsink, asrc, asink; static void *aio[2], *dio[2];
     static uint8_t down[XD]; static int16_t up[XD]; static double dl[XD];
     int secs = argc > 1 ? atoi(argv[1]) : 40, pad = argc > 2 ? atoi(argv[2]) : 0;
+    int index = argc > 4 ? atoi(argv[4]) : 1;
     FILE *dump = fopen(argc > 3 ? argv[3] : "/dev/null", "wb");
     const int d_ac = 37, d_ca = 41, e = 300;
     uint32_t hash = 2166136261u;
@@ -46,7 +50,7 @@ int main(int argc, char **argv)
     answer_init(&a, &ac);
     answer_v90_line(&a, -1, 0, 0);
     memset(&xc, 0, sizeof xc);
-    xc.level = 3000; xc.pad_mode = pad == 6 ? 2 : pad == 3 ? 1 : 0; xc.max_index = 1; xc.up_mask = 0x03FE;
+    xc.level = 3000; xc.pad_mode = pad == 6 ? 2 : pad == 3 ? 1 : 0; xc.max_index = index; xc.up_mask = 0x03FE;
     xc.getbit = get; xc.putbit = put; xc.user = aio;
     x2call_init(&x, &xc);
     for (n = 0; n < 8000L * secs; n++) {

@@ -18,13 +18,14 @@
  *
  * A rate change of the client's ("Rate change"): x2tx_data() with the index
  * its MP asks for, then x2tx_go(), in data mode; after the frame being sent:
- *   marker     8 frames +++--- and one ---+++ at the largest level of the
- *              data levels, no differential signs
- *   records    GPC from zero, the sign positive: our record in levels B
- *              (index 1's data levels), 10 times without the acknowledge
- *              (733C), 33 times with it
+ *   marker     8 frames +++--- and one ---+++, each position at its largest
+ *              level in the rate in use, no differential signs
+ *   records    GPC from zero, the sign positive: our record in index 1's
+ *              data levels, 10 times without the acknowledge (733C), 33
+ *              times with it
  *   start      682 frames of ones: one in levels B, then 681 in the new data levels
  *   data       on from the owner's next bit
+ * From the MP on, all of it is sent for the pad that MP reports.
  *
  * GPC runs on from TRN's first octet through every mapped frame (not the
  * alignment). Fixed-point, no allocation. */
@@ -55,12 +56,12 @@ typedef enum {
 #define X2TX_RREC_N   43        /* ... of all (x2-facts.md "Rate change") */
 /* our record's words: word 0 and 2 as the I-modem sends them (word 0 bit
  * 15 the acknowledge); word 1 the downstream rate indices we have level
- * banks for, bit n - 1 for index n as in the MP's word 1 (the I-modem's
- * 7FFF names all 15). Index 1 alone. The Courier takes 0001 as it takes
- * 7FFF and hangs up on 0002 (x2-facts.md "Records"); what it does with the
- * field is not known. */
+ * banks for, bit n - 1 for index n as in the MP's word 1: all 15, in each
+ * pad mode (x2tab.h), as the I-modem's 7FFF. The Courier takes 0001 as it
+ * takes 7FFF and hangs up on 0002 (x2-facts.md "Records"); what else it
+ * does with the field is not known. */
 #define X2TX_REC_W0   0xF33C
-#define X2TX_REC_W1   0x0001
+#define X2TX_REC_W1   0x7FFF
 #define X2TX_REC_W2   0x0000
 
 typedef int (*x2tx_getbit_fn)(void *user);

@@ -43,6 +43,16 @@ uint8_t x2call_pad(uint8_t o, int m)
     return linear_to_ulaw(v < 0 ? -a : a);
 }
 
+uint8_t x2call_level(const x2map_t *m, int pos, uint8_t o)
+{
+    const uint8_t *rv, *sn;
+    int n = m->levels_a ? 0 : x2map_list(m, pos, &rv, &sn), j;
+    for (j = 0; j < n; j++)
+        if (x2call_pad(sn[j], m->pad_mode) == (o | 0x80))
+            return (uint8_t)((o & 0x80) ? rv[j] : (rv[j] & 0x7f));
+    return o;
+}
+
 static int pad_of(const x2call_t *c) { return c->cfg.pad_mode >= 0 && c->cfg.pad_mode <= 2 ? c->cfg.pad_mode : 0; }
 
 static uint8_t pre_octet(int k)
@@ -58,7 +68,7 @@ static uint8_t pre_octet(int k)
 static void build_mp(x2call_t *c, int ack)
 {
     uint16_t w[4];
-    int n, index = c->renegs ? c->cfg.reneg_index : c->cfg.max_index;
+    int n, index = c->renegs == 2 ? c->cfg.reneg_index2 : c->renegs ? c->cfg.reneg_index : c->cfg.max_index;
     int md = c->renegs ? c->cfg.reneg_md : c->cfg.md;
     w[0] = (uint16_t)(((index & 15) << 2) | (13 << 6) | ((c->cfg.pad_mode & 15) << 11));
     w[1] = c->renegs ? c->cfg.reneg_mask : c->cfg.up_mask;
@@ -130,7 +140,8 @@ static void tx_symbol(x2call_t *c, int32_t *re, int32_t *im)
     *re = *im = 0;
     if (c->reneg_due && c->sig == SIG_DATA) {
         /* the rate change: S in data mode, then as Phase 4 with a short TRN */
-        c->reneg_due = 0; c->renegs++;
+        c->reneg_due = 0; c->renegs++; c->reneg_mp = 0; c->rr_acked = 0;
+        c->rr_base = c->seen.rr_nak + c->seen.rr_ack;
         pick_up(c, c->cfg.reneg_mask);
         go_sig(c, SIG_S); c->state = X2C_RENEG;
     }
@@ -188,7 +199,7 @@ static void tx_symbol(x2call_t *c, int32_t *re, int32_t *im)
             c->mpn = 0; c->mp_count++;
             if (c->cfg.silent == X2C_SIL_MP && c->mp_count >= 4) c->quiet = 1;
             if (c->mp_ack) { go_sig(c, SIG_E); c->state = X2C_E; c->e_sent = 1; }
-            else if (c->renegs ? c->seen.rr_nak + c->seen.rr_ack > 0 : c->seen.rec_good > 0)
+            else if (c->renegs ? c->seen.rr_nak + c->seen.rr_ack > c->rr_base : c->seen.rec_good > 0)
                 build_mp(c, 1);                                 /* one whole MP', then E */
         }
         break;
@@ -220,24 +231,25 @@ static int16_t tx_sample(x2call_t *c)
 
 static int dbit(x2call_t *c, uint8_t o) { return v90_descramble_gpc(&c->dscr, (o & 0x80) ? 0 : 1); }
 
-/* our record, F33C (733C) 0001 0000: in the start-up, F33C alone; in a
- * rate change 733C, then F33C */
+/* our record, F33C (733C) 7FFF 0000 (word 1: all 15 indices, x2-facts.md
+ * "Records"): in the start-up, F33C alone; in a rate change 733C, then
+ * F33C */
 static void rec_bit(x2call_t *c, int bit)
 {
     if (c->rn > 0) {
         c->rb[c->rn++] = (uint8_t)bit;
         if (c->rn == X2REC_BITS(3)) {
             uint16_t w[3];
-            int ok = x2rec_parse(c->rb, c->rn, w, 3) == 3 && (w[0] & 0x7fff) == 0x733C && w[1] == 0x0001 && w[2] == 0;
+            int ok = x2rec_parse(c->rb, c->rn, w, 3) == 3 && (w[0] & 0x7fff) == 0x733C && w[1] == 0x7FFF && w[2] == 0;
             if (!c->rr) {
                 if (ok && (w[0] >> 15)) c->seen.rec_good++; else c->seen.rec_bad++;
             } else if (!ok) {
                 c->seen.rr_bad++;
             } else if (w[0] >> 15) {
-                c->seen.rr_ack++;
+                c->seen.rr_ack++; c->rr_acked = 1;
             } else {
                 c->seen.rr_nak++;
-                if (c->seen.rr_ack) c->seen.rr_order++;
+                if (c->rr_acked) c->seen.rr_order++;
             }
             c->rn = 0;
         }
@@ -248,14 +260,26 @@ static void rec_bit(x2call_t *c, int bit)
 }
 
 /* the server's marker frame of a rate change, as received: +++--- (last
- * 0) or ---+++ (last 1) at the largest level of index 1 */
+ * 0) or ---+++ (last 1), each position at its largest level in the data
+ * levels in use */
 static int marker_frame(const x2call_t *c, int last)
 {
-    uint8_t hi = x2_pad_recv[pad_of(c)][0];
+    const uint8_t *rv, *sn;
     int i;
-    for (i = 0; i < X2MAP_N; i++)
-        if (c->fr[i] != (((i < 3) != last) ? hi : (uint8_t)(hi & 0x7f))) return 0;
+    for (i = 0; i < X2MAP_N; i++) {
+        uint8_t hi;
+        if (!x2map_list(&c->map, i, &rv, &sn)) return 0;
+        hi = rv[0];
+        if (x2call_level(&c->map, i, c->fr[i]) != (((i < 3) != last) ? hi : (uint8_t)(hi & 0x7f))) return 0;
+    }
     return 1;
+}
+
+/* the frame's octets as the levels the client takes them for */
+static void levels_in(const x2call_t *c, uint8_t t[X2MAP_N])
+{
+    int i;
+    for (i = 0; i < X2MAP_N; i++) t[i] = x2call_level(&c->map, i, c->fr[i]);
 }
 
 static void frame_in(x2call_t *c)
@@ -284,14 +308,15 @@ static void frame_in(x2call_t *c)
         return;
     }
     if (c->rr == 2) {
-        n = x2map_unframe(&c->map, c->fr, bits);
+        levels_in(c, t);
+        n = x2map_unframe(&c->map, t, bits);
         if (n < 0) { c->seen.rr_bad++; return; }
         for (i = 0; i < n; i++) { bits[i] = (uint8_t)v90_descramble_gpc(&c->dscr, bits[i]); ones += bits[i]; }
-        if (ones == n && c->rn == 0 && c->seen.rr_nak + c->seen.rr_ack > 0) {
+        if (ones == n && c->rn == 0 && c->seen.rr_nak + c->seen.rr_ack > c->rr_base) {
             /* the frame of ones after the records; then the rate asked for */
-            c->seen.rr_ones = 1; c->rr = 0;
+            c->seen.rr_ones++; c->rr = 0;
             c->in_start = 1; c->start_n = 0; c->start_len = START_FRAMES;
-            c->map.index = c->cfg.reneg_index;
+            c->map.index = c->renegs == 2 ? c->cfg.reneg_index2 : c->cfg.reneg_index;
             return;
         }
         for (i = 0; i < n; i++) rec_bit(c, bits[i]);
@@ -317,7 +342,8 @@ static void frame_in(x2call_t *c)
         if (before) { if (ones == n) c->seen.sync_frames++; else if (c->rn == 0) c->seen.sync_bad++; }
         return;
     }
-    n = x2map_unframe(&c->map, c->fr, bits);
+    levels_in(c, t);
+    n = x2map_unframe(&c->map, t, bits);
     if (n < 0) {
         if (!c->in_start) c->seen.data_lost++;
         else if (c->renegs) c->seen.rstart_bad++;
@@ -428,9 +454,10 @@ int16_t x2call_tick(x2call_t *c, uint8_t octet)
         octet_in(c, o, lin);
         if (c->state == X2C_E && c->in_data && c->sig == SIG_DATA) {
             c->state = X2C_DATA;
-            if (c->data_at < 0) c->data_at = c->now;
+            c->data_at = c->now;        /* (and again after each rate change) */
         }
-        if (c->cfg.reneg_ms && !c->renegs && c->state == X2C_DATA && c->now - c->data_at >= MS(c->cfg.reneg_ms))
+        if (c->cfg.reneg_ms && c->renegs < (c->cfg.reneg_index2 ? 2 : 1) && !c->reneg_due && c->state == X2C_DATA
+            && c->now - c->data_at >= MS(c->cfg.reneg_ms))
             c->reneg_due = 1;
         if (c->cfg.silent == X2C_SIL_DATA && c->state == X2C_DATA && c->seen.data_frames >= 1334) c->quiet = 1;
         out = tx_sample(c);

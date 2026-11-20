@@ -9,7 +9,6 @@
 #include <string.h>
 #include "x2tx.h"
 #include "x2rec.h"
-#include "x2tab.h"
 
 #define POS   0x80              /* bit 7 of a mu-law octet: positive */
 #define SIL   0x7f
@@ -124,10 +123,12 @@ static int next_frame(x2tx_t *t)
         for (k = 0; k < nb; k++) bits[k] = 1;
         break;
     case X2TX_MARK: {
-        /* the largest level of the data levels in use, as sent (index 1:
-         * the client receives a5 behind each pad); not scrambled, no
+        /* each position at its largest level in the rate in use (t->map's
+         * index), sent for the pad the client's MP reports (t->pad_mode:
+         * from its MP on all we send is for it); not scrambled, no
          * differential signs */
-        uint8_t hi = x2_pad_sent[t->map.pad_mode][0], lo = (uint8_t)(hi & 0x7f);
+        x2map_t cur;
+        const uint8_t *rv, *sn;
         int f = (int)(t->n / X2MAP_N);
         if (f == X2TX_MARK_FRAMES) {
             v90_scr_init(&t->scr);
@@ -136,8 +137,11 @@ static int next_frame(x2tx_t *t)
             enter(t, X2TX_RREC);
             return next_frame(t);
         }
-        for (k = 0; k < X2MAP_N; k++)
-            t->frame[k] = ((k < 3) == (f < X2TX_MARK_FRAMES - 1)) ? hi : lo;
+        x2map_init(&cur, t->map.index, t->pad_mode, 0);
+        for (k = 0; k < X2MAP_N; k++) {
+            uint8_t hi = x2map_list(&cur, k, &rv, &sn) ? sn[0] : 0xff;
+            t->frame[k] = ((k < 3) == (f < X2TX_MARK_FRAMES - 1)) ? hi : (uint8_t)(hi & 0x7f);
+        }
         t->fpos = 0;
         return 1;
     }
