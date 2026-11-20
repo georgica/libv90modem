@@ -470,3 +470,57 @@ takes what the mask says.
 - The client's full retrain during x2: unknown; the design clears down.
 - A-law: no client is known to have done it; not offered.
 - Robbed bits: no MP field for them is known; not handled.
+
+## Harness
+
+An emulated U.S. Robotics Courier calls our answerer: `make test-x2-courier
+COURIER_EMU=<courier-emu checkout> [PAD=0|3|6]` (`tools/x2-peer/`; courier-emu
+and its ROM images stay outside the repository). The Courier is courier-emu
+186d653f5624 running `artifacts/courier-board-21210-capture-403/courier-board.rom`
+(supervisor 7.4.16, DSP 3.1.2) with its `idsdl403` NVRAM, `--with-dsp`, its
+line on a socket (`--line-link`, `COURIER_LINE_DIGITAL=1`, 20 ms frames of
+8 kHz linear). `tools/x2-peer/bridge.c` is the exchange: the Courier's codec
+samples to mu-law at -5.86 dB, our octets (through the pad) back at
+-5.54 dB, and our answerer (public API) with a V.42 endpoint on its bit
+pump. The Courier types `ATX1S32=66S54=0S58=48&A3&B1Q0DT5551234`, and after
+`CONNECT`, `+++` and `ATI11`. A call takes some 35 s of wall time for 116 s
+of line.
+
+The run, x2 not offered (2026-11-20, library 0.3.0, PAD=0):
+
+```
+[   9.54] line: seized (Courier off hook)
+[  18.82] line: ringing (Courier off hook)
+[  18.82] line: we answer
+[  28.52] ours: CONNECT 31200/28800 V.34
+[  28.98] ours: V.42 LAPM (compression 1)
+[ 116.08] ours: data mode reached, V.34 31200/28800, V.8, V.42 up
+courier: CONNECT 31200/ARQ/V34/LAPM/V42BIS
+courier: libv90modem x2-peer bridge here
+courier: USRobotics Courier V.Everything Link Diagnostics...
+courier: Modulation               V.34+
+courier: Carrier Freq    ( Hz )   1920/1829
+courier: Symbol Rate              3200/3200
+courier: Trellis Code             64S-4D/16S-4D
+courier: Nonlinear Encoding       ON/OFF
+courier: Precoding                OFF/OFF
+courier: Shaping                  ON/OFF
+courier: Preemphasis Index        0/0
+courier: Recv/Xmit Level (-dBm)   17.6/3.5
+courier: SNR             ( dB )   38.6
+courier: Near Echo Loss  ( dB )   61.7
+courier: Far Echo Loss   ( dB )   88.1
+courier: Roundtrip Delay (msec)   61
+courier: Timing Offset   ( ppm)   -112
+courier: Carrier Offset  ( ppm)   159
+courier: RX Upshifts              0
+courier: RX Downshifts            0
+courier: TX Speedshifts           0
+courier: V.90 Status              0005
+x2-peer: PASS (both sides in data mode)
+```
+
+With `PAD=6`: `CONNECT 28800/ARQ/V34/LAPM/V42BIS`, received level 26.6 dBm,
+SNR 35.6 dB. Without a V.42 endpoint on our side (the first try) the
+Courier printed only `NO CARRIER`: it cleared down 6.4 s after V.34 data
+mode (presumably its stored settings want error control; not checked).

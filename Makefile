@@ -16,6 +16,8 @@
 #   make prof-v90c       per tick and per function ARM instruction counts (prof-v92c, PPM=)
 #   make bench-bell      the calling modem in Bell 103 and Bell 212A; cost-bell counts
 #   make test-interop    against spandsp (SPANDSP=its install prefix), host only
+#   make test-x2-courier an emulated USR Courier calls our answerer (COURIER_EMU=courier-emu
+#                        checkout, PAD=0|3|6; tools/x2-peer/README.md), host only
 #
 # Cross-compiling: set CC (and BUILD to keep the objects apart), e.g.
 #   make CC=arm-linux-gcc BUILD=build/arm
@@ -95,7 +97,7 @@ TESTS    := test_g711 test_noise test_filt test_resamp test_channel test_v21 tes
 API_TESTS := test_api
 SUBS     := v34 v90 v92 v42 v32
 
-.PHONY: test-fixtures test-examples all lib dev install uninstall clean check check-arm check-ubsan test test-arm test-api test-interop examples bench-v90 bench-v34 bench-v90a bench-v90c bench-v92c replay
+.PHONY: test-x2-courier test-fixtures test-examples all lib dev install uninstall clean check check-arm check-ubsan test test-arm test-api test-interop examples bench-v90 bench-v34 bench-v90a bench-v90c bench-v92c replay
 all: lib examples
 lib: $(STATIC) $(SHARED) $(PCFILE)
 dev: $(DEV)
@@ -337,6 +339,18 @@ $(BUILD)/bench_v90a: rig/bench_v90a.c $(MODEM_SRC) $(HDRS)
 $(BUILD)/bench_v90a.arm: rig/bench_v90a.c $(MODEM_SRC) $(HDRS)
 	@mkdir -p $(BUILD)
 	$(ARM_CC) $(T_CFLAGS) -static -o $@ rig/bench_v90a.c $(MODEM_SRC) $(LDLIBS)
+
+# ---- x2 against an emulated U.S. Robotics Courier (tools/x2-peer/README.md):
+# courier-emu and the ROM live outside the repository; not part of check
+COURIER_EMU ?=
+PAD  ?= 0
+MODS ?=
+$(BUILD)/x2-bridge: tools/x2-peer/bridge.c $(STATIC) include/v90modem.h
+	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L -Iinclude -o $@ $< $(STATIC) $(LDLIBS)
+test-x2-courier:
+	@if [ -z "$(COURIER_EMU)" ]; then echo "COURIER_EMU not set"; exit 0; fi; \
+	$(MAKE) -s $(BUILD)/x2-bridge && \
+	COURIER_EMU="$(COURIER_EMU)" PAD="$(PAD)" MODS="$(MODS)" sh tools/x2-peer/run.sh $(abspath $(BUILD))/x2-bridge $(abspath $(BUILD))/x2-peer
 
 clean:
 	rm -rf $(BUILD)
