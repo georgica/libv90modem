@@ -41,5 +41,5 @@ in its checkout, `artifacts/courier-board-21210-capture-403/courier-board.rom`
 
 Logs: `build/x2-peer/` (`bridge.log`, `courier.json`, `courier-serial.txt`,
 `courier.log`). Other knobs: `COURIER_INSTRUCTIONS` (the Courier's budget,
-default 400M, some 90 s of line), `TIMEOUT` (wall seconds, default 3600).
-The emulator is slow: a call takes minutes of wall time.
+default 400M: the call ends there, at 116 s of line, some 35 s of wall
+time), `TIMEOUT` (wall seconds, default 3600).

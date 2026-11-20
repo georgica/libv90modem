@@ -38,6 +38,7 @@
  * The log goes to stdout. Exit status 0 when our modem reached data mode
  * and its V.42 endpoint got data moving (LAPM or start-stop), 1 otherwise, 2 on a usage or socket error. */
 #include <errno.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -176,6 +177,8 @@ int main(int argc, char **argv)
     const char *hello = "\r\nlibv90modem x2-peer bridge here\r\n";
     int pad = 0, seconds = 600, fd, answered = 0, peer = CALL_IDLE, shown = -1, said = 0, err, i, ntx = FRAME;
     long got = 0, printable = 0;
+    uint32_t stamp;
+    double e_pre = 0, e_post = 0, e_n = 0;   /* 0 dBm0: RMS 15872 (mu-law's sine at 32124 is +3.17 dBm0) */
     v90m_cfg cfg;
     v90m_state st;
 
@@ -221,10 +224,11 @@ int main(int argc, char **argv)
         unsigned n, state;
         /* our frame: the samples worked out from the last one received */
         state = answered && peer < CALL_CLEARED ? CALL_ANSWERED : (unsigned)peer;
-        obuf[0] = (uint8_t)(frames * FRAME * (IPS / RATE));
-        obuf[1] = (uint8_t)(frames * FRAME * (IPS / RATE) >> 8);
-        obuf[2] = (uint8_t)(frames * FRAME * (IPS / RATE) >> 16);
-        obuf[3] = (uint8_t)(frames * FRAME * (IPS / RATE) >> 24);
+        stamp = (uint32_t)((int64_t)frames * FRAME * IPS / RATE);   /* wraps, as the field does */
+        obuf[0] = (uint8_t)stamp;
+        obuf[1] = (uint8_t)(stamp >> 8);
+        obuf[2] = (uint8_t)(stamp >> 16);
+        obuf[3] = (uint8_t)(stamp >> 24);
         obuf[4] = (uint8_t)answered;
         obuf[5] = 0;
         obuf[6] = (uint8_t)state;
@@ -252,12 +256,18 @@ int main(int argc, char **argv)
         ntx = (int)n;
         if (answered && peer < CALL_CLEARED) {
             for (i = 0; i < (int)n; i++)
-                rx_oct[i] = v90m_g711_encode(0, scale((int16_t)(body[2 * i] | body[2 * i + 1] << 8), G_TO_ULAW));
+                rx_oct[i] = v90m_g711_encode(0, scale((int16_t)(uint16_t)(body[2 * i] | body[2 * i + 1] << 8), G_TO_ULAW));
             v90m_process_g711(modem, rx_oct, tx_oct, n);
             for (i = 0; i < (int)n; i++) {
                 uint8_t o = tx_oct[i];
                 if (pad)
                     o = v90m_g711_encode(0, scale(v90m_g711_decode(0, o), pad_gain[pad / 3]));
+                if (was_connected) {   /* our signal before and after the pad, in data mode */
+                    double a = v90m_g711_decode(0, tx_oct[i]), b = v90m_g711_decode(0, o);
+                    e_pre += a * a;
+                    e_post += b * b;
+                    e_n++;
+                }
                 tx_lin[i] = scale(v90m_g711_decode(0, o), G_TO_CODEC);
             }
         } else
@@ -307,6 +317,9 @@ int main(int argc, char **argv)
            was_connected ? "data mode reached" : "no data mode", conn_name[st.modulation], st.tx_bps, st.rx_bps,
            st.used_v8 ? "V.8" : "no V.8", ec_up ? "up" : "never up", got, printable, end_name[st.end]);
     v90m_destroy(modem);
+    if (e_pre > 0 && e_post > 0)
+        printf("ours: in data mode, sent %.1f dBm0 before the pad, %.1f dBm0 after it\n",
+               10 * log10(e_pre / e_n) - 83.96, 10 * log10(e_post / e_n) - 83.96);
     v90m_ec_destroy(ec);
     return was_connected && ec_up ? 0 : 1;
 }

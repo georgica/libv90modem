@@ -483,8 +483,9 @@ line on a socket (`--line-link`, `COURIER_LINE_DIGITAL=1`, 20 ms frames of
 samples to mu-law at -5.86 dB, our octets (through the pad) back at
 -5.54 dB, and our answerer (public API) with a V.42 endpoint on its bit
 pump. The Courier types `ATX1S32=66S54=0S58=48&A3&B1Q0DT5551234`, and after
-`CONNECT`, `+++` and `ATI11`. A call takes some 35 s of wall time for 116 s
-of line.
+`CONNECT`, `+++` and `ATI11`. The call lasts until the Courier's budget
+(400M instructions) runs out, at 116 s of line; that takes some 33 s of wall
+time.
 
 The run, x2 not offered (2026-11-20, library 0.3.0, PAD=0):
 
@@ -521,6 +522,16 @@ x2-peer: PASS (both sides in data mode)
 ```
 
 With `PAD=6`: `CONNECT 28800/ARQ/V34/LAPM/V42BIS`, received level 26.6 dBm,
-SNR 35.6 dB. Without a V.42 endpoint on our side (the first try) the
+SNR 35.6 dB. The 9 dB drop at the Courier (against 6 dB of pad) is ours: the bridge measured our data-mode
+signal at -17.4 dBm0 before the pad and -23.4 dBm0 after it (PAD=0: -14.4
+both), so the pad is 6 dB and our V.34 transmitter itself sent 3 dB less in
+that call. Open: why (presumably the power the Courier asked for in the V.34
+start-up at the lower level; not traced).
+The Courier's timing offset (-112 ppm) and carrier offset (159 ppm) did not
+change when the bridge's instruction stamp was corrected (it ran 920 ppm
+slow): the stamp does not clock the Courier, and the offsets are the
+emulator's (or the Courier's estimate), not the line's. Open as well.
+
+Without a V.42 endpoint on our side (the first try) the
 Courier printed only `NO CARRIER`: it cleared down 6.4 s after V.34 data
 mode (presumably its stored settings want error control; not checked).
