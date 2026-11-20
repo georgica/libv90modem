@@ -34,9 +34,9 @@ Firmware images (kept outside the repository, in
 
 | Image | Role | Origin | SHA-256 |
 | --- | --- | --- | --- |
-| `Ie030002.nac` | I-modem 3.00.02 server; 386EX host, TMS320C5x DSP | courier-emu `firmware/legacy-usrobotics/2332-sdl302.zip` | `3f9a7aa8033323c2…babbe358` |
-| `QF060003.NAC` | Total Control Quad x2 NAC 6.0.3; 80186 host, TMS320C50 DSP | courier-emu `docs/x2/Qf060003.zip` | `0eafde5a534c2270…5860e69a` |
-| `IDSDL302.ROM` | Courier (client) SDL 3.02 | courier-emu repository root | `49f4182cc961aef9…6ff2ccc5` |
+| `Ie030002.nac` | I-modem 3.00.02 server; 386EX host, TMS320C5x DSP | courier-emu `firmware/legacy-usrobotics/2332-sdl302.zip` | `3f9a7aa8033323c28eebfee950b53267a67b7ad9141ebf30271918d0babbe358` |
+| `QF060003.NAC` | Total Control Quad x2 NAC 6.0.3; 80186 host, TMS320C50 DSP | courier-emu `docs/x2/Qf060003.zip` | `0eafde5a534c2270d9cd58755ad5af461eacc2d671a5422005d0471d5860e69a` |
+| `IDSDL302.ROM` | Courier (client) SDL 3.02 | courier-emu repository root | `49f4182cc961aef983ff43468b7b7e55c03205c9dba80e9689fe20aa6ff2ccc5` |
 
 "Ie030002 DSP `xxxx`" below is a C5x program-word address. The `.nac` was
 flattened with courier-emu's `NacImage` (load base `40000`); the DSP
@@ -109,6 +109,18 @@ After our L1:
 - If no marker comes within **800 ms** (counted from the end of our L1),
   the server goes on as V.34 (waits for the caller's L2). **RE (D-Modem)**,
   x2-details.md "Phase 2"; D-Modem `dsp/v34_x2.h` lines 306-316 (the state `P2A_X2MARK`, "silence after L1 until the client's marker", `dsp/dp_v34.cpp` line 233).
+- **For our receiver (derived from the three above):** our L1 lasts
+  160 ms. The marker frame begins **170 to 260 ms after the start of our
+  L1**, that is **10 to 100 ms after its end** (D-Modem's client: 170 ms
+  after the start = 10 ms after the end; the Courier against the I-modem:
+  5.27 s against L1 5.01-5.17 s = 260 ms after the start, 100 ms after the
+  end; courier-emu's times are bearer times read to about 10 ms, at the
+  server's side of the line, so they include the round trip). The frame
+  (2 + 35 + 4 bits at 600 bit/s, about 68 ms) has ended by about 170 ms
+  after the end of L1 (5.35 s observed: 180 ms). We **accept it until
+  800 ms after the end of our L1** (960 ms after its start); with nothing
+  by then the call goes on as V.34. That leaves more than four times the
+  latest observed arrival for a long round trip.
 
 The marker frame (as V.34's INFO frames, DPSK at 600 bit/s, from the
 client):
@@ -364,6 +376,11 @@ by D-Modem from QF060003's bank constructor in courier-emu):
 - Behind 3 dB, levels B's `b3` cannot arrive (no octet pads to it), which
   is why the Quad's 3 dB list is not levels B. Behind 6 dB the client
   receives levels B. **derived**.
+- `x2_pad_octet(0x7f, m)` returns -1 for m = 1, 2: `7f` is mu-law's
+  negative zero; it decodes to 0, the pad keeps 0, and the encoder gives
+  `ff` (positive zero), so no octet arrives as `7f`. Harmless: no x2
+  level list contains a zero (the smallest are `e5`, `df`, `e0`, `f1`),
+  and `7f` and `ff` are the same value to the client. **derived**.
 - The levels A of the sync segment are sent unchanged whatever the pad
   (the client measures the pad from them). **RE (D-Modem)**, "The pad" of
   its client.
