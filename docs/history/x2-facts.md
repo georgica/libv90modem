@@ -759,11 +759,59 @@ each pad, all six runs alike):
   `ATI11`, typed before the change). A Courier given the wrong levels
   renegotiates within 3 s and hangs up (**RE (D-Modem)**); this one did
   not, and at PAD=3 its next rate change, 68 s later, asked for a higher
-  index. That is the evidence that it decodes our new rate; its own counts
-  are not read.
+  index. That was taken as evidence that it decodes our new rate; its own
+  counts were not read. **x2 9 (below) shows it does not**: LAPM stays up
+  on the Courier's answers to our polls, but no I frame of ours gets
+  through after the change.
 - At PAD=6 its rate change now came 12.1 s into data as at the others (x2
   7: 21.8 s); not looked into.
 
 Without a V.42 endpoint on our side (the first try) the
 Courier printed only `NO CARRIER`: it cleared down 6.4 s after V.34 data
 mode (presumably its stored settings want error control; not checked).
+
+The Courier's data after its rate change (2026-11-20, this library at x2 8,
+6396873; the bridge with `-k 4`, as `make test-x2-courier MODS=x2` now runs
+it; the same courier-emu and ROM). A control burst of 4096 incompressible
+octets once LAPM is up, at 32000, and another after the rate change once
+data moves again; the Courier is in command mode (after `ATI11`), where its
+LAPM still acknowledges:
+
+| | PAD=0 | PAD=3 | PAD=6 |
+| --- | --- | --- | --- |
+| control, 32.88 s, 32000 | 33 I frames, all acknowledged in 1.22 s (N(R) advanced in 23 line frames); 0 sent again, 0 REJ, 0 T401 | the same (26) | the same (25) |
+| rate change, data again | 54666/28800 at 43.24 s | 52000/28800 | 54666/28800 |
+| burst after it, at 116.08 s (the budget) | **0 of 615** I frames acknowledged; 600 sent again, 68 T401, 0 REJ | **1 of 658**; 642 sent again, 68 T401, **2 REJ** | **0 of 600**; 585 sent again, 68 T401, 0 REJ |
+| frames received from the Courier since the burst began | 59 good (its RR F=1 to our polls) | 55 | 55 |
+| `x2-peer` | FAIL | FAIL | FAIL |
+
+Our receiver counts some 40 to 47 bad frames a second (FCS, runts,
+aborts) before and after the change alike, in the control too; they are
+the upstream's, not the Courier's decoding of ours. Each pad gave the same
+figures in two runs.
+
+- At 32000 (index 1) the Courier decodes our downstream end to end: the
+  control is acknowledged at once, and its first 910 octets appear on the
+  Courier's terminal, byte for byte, before the `+++` takes effect
+  (PAD=0).
+- After the change the Courier answers each poll (RR P=1 after T401) with
+  an RR F=1 that acknowledges nothing: a 3-octet supervisory frame of ours
+  gets through, an I frame of some 128 octets (almost) never does. At PAD=3 it
+  decoded at least one I frame out of sequence (2 REJ).
+- One-off diagnosis, without error control (a scratch copy of the bridge
+  and of run.sh, not kept: the Courier with `&M0` and no `+++`/`ATI11`,
+  numbered 64-character text lines written continuously, our endpoint in
+  start-stop; PAD=0): the Courier's terminal shows the text as sent up to
+  the rate change, apart from lines its DTE side dropped (its serial port
+  is slower than the line). After the change (54666) the text is mostly
+  corrupt: 20 % of the 7948 octets it printed lie in correct alphabet runs
+  of 4 or more (median run 12 octets, about 3 frames of 41 bits, longest
+  40), between stretches of octets that look like the text bit-shifted
+  (start-stop resynchronising after an error). So the errors are frequent
+  but not total: most of a frame's worth of bits get through between them.
+- Not settled: whether our banks or mapping differ from what the Courier
+  decodes at these indices, or the emulated line or DSP cannot carry
+  them. Our simulated client decodes with our own mapper and banks
+  (`x2call_level`, `x2map_unframe`), so its bit-exact runs cannot show a
+  mismatch with a real client. Index 1 (32000) is the only rate shown to
+  carry data to the Courier.

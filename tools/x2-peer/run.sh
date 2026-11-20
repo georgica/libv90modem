@@ -4,11 +4,12 @@
 #   tools/x2-peer/run.sh BRIDGE OUTDIR    (make test-x2-courier runs it)
 #
 # Environment: COURIER_EMU (courier-emu's checkout; required), PAD (0|3|6),
-# MODS, COURIER_ROM (default: the 4.03 board image in COURIER_EMU),
+# MODS, KB (with MODS=x2: KiB pushed after each rate change, default 4; 0 none), COURIER_ROM (default: the 4.03 board image in COURIER_EMU),
 # COURIER_AT (the Courier's settings before the dial), COURIER_INSTRUCTIONS
 # (its budget, default 400M: the call ends there, at 116 s of line, some 35 s
 # of wall time), TIMEOUT (wall seconds, default 3600). Prints the Courier's CONNECT line, its ATI11, and our
-# state; exit 0 when both sides reached data mode, otherwise 1.
+# state; exit 0 when both sides reached data mode (and, with x2, the
+# Courier acknowledged the data after its rate change), otherwise 1.
 set -u
 bridge=$1
 out=$2
@@ -17,6 +18,8 @@ rom=${COURIER_ROM:-$emu/artifacts/courier-board-21210-capture-403/courier-board.
 at=${COURIER_AT:-ATX1S32=66S54=0S58=48&A3&B1Q0}
 budget=${COURIER_INSTRUCTIONS:-400000000}
 limit=${TIMEOUT:-3600}
+# with x2: a burst of V.42 data after each rate change, to be acknowledged
+if [ "${MODS:-}" = x2 ]; then kb=${KB:-4}; else kb=0; fi
 
 case ${PAD:-0} in 0|3|6) ;; *) echo "x2-peer: PAD=${PAD} (0, 3 or 6)"; exit 1;; esac
 case ${MODS:-} in ''|none|x2) ;; *) echo "x2-peer: MODS=${MODS} ('', none or x2)"; exit 1;; esac
@@ -41,10 +44,11 @@ COURIER_LINE_DIGITAL=1 COURIER_LINE_FRAME_MS=20 timeout "$limit" \
     --send-after-connect '+++' --send-after-connect "$(printf 'ATI11\r')" \
     --summary > "$out/courier.json" 2> "$out/courier.log" &
 courier=$!
-timeout "$limit" "$bridge" "$sock" -p "${PAD:-0}" -m "${MODS:-}" > "$out/bridge.log" 2>&1
+timeout "$limit" "$bridge" "$sock" -p "${PAD:-0}" -m "${MODS:-}" -k "$kb" > "$out/bridge.log" 2>&1
 ours=$?
-# a bridge that stopped early leaves the Courier waiting on its line
-[ $ours -eq 0 ] || kill $courier 2>/dev/null
+# a bridge that stopped early (usage, socket, timeout) leaves the Courier
+# waiting on its line; otherwise the Courier ends at its budget
+[ $ours -le 1 ] || kill $courier 2>/dev/null
 wait $courier
 theirs=$?
 courier=
@@ -67,7 +71,8 @@ echo "x2-peer: Courier exit $theirs, bridge exit $ours"
 if [ "${MODS:-}" = x2 ]; then want='CONNECT.*/[Xx]2'; else want='CONNECT.*V34'; fi
 if [ $ours -eq 0 ] && grep -q "$want" "$out/courier-serial.txt" \
    && { [ "${MODS:-}" != x2 ] || grep -q 'Modulation.*[Xx]2' "$out/courier-serial.txt"; }; then
-    echo "x2-peer: PASS (both sides in data mode)"
+    if [ "$kb" -gt 0 ]; then echo "x2-peer: PASS (both sides in data mode, data acknowledged after the rate change)"
+    else echo "x2-peer: PASS (both sides in data mode)"; fi
     exit 0
 fi
 echo "x2-peer: FAIL"

@@ -35,8 +35,21 @@
  *   -m MODS  the modulations to offer beyond the defaults: "" or "none"
  *            (default), or "x2" (V90M_MOD_X2)
  *   -s SEC   give up after SEC seconds of line (default 600)
+ *   -k KB    once LAPM is up (a control), and after each x2 rate change
+ *            once data moves again, write KB KiB of incompressible octets
+ *            to the V.42 endpoint (a burst) and follow the Courier's
+ *            acknowledgements (default 0: none)
+ * With -k, each burst is logged when the Courier has acknowledged all of it
+ * (v90m_ec_tx_idle): its I frames, the 20 ms line frames in which the
+ * acknowledged count advanced (the Courier's N(R)s), and the errors visible
+ * from our end: I frames we sent again, REJs and protocol violations from
+ * the Courier (an SREJ is one: it is never agreed) and T401 expiries. The
+ * bad frames our receiver saw (FCS, runts, aborts: the upstream, not the
+ * Courier's decoding) are shown and not counted as errors.
  * The log goes to stdout. Exit status 0 when our modem reached data mode
- * and its V.42 endpoint got data moving (LAPM or start-stop), 1 otherwise, 2 on a usage or socket error. */
+ * and its V.42 endpoint got data moving (LAPM or start-stop) and, with -k,
+ * there was a rate change and every burst was acknowledged with none of
+ * those errors; 1 otherwise, 2 on a usage or socket error. */
 #include <errno.h>
 #include <math.h>
 #include <stdint.h>
@@ -71,10 +84,103 @@ static const int32_t pad_gain[3] = { 32768, 23198, 16423 };
 static long frames;
 static v90m_t *modem;
 static v90m_ec_t *ec;
-static int ec_on, was_connected;
+static int ec_on, was_connected, moving;   /* moving: between DATA_MOVING and DATA_STOPPED */
 static const char *const ec_name[] = { "detecting", "establishing", "LAPM", "start-stop", "releasing", "disconnected" };
 
 static double line_s(void) { return frames * (double)FRAME / RATE; }
+
+/* the bursts after rate changes (-k) */
+static long burst_len;              /* octets in a burst, 0: none */
+static int changes, burst_want, bursts, bursts_ok, bursts_bad;
+static struct {
+    int on;
+    long left;                      /* octets still to write */
+    uint32_t seed;
+    double t0;
+    long ticks;
+    long adv;                       /* line frames in which the acknowledged count advanced */
+    unsigned long acked;            /* I frames acknowledged so far, at the last frame */
+    v90m_ec_status s0;
+} burst;
+
+/* the I frames the Courier has acknowledged: sent (new, not again) minus
+   those still waiting */
+static unsigned long acked_of(const v90m_ec_status *s)
+{
+    return s->tx_i - s->tx_i_retx - (unsigned long)s->unacked;
+}
+
+static void burst_start(void)
+{
+    v90m_ec_get_status(ec, &burst.s0);
+    burst.on = 1;
+    burst.left = burst_len;
+    burst.t0 = line_s();
+    burst.adv = 0;
+    burst.ticks = 0;
+    burst.acked = acked_of(&burst.s0);
+    bursts++;
+    printf("[%7.2f] ours: burst %d: %ld octets to the Courier, %s\n", line_s(), bursts, burst_len,
+           changes ? "after a rate change" : "before any rate change (a control)");
+}
+
+static void burst_show(const v90m_ec_status *s, const char *what)
+{
+    printf("[%7.2f] ours: burst %d %s: %ld octets to write, %lu acknowledged of %lu I frames (%d waiting, %lu sent again); "
+           "%lu REJ, %lu violations, %lu T401; received %lu good / %lu bad frames since it began\n",
+           line_s(), bursts, what, burst.left, acked_of(s) - acked_of(&burst.s0), s->tx_i - burst.s0.tx_i,
+           s->unacked, s->tx_i_retx - burst.s0.tx_i_retx, s->rx_rej - burst.s0.rx_rej,
+           s->violations - burst.s0.violations, s->t401_expiries - burst.s0.t401_expiries,
+           s->rx_frames - burst.s0.rx_frames, s->rx_frames_bad - burst.s0.rx_frames_bad);
+}
+
+static void burst_tick(void)
+{
+    v90m_ec_status s;
+    unsigned long a;
+    while (burst.left > 0) {
+        uint8_t b[256];
+        size_t k, n = v90m_ec_write_space(ec), w;
+        if (n == 0)
+            break;
+        if (n > sizeof b)
+            n = sizeof b;
+        if ((long)n > burst.left)
+            n = (size_t)burst.left;
+        for (k = 0; k < n; k++) {   /* xorshift32: nothing for V.42bis to compress */
+            burst.seed ^= burst.seed << 13;
+            burst.seed ^= burst.seed >> 17;
+            burst.seed ^= burst.seed << 5;
+            b[k] = (uint8_t)burst.seed;
+        }
+        w = v90m_ec_write(ec, b, n);
+        burst.left -= (long)w;
+        if (w < n)
+            break;
+    }
+    v90m_ec_get_status(ec, &s);
+    a = acked_of(&s);
+    if (a > burst.acked)
+        burst.adv++;
+    burst.acked = a;
+    if (++burst.ticks % 100 == 0)   /* every 2 s: where it stands */
+        burst_show(&s, "waiting");
+    if (burst.left == 0 && v90m_ec_tx_idle(ec)) {
+        unsigned long i = s.tx_i - burst.s0.tx_i, re = s.tx_i_retx - burst.s0.tx_i_retx,
+                      rej = s.rx_rej - burst.s0.rx_rej, vio = s.violations - burst.s0.violations,
+                      t401 = s.t401_expiries - burst.s0.t401_expiries, bad = s.rx_frames_bad - burst.s0.rx_frames_bad;
+        int clean = re == 0 && rej == 0 && vio == 0 && t401 == 0;
+        printf("[%7.2f] ours: burst %d acknowledged after %.2f s: %ld octets in %lu I frames, %lu acknowledged "
+               "in %ld line frames; %lu sent again, %lu REJ, %lu violations, %lu T401, %lu bad frames received%s\n",
+               line_s(), bursts, line_s() - burst.t0, burst_len, i, i - re, burst.adv, re, rej, vio, t401, bad,
+               clean ? "" : " (ERRORS)");
+        if (clean)
+            bursts_ok++;
+        else
+            bursts_bad++;
+        burst.on = 0;
+    }
+}
 
 static int16_t scale(int32_t v, int32_t q15)
 {
@@ -105,15 +211,22 @@ static void on_event(void *u, v90m_event ev)
             ec_on = 1;
         }
         was_connected = 1;
+        moving = 1;
         break;
     case V90M_EV_RATES:
         printf("[%7.2f] ours: rates now %d/%d %s\n", line_s(), st.tx_bps, st.rx_bps, conn_name[st.modulation]);
+        if (st.modulation == V90M_CONN_X2) {
+            changes++;
+            burst_want = burst_len > 0;
+        }
         break;
     case V90M_EV_DATA_STOPPED:
         printf("[%7.2f] ours: data stopped\n", line_s());
+        moving = 0;
         break;
     case V90M_EV_DATA_MOVING:
         printf("[%7.2f] ours: data moving\n", line_s());
+        moving = 1;
         if (ec_on)
             v90m_ec_line_restored(ec);
         break;
@@ -190,11 +303,13 @@ int main(int argc, char **argv)
             mods = argv[i + 1];
         else if (!strcmp(argv[i], "-s"))
             seconds = atoi(argv[i + 1]);
+        else if (!strcmp(argv[i], "-k"))
+            burst_len = atol(argv[i + 1]) * 1024;
         else
             break;
     }
-    if (argc < 2 || i != argc || (pad != 0 && pad != 3 && pad != 6) || seconds <= 0) {
-        fprintf(stderr, "usage: x2-bridge SOCKET [-p 0|3|6] [-m MODS] [-s SECONDS]\n");
+    if (argc < 2 || i != argc || (pad != 0 && pad != 3 && pad != 6) || seconds <= 0 || burst_len < 0) {
+        fprintf(stderr, "usage: x2-bridge SOCKET [-p 0|3|6] [-m MODS] [-s SECONDS] [-k KB]\n");
         return 2;
     }
     if (*mods && strcmp(mods, "none") && strcmp(mods, "x2")) {
@@ -298,8 +413,17 @@ int main(int argc, char **argv)
                 if (!said) {
                     v90m_ec_write(ec, (const uint8_t *)hello, strlen(hello));
                     said = 1;
+                    burst_want = burst_len > 0 && es == V90M_EC_CONNECTED;   /* the control */
                 }
             }
+            /* a burst once data moves again after a rate change; one at a time */
+            if (es == V90M_EC_CONNECTED && burst_want && !burst.on && moving) {
+                burst_want = 0;
+                burst.seed = 0x2545F491u + (uint32_t)bursts;
+                burst_start();
+            }
+            if (burst.on)
+                burst_tick();
             while ((r = v90m_ec_read(ec, text, sizeof text)) > 0) {
                 got += (long)r;
                 for (k = 0; k < r; k++)
@@ -324,6 +448,17 @@ int main(int argc, char **argv)
     if (e_pre > 0 && e_post > 0)
         printf("ours: in data mode, sent %.1f dBm0 before the pad, %.1f dBm0 after it\n",
                10 * log10(e_pre / e_n) - 83.96, 10 * log10(e_post / e_n) - 83.96);
+    if (burst.on) {
+        v90m_ec_status s;
+        v90m_ec_get_status(ec, &s);
+        burst_show(&s, "not acknowledged at the end");
+    }
+    if (burst_len > 0) {
+        printf("ours: %d rate changes, %d bursts: %d acknowledged cleanly, %d with errors, %d not acknowledged\n",
+               changes, bursts, bursts_ok, bursts_bad, bursts - bursts_ok - bursts_bad);
+    }
     v90m_ec_destroy(ec);
+    if (burst_len > 0 && (changes == 0 || bursts < 2 || bursts_ok != bursts))
+        return 1;
     return was_connected && ec_up ? 0 : 1;
 }

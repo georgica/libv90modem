@@ -2990,3 +2990,45 @@ Size (ARM, -Os): the tables go from 72 bytes (`x2tab.o`) to 9 + 4577
 1800. CPU (`bench_v90 -x` on a 40 s `rec_x2` call, second 15 to 16):
 81.9 M ARM instructions per second at 32000 (80.4 M at x2 6: the general
 mapper, +1.9 %), 83.7 M at 56000 (+2.1 % over 32000).
+
+## x2 9: the Courier's data after its rate change (2026-11-20; release held)
+
+The release was to rest on data the emulated Courier decodes after its rate
+change; until now the evidence was indirect (V.42 stayed up). The harness
+now pushes data and counts the acknowledgements, and the Courier does
+**not** decode our downstream after the change. 0.4.0 is not released.
+
+- `tools/x2-peer/bridge.c`, `-k KB`: once LAPM is up a control burst of KB
+  KiB of incompressible octets, and another after each x2 rate change once
+  data moves again. Each is logged when the Courier has acknowledged all of
+  it, with the line frames in which its N(R) advanced and the errors seen
+  from our end (I frames sent again, REJ, violations, T401). With
+  `MODS=x2`, `run.sh` passes `-k 4` (`KB`), and the run passes only when
+  there was a rate change and every burst was acknowledged cleanly. A
+  bridge exit of 1 no longer kills the Courier, so its report is kept.
+
+`make test-x2-courier MODS=x2 PAD=0 / 3 / 6` (x2-facts.md "Harness"), the
+same figures in two runs at each pad:
+
+| | PAD=0 | PAD=3 | PAD=6 |
+| --- | --- | --- | --- |
+| control at 32000 (32.88 s) | 33 of 33 I frames acknowledged in 1.22 s, nothing sent again | the same | the same |
+| after the rate change (43.24 s) | 54666: **0 of 615** acknowledged, 68 T401 | 52000: **1 of 658**, 2 REJ, 68 T401 | 54666: **0 of 600**, 68 T401 |
+| `x2-peer` | FAIL | FAIL | FAIL |
+
+The Courier answers every poll after the change (55 to 59 good frames from
+it), acknowledging nothing: short frames get through and I frames of some
+128 octets almost never do. Without error control (a one-off scratch run,
+PAD=0) its terminal shows our text clean before the change and mostly
+corrupt after it: 20 % of what it printed in correct runs, median 12
+octets. Our simulated client decodes with our own banks and mapper, so its
+bit-exact runs could not show this. Index 1 is the only rate shown to carry
+data to the Courier. The x2 8 reading ("the call stays up ... the evidence
+that it decodes our new rate") was wrong: LAPM stays up on polls alone.
+
+Also (the Task 8 review's minors): `test_x2map` pins the 49 mode 1 levels
+no octet arrives as, and checks that mode 2's received lists equal mode
+0's at all 90 positions (47 checks, 0 failures; the check fails at 90 of 90
+when pointed at mode 1); `test_answer_x2`'s comments give the second rate
+change as `reneg_ms` (12.7 s) into the first one's data, not 3 s; x2-facts
+"Records" puts our `0001` record in the past.
