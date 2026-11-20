@@ -58,6 +58,7 @@ void v8orig_init(v8orig_t *v, const v8orig_cfg *cfg)
     v21mod_init(&v->mod, V21L_MARK, V21L_SPACE, FS, 300, v->cfg.amp);
     v21demod_init(&v->dem, V21H_MARK, V21H_SPACE, FS, 300);
     v8rx_init(&v->rx, FS);
+    v->rx.jm_flip = 1;              /* an x2 server's JM inverts after each (modem/v8rx.h) */
     v->squelch = v21demod_energy_of(&v->dem, SQUELCH_AMP);
     if (v->cfg.send_ci) {
         /* CI: ten ONEs, the CI sync, the call function octet (7.1) */

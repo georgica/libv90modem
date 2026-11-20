@@ -2,10 +2,11 @@
  * it made of it, phase by phase. The tool to run on a recording that comes
  * with a bug report (README: "Reporting a bug").
  *
- *   v90m-replay [-a] [-9] [-u BPS] [-d BPS] [-l DBM0] [-e SAMPLES] [-P CODE] RECORDING
+ *   v90m-replay [-a] [-9] [-x] [-u BPS] [-d BPS] [-l DBM0] [-e SAMPLES] [-P CODE] RECORDING
  *
  *   -a          A-law line (mu-law otherwise)
  *   -9          V.92 offered (PCM upstream up to 48000 bit/s unless -u)
+ *   -x          x2 offered
  *   -u, -d BPS  upstream / downstream rate ceilings (33600 or 48000; 56000)
  *   -l DBM0     transmit level (default -12)
  *   -e SAMPLES  the echo delay, as the recording modem was told (default: measured)
@@ -69,12 +70,13 @@ static void put(void *u, int b) { (void)u; bits_rx++; if (ec_on) v90m_ec_rx_bit(
 static int rp_ones(void *u) { (void)u; return 1; }
 static void rp_drop(void *u, int bit) { (void)u; (void)bit; }
 
-static int opt_alaw, opt_v92, opt_dbm0 = -12, opt_up, opt_down = 56000, opt_echo = -1, opt_code;
+static int opt_alaw, opt_v92, opt_x2, opt_dbm0 = -12, opt_up, opt_down = 56000, opt_echo = -1, opt_code;
 
 static void configure(v90m_cfg *c, int lin)
 {
     v90m_cfg_default(c);
-    c->modulations = V90M_MOD_V21 | V90M_MOD_V22 | V90M_MOD_V32BIS | V90M_MOD_V34 | V90M_MOD_V90 | (opt_v92 ? V90M_MOD_V92 : 0);
+    c->modulations = V90M_MOD_V21 | V90M_MOD_V22 | V90M_MOD_V32BIS | V90M_MOD_V34 | V90M_MOD_V90 | (opt_v92 ? V90M_MOD_V92 : 0)
+                     | (opt_x2 ? V90M_MOD_X2 : 0);
     c->tx_level = level_rms(opt_dbm0);
     c->max_down_bps = opt_down;
     c->max_up_bps = opt_up ? opt_up : opt_v92 ? 48000 : 33600;
@@ -99,6 +101,7 @@ int main(int argc, char **argv)
         const char *o = argv[arg];
         if (!strcmp(o, "-a")) opt_alaw = 1;
         else if (!strcmp(o, "-9")) opt_v92 = 1;
+        else if (!strcmp(o, "-x")) opt_x2 = 1;
         else if (arg + 1 < argc && !strcmp(o, "-u")) opt_up = atoi(argv[++arg]);
         else if (arg + 1 < argc && !strcmp(o, "-d")) opt_down = atoi(argv[++arg]);
         else if (arg + 1 < argc && !strcmp(o, "-l")) opt_dbm0 = atoi(argv[++arg]);
@@ -107,7 +110,7 @@ int main(int argc, char **argv)
         else break;
     }
     if (arg >= argc || !(f = fopen(argv[arg], "rb"))) {
-        fprintf(stderr, "usage: v90m-replay [-a] [-9] [-u BPS] [-d BPS] [-l DBM0] [-e SAMPLES] [-P CODE] RECORDING\n");
+        fprintf(stderr, "usage: v90m-replay [-a] [-9] [-x] [-u BPS] [-d BPS] [-l DBM0] [-e SAMPLES] [-P CODE] RECORDING\n");
         return 2;
     }
     len = (long)fread(file, 1, sizeof file, f);

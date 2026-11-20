@@ -14,6 +14,15 @@ typedef struct {
     uint8_t msg[V8_MAX_OCTETS]; int nmsg;    /* last completed sequence */
     int     matches;                         /* consecutive identical count */
     int     zeros;
+    /* jm_flip (set after v8rx_init, by a calling modem): an x2 server inverts
+     * its carrier after each JM (docs/history/x2-facts.md "Phase 1"). Across
+     * that 180 degree step the V.21 correlators see space for longer than
+     * half a bit, and the receiver takes a character of all ones out of the
+     * ten ONEs before the next JM. No V.8 octet is FF (its low bits are
+     * neither a category nor an extension), so with jm_flip such a character
+     * counts as the mark it is made of. */
+    int     jm_flip;
+    int     carry;                           /* mark bits that FF characters stood for */
 } v8rx_t;
 
 void v8rx_init(v8rx_t *r, int fs);

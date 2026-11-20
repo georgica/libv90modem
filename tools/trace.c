@@ -11,7 +11,7 @@
 /* where p34d_trace_bit writes the bits of the V.90 / V.34 receiver */
 const char *trace_bits_path = "live/bits.txt";
 
-static const char *ph[] = { "V8", "V22", "V21", "FAILED", "P2", "P3", "V90", "RETRAIN", "V34", "V32", "V32_SIL", "P3X", "V92" };
+static const char *ph[] = { "V8", "V22", "V21", "FAILED", "P2", "P3", "V90", "RETRAIN", "V34", "V32", "V32_SIL", "P3X", "V92", "X2" };
 static void menu(const char *n, const v8_menu_t *m)
 {
     printf("  %s: call function %u, modes 0x%04x (%u octets), pcm %s0x%02x, protocol %s0x%02x, access %s0x%02x\n", n, m->call_function, m->modes,

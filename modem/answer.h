@@ -13,6 +13,11 @@
  * 18: Phases 3 and 4 and data mode of V.92, ../v92/v92_p34d), V.34 upstream
  * (V.90 as before) or V.34. Full start-up only: no quick connect, no short
  * Phase 2, no modem on hold.
+ * x2 (ANS_MODE_X2, with V8_MOD_V34, on a mu-law line): offered to a caller
+ * whose CM offers V.34 and no PCM, in its JM (modem/v8ans) and its INFO0a
+ * (modem/p2ans). A client that sends the x2 marker after our L1 makes the
+ * call x2 (ANS_X2); one that does not gets V.34 as it would without x2.
+ * Other callers see nothing of it.
  * One sample in, one sample out. The data interface is a bit pump: getbit is
  * called for every transmitted line bit, putbit for every received one, once
  * the connection is up. Characters travel start-stop framed in that bit stream
@@ -42,7 +47,8 @@ typedef enum {
     ANS_V32,             /* V.32bis / V.32 from AC on (v32/) */
     ANS_V32_SIL,         /* a caller without V.8 sent AA during our answer tone: 75 ms of silence, then ANS_V32 */
     ANS_P3X,             /* V.92 Phases 3 and 4 with PCM upstream: training (v92/v92_p34d) */
-    ANS_V92              /* V.92 data mode, its rate renegotiations included; retrains: ANS_RETRAIN */
+    ANS_V92,             /* V.92 data mode, its rate renegotiations included; retrains: ANS_RETRAIN */
+    ANS_X2               /* x2: the client sent the marker. For now the call ends here (x2_failed) */
 } ans_phase;
 
 /* in answer_cfg.modes, next to the V8_MOD_ bits (which fit 16 bits): offer
@@ -58,6 +64,9 @@ typedef enum {
  * a caller without V.8, send the Bell answer tone (2225 Hz) for a while:
  * a Bell 212A caller replies with 1200 bit/s as a V.22 caller would */
 #define ANS_MODE_BELL212A 0x80000u
+/* with V8_MOD_V34: offer x2 (U.S. Robotics, 1997) as its server to a caller
+ * whose CM offers V.34 and no PCM; only on a mu-law line */
+#define ANS_MODE_X2 0x100000u
 
 #define ANS_MOD_NONE   0
 #define ANS_MOD_V21    1
@@ -69,6 +78,7 @@ typedef enum {
 #define ANS_MOD_V92    7     /* PCM both ways: 24000 to 48000 bit/s upstream */
 #define ANS_MOD_BELL103 8    /* 300 bit/s, in ANS_V21 */
 #define ANS_MOD_BELL212A 9   /* 1200 bit/s, in ANS_V22: V.22 begun after our 2225 Hz */
+#define ANS_MOD_X2     10    /* x2: PCM downstream, V.34 upstream */
 
 typedef struct {
     int           level;     /* transmit RMS, 16-bit sample units */
@@ -126,6 +136,10 @@ typedef struct {
                                 for the rest of the call when a V.92 start-up failed or the
                                 line did not carry the lowest PCM upstream rate */
     int        v92_data;     /* this V.92 engine has reached data mode */
+    /* x2 */
+    int        x2_offered;   /* ANS_MODE_X2 with V.34, on a mu-law line */
+    int        x2_failed;    /* the client sent the x2 marker and the x2 start-up did not
+                                complete: there is no way back to V.34, the call ended */
 } answer_t;
 
 void    answer_init(answer_t *a, const answer_cfg *cfg);

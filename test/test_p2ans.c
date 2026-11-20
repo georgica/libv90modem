@@ -26,7 +26,17 @@ typedef struct {
     int io_tx, io_rx;       /* our own sample path: delay to the line terminals and back */
     int retrain;            /* both ends start in the retrain entry */
     int seconds;
+    /* x2 (docs/history/x2-facts.md "Phase 2 marker"): from the start of our
+     * L1 the caller is silent and, mk_at ms after that start, an x2 client's
+     * marker frame with body mk_body goes out on its carrier (1200 Hz); 0 =
+     * no marker. mk_bad: one CRC bit inverted. */
+    int mk_at, mk_body, mk_bad;
 } scen_t;
+
+/* our transmit from the start of our first L1 on, per run slot */
+#define TXLOG (8000 * 8)
+static int16_t txlog[2][TXLOG];
+static int g_slot;
 
 typedef struct {
     p2ans_t a; p2c_t c;
@@ -34,6 +44,9 @@ typedef struct {
     int l1_samples, l2_samples;
     double l1_pw, l2_pw;
     int c_restarts;         /* times the harness played the caller's side of a retrain */
+    int l1_at, x2_at;       /* sample of our first L1, of P2N_X2; -1 = none */
+    int ntx;                /* samples in txlog[g_slot] */
+    int x2_quiet;           /* nothing sent from 10 ms after P2N_X2 on */
 } run_t;
 
 static double lp[NLP];
@@ -54,6 +67,9 @@ static void run(const scen_t *s, run_t *r, const p2ans_cfg *ac, const p2c_cfg *c
     rng_t rng;
     int16_t atx = 0, ctx = 0;
     int i, k, c_fail_at = -1, secs = s->seconds ? s->seconds : 8;
+    static dpsktx_t mk;
+    uint8_t mkbits[64];
+    int nmk = 0, mk_off = 0;
 
     memset(lca, 0, sizeof lca); memset(lac, 0, sizeof lac);
     memset(ltx, 0, sizeof ltx); memset(lrx, 0, sizeof lrx);
@@ -69,6 +85,12 @@ static void run(const scen_t *s, run_t *r, const p2ans_cfg *ac, const p2c_cfg *c
     }
     rng_seed(&rng, 2024);
     r->a_done_at = r->c_done_at = -1;
+    r->l1_at = r->x2_at = -1; r->x2_quiet = 1;
+    if (s->mk_at) {
+        dpsktx_init(&mk, DPSK_FC_B, cc->level, 0);
+        nmk = p2ans_x2_info_frame((uint8_t)s->mk_body, mkbits);
+        if (s->mk_bad) mkbits[2 + 4 + 8 + 7 + 3] ^= 1;
+    }
     for (i = 0; i < 8000 * secs; i++) {
         double xa, xc, line_a;
         /* our transmit sample reaches the line terminals io_tx samples late */
@@ -92,7 +114,19 @@ static void run(const scen_t *s, run_t *r, const p2ans_cfg *ac, const p2c_cfg *c
         if (r->a.state == P2N_L1) { r->l1_samples++; r->l1_pw += (double)atx * atx; }
         if (r->a.state == P2N_L2) { r->l2_samples++; r->l2_pw += (double)atx * atx; }
         atx = p2ans_tick(&r->a, (int16_t)lrx[(i - s->io_rx + MAXD) % MAXD]);
+        if (r->a.state == P2N_L1 && r->l1_at < 0) { r->l1_at = i; if (s->mk_at) r->c.mute = 1; }
+        if (r->a.state == P2N_X2 && r->x2_at < 0) r->x2_at = i;
+        if (r->x2_at >= 0 && i > r->x2_at + 80 && atx != 0) r->x2_quiet = 0;
+        if (r->l1_at >= 0 && r->ntx < TXLOG) txlog[g_slot][r->ntx++] = atx;
         ctx = p2c_tick(&r->c, (int16_t)xc);
+        if (s->mk_at && r->l1_at >= 0) {
+            int32_t v;
+            if (i == r->l1_at + s->mk_at * 8) { dpsktx_send(&mk, mkbits, nmk); mk_off = -1; }
+            if (mk_off < 0 && !dpsktx_busy(&mk)) mk_off = i + 60;      /* the last bit out, then off */
+            if (i == mk_off) dpsktx_off(&mk);
+            v = ctx + dpsktx_tick(&mk);
+            ctx = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+        }
         /* the caller's side of a retrain (11.5.1.2), which the peer leaves to
          * the test: it gave up, so 70 ms of silence and Tone B */
         if (r->c.state == P2C_FAILED && c_fail_at < 0 && r->c_restarts < 3) c_fail_at = i;
@@ -101,6 +135,7 @@ static void run(const scen_t *s, run_t *r, const p2ans_cfg *ac, const p2c_cfg *c
         if (r->c.state == P2C_DONE && r->c_done_at < 0) r->c_done_at = i;
         if (r->a.state == P2N_FAILED) break;
         if (r->a.state == P2N_DONE && r->c.state == P2C_DONE) break;
+        if (r->x2_at >= 0 && i > r->x2_at + 8000) break;
     }
     r->n = i;
 }
@@ -335,6 +370,103 @@ int main(void)
     CHECK_EQ_I(r.a.sym_rate, 3200);
     CHECK_EQ_I(r.a.info0c.c1664, 1);        /* remembered from the first Phase 2 */
     s.retrain = 0;
+
+    /* ---- x2 (docs/history/x2-facts.md "Phase 2 marker") ---- */
+    {
+        scen_t keep = s;
+        uint8_t b[64], body[7];
+        int n, k, same;
+        static run_t r0;
+        /* the marker frame: lead-in, fill, sync, 7 bits LSB first, CRC */
+        n = p2ans_x2_info_frame(0x4d, b);
+        CHECK_EQ_I(n, 2 + 4 + 8 + 7 + 16 + 4);
+        CHECK_EQ_I(b[0], 1); CHECK_EQ_I(b[1], 1);
+        for (k = 0; k < 4; k++) CHECK_EQ_I(b[2 + k], 1);
+        { static const uint8_t sync[8] = { 0, 1, 1, 1, 0, 0, 1, 0 };
+          for (k = 0; k < 8; k++) CHECK_EQ_I(b[6 + k], sync[k]); }
+        for (k = 0; k < 7; k++) { body[k] = (uint8_t)((0x4d >> k) & 1); CHECK_EQ_I(b[14 + k], body[k]); }
+        {
+            uint16_t crc = 0;
+            for (k = 0; k < 16; k++) crc |= (uint16_t)(b[21 + k] << k);
+            CHECK_EQ_I(crc, 0x24dd);                    /* the facts' CRC of body 4d */
+            CHECK_EQ_I(crc, info_crc(body, 7));
+        }
+        for (k = 0; k < 4; k++) CHECK_EQ_I(b[37 + k], 1);
+
+        memset(&s, 0, sizeof s);
+        s.d_ca = 20; s.d_ac = 24; s.g_ca = 0.5; s.g_ac = 0.5; s.noise = 2.0;
+        /* INFO0a with x2: max_sr_diff = 4 (bit 23 of 21..23) and cme (bit 24);
+         * the rest, and the call, as without */
+        ac.x2 = 1; g_slot = 0;
+        run(&s, &r, &ac, &cc);
+        CHECK_EQ_I(r.a.state, P2N_DONE); CHECK_EQ_I(r.c.state, P2C_DONE);
+        CHECK_EQ_I(r.c.info0a.max_sr_diff, 4); CHECK_EQ_I(r.c.info0a.cme, 1);
+        CHECK_EQ_I(r.c.info0a.c1664, 1); CHECK_EQ_I(r.c.info0a.pwr_reduce, 1);
+        CHECK_EQ_I(r.c.info0a.lo3200, 1); CHECK_EQ_I(r.c.info0a.hi3200, 1); CHECK_EQ_I(r.c.info0a.allow3429, 0);
+        CHECK_EQ_I(r.a.x2_marker, -1);
+        CHECK_EQ_I(r.a.sym_rate, 3200);
+        {
+            info0_t i0; uint8_t f[INFO_MAX_BITS];
+            memset(&i0, 0, sizeof i0); i0.max_sr_diff = 4; i0.cme = 1;
+            n = info0a_build(&i0, f);
+            CHECK_EQ_I(f[21], 0); CHECK_EQ_I(f[22], 0); CHECK_EQ_I(f[23], 1); CHECK_EQ_I(f[24], 1);
+        }
+        /* ... and the same from our L1 on as without x2 */
+        ac.x2 = 0; g_slot = 1;
+        run(&s, &r0, &ac, &cc);
+        CHECK_EQ_I(r0.a.state, P2N_DONE); CHECK_EQ_I(r0.c.info0a.max_sr_diff, 0); CHECK_EQ_I(r0.c.info0a.cme, 0);
+        CHECK_EQ_I(r0.ntx, r.ntx);
+        same = r0.ntx == r.ntx;
+        for (k = 0; k < r.ntx && k < r0.ntx; k++) if (txlog[0][k] != txlog[1][k]) same = 0;
+        CHECK(same);
+
+        /* the marker 4d 170 ms after our L1 began: x2 */
+        ac.x2 = 1; g_slot = 0;
+        s.mk_at = 170; s.mk_body = 0x4d;
+        run(&s, &r, &ac, &cc);
+        printf("  p2ans x2 marker: P2N_X2 %.0f ms after L1 began, marker %02x\n",
+               (r.x2_at - r.l1_at) / 8.0, (unsigned)r.a.x2_marker);
+        CHECK_EQ_I(r.a.state, P2N_X2); CHECK_EQ_I(r.a.x2_marker, 0x4d);
+        CHECK(r.x2_at - r.l1_at >= 8 * (170 + 60) && r.x2_at - r.l1_at <= 8 * (170 + 90));
+        CHECK(r.x2_quiet);                              /* silent until the client's J */
+        CHECK_EQ_I(r.a.rtd, r0.a.rtd);
+        /* the latest the facts saw (260 ms) */
+        s.mk_at = 260;
+        run(&s, &r, &ac, &cc);
+        CHECK_EQ_I(r.a.state, P2N_X2); CHECK_EQ_I(r.a.x2_marker, 0x4d);
+        /* bits 1..3 = 6 is what counts (0d: 6, and symbol rate index 0) */
+        s.mk_at = 170; s.mk_body = 0x0d;
+        run(&s, &r, &ac, &cc);
+        CHECK_EQ_I(r.a.state, P2N_X2); CHECK_EQ_I(r.a.x2_marker, 0x0d);
+        /* without x2 offered the same marker is nothing */
+        ac.x2 = 0; s.mk_body = 0x4d;
+        run(&s, &r, &ac, &cc);
+        CHECK(r.a.state != P2N_X2); CHECK_EQ_I(r.a.x2_marker, -1);
+
+        /* refused: a bad CRC, the marker 900 ms after the end of L1, a body
+         * with another index in bits 1..3 (49: 4, plain V.34; 41: 0). Each
+         * leaves the V.34 path as it is without x2: the same samples. */
+        {
+            static const struct { int at, body, bad; const char *what; } no[] = {
+                { 170, 0x4d, 1, "bad CRC" }, { 160 + 900, 0x4d, 0, "late" },
+                { 170, 0x49, 0, "index 4" }, { 170, 0x41, 0, "index 0" } };
+            int j;
+            for (j = 0; j < 4; j++) {
+                s.mk_at = no[j].at; s.mk_body = no[j].body; s.mk_bad = no[j].bad; s.seconds = 4;
+                ac.x2 = 1; g_slot = 0; run(&s, &r, &ac, &cc);
+                ac.x2 = 0; g_slot = 1; run(&s, &r0, &ac, &cc);
+                same = r0.ntx == r.ntx;
+                for (k = 0; k < r.ntx && k < r0.ntx; k++) if (txlog[0][k] != txlog[1][k]) same = 0;
+                printf("  p2ans x2 marker refused (%s): state %d, %s\n", no[j].what, (int)r.a.state,
+                       same ? "the same samples as without x2" : "SAMPLES DIFFER");
+                CHECK(r.a.state != P2N_X2); CHECK_EQ_I(r.a.x2_marker, -1);
+                CHECK_EQ_I(r.a.state, r0.a.state);
+                CHECK(same);
+            }
+        }
+        s = keep;
+        ac.x2 = 0; g_slot = 0;
+    }
 
     /* ---- dead line: gives up with a reason ---- */
     s.g_ca = 0.0; s.seconds = 30;

@@ -11,6 +11,7 @@ void v8call_init(v8call_t *c, int fs, int16_t amp, const v8_menu_t *cm)
     v21mod_init(&c->mod, V21L_MARK, V21L_SPACE, fs, 300, amp);
     v21demod_init(&c->dem, V21H_MARK, V21H_SPACE, fs, 300);
     v8rx_init(&c->rx, fs);
+    c->rx.jm_flip = 1;          /* an x2 server's JM (modem/v8rx.h) */
     c->gi = c->gq = c->gph = 0; c->gn = 0; c->ghits = 0;
     c->ncm = v8_frame(V8_SYNC_CM_JM, oct, n, c->cmbits, 200);
     c->pos = 0; c->want_cj = 0; c->got_jm = 0; c->cm_sent = 0;

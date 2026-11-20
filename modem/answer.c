@@ -89,6 +89,15 @@ static int16_t v21_bandpass(answer_t *a, int16_t x)
 
 static void fail(answer_t *a) { a->phase = ANS_FAILED; a->connected = 0; a->t = 0; }
 
+/* x2 is offered with V.34 on a mu-law line only (design "Calls made in the
+ * design"; an A-law line gets V.34) */
+static void x2_offer(answer_t *a)
+{
+    a->x2_offered = (a->cfg.modes & ANS_MODE_X2) && (a->cfg.modes & V8_MOD_V34) && !a->p2cfg.alaw;
+    if (a->x2_offered) v8ans_offer_x2(&a->v8, a->p2cfg.alaw);
+    else a->v8.x2_offer = 0;
+}
+
 void answer_init(answer_t *a, const answer_cfg *cfg)
 {
     v8_menu_t local;
@@ -123,6 +132,8 @@ void answer_init(answer_t *a, const answer_cfg *cfg)
      * nothing above depends on ANS_MODE_V92. Phase 2 says it. */
     a->v92_both = 0; a->v92_data = 0;
     a->pcm_up = local.has_pcm && (cfg->modes & ANS_MODE_V92) != 0;
+    a->x2_failed = 0;
+    x2_offer(a);
 }
 
 /* Jd (V.90 Table 13, V.92 Table 21): the downstream rates the ceiling allows; 0 = all */
@@ -208,6 +219,7 @@ static void v34_cfg(const answer_t *a, v34ans_cfg *c)
     c->sr_mask = 0;
     c->max_tx_rate = a->max_down; c->max_rx_rate = a->max_up;
     c->getbit = a->cfg.getbit; c->putbit = a->cfg.putbit; c->user = a->cfg.user;
+    c->x2 = v8ans_x2(&a->v8);
 }
 
 /* V.90 Phase 2 is done and INFO1a selects V.34 (bits 37:39 in 0..5; V.90
@@ -259,7 +271,7 @@ static void start_v32(answer_t *a)
     a->phase = ANS_V32; a->t = 0;
 }
 
-void answer_v90_cfg(answer_t *a, const p2d_cfg *cfg) { a->p2cfg = *cfg; }
+void answer_v90_cfg(answer_t *a, const p2d_cfg *cfg) { a->p2cfg = *cfg; x2_offer(a); }
 
 static int16_t tick_v21(answer_t *a, int16_t rx)
 {
@@ -471,6 +483,10 @@ int16_t answer_tick(answer_t *a, int16_t rx)
             }
             if (a->v34.state == V34A_DATA && ++a->rt_clock >= MS(60000)) { a->rt_clock = 0; if (a->rt_recent > 0) a->rt_recent--; }
         }
+        if (a->v34.state == V34A_X2) {           /* the client's x2 marker */
+            a->phase = ANS_X2; a->t = 0; tx = 0;
+            break;
+        }
         if (a->v34.state == V34A_ENDED) {
             if (a->v34.error == V34A_ERR_CLEARDOWN) a->cleared = 1;
             if (a->v34.error == V34A_ERR_HANGUP) a->cleared = 2;
@@ -498,6 +514,14 @@ int16_t answer_tick(answer_t *a, int16_t rx)
             a->bitrate = a->rx_bitrate = a->u.v32.bitrate;    /* may change at a retrain */
         }
         a->retraining = a->u.v32.retraining; a->retrains = a->u.v32.retrains;
+        break;
+
+    case ANS_X2:
+        /* The x2 start-up (PCM training) is not there yet. There is no
+         * known way back to V.34 once the marker came (design "Calls made
+         * in the design"): the call ends, said as x2's. */
+        a->x2_failed = 1;
+        fail(a);
         break;
 
     case ANS_FAILED:

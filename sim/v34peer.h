@@ -12,6 +12,7 @@
 typedef struct {
     int level;
     int skip_v8;            /* start with Phase 2 at once */
+    int cm_access;          /* CM carries the PSTN access octet (analogue, as the Courier's 0d) */
     uint16_t modes;         /* V.8 modulation modes of CM; 0 = V.34 only */
     p2c_cfg p2;             /* INFO0c / INFO1c: what this modem can do and asks for */
     v34dx_cfg dx;           /* the ask_* fields, ceilings, getbit / putbit / user are used */

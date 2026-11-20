@@ -9,6 +9,7 @@ void v8rx_init(v8rx_t *r, int fs)
     arx_init(&r->u, fs, 300);
     r->ncur = r->in_msg = r->overflow = 0;
     r->nmsg = 0; r->matches = 0; r->zeros = 0;
+    r->jm_flip = 0; r->carry = 0;
 }
 
 static int finalize(v8rx_t *r)
@@ -28,19 +29,27 @@ static int finalize(v8rx_t *r)
 int v8rx_tick(v8rx_t *r, int level)
 {
     int ev = 0;
-    int was_idle_bits = arx_idle_bits(&r->u);
-    int c = arx_tick(&r->u, level);
+    int was_idle_bits = arx_idle_bits(&r->u) + r->carry;
+    int c = arx_tick(&r->u, level), pre;
 
-    if (c == ARX_FRAMEERR) { r->in_msg = 0; r->zeros = 0; return 0; }
+    if (c == ARX_FRAMEERR) { r->in_msg = 0; r->zeros = 0; r->carry = 0; return 0; }
     if (c == ARX_NONE) {
         /* the mark run just reached preamble length: the sequence has ended */
-        if (r->in_msg && was_idle_bits < PREAMBLE_BITS && arx_idle_bits(&r->u) >= PREAMBLE_BITS)
+        if (r->in_msg && was_idle_bits < PREAMBLE_BITS && arx_idle_bits(&r->u) + r->carry >= PREAMBLE_BITS)
             ev |= finalize(r);
         return ev;
     }
+    pre = arx_pre_bits(&r->u) + r->carry;
+    if (r->jm_flip && c == 0xFF) {              /* mark, not a character (see v8rx.h) */
+        r->carry = pre + 10;
+        r->zeros = 0;
+        if (r->in_msg && pre < PREAMBLE_BITS && r->carry >= PREAMBLE_BITS) ev |= finalize(r);
+        return ev;
+    }
+    r->carry = 0;
     if (c == 0) { if (++r->zeros == 3) ev |= V8RX_CJ; } else r->zeros = 0;
 
-    if (arx_pre_bits(&r->u) >= PREAMBLE_BITS) {
+    if (pre >= PREAMBLE_BITS) {
         if (r->in_msg) ev |= finalize(r);
         r->in_msg = (c == V8_SYNC_CM_JM);
         r->ncur = 0; r->overflow = 0;

@@ -28,6 +28,7 @@ typedef struct {
     v34dx_getbit_fn getbit; /* data to send */
     v34dx_putbit_fn putbit; /* data received */
     void *user;
+    int x2;                 /* offer x2 in Phase 2 (p2ans_cfg.x2): V.8 made our JM x2's */
 } v34ans_cfg;
 
 typedef enum {
@@ -36,7 +37,9 @@ typedef enum {
     V34A_DATA,              /* both directions carry data */
     V34A_RENEG,             /* rate renegotiation under way (data interrupted) */
     V34A_RETRAIN,           /* 70 ms of silence before Phase 2 of a retrain */
-    V34A_ENDED              /* see error */
+    V34A_ENDED,             /* see error */
+    V34A_X2                 /* Phase 2 ended with the x2 marker (p2.x2_marker): silent, and
+                               the owner goes on as x2 */
 } v34ans_state;
 
 enum {

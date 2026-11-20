@@ -2661,3 +2661,74 @@ Open, for the owner before 0.3.0:
   harmless dead code.
 - DESIGN.md has no section on the V.90 analogue (calling) side, nor on
   V.21 / V.22bis / V.32bis / V.34 calling: 4.2c leans on it.
+
+## x2 4: the API, and negotiation with V.34 fallback (2026-11-20)
+
+x2 offered on the answering side, up to the client's marker; no PCM
+training yet (ANS_X2 ends the call with V90M_END_X2_FAILED until x2 6).
+The facts are docs/history/x2-facts.md "Phase 1" and "Phase 2 marker".
+
+- API: `V90M_MOD_X2` (0x0100, not in the defaults; without V.34 or in the
+  calling role `V90M_ENOTSUP`), `V90M_CONN_X2` and `V90M_END_X2_FAILED`
+  appended. `ANS_MODE_X2`, `ANS_MOD_X2`, `ANS_X2`; `answer_t.x2_offered`
+  (V.34 too, and a mu-law line: answer_v90_cfg recomputes it) and
+  `x2_failed`.
+- V.8 (v8ans): with x2 offered, a CM with V.34 and no PCM, and V.34 the JM's
+  choice: the carrier is inverted after each complete JM; a CM with the
+  PSTN access octet gets it back with the digital-network bit (0d -> 8d).
+  `v8ans_offer_x2`, `v8ans_x2`.
+- Phase 2 (p2ans, through v34ans_cfg.x2): INFO0a max_sr_diff = 4, cme = 1.
+  From the start of our L1 the DPSK receiver hunts a 7-bit INFO frame
+  (`p2ans_x2_info_frame` builds one: lead-in 11, fill, sync, body, CRC,
+  fill; body 4d -> CRC 24dd as the facts say); one that checks out with 6
+  in bits 1..3 by 960 ms after L1 began: P2N_X2, silent, `x2_marker`;
+  v34ans V34A_X2 -> answer ANS_X2. L2 goes on meanwhile exactly as
+  without x2; the window also closes when the tones restart (L2 unanswered:
+  760 ms + round trip after L1 began) or the caller's L1 / L2 have been
+  analysed.
+- The JM flip broke our own V.8 receivers (sim/v8call, and so modem/v8orig
+  would have): across the 180 degree step the V.21 correlators read space
+  for more than half a bit, and the receiver took a character FF out of the
+  ten ONEs, which left the next JM without its preamble (21 JMs sent, no
+  CJ). `v8rx_t.jm_flip` (set by v8call and v8orig, not by v8ans) counts an
+  FF character as the mark it is; no V.8 octet is FF. The answerer's V.8
+  receiver is unchanged.
+- tools: v90m-replay `-x`; trace / v90m-fields know the phase X2.
+
+Tests (seen failing first, then passing): test_api (refusals, enum
+values; the "unknown bit" check moved from 0x100 to 0x200), test_v8ans (JM
+negated after each complete JM, octets unchanged; the access octet 8d; A-law
+and a PCM CM sample for sample as without x2), test_p2ans (the frame's bits
+and CRC; INFO0a bits 21..24 = 0 0 1 1 and the rest of Phase 2 the same
+samples from L1 on; marker 4d at 170 and 260 ms and 0d accepted; a bad CRC,
+a marker 900 ms after the end of L1, 49 and 41 refused, each with our
+samples from L1 on identical to a run without x2), test_answer_x2 (new:
+sim/v34peer with x2 offered connects V.34 28800 / 28800 at 3200 as without,
+0 bad bits; with the access octet too; A-law: all 87752 samples as without
+x2; a V.90 caller: all 64000 as without; a marker caller: ANS_X2 244 ms after
+L1 began, the call ends, x2_failed). `make check`: ALL HOST CHECKS PASS.
+
+Replay proof, every recording of ~/sync-build/live-050 (106), main
+(19ba2c6, a worktree) against this branch, each tool in its own directory
+(bits.txt kept), 8 at a time:
+
+    ls live-050/*.raw | xargs -P 8 ... v90m-replay [FLAGS] REC > NAME.txt; bits.txt -> NAME.bits
+    FLAGS: main "" and "-9"; branch "", "-9", "-x", "-x -9"
+
+| comparison | outputs (106 .txt, 21 / 40 .bits) |
+|---|---|
+| main vs branch, no flags | identical, byte for byte |
+| main -9 vs branch -9 | identical, byte for byte |
+| main vs branch -x | 100 identical; 6 differ (ab_cc_v34, ab_cl_v34, v34a, v34b, v34c, x1: the V.34-only callers) |
+| main -9 vs branch -x -9 | the same 6 |
+
+In those 6 only the count of transmit samples that differ from the
+recording changes, by 2094 each (x1: 110394 -> 112488): the second JM
+negated (1867 samples; JM 233 ms, the first difference at its start, e.g.
+x1 8.234 s, JM began 8.000 s) and INFO0a from bit 21 on (227). Every
+decision, phase, rate and bit received is the same; .bits identical. None
+of the recordings is an x2 caller, so no marker was taken.
+
+`make check-arm` (armv5 uclibc, qemu): ALL ARM CHECKS PASS. test_answer_x2
+was run in full (46 checks). It now has a TEST_SHORT version for ARM that
+leaves out the access-octet call and the A-law pair: 30 checks, 3.4 s.

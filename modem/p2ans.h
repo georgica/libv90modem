@@ -14,6 +14,15 @@
  * (carrier, pre-emphasis filter, power reduction for the chosen symbol rate)
  * is taken from INFO1c and reported in tx_*.
  *
+ * x2 (cfg.x2; docs/history/x2-facts.md "Phase 2 marker"): INFO0a says
+ * max_sr_diff = 4 and cme, which a U.S. Robotics x2 client reads as an x2
+ * server; from the start of our L1 a receiver hunts for the client's marker,
+ * one INFO frame with 7 bits (p2ans_x2_info_frame), sent in place of its L1,
+ * L2 and INFO1c. One that checks out and carries 6 in bits 1..3 by 960 ms
+ * after the start of our L1 (800 ms after its end) ends Phase 2 in P2N_X2:
+ * silent, x2_marker set. Anything else, and the V.34 path goes on as it
+ * would without x2: L2 is sent as ever while the receiver listens.
+ *
  * Sample-driven: one received sample in, one transmit sample out, 8 kHz.
  * Fixed-point, no allocation. */
 #ifndef V90D_MODEM_P2ANS_H
@@ -33,6 +42,7 @@ typedef struct {
                            and back, samples (a driver's buffering) */
     int sr_mask;        /* symbol rates INFO1a may select; 0 = 2400, 3000 and 3200 */
     int max_rate;       /* ceiling for the projected call -> answer rate, bit/s; 0 = none */
+    int x2;             /* offer x2 (see above): INFO0a bits, and the marker receiver */
 } p2ans_cfg;
 
 typedef enum {
@@ -48,7 +58,8 @@ typedef enum {
     P2N_INFO1A,         /* sending INFO1a */
     P2N_RT_SILENCE,     /* 11.5.2.1: 70 ms of silence before Tone A (a retrain we begin) */
     P2N_DONE,
-    P2N_FAILED
+    P2N_FAILED,
+    P2N_X2              /* the x2 marker came (x2_marker): silent; the owner goes on as x2 */
 } p2ans_state;
 
 enum { P2N_OK = 0,
@@ -86,6 +97,8 @@ typedef struct {
     int         tx_preemph;         /* pre-emphasis filter index 0..10 */
     int         tx_pwr_red;         /* power reduction, dB */
     int         md_len;             /* the caller's MD, units of 35 ms */
+    int         x2_marker;          /* the marker's 7 bits (0x00..0x7f) in P2N_X2, else -1 */
+    int32_t     x2_until;           /* the marker receiver runs until this sample; -1 = off */
 } p2ans_t;
 
 void    p2ans_init(p2ans_t *p, const p2ans_cfg *cfg);
@@ -94,6 +107,13 @@ void    p2ans_init(p2ans_t *p, const p2ans_cfg *cfg);
  * is the caller's INFO0c of the first Phase 2 (it is not sent again). */
 void    p2ans_init_retrain(p2ans_t *p, const p2ans_cfg *cfg, const info0_t *info0c);
 int16_t p2ans_tick(p2ans_t *p, int16_t rx);
+/* An x2 client's marker frame, as the line carries it (600 bit/s DPSK, one
+ * bit per element, 1 = reversal): 2 lead-in ones, fill 1111, sync 01110010,
+ * the 7 bits of marker7 LSB first, their INFO CRC LSB first, fill 1111.
+ * Returns the count, P2N_X2_FRAME_BITS. For the tests and the simulated
+ * client. */
+#define P2N_X2_FRAME_BITS (2 + 4 + 8 + 7 + 16 + 4)
+int     p2ans_x2_info_frame(uint8_t marker7, uint8_t *bits);
 
 /* V.34 Tables 1 and 2 for a symbol rate index: the rate, and the carrier as
  * the ratio num/den of it. Returns 0 for an index outside 0..5. */

@@ -113,13 +113,23 @@ typedef enum {
  * has a cleardown signal. */
 #define V90M_MOD_BELL103  0x0040u
 #define V90M_MOD_BELL212A 0x0080u
+/* Answering only (calling: V90M_ENOTSUP), with V90M_MOD_V34 (without:
+ * V90M_ENOTSUP), not in the defaults: x2, U.S. Robotics' 56k of 1997, as
+ * its server. Offered on a mu-law line to a caller whose V.8 CM offers V.34
+ * and no PCM: the JM and INFO0a of an x2 server. A caller that does not
+ * take it up gets V.34 as without x2; other callers see nothing of it. A
+ * client that does take it up (its marker after our L1) has no way back to
+ * V.34: if the x2 start-up does not complete, the call ends with
+ * V90M_END_X2_FAILED (this version has no x2 start-up yet: always). */
+#define V90M_MOD_X2       0x0100u
 
 /* the modulation of a connection (v90m_state.modulation) */
 typedef enum {
     V90M_CONN_NONE = 0, V90M_CONN_V21, V90M_CONN_V22, V90M_CONN_V22BIS,
     V90M_CONN_V90, V90M_CONN_V34, V90M_CONN_V32BIS, V90M_CONN_V92,
     V90M_CONN_BELL103,          /* appended: the values above stay as they were */
-    V90M_CONN_BELL212A          /* V.22 at 1200 bit/s begun on the 2225 Hz Bell answer tone */
+    V90M_CONN_BELL212A,         /* V.22 at 1200 bit/s begun on the 2225 Hz Bell answer tone */
+    V90M_CONN_X2                /* (appended) x2: PCM downstream, V.34 upstream */
 } v90m_conn;
 
 typedef int  (*v90m_getbit_fn)(void *user);             /* next bit to send, 0 or 1 */
@@ -239,8 +249,10 @@ typedef enum {
     V90M_END_NO_ANSWER_TONE,    /* no answer tone came */
     V90M_END_NO_JM,             /* ANSam came, but no JM in answer to CM (V.8) */
     V90M_END_NO_COMMON,         /* the answerer has no modulation in common with us */
-    V90M_END_RETRAIN_FAILED     /* (appended) calling V.90 / V.92: a retrain failed, or one
+    V90M_END_RETRAIN_FAILED,    /* (appended) calling V.90 / V.92: a retrain failed, or one
                                    more was due past the limit (see v90m_retrain) */
+    V90M_END_X2_FAILED          /* (appended) answering: the client took up x2 (its marker
+                                   came) and the x2 start-up did not complete */
 } v90m_end;
 
 /* Cheap; fine to read after every sample. Also after the end: end says why. */

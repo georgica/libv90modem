@@ -19,6 +19,31 @@ static const int8_t CAR[6][2][2] = {     /* [index][low / high] = { d, e } */
 /* highest data rate of Table 8 per symbol rate, in units of 2400 bit/s */
 static const int8_t TOP[6] = { 9, 10, 10, 12, 13, 14 };
 
+/* x2's marker (docs/history/x2-facts.md "Phase 2 marker"): a 7-bit INFO
+ * frame, 2 + 35 + 4 bits (RE (D-Modem); the 2 + 12 + 7 + 16 + 4 layout RE
+ * (courier-emu), specification 5.1). The lead-in is courier-emu's two ones.
+ * Body: bit 0 the carrier, bits 1..3 the first modulation index, 6 for x2
+ * from an answering server (RE (courier-emu), 4.2 and 5.2); 4d from a
+ * Courier, whose CRC is 24dd. */
+#define X2_PAYLOAD (7 + 16)             /* the bits after the sync */
+#define X2_INDEX_PCM 6
+#define X2_WINDOW MS(160 + 800)         /* from the start of our L1 */
+
+int p2ans_x2_info_frame(uint8_t marker7, uint8_t *bits)
+{
+    static const uint8_t sync[8] = { 0, 1, 1, 1, 0, 0, 1, 0 };
+    uint16_t crc;
+    int n = 0, k;
+    bits[n++] = 1; bits[n++] = 1;
+    for (k = 0; k < 4; k++) bits[n++] = 1;
+    for (k = 0; k < 8; k++) bits[n++] = sync[k];
+    for (k = 0; k < 7; k++) bits[n++] = (uint8_t)((marker7 >> k) & 1);
+    crc = info_crc(bits + n - 7, 7);
+    for (k = 0; k < 16; k++) bits[n++] = (uint8_t)((crc >> k) & 1);
+    for (k = 0; k < 4; k++) bits[n++] = 1;
+    return n;
+}
+
 int v34_symbol_rate(int idx) { return idx >= 0 && idx <= 5 ? SR[idx] : 0; }
 
 void v34_carrier(int idx, int hi, int *num, int *den)
@@ -48,6 +73,11 @@ static void send_info0a(p2ans_t *p, int ack)
     i.pwr_reduce = 1;
     i.max_sr_diff = 0;
     i.c1664 = 1;
+    /* x2: bit 23 (max_sr_diff = 4 of bits 21..23) and bit 24 (cme); the
+     * Courier takes either for an x2 server (x2-facts.md "Phase 2 marker":
+     * our disassembly of IDSDL302.ROM; 4, not the I-modem's 6, as V.34 allows
+     * 0..5 there) */
+    if (p->cfg.x2) { i.max_sr_diff = 4; i.cme = 1; }
     i.ack = (uint8_t)ack;
     n = info0a_build(&i, bits);
     dpsktx_send(&p->tx, bits, n);
@@ -67,6 +97,33 @@ static void common_init(p2ans_t *p, const p2ans_cfg *cfg)
     probetx_init(&p->ptx, cfg->level);
     proberx_init(&p->prx);
     p->tone_since = -1;
+    p->x2_marker = -1; p->x2_until = -1;
+}
+
+/* the marker receiver stops: the hunt is INFO0c's again, as without x2 */
+static void x2_stop(p2ans_t *p)
+{
+    if (p->x2_until < 0) return;
+    p->x2_until = -1;
+    dpskrx_expect(&p->rx, INFO_PAYLOAD(INFO0A_BITS));
+}
+
+/* While our L1 / L2 run (and the tones after them), the x2 client's marker:
+ * a frame that checks out, 6 in bits 1..3, within the window. Returns 1
+ * when it is there. */
+static int x2_marker(p2ans_t *p, int ev)
+{
+    int k, m = 0;
+    if (p->x2_until < 0) return 0;
+    if (p->now > p->x2_until) { x2_stop(p); return 0; }
+    if (!(ev & DPSK_EV_FRAME)) return 0;
+    for (k = 0; k < 7; k++) m |= p->rx.frame[k] << k;
+    if (((m >> 1) & 7) != X2_INDEX_PCM) return 0;
+    p->x2_marker = m;
+    p->x2_until = -1;
+    dpsktx_off(&p->tx); p->probing = 0;
+    go(p, P2N_X2);
+    return 1;
 }
 
 void p2ans_init(p2ans_t *p, const p2ans_cfg *cfg)
@@ -86,6 +143,7 @@ void p2ans_init_retrain(p2ans_t *p, const p2ans_cfg *cfg, const info0_t *info0c)
 /* a retrain we begin ourselves (11.5.2.1): silence, then as the retrain entry */
 static void self_retrain(p2ans_t *p, int why)
 {
+    p->x2_until = -1;
     if (p->retrains >= P2N_MAX_RETRAINS) { fail(p, why); return; }
     p->retrains++;
     dpsktx_off(&p->tx);
@@ -98,6 +156,7 @@ static void restart_tones(p2ans_t *p)
 {
     p->restarts++;
     p->probing = 0;
+    p->x2_until = -1;
     dpsktx_on(&p->tx);
     dpskrx_expect(&p->rx, INFO_PAYLOAD(INFO0A_BITS));
     p->tone_since = -1;
@@ -231,6 +290,16 @@ int16_t p2ans_tick(p2ans_t *p, int16_t x)
     int ev = dpskrx_tick(&p->rx, x);
     int32_t out;
 
+    /* x2: from our L1 until the caller's L1 / L2 are analysed */
+    if (p->x2_until >= 0) {
+        if (p->state == P2N_L1 || p->state == P2N_L2 || p->state == P2N_TONE50 || p->state == P2N_REV_TAIL
+            || p->state == P2N_WAIT_BREV2 || p->state == P2N_PROBE_RX) {
+            if (x2_marker(p, ev)) ev = 0;
+        } else {
+            x2_stop(p);
+        }
+    }
+
     switch (p->state) {
     case P2N_INFO0:
         if (ev & DPSK_EV_FRAME) {
@@ -286,6 +355,12 @@ int16_t p2ans_tick(p2ans_t *p, int16_t x)
             proberx_init(&p->prx);
             p->tone_blocks = 0;
             p->probing = 1;
+            if (p->cfg.x2) {
+                /* the marker begins 170 to 260 ms after the start of our L1;
+                 * accepted until 800 ms after its end (x2-facts.md) */
+                p->x2_until = p->now + X2_WINDOW;
+                dpskrx_expect(&p->rx, X2_PAYLOAD);
+            }
             go(p, P2N_L1);
         }
         break;
@@ -330,6 +405,7 @@ int16_t p2ans_tick(p2ans_t *p, int16_t x)
         if (p->now >= p->probe_from) {
             proberx_tick(&p->prx, x);
             if (p->prx.nblk >= PROBE_BLOCKS) {
+                p->x2_until = -1;
                 dpskrx_expect(&p->rx, INFO_PAYLOAD(INFO1D_BITS));   /* INFO1c: Table 15, 109 bits */
                 dpsktx_on(&p->tx);
                 go(p, P2N_WAIT_INFO1C);
@@ -369,6 +445,7 @@ int16_t p2ans_tick(p2ans_t *p, int16_t x)
 
     case P2N_DONE:
     case P2N_FAILED:
+    case P2N_X2:
         break;
     }
 

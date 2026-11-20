@@ -17,6 +17,23 @@ void v8ans_init(v8ans_t *v, int fs, int16_t amp, const v8_menu_t *local)
     v->local = *local;
     v->njm = v->jmpos = 0;
     v->result = V8A_RES_NONE; v->selected = 0;
+    v->x2_offer = 0; v->x2 = 0; v->jm_sign = 1;
+}
+
+void v8ans_offer_x2(v8ans_t *v, int alaw) { v->x2_offer = !alaw; }
+int v8ans_x2(const v8ans_t *v) { return v->x2; }
+
+/* x2 (docs/history/x2-facts.md "Phase 1"): the client's CM offers V.34 and
+ * no PCM (RE (D-Modem)), and V.34 is what the JM selects. The JM octets are
+ * V.34's; the CM's PSTN access octet comes back with the digital-network
+ * bit (the Courier's CM ends 0d, the I-modem's JM 8d: RE (courier-emu)). */
+static void x2_jm(v8ans_t *v)
+{
+    v->x2 = v->x2_offer && v->selected == 1 && (v->cm.modes & V8_MOD_V34)
+            && !(v->cm.has_pcm && (v->cm.pcm & V8_PCM_ANALOG));
+    if (!v->x2 || !v->cm.has_access) return;
+    v->jm.has_access = 1;
+    v->jm.access = (uint8_t)(V8_ACC_DIGITAL | (v->cm.access & V8_ACC_CALL_CELL) | (v->local.access & V8_ACC_ANS_CELL));
 }
 
 static void go(v8ans_t *v, v8a_state s) { v->state = s; v->t = 0; }
@@ -44,6 +61,7 @@ v8a_state v8ans_tick(v8ans_t *v, int16_t rx, int16_t *tx)
             int n;
             v8_build_jm(&v->cm, &v->local, &v->jm);
             v->selected = v8_selected(&v->jm);
+            x2_jm(v);
             n = v8_encode(&v->jm, oct, V8_MAX_OCTETS);
             v->njm = v8_frame(V8_SYNC_CM_JM, oct, n, v->jmbits, V8A_MAXBITS);
             v->jmpos = 0;
@@ -55,7 +73,15 @@ v8a_state v8ans_tick(v8ans_t *v, int16_t rx, int16_t *tx)
         break;
     case V8A_JM:
         *tx = v21mod_tick(&v->mod, v->jmbits[v->jmpos], &done);
-        if (done && ++v->jmpos >= v->njm) v->jmpos = 0;
+        /* x2: the carrier's sign inverted after each complete JM, a 180
+         * degree step; the octets are not changed by it (x2-facts.md
+         * "Phase 1": RE (D-Modem), RE (courier-emu); our disassembly of
+         * Ie030002, DSP dd62-dd64). The amplitude is far below full scale. */
+        if (v->jm_sign < 0) *tx = (int16_t)-*tx;
+        if (done && ++v->jmpos >= v->njm) {
+            v->jmpos = 0;
+            if (v->x2) v->jm_sign = (int16_t)-v->jm_sign;
+        }
         v->t++;
         if (ev & V8RX_CJ) {                      /* JM stops at once (8.2.3) */
             v->result = V8A_RES_OK;

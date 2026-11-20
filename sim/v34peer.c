@@ -25,6 +25,7 @@ void v34peer_init(v34peer_t *p, const v34peer_cfg *cfg)
     cm.call_function = V8_CALLF_DATA;
     cm.modes = cfg->modes ? cfg->modes : V8_MOD_V34;
     cm.n_mod_octets = 3;
+    cm.has_access = (uint8_t)(cfg->cm_access != 0);
     v8call_init(&p->v8, 8000, (int16_t)cfg->level, &cm);
     if (cfg->skip_v8) { p2c_init(&p->p2, &cfg->p2); p->state = VP_PHASE2; }
     else p->state = VP_V8;

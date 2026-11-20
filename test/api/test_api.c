@@ -83,6 +83,31 @@ static void test_cfg(void)
     v90m_destroy(m);
     v90m_cfg_default(&c); c.role = V90M_ROLE_ORIGINATE;     /* not in the calling defaults either */
     CHECK(!(c.modulations & (V90M_MOD_BELL103 | V90M_MOD_BELL212A)));
+    /* x2: answering only, with V.34, and not in the defaults; its numbers
+     * appended to the enums */
+    CHECK_EQ_I(V90M_MOD_X2, 0x0100);
+    CHECK_EQ_I(V90M_CONN_X2, 10);
+    CHECK_EQ_I(V90M_END_X2_FAILED, V90M_END_RETRAIN_FAILED + 1);
+    v90m_cfg_default(&c);
+    CHECK(!(c.modulations & V90M_MOD_X2));
+    c.modulations = V90M_MOD_X2;                            /* alone: x2's upstream is V.34 */
+    err = 99; m = v90m_create(&c, &err);
+    CHECK(m == NULL); CHECK_EQ_I(err, V90M_ENOTSUP);
+    c.modulations = V90M_MOD_X2 | V90M_MOD_V90 | V90M_MOD_V21;
+    err = 99; m = v90m_create(&c, &err);
+    CHECK(m == NULL); CHECK_EQ_I(err, V90M_ENOTSUP);
+    c.modulations = V90M_MOD_X2 | V90M_MOD_V34;             /* the calling role has no x2 */
+    c.role = V90M_ROLE_ORIGINATE;
+    err = 99; m = v90m_create(&c, &err);
+    CHECK(m == NULL); CHECK_EQ_I(err, V90M_ENOTSUP);
+    c.role = V90M_ROLE_ANSWER;
+    err = 99; m = v90m_create(&c, &err);
+    CHECK(m != NULL); CHECK_EQ_I(err, V90M_OK);
+    v90m_destroy(m);
+    v90m_cfg_default(&c); c.modulations |= V90M_MOD_X2;
+    err = 99; m = v90m_create(&c, &err);
+    CHECK(m != NULL); CHECK_EQ_I(err, V90M_OK);
+    v90m_destroy(m);
     c.role = V90M_ROLE_ANSWER; c.modulations = 0x8000;
     m = v90m_create(&c, &err);
     CHECK(m == NULL); CHECK_EQ_I(err, V90M_EINVAL);
@@ -147,7 +172,7 @@ static void test_errors(void)
         bad = c; bad.max_down_bps = -1;    CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
         bad = c; bad.max_up_bps = -1;      CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
         bad = c; bad.echo_delay = -2;      CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
-        bad = c; bad.modulations |= 0x100; CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
+        bad = c; bad.modulations |= 0x200; CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);   /* 0x100 is x2 now */
 
         m = v90m_init(mem.b, sizeof mem.b, &c, &err);
         CHECK(m != NULL); CHECK_EQ_I(err, V90M_OK);
