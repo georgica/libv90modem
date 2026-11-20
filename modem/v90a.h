@@ -33,7 +33,7 @@
  * more, or a renegotiation for the line did not help); 12 dB over for 250 ms
  * (the receiver lost) a retrain; 6 dB under it for 5 s, after the watch took
  * the rate down, a renegotiation back up. (6 dB over is already where the
- * decision feedback collapses: PROGRESS.md, robust 2c.) A rate
+ * decision feedback collapses: docs/history/PROGRESS.md, robust 2c.) A rate
  * renegotiation without Ed (9.6.2), and a Phase 3 or 4 that
  * fails once the call has carried data, are retrains too. Retrains are
  * limited as answer.c's: V90A_MAX_RETRAINS without a minute of data mode

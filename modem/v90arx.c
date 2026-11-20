@@ -677,7 +677,7 @@ static void equalise(v90arx_t *r, int32_t k, int16_t q)
     /* the symbol as known or decided, held or not: the estimate's
      * regressor (when it was kept only while adapting, the estimate went on
      * after a hold with up to NCH stale symbols in its span, and its error
-     * moved it and the timing loop with it: PROGRESS.md, robust) */
+     * moved it and the timing loop with it: docs/history/PROGRESS.md, robust) */
     r->sb[m & 255] = (int16_t)(lev >> V90ARX_YF);
     if (!r->hold) {
         /* what aliases at the band edge turns with our sampling phase, one
@@ -725,7 +725,7 @@ static void eq_start(v90arx_t *r, int32_t k)
  * interval's error into every tap: TRN1d's error 42 dB (mse), the timing loop
  * following the estimate 0.03 sample away during the DIL and back during
  * TRN2d, and a V.92 transmitter, on that clock, moved under the digital
- * modem's measurements (PROGRESS.md, robust 2b). So the estimate's residual
+ * modem's measurements (docs/history/PROGRESS.md, robust 2b). So the estimate's residual
  * is projected on each interval's part of the prediction over TRN1d's
  * symbols LS_FROM .. LS_TO, and each interval's level set from it (within
  * 25 % of L; one closer than 1 % to L stays L); the reference from there,

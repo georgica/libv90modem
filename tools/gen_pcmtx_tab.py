@@ -7,7 +7,7 @@ A PCM upstream reaches to the band edge, and what a bank gets wrong there
 changes as the two clocks turn against each other: a channel the digital
 modem measured once and does not follow. No bank of reasonable length is
 right up to 4 kHz (modem/v34_tabs.h's 64 taps: -74 dB to 3.7 kHz, -9 dB at
-3.9 kHz; see PROGRESS.md, C6-2), so this one is a low-pass as well: a sinc
+3.9 kHz; see docs/history/PROGRESS.md, C6-2), so this one is a low-pass as well: a sinc
 cut at 3700 Hz in a 64 tap Kaiser window: -1.7 dB at 3600 Hz, -15 dB at 3800
 Hz, -31 dB at 3900 Hz, and every branch within -78 dB of the others at every
 frequency of the band. The far codec's filters (G.712) cut there anyway;

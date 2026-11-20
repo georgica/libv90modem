@@ -5,7 +5,7 @@
  * moves everything after V.8 by a few milliseconds: other noise, another
  * phase between our A/D clock and the network's when each sequence arrives.
  * A receiver that works only at some of these moments is not robust (before
- * the "robust" branch: 15 of 22 calls bad on 0 km +100 ppm, see PROGRESS.md).
+ * the "robust" branch: 15 of 22 calls bad on 0 km +100 ppm, see docs/history/PROGRESS.md).
  * Per call: data mode reached, at least the line's floor downstream, and
  * 10 s of data both ways without one failure of the self-synchronising check.
  * Host: 3 lines x 22 calls; TEST_SHORT (32-bit ARM under qemu): 3 x 4. */

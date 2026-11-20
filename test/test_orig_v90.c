@@ -3,7 +3,7 @@
  * (modem/answer with V.90 on) over test/v90link.h's line (the downstream
  * through sim/dschan: loop, clock offset, pads, robbed bits, law, noise, our
  * hybrid echo at -16 dB (at -10 dB V.8's JM is lost on some lines: see
- * PROGRESS.md, C5-2); the upstream resampled to the network clock, 6 dB
+ * docs/history/PROGRESS.md, C5-2); the upstream resampled to the network clock, 6 dB
  * loss, noise, the network codec). Per line: the connect rates down / up,
  * the time from the start of the call to data mode, and 10 s of data both
  * ways (2^23 - 1, self-synchronising check: a wrong bit fails it three
@@ -74,7 +74,7 @@ int main(void)
         { "2 km,  +30 ppm, robbed bit",          2,   30, -75, 0, 1, 0, 0, 44000 },
         { "  ... Table 1 levels",                2,   30, -75, 0, 1, 0, 1, 0 },
         { "2 km,  +30 ppm, 6 dB pad, robbed bit", 2,  30, -75, 6, 1, 0, 0, 37333 },   /* 38666 .. 45333 with Te
-                                   alone (29333 .. 44000 before robust 2b; PROGRESS.md) */
+                                   alone (29333 .. 44000 before robust 2b; docs/history/PROGRESS.md) */
         { "2 km,  -50 ppm, A-law",               2,  -50, -75, 0, 0, 1, 0, 42666 },
     };
     enum { NR = sizeof R / sizeof R[0] };

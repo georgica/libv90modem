@@ -20,7 +20,7 @@
  * answerer's own V.92 tests use (sim/v92chan: codec filters, transformer,
  * the short line or the long one); 2: the downstream's loop and codec
  * filters (sim/dschan), whose low frequency tail outlasts the digital
- * modem's 12 ms channel estimate (PROGRESS.md, C6-2). And our clock is carried on to the network's
+ * modem's 12 ms channel estimate (docs/history/PROGRESS.md, C6-2). And our clock is carried on to the network's
  * by a 320-tap resampler (sim/resamp's lresamp): the 48 taps of C5 change
  * the line near 4 kHz with the phase between the clocks, where a PCM
  * upstream has its share of power. Off, the upstream is as in C5. Data both ways is a 2^23 - 1 sequence (O.151), checked

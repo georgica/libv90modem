@@ -15,7 +15,7 @@
  *   - where the caller chooses the content (CM, INFO0a), what it sends has
  *     what the real modems' have and the tables require.
  *
- * See PROGRESS.md, "realcheck". */
+ * See docs/history/PROGRESS.md, "realcheck". */
 #include <stdio.h>
 #include <string.h>
 #include "test.h"

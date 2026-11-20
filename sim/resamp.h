@@ -40,7 +40,7 @@ int  sresamp_push(sresamp_t *r, double x, double *out, int maxout);
 
 /* The same with a window of LRESAMP_TAPS: for a PCM upstream (V.92), whose
  * signal reaches to the band edge, where the 48 taps above make the line
- * change with the phase between the two clocks (C6-2, PROGRESS.md). */
+ * change with the phase between the two clocks (C6-2, docs/history/PROGRESS.md). */
 #define LRESAMP_TAPS  320
 #define LRESAMP_DELAY (LRESAMP_TAPS / 2)
 typedef struct {

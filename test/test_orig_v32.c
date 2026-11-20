@@ -297,7 +297,7 @@ static void via_v8(void)
     /* the realistic line again with our Te moved (V.8 ends a few ms
      * earlier or later): the rate must not depend on that moment. At 20 to
      * 22 dB both receivers' error allows 9600 (v32_rate_mse); before the
-     * "robust" branch 5 of 14 calls took 7200 or 4800 (PROGRESS.md) */
+     * "robust" branch 5 of 14 calls took 7200 or 4800 (docs/history/PROGRESS.md) */
     {
 #ifdef TEST_SHORT
         enum { NTE = 3, TSTEP = 48 };

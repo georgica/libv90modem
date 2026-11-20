@@ -144,7 +144,7 @@ int main(void)
     /* JM comes straight after ANSam, and the V.21(H) receiver reads 2100 Hz
      * as characters: one still in progress when JM begins takes the ten ONEs
      * before JM's sync, and that JM goes unseen. Real callers send CJ after
-     * the second JM (tools/v90m-fields on the recordings of PROGRESS.md,
+     * the second JM (tools/v90m-fields on the recordings of docs/history/PROGRESS.md,
      * "realcheck": the Conexant CX93001 ends CJ 0.673 s after the start of
      * a 5-octet JM, 0.807 s after a 7-octet one), so the first one must
      * count, whatever the line's delay. */

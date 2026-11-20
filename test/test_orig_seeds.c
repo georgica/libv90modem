@@ -10,7 +10,7 @@
  * upstream errors after our timing moved). Before answer-fix 1, 2 of the
  * V.92 calls had bursts of upstream check failures at 37333 bit/s: the
  * digital modem's baseline follower took the codec's quantising error at the
- * large points for a baseline (PROGRESS.md, answer-fix 1).
+ * large points for a baseline (docs/history/PROGRESS.md, answer-fix 1).
  * Host: 108 calls; TEST_SHORT (32-bit ARM under qemu): seed 100. */
 #include <stdio.h>
 #include <inttypes.h>

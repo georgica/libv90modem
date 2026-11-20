@@ -964,7 +964,7 @@ static void jd92_bit(v90a_t *a, const v90arx_dec_t *d)
              * pad and robbed bit lines, back during TRN2d), moving our
              * symbols while the digital modem measures them for CPd. The
              * clock from L2 is within 0.1 ppm: the loop stands until Ri-bar
-             * (PROGRESS.md, robust 2b). V.90's clock comes from Sd (off by up
+             * (docs/history/PROGRESS.md, robust 2b). V.90's clock comes from Sd (off by up
              * to 1.6 ppm) and nothing follows it: its loop runs on. */
             v90arx_timing_hold(&a->rx, 1);
             return;

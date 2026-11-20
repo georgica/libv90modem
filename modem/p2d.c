@@ -24,7 +24,7 @@ static void send_info0d(p2d_t *p, int ack)
     uint8_t bits[INFO_MAX_BITS];
     int k, n;
     for (k = 0; k < (int)sizeof i; k++) ((uint8_t *)&i)[k] = 0;
-    /* bits 15..18 describe a V.34 transmitter; see PROGRESS.md (V.34 fallback) */
+    /* bits 15..18 describe a V.34 transmitter; see v90d's PROGRESS.md (V.34 fallback) */
     i.lo3000 = i.hi3000 = i.lo3200 = i.hi3200 = 1;
     i.max_sr_diff = 5;
     i.ack = (uint8_t)ack;

@@ -110,7 +110,7 @@ int main(void)
      * it without error. Our own V.22bis answerer, in the same channel, trains
      * on this caller at 2400 bit/s down to -32 dBFS; spandsp's caller trains
      * with our answerer at -38 dBFS (interop_v22bis_spandsp). Not explained:
-     * PROGRESS.md, C2. */
+     * docs/history/PROGRESS.md, C2. */
     printf("  finding, not checked:\n");
     run(2400, -38, 0.35, 0);
     T_REPORT("interop_orig_v22bis_spandsp");

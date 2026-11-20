@@ -12,7 +12,7 @@
  * V.90 fallback (the answerer without V.92; our V.92 off), cleardown from
  * either end, and, reported only, the upstream through the downstream's own
  * loop response (whose low frequency tail outlasts the answerer's channel
- * estimate, see PROGRESS.md). */
+ * estimate, see docs/history/PROGRESS.md). */
 #include <stdio.h>
 #include <inttypes.h>
 #include "test.h"
@@ -76,7 +76,7 @@ int main(void)
         { "6 km, -100 ppm, -75 dBm0",            6, -100, -75, 0, 0, 0, 41333 },
         { "4 km,  +50 ppm, -65 dBm0",            4,   50, -65, 0, 0, 0, 37333 },
         { "2 km,  +30 ppm, 3 dB pad",            2,   30, -75, 3, 0, 0, 42666 },   /* 44000 .. 48000 with Te
-                                   alone (PROGRESS.md, robust 2a, 2b) */
+                                   alone (docs/history/PROGRESS.md, robust 2a, 2b) */
         { "2 km,  -30 ppm, 6 dB pad",            2,  -30, -75, 6, 0, 0, 40000 },
         { "2 km,  +30 ppm, robbed bit",          2,   30, -75, 0, 1, 0, 41333 },
         { "2 km,  +30 ppm, 6 dB pad, robbed bit", 2,  30, -75, 6, 1, 0, 37333 },

@@ -86,7 +86,7 @@ if [ "${1:-}" = --one ]; then
     # 32-bit x86 the test harness's doubles (the simulated line, sim/) are
     # computed in SSE2, not in the x87's 80 bits, which round differently
     # and so feed the modem a different line; the modem itself is integer
-    # code that these flags do not change (see PROGRESS.md, "ports-2")
+    # code that these flags do not change (see docs/history/PROGRESS.md, "ports-2")
     extra="-DTEST_FULL"
     case "$cc" in *mingw*) extra="$extra -D__USE_MINGW_ANSI_STDIO=1" ;; esac
     case "$name" in i686-*|win32-*) extra="$extra -msse2 -mfpmath=sse" ;; esac

@@ -1,6 +1,6 @@
 /* V.90 / V.34 Phase 2 INFO frame codec. See info.h.
  *
- * Spec reading (flagged in PROGRESS.md): Figure 14/V.34 draws the CRC register
+ * Spec reading (flagged in v90d's PROGRESS.md): Figure 14/V.34 draws the CRC register
  * with cells 15..0, the data entering at the bit-0 end and gaps after cells 11
  * and 4. Read as: feedback = data XOR bit 0; the register shifts towards bit
  * 0; the feedback enters cells 15, 10 and 3. That is x^16+x^12+x^5+1 in the

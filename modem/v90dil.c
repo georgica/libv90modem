@@ -29,7 +29,7 @@ void v90dil_design(v90_dil_t *d, int uinfo)
      * residual interference, deterministic in a pattern that repeats every
      * pass, so not averaged out) stood in the means of Ucodes 0 to 6 at up
      * to 160 units on a 0 km line, where their true levels are 0 to 50:
-     * CP then took such a Ucode as its smallest point (PROGRESS.md, robust) */
+     * CP then took such a Ucode as its smallest point (docs/history/PROGRESS.md, robust) */
     for (i = 0; i < V90DIL_NU; i++) d->train[i] = (uint8_t)(i < V90DIL_NU / 2 ? 2 * i : 2 * (V90DIL_NU - 1 - i) + 1);
 }
 
@@ -225,7 +225,7 @@ int v90dil_analyse_step(v90dil_an_t *an, v90dil_res_t *r)
          * the REF symbols or not), a gain of its own of up to +-0.9 % (measured
          * on 2 km with a 3 dB pad: intervals 0..2 low, 3..5 high), which at a
          * pad's codeword spacing was enough to snap a level to its neighbour
-         * (PROGRESS.md, robust 2b). The codeword is found with the interval's
+         * (docs/history/PROGRESS.md, robust 2b). The codeword is found with the interval's
          * gain, held within 3 % of the common one; its level is the common
          * gain's. One interval a step. */
         int it;

@@ -159,7 +159,9 @@ typedef struct {
                                        holds it at 33333. V.32bis (either role): one rate both ways,
                                        under the lower of the two. V.21, V.22, V.22bis, Bell: unused */
     int            echo_delay;      /* samples from a sample leaving to its echo starting back (the
-                                       driver's buffering), >= 0; -1 = measure it in every start-up */
+                                       driver's buffering), >= 0; -1 = measure it in every start-up.
+                                       Calling V.90 / V.92: never measured, used as given, 0 .. 511
+                                       (-1 is taken as 0, more as 511) */
     v90m_getbit_fn getbit;
     v90m_putbit_fn putbit;
     v90m_event_fn  on_event;        /* may be NULL: poll v90m_get_state() instead */

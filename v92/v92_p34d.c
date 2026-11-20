@@ -351,7 +351,7 @@ static uint32_t qvar(const v92d_t *p, int32_t a)
  *   - The decision's reliability: an error beyond a quarter of the spacing
  *     on its side may be a wrong decision, which moves the baseline away
  *     from the truth and makes the next wrong decision likelier (bursts of
- *     upstream errors at the top rates, PROGRESS.md answer-fix 1). Its step
+ *     upstream errors at the top rates, docs/history/PROGRESS.md answer-fix 1). Its step
  *     falls linearly to nothing at half the spacing.
  * Where the errors are small (the baseline followed, the decisions right)
  * this is the plain eighth. With a linear codec (cfg.rx_linear) it is the
