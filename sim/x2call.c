@@ -197,7 +197,7 @@ static void rec_bit(x2call_t *c, int bit)
         c->rb[c->rn++] = (uint8_t)bit;
         if (c->rn == X2REC_BITS(3)) {
             uint16_t w[3];
-            if (x2rec_parse(c->rb, c->rn, w, 3) == 3 && w[0] == 0xF33C && w[1] == 0x7FFF && w[2] == 0) c->seen.rec_good++;
+            if (x2rec_parse(c->rb, c->rn, w, 3) == 3 && w[0] == 0xF33C && w[1] == 0x0001 && w[2] == 0) c->seen.rec_good++;
             else c->seen.rec_bad++;
             c->rn = 0;
         }

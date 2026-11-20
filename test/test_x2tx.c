@@ -6,6 +6,7 @@
 #include <string.h>
 #include "test.h"
 #include "../modem/x2tx.h"
+#include "../modem/x2d.h"
 #include "../modem/x2rec.h"
 #include "../modem/x2tab.h"
 #include "../v90/v90_scr.h"
@@ -120,7 +121,9 @@ int main(void)
         CHECK_EQ_I(frames, X2TX_SYNC_MIN / 6); CHECK_EQ_I(notlv, 0); CHECK_EQ_I(ones, nbits);
         CHECK_EQ_I(T.seg, X2TX_REC);
 
-        /* the record: 4 frames in levels A, F33C 7FFF 0000 with its CRC,
+        /* the record: 4 frames in levels A, F33C 0001 0000 with its CRC
+         * (word 1: the rate indices we have banks for, bit n - 1 for index
+         * n as the MP's word 1: index 1 alone; x2-facts.md "Records"),
          * zeros to 96 bits; whole records until go */
         {
             uint8_t rb[96]; uint16_t w[3];
@@ -132,14 +135,15 @@ int main(void)
                 for (i = 0; i < 24; i++) rb[j * 24 + i] = (uint8_t)v90_descramble_gpc(&D, bits[i]);
                 if (++j == 4) {
                     nrec++; j = 0;
-                    if (x2rec_parse(rb, 96, w, 3) == 3 && w[0] == 0xF33C && w[1] == 0x7FFF && w[2] == 0) good++;
+                    if (x2rec_parse(rb, 96, w, 3) == 3 && w[0] == 0xF33C && w[1] == 0x0001 && w[2] == 0) good++;
                     for (i = X2REC_BITS(3); i < 96; i++) if (rb[i]) pad_ok = 0;
                 }
                 if (nrec == 3 && j == 1) x2tx_go(&T);     /* in the middle of the fourth */
                 for (i = 0; i < 6; i++) fr[i] = x2tx_tick(&T);
                 if (T.seg != X2TX_REC) break;
             }
-            printf("  x2tx records: %d sent, %d decode as F33C 7FFF 0000\n", nrec, good);
+            printf("  x2tx records: %d sent, %d decode as F33C 0001 0000\n", nrec, good);
+            CHECK_EQ_I(X2TX_REC_W1, 0x0001); CHECK_EQ_I(X2D_RATE_MASK, X2TX_REC_W1);
             CHECK_EQ_I(nrec, 4); CHECK_EQ_I(good, 4); CHECK(pad_ok); CHECK_EQ_I(j, 0);
             CHECK_EQ_I(T.seg, X2TX_START);
         }

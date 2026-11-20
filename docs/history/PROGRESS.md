@@ -2846,3 +2846,15 @@ test_x2tx and test_answer_x2 print what gcc's do.
 Replay proof (every live-050 recording, 106; v90m-replay at 109c2d0
 against this branch; flags "", "-9", "-x", "-x -9"): all four
 comparisons identical, .bits included.
+
+Review fix (x2 6): our record's word 1 named every rate index (the
+I-modem's 7FFF) against the design's "our record's rate mask names only
+the indices that have banks". Against the emulated Courier at PAD=0: 0001
+behaves as 7FFF (CONNECT 48000, V.42 up, the rate change at 12.1 s; PAD=3
+CONNECT 50666 too); 0002 never gets a CONNECT from it and it hangs up 7.1
+s into our data mode. Word 1 is now 0001, bit n - 1 for index n (the MP's
+word 1 convention), and X2D_RATE_MASK is that same word, so the record
+and the check of the client's MP agree (the 0x0002 / bit n above is
+superseded). x2-facts.md "Records" has the runs; 48000 and 50666 are the
+rates of index 9 and 11. test_x2tx pins the word; test_answer_x2's record
+check in sim/x2call follows.

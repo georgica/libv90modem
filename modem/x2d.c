@@ -114,7 +114,7 @@ static void on_mp(x2d_t *d, const uint16_t *w)
     d->pad_mode = x2_mp_pad(w[0]);
     /* the exact index asked for, and only one we have a bank for ("Rate
      * change": a client given another rate's levels hangs up) */
-    if (d->index > 15 || !((X2D_RATE_MASK >> d->index) & 1)) { end(d, X2D_ERR_RATE); return; }
+    if (d->index < 1 || !((X2D_RATE_MASK >> (d->index - 1)) & 1)) { end(d, X2D_ERR_RATE); return; }
     if (d->pad_mode > 2) { end(d, X2D_ERR_PAD); return; }
     d->up_rate = pick_up_rate(d, w[1]);
     if (!d->up_rate) { end(d, X2D_ERR_UP); return; }

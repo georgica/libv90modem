@@ -264,9 +264,26 @@ place of the next sync. **RE (D-Modem, courier-emu)**. Fields (**RE
 
 The server's record: 3 words `F33C 7FFF 0000` (bit 15 of word 0 the
 acknowledge; `733C` without it), padded with zeros to 96 bits (4 frames of
-24 bits); the meaning of the other bits is not known. **RE (D-Modem,
+24 bits); the meaning of the other bits is not known. We send word 1 as `0001`: see "Our record's word 1" below. **RE (D-Modem,
 courier-emu)**. The words are not in the DSP image (the host supplies
 them); **our disassembly** found no `f33c`/`733c` word there.
+
+Our record's word 1 (**derived**, and the Courier runs of "Harness"):
+the I-modem's `7FFF` has one bit for each of the 15 rate indices, which
+makes word 1 the likeliest place for the downstream rates the server
+offers. The design asks our record to name only the indices we have banks
+for; we send `0001`: bit n - 1 for index n, as in the MP's word 1 (its
+upstream mask). Against the emulated Courier (2026-11-20, PAD=0):
+- `0001`: as with `7FFF` in every respect: CONNECT 48000 (50666 at
+  PAD=3), V.42 up, its rate change 12.1 s into data mode.
+- `0002`: the Courier never prints CONNECT; our data mode starts, V.42
+  never comes up, and the Courier hangs up 7.1 s later (NO CARRIER).
+So the Courier reads word 1 (`0002` alone fails), and bit 0 is the bit it
+needs for index 1, which agrees with the n - 1 convention. What else it
+does with the field is not confirmed: its CONNECT figure and its rate
+change do not move with it. 48000 and 50666 are exactly the rates of
+index 9 and index 11 ("Banks"), so the rate change presumably asks for one
+of those from what it measured itself, not from our record.
 
 Sequence (**RE (D-Modem)**): the client sends Phase 4 (S, S-bar, TRN at 4
 then 16 points), its MP until our record has been decoded, then MP', then
@@ -566,9 +583,11 @@ data mode both ways with V.42 LAPM up.
   non-linear encoding, shaping; at 24000 (its mask `03FE`).
 - Its CONNECT figure is not our downstream rate (index 1: 32000 payload,
   33333 as USR prints it): 48000 and 50666 here, against the same
-  downstream. Presumably what its own measurement of the line allows
-  (courier-emu: its MP keeps a measured ceiling and asks for index 1 at
-  start-up). Not settled.
+  downstream; they are the rates of index 9 and index 11 ("Banks").
+  Presumably what its own measurement of the line allows (courier-emu: its
+  MP keeps a measured ceiling and asks for index 1 at start-up). These
+  runs sent our record's word 1 as the I-modem's `7FFF`; with `0001` the
+  figures are the same ("Records", our record's word 1). Not settled.
 - The first field of x2 Status follows the pad (`0000`, `0001`, `0010`):
   presumably the pad it measured, as its MP reports it.
 - 12.1 s after our CONNECT (12.6 s after the start segment's data levels

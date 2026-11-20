@@ -39,9 +39,14 @@ typedef enum {
 #define X2TX_SYNC_MIN 10002     /* octets of sync frames at least */
 #define X2TX_START_FRAMES 681
 #define X2TX_REC_BITS 96        /* our record, padded with zeros to 4 frames */
-#define X2TX_REC_W0   0xF33C    /* our record's words (sent as the I-modem sends them;
-                                   word 0 bit 15 the acknowledge) */
-#define X2TX_REC_W1   0x7FFF
+/* our record's words: word 0 and 2 as the I-modem sends them (word 0 bit
+ * 15 the acknowledge); word 1 the downstream rate indices we have level
+ * banks for, bit n - 1 for index n as in the MP's word 1 (the I-modem's
+ * 7FFF names all 15). Index 1 alone. The Courier takes 0001 as it takes
+ * 7FFF and hangs up on 0002 (x2-facts.md "Records"); what it does with the
+ * field is not known. */
+#define X2TX_REC_W0   0xF33C
+#define X2TX_REC_W1   0x0001
 #define X2TX_REC_W2   0x0000
 
 typedef int (*x2tx_getbit_fn)(void *user);

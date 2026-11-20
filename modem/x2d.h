@@ -14,8 +14,9 @@
  *   encoding), through qamrx and v34/ as in p34d.
  *
  * The client's MP decides: the downstream rate index it asks for (only an
- * index we have a bank for, X2D_RATE_MASK), the digital pad it measured (0,
- * 3 or 6 dB), and the upstream rates it can send (the highest, at most
+ * index we have a bank for, X2D_RATE_MASK, which our record names), the
+ * digital pad it measured (0, 3 or 6 dB), and the upstream rates it can
+ * send (the highest, at most
  * 28800, is taken). Anything else ends the call: once the marker has come
  * there is no way back to V.34. So does a client that goes silent, at any
  * point, within the time limits below (all well under 10 s). A client's
@@ -36,8 +37,9 @@
 typedef int  (*x2d_getbit_fn)(void *user);
 typedef void (*x2d_putbit_fn)(void *user, int bit);
 
-/* the downstream rate indices we have level banks for: bit n = index n */
-#define X2D_RATE_MASK 0x0002u
+/* the downstream rate indices we have level banks for, bit n - 1 for index
+ * n: what our record says (word 1), and what the client's MP may ask for */
+#define X2D_RATE_MASK X2TX_REC_W1
 #define X2D_MAX_ECHO_DELAY 1919     /* the longest echo delay that can be given (as p34d) */
 #define X2D_FBUF 128                /* an MP (X2REC_BITS(4)) and then some */
 
