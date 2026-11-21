@@ -19,7 +19,13 @@ typedef struct {
     int preemph[6];         /* pre-emphasis filter index per symbol rate */
     int max_rate[6];        /* projected rate per symbol rate in 2400 bit/s units; -1 = from
                                the probing, 0 = cannot be used */
+    int k56;                /* INFO1c's frequency offset (bits 79:88) as a K56flex client sends
+                               it (k56-facts.md "Phase 2"): P2C_K56_ACCEPT 0x001, mu-law and its
+                               codec check passed; P2C_K56_DECLINE 0x200; 0 = the offset measured */
 } p2c_cfg;
+
+#define P2C_K56_ACCEPT  1
+#define P2C_K56_DECLINE 2
 
 typedef enum {
     P2C_INFO0, P2C_WAIT_REV1, P2C_REPLY1, P2C_WAIT_REV2, P2C_RECOVER, P2C_PROBE_RX,

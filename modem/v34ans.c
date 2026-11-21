@@ -13,6 +13,7 @@ static void p2_cfg(const v34ans_t *a, p2ans_cfg *c)
     c->sr_mask = a->cfg.sr_mask;
     c->max_rate = a->cfg.max_rx_rate;
     c->x2 = a->cfg.x2;
+    c->k56 = a->cfg.k56;
 }
 
 void v34ans_init(v34ans_t *a, const v34ans_cfg *cfg)
@@ -76,6 +77,10 @@ int16_t v34ans_tick(v34ans_t *a, int16_t rx)
             end(a, V34A_ERR_PHASE2);
         } else if (a->p2.state == P2N_X2) {
             a->state = V34A_X2;
+        } else if (a->p2.state == P2N_K56) {
+            a->info0c = a->p2.info0c; a->have0c = 1;
+            a->retrains += a->p2.retrains; a->retrains_ours += a->p2.retrains;
+            a->state = V34A_K56;
         }
         break;
     case V34A_TRAINING:

@@ -4,8 +4,12 @@
  * Review Focus 1 and 2). K56flex, V.34 and V.90 offered unless said.
  *   - the simulated client (sim/k56call) over a digital link, the whole
  *     V.8bis exchange, its CM V.34 only: agreed, JM selects V.34, with x2
- *     offered too no JM flip and no x2 INFO0a bits, and (until the K56flex
- *     start-up exists) V.34 at the rates of the same call without K56flex;
+ *     offered too no JM flip and no x2 INFO0a bits; its INFO1c 0x001 at
+ *     3200 baud: our INFO1a flagged, ANS_K56, and (until the K56flex
+ *     start-up exists, Task 6) the call ends with k56_failed within 100 ms;
+ *   - Review Focus 3: the agreed client with INFO1c 0x200, or one that
+ *     cannot transmit at 3200 baud: INFO1a unflagged, V.34 at the rates of
+ *     the same client without K56flex;
  *   - the same client with CRd and no MS (a V.8bis caller without K56flex,
  *     Review Focus 1): our ANSam 1700 ms (+-20) after our CL ended (V.8bis
  *     done at 1500 ms, then v8ans' own 200 ms of silence), not agreed,
@@ -92,7 +96,12 @@ typedef struct {
     int ok, mod, down, up;
     int agreed, sel, x2, sr_diff, cme;
     long bad;
+    long k56_at, flag_at, end_at;   /* our ANS_K56, the client's VP_K56 (it took our INFO1a
+                                       flagged), ANS_FAILED: samples, -1 none */
+    int info1a_off, sym;            /* the INFO1a offset the client received, the symbol rate */
 } k_outcome;
+
+static int K_INFO1C = 1, K_UP3000 = 0;  /* the client's options (k56call_cfg), for k_call */
 
 static void k_call(unsigned modes, int v8bis, int cm_pcm, int secs, k_outcome *o)
 {
@@ -109,16 +118,20 @@ static void k_call(unsigned modes, int v8bis, int cm_pcm, int secs, k_outcome *o
     ac.level = 3000; ac.modes = modes; ac.getbit = p_get; ac.putbit = p_put; ac.user = &UA;
     answer_init(&A, &ac);
     answer_v90_line(&A, 0, 0, 0);
-    memset(&kc, 0, sizeof kc);
-    kc.level = 3000; kc.v8bis = v8bis; kc.cm_pcm = cm_pcm;
+    k56call_default(&kc, 3000);
+    kc.v8bis = v8bis; kc.cm_pcm = cm_pcm;
+    kc.info1c_k56 = K_INFO1C; kc.up_sr_3000 = K_UP3000;
     kc.getbit = p_get; kc.putbit = p_put; kc.user = &UC;
     k56call_init(&K, &kc);
     p1_reset();
+    o->k56_at = o->flag_at = o->end_at = -1;
     for (n = 0; n < 8000L * secs; n++) {
         int i = (int)(n & (XD - 1));
         double v;
         uint8_t atx = answer_tick_pcm(&A, arx);
         p1_watch(n);
+        if (A.phase == ANS_K56 && o->k56_at < 0) o->k56_at = n;
+        if (A.phase == ANS_FAILED && o->end_at < 0) o->end_at = n;
         down[i] = atx;
         dl[i] = (double)ulaw_to_linear(atx);
         up[i] = k56call_tick(&K, down[(n - d_ac) & (XD - 1)]);
@@ -127,6 +140,7 @@ static void k_call(unsigned modes, int v8bis, int cm_pcm, int secs, k_outcome *o
             + 0.12 * dl[(n - 2) & (XD - 1)] + 0.08 * dl[(n - 4) & (XD - 1)] - 0.05 * dl[(n - 9) & (XD - 1)]
             + 2.0 * rng_gauss(&rng);
         arx = linear_to_ulaw((int32_t)lround(v));
+        if (K.state == K56C_V34 && K.peer.state == VP_K56 && o->flag_at < 0) o->flag_at = n;
         if (A.phase == ANS_FAILED || K.state == K56C_ENDED) break;
         if (cm_pcm && A.phase == ANS_P2) break;
         /* in data: BITS each way, from 1 s into it */
@@ -142,6 +156,7 @@ static void k_call(unsigned modes, int v8bis, int cm_pcm, int secs, k_outcome *o
     o->mod = A.modulation; o->down = A.bitrate; o->up = A.rx_bitrate;
     o->bad = UA.bad + UC.bad;
     if (UA.n < BITS || UC.n < BITS) o->bad = -1;
+    o->info1a_off = K.peer.p2.info1a.freq_off; o->sym = A.v34.p2.sym_rate;
 }
 
 static void k_report(const char *what, const k_outcome *o)
@@ -163,9 +178,15 @@ static void k56_client_tests(void)
     CHECK(o0.ok); CHECK_EQ_I(o0.bad, 0); CHECK_EQ_I(o0.agreed, 0);
     CHECK_EQ_I(K.got_cre, 0); CHECK_EQ_I(K.got_cl, 0);
 
-    /* the whole exchange, x2 offered too: agreed, x2 not offered in the call */
+    /* the whole exchange, x2 offered too: agreed, x2 not offered in the
+     * call; INFO1c 0x001, 3200 baud: our INFO1a flagged, the point of no
+     * return, and (until the K56flex engine, Task 9) the end at once */
     k_call(BASE | ANS_MODE_K56 | ANS_MODE_X2, K56C_V8BIS_FULL, 0, 40, &o1);
     k_report("K56flex client, K56flex and x2 offered", &o1);
+    printf("     our ANSam %.3f s after answering (%.3f s without K56flex); INFO1a offset %d at %d baud,"
+           " ANS_K56 at %.3f s, the client took the flag at %.3f s, the call ended %.1f ms after that\n",
+           P1.ansam_at / 8000.0, ansam0 / 8000.0, o1.info1a_off, o1.sym, o1.k56_at / 8000.0, o1.flag_at / 8000.0,
+           (o1.end_at - o1.flag_at) / 8.0);
     CHECK_EQ_I(A.k56_offered, 1);
     CHECK_EQ_I(K.got_cre, 1); CHECK_EQ_I(K.got_cl, 1); CHECK_EQ_I(K.cl_ok, 1);
     CHECK_EQ_I(K.sent_ms, 1); CHECK_EQ_I(K.got_ack, 1); CHECK_EQ_I(K.got_nak, 0);
@@ -174,9 +195,38 @@ static void k56_client_tests(void)
     CHECK_EQ_I(o1.x2, 0); CHECK_EQ_I(P1.flipped, 0);
     CHECK_EQ_I(o1.sr_diff, o0.sr_diff); CHECK_EQ_I(o1.cme, o0.cme);
     CHECK_EQ_I(A.v34.cfg.x2, 0); CHECK_EQ_I(A.v34.cfg.k56, 1);
-    CHECK(o1.ok); CHECK_EQ_I(o1.mod, ANS_MOD_V34);
-    CHECK_EQ_I(o1.down, o0.down); CHECK_EQ_I(o1.up, o0.up); CHECK_EQ_I(o1.bad, 0);
-    printf("     our ANSam %.3f s after answering (%.3f s without K56flex)\n", P1.ansam_at / 8000.0, ansam0 / 8000.0);
+    CHECK_EQ_I(A.v34.p2.k56, 1); CHECK_EQ_I(A.v34.state, V34A_K56);
+    CHECK_EQ_I(o1.info1a_off, 1); CHECK_EQ_I(o1.sym, 3200);
+    CHECK_EQ_I(K.peer.state, VP_K56);
+    CHECK(o1.k56_at > 0); CHECK(o1.flag_at > 0); CHECK(o1.end_at >= o1.k56_at);
+    CHECK(o1.end_at - o1.flag_at <= MS(100));
+    CHECK_EQ_I(A.phase, ANS_FAILED); CHECK_EQ_I(A.k56_failed, 1); CHECK_EQ_I(A.x2_failed, 0);
+    CHECK_EQ_I(A.connected, 0); CHECK(!o1.ok);
+
+    /* Review Focus 3: agreed, but its INFO1c is 0x200 (its codec check
+     * failed), or it cannot transmit at 3200 baud: INFO1a unflagged, V.34
+     * at the rates the same client gets without K56flex */
+    {
+        int j;
+        k_outcome r3;
+        for (j = 0; j < 2; j++) {
+            K_INFO1C = j == 0 ? 0 : 1; K_UP3000 = j;
+            k_call(BASE, K56C_V8BIS_FULL, 0, 40, &r3);
+            k_call(BASE | ANS_MODE_K56, K56C_V8BIS_FULL, 0, 40, &o2);
+            k_report(j ? "agreed K56flex client, 3000 baud up at most" : "agreed K56flex client, INFO1c 0x200", &o2);
+            printf("     INFO1a offset %d at %d baud (without K56flex: %d / %d bit/s, offset %d at %d baud)\n",
+                   o2.info1a_off, o2.sym, r3.down, r3.up, r3.info1a_off, r3.sym);
+            CHECK(r3.ok); CHECK_EQ_I(r3.agreed, 0);
+            CHECK_EQ_I(o2.agreed, 1); CHECK_EQ_I(K.got_ack, 1);
+            CHECK_EQ_I(A.v34.p2.k56, 0); CHECK_EQ_I(o2.k56_at, -1); CHECK_EQ_I(A.k56_failed, 0);
+            CHECK(o2.info1a_off != 1);
+            CHECK_EQ_I(o2.info1a_off, p2ans_k56_nudge(r3.info1a_off));
+            CHECK_EQ_I(o2.sym, j ? 3000 : 3200); CHECK_EQ_I(o2.sym, r3.sym);
+            CHECK(o2.ok); CHECK_EQ_I(o2.mod, ANS_MOD_V34);
+            CHECK_EQ_I(o2.down, r3.down); CHECK_EQ_I(o2.up, r3.up); CHECK_EQ_I(o2.bad, 0);
+        }
+        K_INFO1C = 1; K_UP3000 = 0;
+    }
 
     /* Review Focus 1: CRd, then no MS (a V.92 modem) */
     k_call(BASE | ANS_MODE_K56, K56C_V8BIS_NO_MS, 0, 40, &o2);

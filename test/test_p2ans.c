@@ -1,7 +1,8 @@
 /* V.34 Phase 2, answer modem (modem/p2ans) against the call-side test peer
  * (sim/p2c) over a delayed, attenuated, noisy, echoing, band-limited path:
  * INFO contents, the timings 11.2.1.2 gives, the symbol rate decision in
- * INFO1a, the recovery procedures of 11.2.2.2 and the retrain entry. */
+ * INFO1a, the recovery procedures of 11.2.2.2 and the retrain entry; x2's
+ * marker; K56flex's INFO1a flag and offset nudge (k56 design, decision 6). */
 #include <string.h>
 #include <math.h>
 #include "test.h"
@@ -31,6 +32,7 @@ typedef struct {
      * marker frame with body mk_body goes out on its carrier (1200 Hz); 0 =
      * no marker. mk_bad: one CRC bit inverted. */
     int mk_at, mk_body, mk_bad, mk_nofill;
+    double foff;            /* Hz: the caller -> answer path shifts every frequency by this */
 } scen_t;
 
 /* our transmit from the start of our first L1 on, per run slot */
@@ -47,6 +49,8 @@ typedef struct {
     int l1_at, x2_at;       /* sample of our first L1, of P2N_X2; -1 = none */
     int ntx;                /* samples in txlog[g_slot] */
     int x2_quiet;           /* nothing sent from 10 ms after P2N_X2 on */
+    int k56_at;             /* sample of P2N_K56, -1 = none */
+    int k56_quiet;          /* nothing sent from P2N_K56 on */
 } run_t;
 
 static double lp[NLP];
@@ -61,8 +65,23 @@ static void lp_design(double fc)
     for (k = 0; k < NLP; k++) lp[k] /= s;
 }
 
+/* a frequency shift: the analytic signal (a windowed Hilbert transformer
+ * of NH taps, and the input delayed to its centre) turned by foff */
+#define NH 127
+static double hb[NH];
+static void hb_design(void)
+{
+    int k;
+    for (k = 0; k < NH; k++) {
+        int t = k - (NH - 1) / 2;
+        double w = 0.54 - 0.46 * cos(2 * M_PI * k / (NH - 1));
+        hb[k] = (t & 1) ? 2.0 / (M_PI * t) * w : 0.0;
+    }
+}
+
 static void run(const scen_t *s, run_t *r, const p2ans_cfg *ac, const p2c_cfg *cc)
 {
+    static double hx[MAXD];
     static int16_t lca[MAXD], lac[MAXD], ltx[MAXD]; static double lrx[MAXD];
     rng_t rng;
     int16_t atx = 0, ctx = 0;
@@ -72,8 +91,9 @@ static void run(const scen_t *s, run_t *r, const p2ans_cfg *ac, const p2c_cfg *c
     int nmk = 0, mk_off = 0;
 
     memset(lca, 0, sizeof lca); memset(lac, 0, sizeof lac);
-    memset(ltx, 0, sizeof ltx); memset(lrx, 0, sizeof lrx);
+    memset(ltx, 0, sizeof ltx); memset(lrx, 0, sizeof lrx); memset(hx, 0, sizeof hx);
     if (s->lp_hz > 0) lp_design(s->lp_hz);
+    if (s->foff != 0) hb_design();
     memset(r, 0, sizeof *r);
     if (s->retrain) {
         info0_t i0 = cc->info0c;
@@ -86,6 +106,7 @@ static void run(const scen_t *s, run_t *r, const p2ans_cfg *ac, const p2c_cfg *c
     rng_seed(&rng, 2024);
     r->a_done_at = r->c_done_at = -1;
     r->l1_at = r->x2_at = -1; r->x2_quiet = 1;
+    r->k56_at = -1; r->k56_quiet = 1;
     if (s->mk_at) {
         dpsktx_init(&mk, DPSK_FC_B, cc->level, 0);
         nmk = p2ans_x2_info_frame((uint8_t)s->mk_body, mkbits);
@@ -105,6 +126,12 @@ static void run(const scen_t *s, run_t *r, const p2ans_cfg *ac, const p2c_cfg *c
         } else {
             xa = s->g_ca * lca[(i - s->d_ca + MAXD) % MAXD];
         }
+        if (s->foff != 0) {
+            double h = 0, ph = 2 * M_PI * s->foff * i / 8000.0;
+            hx[i % MAXD] = xa;
+            for (k = 0; k < NH; k += 2) h += hb[k] * hx[(i - k + MAXD) % MAXD];    /* (odd k: 0) */
+            xa = hx[(i - (NH - 1) / 2 + MAXD) % MAXD] * cos(ph) - h * sin(ph);
+        }
         xc = s->g_ac * lac[(i - s->d_ac + MAXD) % MAXD];
         if (i >= s->mute_ca_from && i < s->mute_ca_to) xa = 0;
         if (i >= s->mute_ac_from && i < s->mute_ac_to) xc = 0;
@@ -118,6 +145,8 @@ static void run(const scen_t *s, run_t *r, const p2ans_cfg *ac, const p2c_cfg *c
         if (r->a.state == P2N_L1 && r->l1_at < 0) { r->l1_at = i; if (s->mk_at) r->c.mute = 1; }
         if (r->a.state == P2N_X2 && r->x2_at < 0) r->x2_at = i;
         if (r->x2_at >= 0 && i > r->x2_at + 80 && atx != 0) r->x2_quiet = 0;
+        if (r->a.state == P2N_K56 && r->k56_at < 0) r->k56_at = i;
+        if (r->k56_at >= 0 && atx != 0) r->k56_quiet = 0;
         if (r->l1_at >= 0 && r->ntx < TXLOG) txlog[g_slot][r->ntx++] = atx;
         ctx = p2c_tick(&r->c, (int16_t)xc);
         if (s->mk_at && r->l1_at >= 0) {
@@ -137,6 +166,7 @@ static void run(const scen_t *s, run_t *r, const p2ans_cfg *ac, const p2c_cfg *c
         if (r->a.state == P2N_FAILED) break;
         if (r->a.state == P2N_DONE && r->c.state == P2C_DONE) break;
         if (r->x2_at >= 0 && i > r->x2_at + 8000) break;
+        if (r->k56_at >= 0 && i > r->k56_at + 8000) break;
     }
     r->n = i;
 }
@@ -152,6 +182,22 @@ static void caller_cfg(p2c_cfg *cc)
     cc->hi_carrier_mask = 1 << 4;                   /* high carrier at 3200 only */
     for (k = 0; k < 6; k++) { cc->preemph[k] = k + 1; cc->max_rate[k] = -1; }
     cc->min_pwr_red = 2; cc->add_pwr_red = 3; cc->md_len = 0;
+}
+
+/* INFO1a as the caller received it: the same, but for the frequency offset */
+static int same_info1a(const info1a_t *x, const info1a_t *y)
+{
+    return x->v90 == y->v90 && x->md_len == y->md_len && x->up_sr == y->up_sr && x->down_sr == y->down_sr
+        && x->min_pwr_red == y->min_pwr_red && x->add_pwr_red == y->add_pwr_red
+        && x->hi_carrier == y->hi_carrier && x->preemph == y->preemph && x->max_rate == y->max_rate;
+}
+
+static int same_txlog(const run_t *x, const run_t *y)
+{
+    int k;
+    if (x->ntx != y->ntx) return 0;
+    for (k = 0; k < x->ntx; k++) if (txlog[0][k] != txlog[1][k]) return 0;
+    return 1;
 }
 
 int main(void)
@@ -494,6 +540,132 @@ int main(void)
         CHECK(same);
         s = keep;
         ac.x2 = 0; g_slot = 0;
+    }
+
+    /* ---- K56flex (k56 design, decision 6; k56-facts.md "Phase 2") ---- */
+    {
+        scen_t keep = s;
+        static run_t r0;
+        uint8_t b[INFO_MAX_BITS];
+        int n, k, hit_pos = 0, hit_neg = 0;
+        /* the offset nudge: a measured offset ending in binary 01 (which
+         * the client reads as K56flex) moves one step toward zero */
+        CHECK_EQ_I(p2ans_k56_nudge(5), 4); CHECK_EQ_I(p2ans_k56_nudge(-3), -2);
+        CHECK_EQ_I(p2ans_k56_nudge(1), 0); CHECK_EQ_I(p2ans_k56_nudge(-7), -6);
+        CHECK_EQ_I(p2ans_k56_nudge(-511), -510); CHECK_EQ_I(p2ans_k56_nudge(509), 508);
+        {
+            static const int same[] = { 0, 2, 3, 4, 6, 7, -1, -2, -4, -5, -6, 511, -512, 510 };
+            for (k = 0; k < (int)(sizeof same / sizeof same[0]); k++) CHECK_EQ_I(p2ans_k56_nudge(same[k]), same[k]);
+        }
+
+        memset(&s, 0, sizeof s);
+        s.d_ca = 20; s.d_ac = 24; s.g_ca = 0.5; s.g_ac = 0.5; s.noise = 2.0;
+        caller_cfg(&cc);
+
+        /* an agreed client that sends INFO1c 0x001, 3200 selected: INFO1a
+         * bits 40:49 are 0x001; the rest of INFO1a and its timing are as
+         * without K56flex; after its last bit P2N_K56, and silence */
+        cc.k56 = P2C_K56_ACCEPT;
+        ac.k56 = 0; g_slot = 1;
+        run(&s, &r0, &ac, &cc);
+        ac.k56 = 1; g_slot = 0;
+        run(&s, &r, &ac, &cc);
+        printf("  p2ans K56flex flag: state %d, INFO1a offset %d, P2N_K56 at %.4f s (P2N_DONE without: %.4f s), %s\n",
+               (int)r.a.state, r.c.info1a.freq_off, r.k56_at / 8000.0, r0.a_done_at / 8000.0,
+               r.k56_quiet ? "silent from then" : "NOT SILENT");
+        CHECK_EQ_I(r.a.state, P2N_K56); CHECK_EQ_I(r.a.k56, 1); CHECK_EQ_I(r.a.error, 0);
+        CHECK_EQ_I(r.c.state, P2C_DONE);
+        CHECK_EQ_I(r.a.info1c.freq_off, 1);
+        CHECK_EQ_I(r.a.info1a.freq_off, 1); CHECK_EQ_I(r.c.info1a.freq_off, 1);
+        n = info1a_build(&r.a.info1a, b);
+        CHECK_EQ_I(n, INFO1A_BITS);
+        CHECK_EQ_I(b[40], 1);
+        for (k = 41; k <= 49; k++) CHECK_EQ_I(b[k], 0);
+        CHECK_EQ_I(r.a.sym_rate, 3200); CHECK_EQ_I(r.c.info1a.up_sr, 4); CHECK_EQ_I(r.c.info1a.down_sr, 4);
+        CHECK_EQ_I(r0.a.state, P2N_DONE); CHECK_EQ_I(r0.a.k56, 0);
+        CHECK(same_info1a(&r.c.info1a, &r0.c.info1a));
+        CHECK_EQ_I(r.k56_at, r0.a_done_at);
+        CHECK(r.k56_quiet); CHECK(r.n >= r.k56_at + 8000);
+        CHECK_EQ_I(r.a_done_at, -1);
+        /* the samples up to INFO1a's offset field are those of the call without */
+        {
+            int same = 1;
+            for (k = 0; k < r.ntx && k < r0.ntx && k < r0.a_done_at - r0.l1_at - 2000; k++)
+                if (txlog[0][k] != txlog[1][k]) same = 0;
+            CHECK(same);
+        }
+        /* ... and in the first Phase 2 of a retrain (11.5.2) */
+        s.retrain = 1;
+        run(&s, &r, &ac, &cc);
+        CHECK_EQ_I(r.a.state, P2N_K56); CHECK_EQ_I(r.a.k56, 1); CHECK_EQ_I(r.c.info1a.freq_off, 1);
+        s.retrain = 0;
+
+        /* an agreed client whose check failed: INFO1c 0x200. INFO1a as
+         * without K56flex, but for a measured offset ending in 01, moved one
+         * step toward zero. Over a few frequency offsets of the line. */
+        cc.k56 = P2C_K56_DECLINE;
+        {
+            static const double FO[] = { 0.0, 0.10, -0.06, 0.02, 0.08, -0.04, -0.14, 0.18 };
+            int j;
+            for (j = 0; j < (int)(sizeof FO / sizeof FO[0]); j++) {
+                int meas;
+                s.foff = FO[j];
+                ac.k56 = 0; g_slot = 1; run(&s, &r0, &ac, &cc);
+                ac.k56 = 1; g_slot = 0; run(&s, &r, &ac, &cc);
+                meas = r0.c.info1a.freq_off;
+                printf("  p2ans K56flex, INFO1c 0x200, line offset %+.2f Hz: measured %d, INFO1a %d (%s)\n",
+                       FO[j], meas, r.c.info1a.freq_off, same_txlog(&r, &r0) ? "the same samples" : "samples differ");
+                CHECK_EQ_I(r0.a.state, P2N_DONE); CHECK_EQ_I(r.a.state, P2N_DONE); CHECK_EQ_I(r.a.k56, 0);
+                CHECK_EQ_I(r.a.info1c.freq_off, -512);
+                CHECK_EQ_I(meas, proberx_freq_off(&r0.a.prx));
+                CHECK(same_info1a(&r.c.info1a, &r0.c.info1a));
+                CHECK_EQ_I(r.c.info1a.freq_off, p2ans_k56_nudge(meas));
+                if (((unsigned)meas & 3) == 1) {
+                    CHECK(r.c.info1a.freq_off != meas);
+                    if (meas > 0) hit_pos++; else hit_neg++;
+                } else {
+                    CHECK_EQ_I(r.c.info1a.freq_off, meas);
+                    CHECK(same_txlog(&r, &r0));
+                }
+            }
+            /* the sweep met the nudge both ways */
+            CHECK(hit_pos > 0); CHECK(hit_neg > 0);
+            s.foff = 0;
+        }
+
+        /* INFO1c 0x001, but 3200 is not selected: unflagged, as the case
+         * before. The client cannot transmit at 3200 (INFO0c), or we do not
+         * allow 3200. On a line 0.02 Hz off, measured as 1: nudged to 0. */
+        cc.k56 = P2C_K56_ACCEPT; s.foff = 0.02;
+        for (k = 0; k < 2; k++) {
+            if (k == 0) { cc.info0c.lo3200 = cc.info0c.hi3200 = 0; }
+            else { caller_cfg(&cc); cc.k56 = P2C_K56_ACCEPT; ac.sr_mask = P2N_SR_2400 | P2N_SR_3000; }
+            ac.k56 = 0; run(&s, &r0, &ac, &cc);
+            ac.k56 = 1; run(&s, &r, &ac, &cc);
+            printf("  p2ans K56flex, INFO1c 0x001, %s: %d symbols/s, state %d, INFO1a offset %d (measured %d)\n",
+                   k ? "3200 not allowed by us" : "the client cannot send 3200", r.a.sym_rate, (int)r.a.state,
+                   r.c.info1a.freq_off, r0.c.info1a.freq_off);
+            CHECK_EQ_I(r.a.state, P2N_DONE); CHECK_EQ_I(r.a.k56, 0);
+            CHECK_EQ_I(r.a.sym_rate, 3000); CHECK_EQ_I(r.c.info1a.up_sr, 3);
+            CHECK_EQ_I(r.a.info1c.freq_off, 1);
+            CHECK(same_info1a(&r.c.info1a, &r0.c.info1a));
+            CHECK_EQ_I(r0.c.info1a.freq_off, 1); CHECK_EQ_I(r.c.info1a.freq_off, 0);
+        }
+        ac.sr_mask = 0; s.foff = 0;
+        caller_cfg(&cc);
+
+        /* without cfg.k56 an INFO1c of 0x001 is nothing: every sample as
+         * with the caller's measured offset in it */
+        ac.k56 = 0;
+        cc.k56 = P2C_K56_ACCEPT; g_slot = 0; run(&s, &r, &ac, &cc);
+        cc.k56 = 0;              g_slot = 1; run(&s, &r0, &ac, &cc);
+        CHECK_EQ_I(r.a.state, P2N_DONE); CHECK_EQ_I(r.a.k56, 0);
+        CHECK_EQ_I(r.a.info1c.freq_off, 1);
+        CHECK_EQ_I(r.c.info1a.freq_off, proberx_freq_off(&r.a.prx));
+        CHECK(same_txlog(&r, &r0));
+        CHECK_EQ_I(r.a_done_at, r0.a_done_at);
+        g_slot = 0;
+        s = keep;
     }
 
     /* ---- dead line: gives up with a reason ---- */

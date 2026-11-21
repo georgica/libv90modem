@@ -16,6 +16,14 @@ enum { B_CRE, B_CRE_IN, B_CRD, B_CL, B_MS, B_ACK, B_OFF };
 /* SM56's MS (k56-facts.md "V.8bis messages") */
 static const uint8_t sm56_ms[13] = { 0x11, 0xc9, 0x80, 0x80, 0x80, 0x07, 0xb5, 0x02, 0x00, 0x94, 0x81, 0x83, 0x21 };
 
+void k56call_default(k56call_cfg *cfg, int level)
+{
+    memset(cfg, 0, sizeof *cfg);
+    cfg->level = level;
+    cfg->v8bis = K56C_V8BIS_FULL;
+    cfg->info1c_k56 = 1;
+}
+
 void k56call_init(k56call_t *c, const k56call_cfg *cfg)
 {
     v8_menu_t cm;
@@ -167,6 +175,11 @@ int16_t k56call_tick(k56call_t *c, uint8_t octet)
                 v34peer_default(&pc, c->cfg.level);
                 pc.skip_v8 = 1;
                 pc.dx.getbit = c->cfg.getbit; pc.dx.putbit = c->cfg.putbit; pc.dx.user = c->cfg.user;
+                if (c->cfg.up_sr_3000) pc.p2.info0c.lo3200 = pc.p2.info0c.hi3200 = 0;
+                if (c->got_ack) {               /* agreed in V.8bis */
+                    pc.k56 = 1;
+                    pc.p2.k56 = c->cfg.info1c_k56 ? P2C_K56_ACCEPT : P2C_K56_DECLINE;
+                }
                 v34peer_init(&c->peer, &pc);
                 c->state = K56C_V34;
             } else {

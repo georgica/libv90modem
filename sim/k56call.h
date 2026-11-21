@@ -13,7 +13,10 @@
  *   V.8 as a caller (sim/v8call) from the start, as v34peer's own: CM with
  *   V.34, or with cm_pcm V.34 and the PCM octet of an analogue modem (SM56
  *   in automode). When JM selects V.34, sim/v34peer from Phase 2 on
- *   (skip_v8), exactly as v34peer goes on after its own V.8.
+ *   (skip_v8), exactly as v34peer goes on after its own V.8; once V.8bis
+ *   agreed (our ACK(1) came), its INFO1c carries 0x001 (info1c_k56) or 0x200
+ *   (its codec check failed), and after our INFO1a flagged it stops
+ *   (VP_K56). up_sr_3000: it cannot transmit at 3200 baud (INFO0c).
  *
  * The line is digital, as x2call's: one octet from the server in (mu-law,
  * as it left it), one linear sample back. Test side. */
@@ -34,6 +37,8 @@ typedef struct {
     int level;              /* transmit RMS, sample units */
     int v8bis;              /* K56C_V8BIS_* */
     int cm_pcm;             /* CM offers PCM (V.90 analogue modem) as well */
+    int info1c_k56;         /* once agreed, INFO1c says 0x001 (1) or 0x200 (0); k56call_default: 1 */
+    int up_sr_3000;         /* INFO0c without the 3200 carriers: at most 3000 baud up */
     int  (*getbit)(void *user);
     void (*putbit)(void *user, int bit);
     void *user;
@@ -69,6 +74,8 @@ typedef struct {
     v34peer_t   peer;
 } k56call_t;
 
+/* a client that takes K56flex up: the whole V.8bis exchange, INFO1c 0x001 */
+void       k56call_default(k56call_cfg *cfg, int level);
 void       k56call_init(k56call_t *c, const k56call_cfg *cfg);
 /* one octet from the server in (as it left it), one line sample out */
 int16_t    k56call_tick(k56call_t *c, uint8_t octet_from_server);

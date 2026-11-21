@@ -78,6 +78,8 @@ static void probe_result(p2c_t *p)
         p->info1c.sr[k].max_rate = (uint8_t)rate;
     }
     p->info1c.freq_off = (int16_t)proberx_freq_off(&p->prx);
+    if (p->cfg.k56 == P2C_K56_ACCEPT) p->info1c.freq_off = 1;
+    else if (p->cfg.k56 == P2C_K56_DECLINE) p->info1c.freq_off = -512;     /* 0x200 */
 }
 
 static int tone_under_probe(p2c_t *p, int16_t x, int m)

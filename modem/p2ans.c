@@ -33,6 +33,11 @@ static const int8_t TOP[6] = { 9, 10, 10, 12, 13, 14 };
  * test_p2ans) */
 #define X2_FRAME_SPAN ((2 + 4 + 8 + X2_PAYLOAD) * 40 / 3 + 40)
 
+/* K56flex's INFO1 frequency offset (k56-facts.md "Phase 2"): INFO1c's from a
+ * client that takes K56flex up (mu-law, its codec check passed), and ours in
+ * INFO1a: 1 | law << 2 | x << 3 with mu-law and x = 0 */
+#define K56_INFO1_FLAG 0x001
+
 int p2ans_x2_info_frame(uint8_t marker7, uint8_t *bits)
 {
     static const uint8_t sync[8] = { 0, 1, 1, 1, 0, 0, 1, 0 };
@@ -46,6 +51,12 @@ int p2ans_x2_info_frame(uint8_t marker7, uint8_t *bits)
     for (k = 0; k < 16; k++) bits[n++] = (uint8_t)((crc >> k) & 1);
     for (k = 0; k < 4; k++) bits[n++] = 1;
     return n;
+}
+
+int p2ans_k56_nudge(int off)
+{
+    if (((unsigned)off & 3) != 1) return off;   /* (two's complement bits, as INFO1a carries them) */
+    return off > 0 ? off - 1 : off + 1;
 }
 
 int v34_symbol_rate(int idx) { return idx >= 0 && idx <= 5 ? SR[idx] : 0; }
@@ -280,6 +291,18 @@ static int decide(p2ans_t *p)
     p->info1a.up_sr = (uint8_t)best;                /* bits 34:36: answer -> call */
     p->info1a.down_sr = (uint8_t)best;              /* bits 37:39: call -> answer */
     p->info1a.freq_off = (int16_t)proberx_freq_off(&p->prx);
+    if (p->cfg.k56) {
+        /* K56flex agreed (k56 design, decision 6): the flag when INFO1c says
+         * the client takes it up and its upstream is to be 3200 baud, the
+         * only rate it is seen at; else plain V.34, the offset kept off the
+         * flag's pattern */
+        if (p->info1c.freq_off == K56_INFO1_FLAG && best == 4) {
+            p->info1a.freq_off = K56_INFO1_FLAG;
+            p->k56 = 1;
+        } else {
+            p->info1a.freq_off = (int16_t)p2ans_k56_nudge(p->info1a.freq_off);
+        }
+    }
     return 0;
 }
 
@@ -443,7 +466,7 @@ int16_t p2ans_tick(p2ans_t *p, int16_t x)
     case P2N_INFO1A:
         if (dpsktx_busy(&p->tx)) p->t = 0;
         else if (p->t == TX_FLUSH) dpsktx_off(&p->tx);
-        else if (p->t == TX_FLUSH + TX_DECAY) go(p, P2N_DONE);
+        else if (p->t == TX_FLUSH + TX_DECAY) go(p, p->k56 ? P2N_K56 : P2N_DONE);
         break;
 
     case P2N_RT_SILENCE:
@@ -459,6 +482,7 @@ int16_t p2ans_tick(p2ans_t *p, int16_t x)
     case P2N_DONE:
     case P2N_FAILED:
     case P2N_X2:
+    case P2N_K56:
         break;
     }
 

@@ -29,7 +29,8 @@ typedef struct {
     v34dx_putbit_fn putbit; /* data received */
     void *user;
     int x2;                 /* offer x2 in Phase 2 (p2ans_cfg.x2): V.8 made our JM x2's */
-    int k56;                /* K56flex was agreed in V.8bis (answer_t.k56_agreed; used later) */
+    int k56;                /* K56flex was agreed in V.8bis (answer_t.k56_agreed): Phase 2
+                               (p2ans_cfg.k56) may flag INFO1a, first and in a retrain */
 } v34ans_cfg;
 
 typedef enum {
@@ -39,8 +40,10 @@ typedef enum {
     V34A_RENEG,             /* rate renegotiation under way (data interrupted) */
     V34A_RETRAIN,           /* 70 ms of silence before Phase 2 of a retrain */
     V34A_ENDED,             /* see error */
-    V34A_X2                 /* Phase 2 ended with the x2 marker (p2.x2_marker): silent, and
+    V34A_X2,                /* Phase 2 ended with the x2 marker (p2.x2_marker): silent, and
                                the owner goes on as x2 */
+    V34A_K56                /* Phase 2 ended with our flagged INFO1a (p2.k56): silent, and the
+                               owner goes on as K56flex; there is no way back to V.34 */
 } v34ans_state;
 
 enum {

@@ -25,7 +25,10 @@
  * K56flex (ANS_MODE_K56, with V8_MOD_V34, on a mu-law line): V.8bis comes
  * first (ANS_V8BIS: modem/v8bis), then V.8 as above whatever came of it. A
  * client whose MS carries the K56flex block is agreed (k56_agreed): x2 is
- * then not offered, and V.34 is told (v34ans_cfg.k56).
+ * then not offered, and V.34 is told (v34ans_cfg.k56). V.34's Phase 2 then
+ * flags our INFO1a when the client's INFO1c takes K56flex up and the symbol
+ * rate is 3200 (modem/p2ans): the point of no return, ANS_K56. Until the
+ * K56flex engine exists, ANS_K56 ends the call at once with k56_failed.
  * One sample in, one sample out. The data interface is a bit pump: getbit is
  * called for every transmitted line bit, putbit for every received one, once
  * the connection is up. Characters travel start-stop framed in that bit stream
@@ -60,7 +63,7 @@ typedef enum {
     ANS_V92,             /* V.92 data mode, its rate renegotiations included; retrains: ANS_RETRAIN */
     ANS_X2,              /* x2: the client sent the marker; its start-up and data mode (u.x2) */
     ANS_V8BIS,           /* K56flex offered: V.8bis before V.8 (u.v8b), then ANS_V8 */
-    ANS_K56              /* K56flex: from our flagged INFO1a on (later) */
+    ANS_K56              /* K56flex: from our flagged INFO1a on (for now: k56_failed, the end) */
 } ans_phase;
 
 /* in answer_cfg.modes, next to the V8_MOD_ bits (which fit 16 bits): offer
@@ -164,7 +167,8 @@ typedef struct {
     int        k56_agreed;   /* the client's MS carried the K56flex block (we sent ACK(1));
                                 x2 is then not offered in this call */
     int        k56_failed;   /* past the point of no return, the K56flex start-up or a rate
-                                change did not complete: the call ended (later) */
+                                change did not complete: the call ended (for now: every
+                                call that reaches ANS_K56) */
 } answer_t;
 
 void    answer_init(answer_t *a, const answer_cfg *cfg);

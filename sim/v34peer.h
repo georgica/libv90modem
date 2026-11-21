@@ -16,9 +16,13 @@ typedef struct {
     uint16_t modes;         /* V.8 modulation modes of CM; 0 = V.34 only */
     p2c_cfg p2;             /* INFO0c / INFO1c: what this modem can do and asks for */
     v34dx_cfg dx;           /* the ask_* fields, ceilings, getbit / putbit / user are used */
+    int k56;                /* a K56flex client (k56-facts.md "Phase 2"): after an INFO1a with
+                               the frequency offset 0x001 it stops in VP_K56 (the server's PCM
+                               training would follow; this peer does not go on) */
 } v34peer_cfg;
 
-typedef enum { VP_V8, VP_PHASE2, VP_TRAINING, VP_DATA, VP_RETRAIN, VP_ENDED } v34peer_state;
+typedef enum { VP_V8, VP_PHASE2, VP_TRAINING, VP_DATA, VP_RETRAIN, VP_ENDED,
+               VP_K56 } v34peer_state;      /* VP_K56: silent, from the flagged INFO1a on */
 
 typedef struct {
     v34peer_cfg cfg;

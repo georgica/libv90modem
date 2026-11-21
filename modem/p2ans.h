@@ -44,6 +44,7 @@ typedef struct {
     int sr_mask;        /* symbol rates INFO1a may select; 0 = 2400, 3000 and 3200 */
     int max_rate;       /* ceiling for the projected call -> answer rate, bit/s; 0 = none */
     int x2;             /* offer x2 (see above): INFO0a bits, and the marker receiver */
+    int k56;            /* K56flex was agreed in V.8bis (see above): INFO1a's flag, the nudge */
 } p2ans_cfg;
 
 typedef enum {
@@ -60,7 +61,9 @@ typedef enum {
     P2N_RT_SILENCE,     /* 11.5.2.1: 70 ms of silence before Tone A (a retrain we begin) */
     P2N_DONE,
     P2N_FAILED,
-    P2N_X2              /* the x2 marker came (x2_marker): silent; the owner goes on as x2 */
+    P2N_X2,             /* the x2 marker came (x2_marker): silent; the owner goes on as x2 */
+    P2N_K56             /* our INFO1a went out flagged (k56): silent; the owner goes on as
+                           K56flex. The point of no return. */
 } p2ans_state;
 
 enum { P2N_OK = 0,
@@ -102,6 +105,7 @@ typedef struct {
     int32_t     x2_until;           /* a marker frame may begin until this sample; -1 = off */
     int         x2_hunt;            /* cfg.x2 in the first Phase 2 of the call: not in a
                                        retrain's (p2ans_init_retrain, or one begun here) */
+    int         k56;                /* 1 when INFO1a went out flagged (0x001) */
 } p2ans_t;
 
 void    p2ans_init(p2ans_t *p, const p2ans_cfg *cfg);
@@ -117,6 +121,11 @@ int16_t p2ans_tick(p2ans_t *p, int16_t rx);
  * client. */
 #define P2N_X2_FRAME_BITS (2 + 4 + 8 + 7 + 16 + 4)
 int     p2ans_x2_info_frame(uint8_t marker7, uint8_t *bits);
+
+/* K56flex: a measured frequency offset (0.02 Hz units, -512 = none) as
+ * INFO1a carries it in an agreed call that stays V.34: one ending in binary
+ * 01 (which the client reads as K56flex) moved one step toward zero. */
+int     p2ans_k56_nudge(int off);
 
 /* V.34 Tables 1 and 2 for a symbol rate index: the rate, and the carrier as
  * the ratio num/den of it. Returns 0 for an index outside 0..5. */

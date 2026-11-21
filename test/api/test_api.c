@@ -10,6 +10,7 @@
 /* the simulator's calling modem (dev archive) */
 #include "callpeer.h"
 #include "x2call.h"
+#include "k56call.h"
 
 static uint32_t fnv(uint32_t h, const void *p, size_t n)
 {
@@ -1164,6 +1165,51 @@ static void test_x2(void)
     v90m_destroy(m);
 }
 
+/* ---- K56flex: the simulated client (sim/k56call) calls the library. Its
+ * INFO1c takes K56flex up at 3200 baud: our INFO1a goes out flagged, and
+ * (until the K56flex engine, plan Task 9) the call ends at once as
+ * K56flex's ---- */
+static void test_k56(void)
+{
+    static k56call_t k;
+    static uint8_t down[64];
+    k56call_cfg kc; v90m_cfg c; v90m_state st;
+    v90m_t *m; int err;
+    long n, flag_at = -1, end_at = -1;
+    uint8_t rx = 0xff, tx;
+
+    v90m_cfg_default(&c);
+    c.modulations |= V90M_MOD_K56;
+    c.getbit = ones_get; c.putbit = bits_put; c.on_event = x2_on_event;
+    x2_nev = 0;
+    m = v90m_create(&c, &err);
+    CHECK(m != NULL);
+    if (!m) return;
+    k56call_default(&kc, 3000);
+    kc.getbit = ones_get; kc.putbit = bits_put;
+    k56call_init(&k, &kc);
+    memset(down, 0xff, sizeof down);
+    for (n = 0; n < 8000L * 15; n++) {
+        int16_t s;
+        v90m_process_g711(m, &rx, &tx, 1);
+        down[n & 63] = tx;
+        s = k56call_tick(&k, down[(n - 30) & 63]);
+        rx = v90m_g711_encode(0, (int16_t)(s / 2));
+        if (flag_at < 0 && k.state == K56C_V34 && k.peer.state == VP_K56) flag_at = n;
+        v90m_get_state(m, &st);
+        if (st.end != V90M_END_NONE) { end_at = n; break; }
+    }
+    printf("  API K56flex call: the client took our flagged INFO1a at %.3f s, end %d %.1f ms after that\n",
+           flag_at / 8000.0, (int)st.end, (end_at - flag_at) / 8.0);
+    CHECK(flag_at > 0); CHECK(end_at >= flag_at);
+    CHECK(end_at - flag_at <= 8 * 100);
+    CHECK_EQ_I(st.end, V90M_END_K56_FAILED);
+    CHECK_EQ_I(st.connected, 0); CHECK_EQ_I(st.used_v8, 1);
+    CHECK(x2_nev >= 1 && x2_nev <= 8);
+    if (x2_nev >= 1 && x2_nev <= 8) CHECK_EQ_I(x2_ev[x2_nev - 1], V90M_EV_ENDED);
+    v90m_destroy(m);
+}
+
 int main(void)
 {
     test_cfg();
@@ -1176,5 +1222,6 @@ int main(void)
     test_bell();
     test_bell_originate();
     test_x2();
+    test_k56();
     T_REPORT("api");
 }

@@ -530,6 +530,10 @@ int16_t answer_tick(answer_t *a, int16_t rx)
             start_x2(a); tx = 0;
             break;
         }
+        if (a->v34.state == V34A_K56) {          /* our flagged INFO1a: no way back to V.34 */
+            a->phase = ANS_K56; a->t = 0; tx = 0;
+            break;
+        }
         if (a->v34.state == V34A_ENDED) {
             if (a->v34.error == V34A_ERR_CLEARDOWN) a->cleared = 1;
             if (a->v34.error == V34A_ERR_HANGUP) a->cleared = 2;
@@ -582,7 +586,13 @@ int16_t answer_tick(answer_t *a, int16_t rx)
         break;
     }
 
-    case ANS_K56:                /* (not entered yet) */
+    case ANS_K56:
+        /* past the point of no return; until the K56flex engine comes, the
+         * call ends here (k56 plan, Task 6) */
+        a->k56_failed = 1;
+        fail(a); tx = 0;
+        break;
+
     case ANS_FAILED:
         break;
     }

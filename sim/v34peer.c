@@ -63,7 +63,8 @@ int16_t v34peer_tick(v34peer_t *p, int16_t rx)
         break;
     case VP_PHASE2:
         out = p2c_tick(&p->p2, rx);
-        if (p->p2.state == P2C_DONE) start_dx(p);
+        if (p->p2.state == P2C_DONE && p->cfg.k56 && p->p2.info1a.freq_off == 1) p->state = VP_K56;
+        else if (p->p2.state == P2C_DONE) start_dx(p);
         else if (p->p2.state == P2C_FAILED) {
             /* 11.2.2.1: as a retrain, a few times */
             if (++p->p2_failed > 3) p->state = VP_ENDED;

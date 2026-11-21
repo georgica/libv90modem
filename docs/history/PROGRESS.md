@@ -3376,3 +3376,46 @@ identical. Decoded from its `call.rec`: SM56's CRd, our CL with the
 block, our 9-octet form echoed with version `02`), our ACK(1) `14`. So the
 9-octet form stays the default (`V8B_NS_DEFAULT` = `V8B_NS9`). INFO1a is not
 flagged yet (Task 6).
+
+## k56 6: the INFO1a flag, the point of no return (2026-11-21)
+
+`p2ans_cfg.k56` (from `v34ans_cfg.k56`, in the first Phase 2 and in a
+retrain's): when INFO1c's frequency offset is `0x001` and the symbol rate
+chosen is 3200 (spec decision 6, the builder-check answer), INFO1a's bits
+40:49 are `0x001` (mu-law, x = 0), `p2ans_t.k56` is set, and Phase 2 ends in
+`P2N_K56` (silent) where it would end in `P2N_DONE`; `v34ans` goes to
+`V34A_K56`, the answerer to `ANS_K56`, which (until the engine of Task 9)
+ends the call on the next sample with `k56_failed` (`V90M_END_K56_FAILED`).
+Any other agreed call is plain V.34, with a measured offset ending in binary
+01 moved one step toward zero (`p2ans_k56_nudge`). L1, L2 and everything
+without `cfg.k56` unchanged. Test peers: `p2c_cfg.k56` (INFO1c `0x001` or
+`0x200`), `v34peer_cfg.k56` (stops in `VP_K56` after a flagged INFO1a),
+`k56call_default`, `k56call_cfg.info1c_k56` (default 1), `up_sr_3000`.
+test_p2ans shifts the caller's frequency (a Hilbert transformer) to make
+the measured offsets the nudge works on.
+
+    build/test_p2ans                   (first: P2N_K56 undeclared; then, with the
+                                        interface alone, 21 failures)
+      K56flex flag: INFO1a offset 1, P2N_K56 at 2.0293 s (P2N_DONE without: 2.0293 s), silent
+      INFO1c 0x200, line offset +0.10 / -0.06 / +0.02 / -0.14 / +0.18 Hz:
+        measured 5 / -3 / 1 / -7 / 9, INFO1a 4 / -2 / 0 / -6 / 8; 0, 4, -2 kept (same samples)
+      INFO1c 0x001 at 3000 baud (client without 3200, or 3200 not allowed): unflagged, 1 -> 0
+      p2ans: 402 checks, 0 failures
+    build/test_answer_k56              (first, without the answer.c change: 3 failures)
+      agreed client, INFO1c 0x001: INFO1a offset 1 at 3200 baud, ANS_K56 at 7.884 s,
+        the client took the flag at 7.873 s, the call ended 11.0 ms after that
+      agreed, INFO1c 0x200: V.34 28800 / 28800, as without K56flex
+      agreed, 3000 baud up at most: V.34 28800 / 26400 at 3000, as without K56flex
+      answer_k56: 156 checks, 0 failures
+    build/api_test_api                 (first, without the answer.c change: 4 failures)
+      API K56flex call: the client took our flagged INFO1a at 7.836 s, end 10 (K56_FAILED) 11.9 ms after
+      api: 490 checks, 0 failures
+    make check                         ALL HOST CHECKS PASS
+    make -j8 check-arm ARM_CC=...armv7-eabihf musl...
+      p2ans: 402 checks; answer_k56 (TEST_SHORT): 108 checks; api: 490 checks (the
+      K56flex call 11.9 ms, mem size as pinned)   ALL ARM CHECKS PASS
+
+Replay proof: `~/k56-base` (704b370) against this tree, the 106 recordings
+of `~/sync-build/live-050`, flags `""`, `-9`, `-x`, `-x -9`: every `.txt`
+(424) and `.bits` (122) byte-identical. `-k` and `-k -9`: 106 of 106
+complete, the final modulation line as without `-k` in 106 of 106.
