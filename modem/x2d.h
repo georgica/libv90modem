@@ -24,8 +24,7 @@
  * A client's rate change in data mode (x2-facts.md "Rate change"): its S
  * (X2D_RENEG; the data stops up, goes on down), S-bar, a short TRN and its
  * MP, on 4 points (not 16 as at the start-up), checked as at the start-up;
- * after the data frame being sent our
- * marker, our records in levels B, the start segment at the new rate
+ * after the data frame being sent, our marker, our records in levels B, the start segment at the new rate
  * (x2tx); its E, B1 and data at its new upstream rate -> X2D_DATA. Never a
  * marker of ours before its MP.
  *

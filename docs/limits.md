@@ -62,11 +62,20 @@ Each item names where it is recorded.
 - **Robbed bits: not handled.** No field of the client's MP for them is
   known; on a line with robbed-bit signalling the downstream would carry
   errors. The pad (none, 3 dB, 6 dB) the client reports is handled.
+- **A non-x2 V.34 caller sees an x2 server's JM and INFO0a.** With x2
+  offered, a caller whose CM offers V.34 and no PCM gets a JM whose carrier
+  is inverted after each JM, and an INFO0a with max_sr_diff 4 and cme 1, as
+  from a U.S. Robotics server. It still connects at V.34 in simulation and
+  on recordings. Not tried on a live non-x2 V.34 call: a V.8 receiver that
+  cannot take the inverted JM would fail V.8, as this library's 0.3.0
+  calling side did. Check one before x2 is offered by default.
 - **No way back to V.34.** Once the client's marker has come, a start-up
   or rate change that does not complete, or a request we cannot serve
   (rate index 0, a pad other than none / 3 / 6 dB, MD other than 5),
   ends the call with `V90M_END_X2_FAILED`. A full retrain asked for by the
-  client during x2 is not handled either: the design clears down.
+  client during x2 is not handled either: the design clears down. The
+  quiet or MSE watchdog ends that call, so the end reason is
+  `V90M_END_LOST`, not `V90M_END_X2_FAILED`.
 - **The free sign differs from the I-modem's.** In data mode the sign of
   the one position left free is chosen from a running sum, as D-Modem's
   server does; the I-modem's choice differs in about 25 % of frames (219

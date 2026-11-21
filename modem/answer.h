@@ -17,7 +17,8 @@
  * whose CM offers V.34 and no PCM, in its JM (modem/v8ans) and its INFO0a
  * (modem/p2ans). A client that sends the x2 marker after our L1 makes the
  * call x2 (ANS_X2: modem/x2d, PCM downstream, V.34 upstream); one that does
- * not gets V.34 as it would without x2. Other callers see nothing of it.
+ * not still gets V.34, but sees that JM (carrier inverted after each JM)
+ * and INFO0a, not those it would get without x2.
  * After the marker there is no way back to V.34: an x2 start-up that does
  * not reach data mode, or a client's rate change that does not get back to
  * it, ends the call with x2_failed.

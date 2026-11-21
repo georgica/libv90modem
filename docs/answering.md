@@ -56,8 +56,10 @@ CM, our JM, its CJ. The menu decides:
 - **x2** (`V90M_MOD_X2` with `V90M_MOD_V34`, mu-law only): when the
   caller's CM offers V.34 and no PCM, our JM and INFO0a are an x2
   server's. A U.S. Robotics x2 client then sends its marker after our L1
-  and the call goes x2 (below); any other caller gets V.34 exactly as
-  without x2.
+  and the call goes x2 (below); any other caller still gets V.34, but
+  sees an x2 server's JM (carrier inverted after each JM) and INFO0a, not
+  the ones it would get without x2. Not yet tried on a live non-x2 V.34
+  call.
 
 `v90m_state.used_v8` says whether the caller spoke V.8.
 

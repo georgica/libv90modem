@@ -117,7 +117,9 @@ typedef enum {
  * V90M_ENOTSUP), not in the defaults: x2, U.S. Robotics' 56k of 1997, as
  * its server. Offered on a mu-law line to a caller whose V.8 CM offers V.34
  * and no PCM: the JM and INFO0a of an x2 server. A caller that does not
- * take it up gets V.34 as without x2; other callers see nothing of it. A
+ * take it up still gets V.34, but sees that JM (carrier inverted after
+ * each JM) and INFO0a, not those it would get without x2; not yet tried
+ * on a live non-x2 V.34 call. A
  * client that does take it up (its marker after our L1) has no way back to
  * V.34: if the x2 start-up does not reach data mode, or a rate change the
  * client asks for in data mode cannot be served (an index outside 1..15,

@@ -139,6 +139,7 @@ static int next_frame(x2tx_t *t)
         }
         x2map_init(&cur, t->map.index, t->pad_mode, 0);
         for (k = 0; k < X2MAP_N; k++) {
+            /* the 0xff cannot come: the index is 1..15 and the pad passed on_mp */
             uint8_t hi = x2map_list(&cur, k, &rv, &sn) ? sn[0] : 0xff;
             t->frame[k] = ((k < 3) == (f < X2TX_MARK_FRAMES - 1)) ? hi : (uint8_t)(hi & 0x7f);
         }
