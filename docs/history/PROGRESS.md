@@ -3294,3 +3294,23 @@ The generator checks K, u, r and M against the facts, the frame identity,
 M^8 >= 2^K, each ring list a permutation and each constellation M << (u -
 1) increasing magnitudes. Not in the signal path yet (Task 7's encoder
 uses it); no check-arm.
+
+## k56 4: the V.8bis messages (2026-11-21)
+
+`modem/v8bismsg.{h,c}`: the FCS (CRC-16/X.25, checked against "123456789"
+= `0x906e` and the recorded `23 50`, `71 d8`, `dd a6`), our CL (default the
+real server's 16 octets, ruling C2; `V8B_NS7` the 13-octet form;
+`V8B_NS_DEFAULT` overridable), ACK(1) `14`, the framing (32 ones, three
+flags, octets and FCS LSB first with zero insertion, one closing flag; V.8bis's
+own, not V.42's HDLC), the receiver (`v8bis_rx_bit`: octets, 0, or -1 for
+fewer than three octets, not whole octets, bad FCS, too long, abort), SM56's
+CL block test, and `v8bis_ms_is_k56`, which walks the I and S field trees of
+8.2.3 (ruling C3), so the real client's MS (`81 c2` Par(2) block) passes where
+D-Modem's fixed skip reads it as an NS block of length `0xc2`.
+
+    make build/test_v8bismsg      (first: no rule for modem/v8bismsg.c; then the
+                                   first run failed 10 checks, receiver and trees)
+    build/test_v8bismsg
+      test_v8bismsg: 297 checks, 0 failures
+
+Not in the signal path (Task 5/8 use it); no check-arm.
