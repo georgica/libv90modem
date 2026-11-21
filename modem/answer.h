@@ -22,6 +22,10 @@
  * After the marker there is no way back to V.34: an x2 start-up that does
  * not reach data mode, or a client's rate change that does not get back to
  * it, ends the call with x2_failed.
+ * K56flex (ANS_MODE_K56, with V8_MOD_V34, on a mu-law line): V.8bis comes
+ * first (ANS_V8BIS: modem/v8bis), then V.8 as above whatever came of it. A
+ * client whose MS carries the K56flex block is agreed (k56_agreed): x2 is
+ * then not offered, and V.34 is told (v34ans_cfg.k56).
  * One sample in, one sample out. The data interface is a bit pump: getbit is
  * called for every transmitted line bit, putbit for every received one, once
  * the connection is up. Characters travel start-stop framed in that bit stream
@@ -37,6 +41,7 @@
 #include "p34d.h"
 #include "v34ans.h"
 #include "x2d.h"
+#include "v8bis.h"
 #include "../v32/v32.h"
 #include "../v92/v92_p34d.h"
 
@@ -53,7 +58,9 @@ typedef enum {
     ANS_V32_SIL,         /* a caller without V.8 sent AA during our answer tone: 75 ms of silence, then ANS_V32 */
     ANS_P3X,             /* V.92 Phases 3 and 4 with PCM upstream: training (v92/v92_p34d) */
     ANS_V92,             /* V.92 data mode, its rate renegotiations included; retrains: ANS_RETRAIN */
-    ANS_X2               /* x2: the client sent the marker; its start-up and data mode (u.x2) */
+    ANS_X2,              /* x2: the client sent the marker; its start-up and data mode (u.x2) */
+    ANS_V8BIS,           /* K56flex offered: V.8bis before V.8 (u.v8b), then ANS_V8 */
+    ANS_K56              /* K56flex: from our flagged INFO1a on (later) */
 } ans_phase;
 
 /* in answer_cfg.modes, next to the V8_MOD_ bits (which fit 16 bits): offer
@@ -72,6 +79,9 @@ typedef enum {
 /* with V8_MOD_V34: offer x2 (U.S. Robotics, 1997) as its server to a caller
  * whose CM offers V.34 and no PCM; only on a mu-law line */
 #define ANS_MODE_X2 0x100000u
+/* with V8_MOD_V34: offer K56flex as its server in V.8bis before V.8
+ * (modem/v8bis); only on a mu-law line */
+#define ANS_MODE_K56 0x200000u
 
 #define ANS_MOD_NONE   0
 #define ANS_MOD_V21    1
@@ -84,6 +94,7 @@ typedef enum {
 #define ANS_MOD_BELL103 8    /* 300 bit/s, in ANS_V21 */
 #define ANS_MOD_BELL212A 9   /* 1200 bit/s, in ANS_V22: V.22 begun after our 2225 Hz */
 #define ANS_MOD_X2     10    /* x2: PCM downstream, V.34 upstream */
+#define ANS_MOD_K56    11    /* K56flex: PCM downstream, V.34 upstream */
 
 typedef struct {
     int           level;     /* transmit RMS, 16-bit sample units */
@@ -119,8 +130,9 @@ typedef struct {
      * V.8, x2 a CM without it and V.34 selected, V.32 is what V.8 selects
      * without V.34 or a caller without V.8 asks for with AA, and no phase
      * leads back to V.8): they share their storage. u.v92 holds a call's
-     * V.92 engine from ANS_P3X on, u.x2 the x2 engine from ANS_X2 on. */
-    union { v32_t v32; v92d_t v92; x2d_t x2; } u;
+     * V.92 engine from ANS_P3X on, u.x2 the x2 engine from ANS_X2 on; u.v8b
+     * K56flex's V.8bis, during ANS_V8BIS only (before any of the others). */
+    union { v32_t v32; v92d_t v92; x2d_t x2; v8bis_t v8b; } u;
     v32_aadet_t aadet;       /* 1800 Hz from the caller while the answer tone runs */
     uint8_t    pcm;          /* the codeword of this sample while V.90 runs */
     v21mod_t   fmod; v21demod_t fdem; arx_t uart;
@@ -147,6 +159,12 @@ typedef struct {
     int        x2_failed;    /* the client sent the x2 marker and the x2 start-up did not
                                 reach data mode, or a rate change of its own did not get
                                 back to it: there is no way back to V.34, the call ended */
+    /* K56flex */
+    int        k56_offered;  /* ANS_MODE_K56 with V.34, on a mu-law line: ANS_V8BIS first */
+    int        k56_agreed;   /* the client's MS carried the K56flex block (we sent ACK(1));
+                                x2 is then not offered in this call */
+    int        k56_failed;   /* past the point of no return, the K56flex start-up or a rate
+                                change did not complete: the call ended (later) */
 } answer_t;
 
 void    answer_init(answer_t *a, const answer_cfg *cfg);

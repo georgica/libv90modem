@@ -19,7 +19,8 @@
 typedef char v90m_check_conn[(SAME(V90M_CONN_V21, ANS_MOD_V21) && SAME(V90M_CONN_V22, ANS_MOD_V22) && SAME(V90M_CONN_V22BIS, ANS_MOD_V22BIS)
                               && SAME(V90M_CONN_V90, ANS_MOD_V90) && SAME(V90M_CONN_V34, ANS_MOD_V34) && SAME(V90M_CONN_V32BIS, ANS_MOD_V32BIS)
                               && SAME(V90M_CONN_V92, ANS_MOD_V92) && SAME(V90M_CONN_BELL103, ANS_MOD_BELL103)
-                              && SAME(V90M_CONN_BELL212A, ANS_MOD_BELL212A) && SAME(V90M_CONN_X2, ANS_MOD_X2)) ? 1 : -1];
+                              && SAME(V90M_CONN_BELL212A, ANS_MOD_BELL212A) && SAME(V90M_CONN_X2, ANS_MOD_X2)
+                              && SAME(V90M_CONN_K56FLEX, ANS_MOD_K56)) ? 1 : -1];
 typedef char v90m_check_ec[(SAME(V90M_EC_DETECT, V42EC_DETECT) && SAME(V90M_EC_ESTABLISH, V42EC_ESTABLISH) && SAME(V90M_EC_CONNECTED, V42EC_CONNECTED)
                             && SAME(V90M_EC_ASYNC, V42EC_ASYNC) && SAME(V90M_EC_RELEASING, V42EC_RELEASING) && SAME(V90M_EC_DISCONNECTED, V42EC_DISCONNECTED)
                             && SAME(V90M_EC_R_LOCAL, V42LAPM_R_LOCAL) && SAME(V90M_EC_R_NEGOTIATION, V42LAPM_R_NEGOTIATION)
@@ -51,12 +52,13 @@ struct v90m {
 
 #define ORIGINATING(m) ((m)->cfg.role == V90M_ROLE_ORIGINATE)
 #define V90M_MOD_ALL  (V90M_MOD_V21 | V90M_MOD_V22 | V90M_MOD_V32BIS | V90M_MOD_V34 | V90M_MOD_V90 | V90M_MOD_V92 \
-                       | V90M_MOD_BELL103 | V90M_MOD_BELL212A | V90M_MOD_X2)
+                       | V90M_MOD_BELL103 | V90M_MOD_BELL212A | V90M_MOD_X2 | V90M_MOD_K56)
 /* the defaults: all but V.92, Bell (which would change what a caller
- * without V.8 hears from us after 4 s) and x2 */
-#define V90M_MOD_DEFAULT (V90M_MOD_ALL & ~(V90M_MOD_V92 | V90M_MOD_BELL103 | V90M_MOD_BELL212A | V90M_MOD_X2))
-/* what the calling side can do: all but x2 (V.90 and V.92 as their analogue modem) */
-#define V90M_MOD_ORIG (V90M_MOD_ALL & ~V90M_MOD_X2)
+ * without V.8 hears from us after 4 s), x2 and K56flex */
+#define V90M_MOD_DEFAULT (V90M_MOD_ALL & ~(V90M_MOD_V92 | V90M_MOD_BELL103 | V90M_MOD_BELL212A | V90M_MOD_X2 | V90M_MOD_K56))
+/* what the calling side can do: all but x2 and K56flex (V.90 and V.92 as
+ * their analogue modem) */
+#define V90M_MOD_ORIG (V90M_MOD_ALL & ~(V90M_MOD_X2 | V90M_MOD_K56))
 
 typedef char v90m_check_orig[(SAME(ORIG_MOD_V21, ANS_MOD_V21) && SAME(ORIG_MOD_V22, ANS_MOD_V22) && SAME(ORIG_MOD_V22BIS, ANS_MOD_V22BIS)
                               && SAME(ORIG_MOD_V32BIS, ANS_MOD_V32BIS) && SAME(ORIG_MOD_V34, ANS_MOD_V34)
@@ -85,6 +87,8 @@ static int check_cfg(const v90m_cfg *c)
     if ((c->modulations & V90M_MOD_V92) && !(c->modulations & V90M_MOD_V90)) return V90M_ENOTSUP;
     /* x2's upstream is V.34, and only its server (answering) side is here */
     if ((c->modulations & V90M_MOD_X2) && !(c->modulations & V90M_MOD_V34)) return V90M_ENOTSUP;
+    /* K56flex's upstream is V.34 too, and only its server side is here */
+    if ((c->modulations & V90M_MOD_K56) && !(c->modulations & V90M_MOD_V34)) return V90M_ENOTSUP;
     if (c->role == V90M_ROLE_ORIGINATE) {
         if (!(c->modulations & V90M_MOD_ORIG)) return (c->modulations ? V90M_ENOTSUP : V90M_EINVAL);
         if (c->modulations & ~V90M_MOD_ORIG) return V90M_ENOTSUP;
@@ -106,6 +110,7 @@ static unsigned modes_of(unsigned mods)
     if (mods & V90M_MOD_BELL103) m |= ANS_MODE_BELL103;
     if (mods & V90M_MOD_BELL212A) m |= ANS_MODE_BELL212A;
     if (mods & V90M_MOD_X2) m |= ANS_MODE_X2;
+    if (mods & V90M_MOD_K56) m |= ANS_MODE_K56;
     return m;
 }
 
@@ -224,6 +229,7 @@ static v90m_end end_of(const v90m_t *m)
         const answer_t *a = &m->u.a;
         if (a->phase != ANS_FAILED) return V90M_END_NONE;
         if (a->x2_failed) return V90M_END_X2_FAILED;
+        if (a->k56_failed) return V90M_END_K56_FAILED;
         if (a->cleared == 1) return V90M_END_CLEARDOWN_FAR;
         if (a->cleared == 2) return V90M_END_CLEARDOWN_OURS;
         return a->connected ? V90M_END_LOST : V90M_END_FAILED;

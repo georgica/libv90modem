@@ -98,6 +98,20 @@ static void x2_offer(answer_t *a)
     else a->v8.x2_offer = 0;
 }
 
+/* K56flex is offered with V.34 on a mu-law line only (k56 design, decision
+ * 17): then V.8bis comes first. Settled before the first sample. */
+static void k56_offer(answer_t *a)
+{
+    a->k56_offered = (a->cfg.modes & ANS_MODE_K56) && (a->cfg.modes & V8_MOD_V34) && !a->p2cfg.alaw;
+    if (a->t != 0 || (a->phase != ANS_V8 && a->phase != ANS_V8BIS)) return;
+    if (a->k56_offered) {
+        v8bis_init(&a->u.v8b, (int16_t)(a->cfg.level * 181 / 128), V8B_NS_DEFAULT);
+        a->phase = ANS_V8BIS;
+    } else {
+        a->phase = ANS_V8;
+    }
+}
+
 void answer_init(answer_t *a, const answer_cfg *cfg)
 {
     v8_menu_t local;
@@ -134,6 +148,8 @@ void answer_init(answer_t *a, const answer_cfg *cfg)
     a->pcm_up = local.has_pcm && (cfg->modes & ANS_MODE_V92) != 0;
     a->x2_failed = 0;
     x2_offer(a);
+    a->k56_agreed = a->k56_failed = 0;
+    k56_offer(a);
 }
 
 /* Jd (V.90 Table 13, V.92 Table 21): the downstream rates the ceiling allows; 0 = all */
@@ -220,6 +236,7 @@ static void v34_cfg(const answer_t *a, v34ans_cfg *c)
     c->max_tx_rate = a->max_down; c->max_rx_rate = a->max_up;
     c->getbit = a->cfg.getbit; c->putbit = a->cfg.putbit; c->user = a->cfg.user;
     c->x2 = v8ans_x2(&a->v8);
+    c->k56 = a->k56_agreed;
 }
 
 /* V.90 Phase 2 is done and INFO1a selects V.34 (bits 37:39 in 0..5; V.90
@@ -287,7 +304,7 @@ static void start_v32(answer_t *a)
     a->phase = ANS_V32; a->t = 0;
 }
 
-void answer_v90_cfg(answer_t *a, const p2d_cfg *cfg) { a->p2cfg = *cfg; x2_offer(a); }
+void answer_v90_cfg(answer_t *a, const p2d_cfg *cfg) { a->p2cfg = *cfg; x2_offer(a); k56_offer(a); }
 
 static int16_t tick_v21(answer_t *a, int16_t rx)
 {
@@ -328,6 +345,16 @@ int16_t answer_tick(answer_t *a, int16_t rx)
     int16_t tx = 0;
     a->t++;
     switch (a->phase) {
+    case ANS_V8BIS:
+        /* K56flex's V.8bis; V.8 follows from its own silence, whatever came
+         * of it. An agreement turns x2 off for the call (k56 design,
+         * decision 5): no x2 JM, no x2 INFO0a. */
+        if (v8bis_tick(&a->u.v8b, rx, &tx) != V8B_DONE) break;
+        a->k56_agreed = v8bis_result(&a->u.v8b) == V8B_RES_AGREED;
+        if (a->k56_agreed) a->v8.x2_offer = 0;
+        a->phase = ANS_V8; a->t = 0;
+        break;
+
     case ANS_V8:
         /* V.32bis 6.1: a caller without V.8 answers the answer tone with a
          * steady 1800 Hz (only listened for during the tone: our own JM has
@@ -555,6 +582,7 @@ int16_t answer_tick(answer_t *a, int16_t rx)
         break;
     }
 
+    case ANS_K56:                /* (not entered yet) */
     case ANS_FAILED:
         break;
     }

@@ -130,6 +130,19 @@ typedef enum {
  * upstream (it may change in the client's rate change); USR's CONNECT
  * figure is one step of 1333 above it. */
 #define V90M_MOD_X2       0x0100u
+/* Answering only (calling: V90M_ENOTSUP), with V90M_MOD_V34 (without:
+ * V90M_ENOTSUP), not in the defaults; experimental: K56flex (Rockwell and
+ * Lucent, 1997) as its server. Offered on a mu-law line, in V.8bis before
+ * V.8: at least 400 ms of silence after answering, CRe, and to a caller
+ * that answers with CRd, a CL with the K56flex block; a caller whose MS
+ * carries the block gets ACK(1), and K56flex is agreed (x2, offered too, is
+ * then not offered in that call). V.8 follows in every case and chooses the
+ * modulation as without K56flex: a caller whose CM offers PCM while V.90
+ * is offered gets V.90. Every caller hears our answer tone later than
+ * without K56flex: 1.79 s for a caller without V.8bis, about 3.8 s for a
+ * V.8bis caller without K56flex (CRd, no MS), about 3.4 s for a K56flex
+ * client (measured in the simulator). */
+#define V90M_MOD_K56      0x0200u
 
 /* the modulation of a connection (v90m_state.modulation) */
 typedef enum {
@@ -137,7 +150,8 @@ typedef enum {
     V90M_CONN_V90, V90M_CONN_V34, V90M_CONN_V32BIS, V90M_CONN_V92,
     V90M_CONN_BELL103,          /* appended: the values above stay as they were */
     V90M_CONN_BELL212A,         /* V.22 at 1200 bit/s begun on the 2225 Hz Bell answer tone */
-    V90M_CONN_X2                /* (appended) x2: PCM downstream, V.34 upstream */
+    V90M_CONN_X2,               /* (appended) x2: PCM downstream, V.34 upstream */
+    V90M_CONN_K56FLEX           /* (appended) K56flex: PCM downstream, V.34 upstream */
 } v90m_conn;
 
 typedef int  (*v90m_getbit_fn)(void *user);             /* next bit to send, 0 or 1 */
@@ -260,9 +274,13 @@ typedef enum {
     V90M_END_NO_COMMON,         /* the answerer has no modulation in common with us */
     V90M_END_RETRAIN_FAILED,    /* (appended) calling V.90 / V.92: a retrain failed, or one
                                    more was due past the limit (see v90m_retrain) */
-    V90M_END_X2_FAILED          /* (appended) answering: the client took up x2 (its marker
+    V90M_END_X2_FAILED,         /* (appended) answering: the client took up x2 (its marker
                                    came) and the x2 start-up, or a rate change of
                                    the client's, did not complete */
+    V90M_END_K56_FAILED         /* (appended) answering: K56flex was agreed and its start-up
+                                   went past the point of no return (our INFO1a), and
+                                   the start-up, or a rate change of the client's, did
+                                   not complete */
 } v90m_end;
 
 /* Cheap; fine to read after every sample. Also after the end: end says why. */

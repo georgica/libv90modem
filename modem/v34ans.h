@@ -29,6 +29,7 @@ typedef struct {
     v34dx_putbit_fn putbit; /* data received */
     void *user;
     int x2;                 /* offer x2 in Phase 2 (p2ans_cfg.x2): V.8 made our JM x2's */
+    int k56;                /* K56flex was agreed in V.8bis (answer_t.k56_agreed; used later) */
 } v34ans_cfg;
 
 typedef enum {

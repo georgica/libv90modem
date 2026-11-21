@@ -11,7 +11,7 @@
 /* where p34d_trace_bit writes the bits of the V.90 / V.34 receiver */
 const char *trace_bits_path = "live/bits.txt";
 
-static const char *ph[] = { "V8", "V22", "V21", "FAILED", "P2", "P3", "V90", "RETRAIN", "V34", "V32", "V32_SIL", "P3X", "V92", "X2" };
+static const char *ph[] = { "V8", "V22", "V21", "FAILED", "P2", "P3", "V90", "RETRAIN", "V34", "V32", "V32_SIL", "P3X", "V92", "X2", "V8BIS", "K56" };
 static void menu(const char *n, const v8_menu_t *m)
 {
     printf("  %s: call function %u, modes 0x%04x (%u octets), pcm %s0x%02x, protocol %s0x%02x, access %s0x%02x\n", n, m->call_function, m->modes,
@@ -140,14 +140,19 @@ int rec_tx92;
 int16_t v92d_trace_tx(const v92d_t *p, int16_t y) { if (p->state == V92D_DATA) rec_tx92 = 1; return rec_tx92 && tr_on ? rec_tx : y; }
 static const char *p2n[] = { "INFO0", "WAIT_REV1", "REPLY1", "WAIT_REV2", "RECOVER", "PROBE_RX", "WAIT_REV3", "REPLY3", "L1", "L2", "INFO1D", "WAIT_INFO1A", "DONE", "FAILED" };
 
-static int last_ph = -1, last_v8 = -1, last_p2 = -1, last_p34 = -1;
+static int last_ph = -1, last_v8 = -1, last_p2 = -1, last_p34 = -1, last_v8b = -1;
 /* a new pass over the recording: report the phases again */
-void trace_reset(void) { last_ph = last_v8 = last_p2 = -1; }
+void trace_reset(void) { last_ph = last_v8 = last_p2 = last_v8b = -1; }
 
 /* phase, V.8 and Phase 2 */
 void trace_a(answer_t *a, long src)
 {
+    if (last_ph == ANS_V8BIS && a->phase != ANS_V8BIS)
+        printf("%7.3f s    V.8bis result %d, K56flex agreed %d\n", src / 8000.0, v8bis_result(&a->u.v8b), a->k56_agreed);
     if ((int)a->phase != last_ph) { last_ph = (int)a->phase; printf("%7.3f s  modem phase %s (V.34 engine state %d error %d)\n", src / 8000.0, ph[last_ph], (int)a->v34.dx.state, a->v34.dx.error); }
+    if (a->phase == ANS_V8BIS && (int)a->u.v8b.state != last_v8b) {
+        last_v8b = (int)a->u.v8b.state; printf("%7.3f s    V.8bis state %d\n", src / 8000.0, last_v8b);
+    }
     if (a->phase == ANS_V8 && (int)a->v8.state != last_v8) {
         last_v8 = (int)a->v8.state; printf("%7.3f s    V.8 state %d\n", src / 8000.0, last_v8);
         if (last_v8 == V8A_JM) { menu("CM heard", &a->v8.cm); menu("JM sent ", &a->v8.jm); }

@@ -3314,3 +3314,65 @@ D-Modem's fixed skip reads it as an NS block of length `0xc2`.
       test_v8bismsg: 297 checks, 0 failures
 
 Not in the signal path (Task 5/8 use it); no check-arm.
+
+## k56 5: the API, and Phase 1 with fall-through (2026-11-21)
+
+`V90M_MOD_K56` (0x0200: answering only, with V.34, not in the defaults),
+`V90M_CONN_K56FLEX`, `V90M_END_K56_FAILED` (both appended); `v90m_mem_size()`
+pinned by test_api at 118824 (x86-64) and 118512 (32-bit ARM). The answerer
+(`ANS_MODE_K56`, mu-law with V.34 only) begins with `ANS_V8BIS`
+(`modem/v8bis`, in `answer_t.u` while it runs): 400 ms of silence (ruling C6),
+CRe (ruling C1: 1375 + 2002 Hz 290 ms, 400 Hz 100 ms, 14.6 dB below our
+messages, as the real server), CRd's pair begun within 1000 ms of CRe's end
+and followed to its 1900 Hz end, our CL (the real server's, ruling C2) on V.21
+channel 1 120 ms later, the MS on channel 2 until 1500 ms after the CL,
+ACK(1) 180 ms after an MS with the block, NAK(1) after an invalid frame;
+then V.8 as before. An agreement turns x2 off for the call and is handed to
+V.34 (`v34ans_cfg.k56`, used from Task 6). A-law, or K56flex not offered:
+no new state is entered. `sim/k56call` (a client from the facts, then
+`sim/v34peer`), `tools/k56_crd_scan.c` (`make crd-scan RECS=<dir>`),
+`v90m-replay -k`.
+
+    make build/test_v8bis              (first: no rule for modem/v8bis.c)
+    build/test_v8bis
+      CRe: 1375.0 + 2002.0 Hz, 400.0 Hz; 14.6 / 14.6 dB below the CL
+      CL begins 125.0 ms after CRd ends; ACK(1) 180.0 ms after the MS ends
+      test_v8bis: 48 checks, 0 failures
+    build/test_answer_k56              (first: ANS_V8BIS undeclared)
+      K56flex client, K56flex and x2 offered: V.34 28800 / 28800, 0 bad; agreed 1, x2 0, ACK 1
+      V.8bis caller without K56flex: our ANSam 1700.0 ms after our CL ended
+      our calling modem in V.90 / V.92, K56flex offered: 52000 / 28800, 52000 / 34666, 0 fail,
+        the same as the reference (which starts as late as V.8; V.92's rates move a step
+        with the line's noise), the same octets for 12 s from V.8 on
+      answer_k56: 115 checks, 0 failures
+    make check                         ALL HOST CHECKS PASS
+
+Delays before our ANSam, measured in test_answer_k56 (for `docs/limits.md`,
+F10): a caller without V.8bis 1.790 s later than without K56flex; a V.8bis
+caller without K56flex (CRd, no MS) 3.807 s later (ANSam 1700 ms after our
+CL); a K56flex client 3.413 s later (ANSam at 3.613 s after answering).
+
+The CRd scan over the 106 recordings of `~/sync-build/live-050`:
+
+    make crd-scan RECS=~/sync-build/live-050
+      k56-crd-scan: 106 recordings, 0 CRd detections (0 with the 1900 Hz end)
+
+The same detector on the client channel of Gough Lui's recording (outside
+the repository) finds its one CRd: the pair at 2.040 s (it began at 1.885),
+the end at 2.400 s (1900 Hz ended at 2.390).
+
+Replay proof: the 0.4.0 + x2-gate tree (704b370, `~/k56-base`) against this
+one, the 106 recordings, flags `""`, `-9`, `-x`, `-x -9`, each run in its own
+directory: every `.txt` (424) and `.bits` (122) byte-identical. With `-k`
+(and `-k -9`) every recording completes; V.8bis hears silence and gives up
+(result 2, no CRd) in all 106; the final modulation and rates line equals
+the run without `-k` in 106 of 106 (the transmit-difference count grows by
+CRe, which the recording does not have).
+
+SM56 (`make test-k56-sm56 DMODEM=~/modem-research/D-Modem MODS=k56`, SM56
+dialled `AT+MS=K56FLEX,0`): PASS, V.34 28800 / 28800, 4096 octets each way
+identical. Decoded from its `call.rec`: SM56's CRd, our CL with the
+9-octet block, SM56's MS `11 c9 80 80 80 09 b5 02 00 94 81 83 02 46 e0` (the
+block, our 9-octet form echoed with version `02`), our ACK(1) `14`. So the
+9-octet form stays the default (`V8B_NS_DEFAULT` = `V8B_NS9`). INFO1a is not
+flagged yet (Task 6).
