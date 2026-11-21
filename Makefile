@@ -20,6 +20,9 @@
 #   make test-x2-courier an emulated USR Courier calls our answerer (COURIER_EMU=courier-emu
 #                        checkout, PAD=0|3|6, MODS=x2, STRICT_RENEG=1; tools/x2-peer/README.md),
 #                        host only
+#   make test-k56-sm56   Motorola's SM56 calls our answerer (DMODEM=D-Modem checkout, built;
+#                        MODS=k56|none, RBS=<hex>, DOWN=<bps>, STRICT_RENEG=1;
+#                        tools/k56-peer/README.md), host only, needs gcc -m32
 #
 # Cross-compiling: set CC (and BUILD to keep the objects apart), e.g.
 #   make CC=arm-linux-gcc BUILD=build/arm
@@ -100,7 +103,7 @@ TESTS    := test_g711 test_noise test_filt test_resamp test_channel test_v21 tes
 API_TESTS := test_api
 SUBS     := v34 v90 v92 v42 v32
 
-.PHONY: test-x2-courier test-fixtures test-examples all lib dev install uninstall clean check check-arm check-ubsan test test-arm test-api test-interop examples bench-v90 bench-v34 bench-v90a bench-v90c bench-v92c replay
+.PHONY: test-x2-courier test-k56-sm56 test-fixtures test-examples all lib dev install uninstall clean check check-arm check-ubsan test test-arm test-api test-interop examples bench-v90 bench-v34 bench-v90a bench-v90c bench-v92c replay
 all: lib examples
 lib: $(STATIC) $(SHARED) $(PCFILE)
 dev: $(DEV)
@@ -386,6 +389,20 @@ test-x2-courier:
 	@if [ -z "$(COURIER_EMU)" ]; then echo "COURIER_EMU not set"; exit 0; fi; \
 	$(MAKE) -s $(BUILD)/x2-bridge && \
 	COURIER_EMU="$(COURIER_EMU)" PAD="$(PAD)" MODS="$(MODS)" STRICT_RENEG="$(STRICT_RENEG)" sh tools/x2-peer/run.sh $(abspath $(BUILD))/x2-bridge $(abspath $(BUILD))/x2-peer
+
+# ---- K56flex against Motorola's SM56 (tools/k56-peer/README.md): D-Modem's
+# half_sm56 and sm56.ko live outside the repository; not part of check
+DMODEM ?=
+RBS  ?= 0
+DOWN ?= 0
+$(BUILD)/k56-bridge: tools/k56-peer/bridge.c $(STATIC) include/v90modem.h
+	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L -Iinclude -o $@ $< $(STATIC) $(LDLIBS)
+test-k56-sm56:
+	@if [ -z "$(DMODEM)" ]; then echo "DMODEM not set"; exit 0; fi; \
+	if ! printf 'int main(void) { return 0; }\n' | $(CC) -m32 -x c - -o /dev/null 2>/dev/null; then \
+		echo "no 32-bit toolchain (glibc-devel.i686)"; exit 0; fi; \
+	$(MAKE) -s $(BUILD)/k56-bridge && \
+	DMODEM="$(DMODEM)" MODS="$(MODS)" RBS="$(RBS)" DOWN="$(DOWN)" STRICT_RENEG="$(STRICT_RENEG)" sh tools/k56-peer/run.sh $(abspath $(BUILD))/k56-bridge $(abspath $(BUILD))/k56-peer
 
 clean:
 	rm -rf $(BUILD)

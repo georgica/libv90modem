@@ -3217,3 +3217,59 @@ Found while writing it down (in "Unsettled", for the controller):
 `glibc-devel.i686` is not installed (`rpm -q`): the SM56 harnesses cannot
 run yet ("Harness"). No build or test change in this task; `make check` run
 before the commit as the plan asks.
+
+## k56 2: the oracles and the SM56 harnesses, outside the repository (2026-11-21)
+
+`glibc-devel.i686` (and `libxcrypt-devel.i686`) installed by the owner during
+the task: the SM56 harnesses ran; the release label is not held at L0 by the
+toolchain.
+
+D-Modem at `c06a380d` in `~/modem-research/D-Modem`, built unmodified:
+
+    cmake -B build -DCMAKE_C_FLAGS=-mstackrealign -DCMAKE_CXX_FLAGS=-mstackrealign
+    cmake --build build -j16
+    ctest --test-dir build -R k56flex -L sm56     # 3 of 3 pass
+
+(without `-mstackrealign` GCC 15's `half_sm56` faults at once: an aligned SSE
+store on the module's 4-byte-aligned stack). D-Modem's server against SM56
+(`sm56_k56flex`): CONNECT 44000/31200; its timeline is in `k56-facts.md`
+"Harness".
+
+Oracles (ours, `~/modem-research/k56-oracle/`, `make`):
+
+- `./enc > test/data/k56enc_oracle.h`: `K56Enc` at 13 rates x 3 pads x 64
+  masks, 600 frames each, 0.3 s. `K56Enc` scrambles internally; the pipeline
+  for our encoder (xorshift32 from 1, GPA from 0, then the encoder) is in
+  "Oracle" and the header's comment.
+- `./train > test/data/k56tx_oracle.h`: `K56Train` driven alone (no
+  `open_k56flex` run needed), 12 cases of J (`00 40 80 04 12 98` x J after
+  12000 / 13000 of silence 2, MP after 3000 of TRN2B) and one renegotiation
+  (MP after 1500); per segment length, FNV-1a, first 8 octets, to the first
+  data frame; our MP's octets included.
+- `sm56dec/` (32-bit, `sm56.ko`'s `pstn_init_rx` / `putBIOS`): on `enc -d`'s
+  dumps, 3 of 3 (32000/0/00, 44000/1/12, 56000/2/3f) decode to the data
+  sent; `check.sh DIR` runs a directory (Task 7's `k56-dump`).
+- GPC upstream settled from D-Modem's `k56_start` / `V34Rx::init` (RE).
+
+The peer (`tools/k56-peer/`, `make test-k56-sm56`, not in `check`):
+
+    make test-k56-sm56                                        # DMODEM not set, exit 0
+    make test-k56-sm56 DMODEM=/x CC=false                     # no 32-bit toolchain (glibc-devel.i686), exit 0
+    make test-k56-sm56 DMODEM=~/modem-research/D-Modem MODS=none
+      ours: CONNECT 28800/28800 V.34 at 13.0 s of line; sm56: CONNECT 28800/LAPM
+      to SM56: 4096 octets, identical; to us: 4096 octets, identical; PASS
+    ... RBS=0x08                                              # PASS, the same
+    ... MODS=k56                                              # bridge: no V90M_MOD_K56 yet (Task 5), FAIL
+
+SM56 dials `AT+MS=K56FLEX,0` (the brief's): with nothing answering its
+V.8bis it falls back to V.34 by itself, so Ruling F2's automode is not
+needed for a fall-back. With automode (`AT+MS=K56FLEX,1`, `SM56_MS=`) its CM
+offers V.90 too and **our V.90 answerer fails against SM56 in Phase 2** (no
+INFO1a after our INFO1d; SM56 NO CARRIER), as with `AT+MS=V90`; D-Modem's
+server passes that call. Recorded in "Harness", not investigated here.
+
+Corrections to `k56-facts.md` from Task 1's review: the server-started
+renegotiation sends R (not R2); a retrain repeats Phase 2 (INFO1), not
+"INFO1a flagged again".
+
+`make check`: ALL HOST CHECKS PASS (nothing new runs in it).

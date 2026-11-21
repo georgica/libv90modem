@@ -461,9 +461,12 @@ notes 3]:
   for 16 levels, TRN, MP and E are 16-point (4 bits a symbol, V.34
   10.1.3.8).
 
-- The upstream descrambler is GPC (tap 18): D-Modem's answering receiver
-  is created with "not caller", which selects tap 18. [RE: D-Modem, code
-  `v34_modem.cpp` `V34Rx::init`]. This settles decision 9's GPC.
+- The upstream descrambler is GPC (tap 18): D-Modem's server starts its
+  K56flex upstream receiver with `prx.init(baud_rx, high_rx, 0)` ("not
+  caller", `v34_k56.h` `k56_start`), and `V34Rx::init` takes `tap = caller
+  ? 5 : 18`. [RE: D-Modem, code `v34_k56.h`, `v34_modem.cpp`]. This
+  settles decision 9's GPC; the SM56 call of Task 9 is to confirm it as our
+  observation.
 - **J24**: a 24-bit word sent least significant bit first, 2 bits a symbol
   (12 symbols), 4-point, scrambled and differentially encoded as V.34's J:
   bits 0-15 the V.34 J (`0x89b0` asks for 16-point Phase 4, `0x8990` for
@@ -710,8 +713,8 @@ comparison). Rebuild or include: decision 11, task "Tables".
   at 32000); 3 checks above 4 times that: retrain; 17 checks below 0.8
   L(r+1) + 0.2 L(r+2): up (none at the top, nor to the rate the last
   renegotiation went down from); more than 5 renegotiations down: retrain.
-- Server-started (we never do this, decision 13): R2 replaces the data
-  and the client, on spotting R2, replies with S. SM56 survives the
+- Server-started (we never do this, decision 13): R replaces the data
+  and the client, on spotting R, replies with S. SM56 survives the
   exchange but its data error then runs about 10 times higher and it
   retrains about 4 s later; the likely cause is its adapted level table.
 - A client MP with rate 0 both ways is V.34's cleardown (11.7). [doc]
@@ -723,7 +726,7 @@ comparison). Rebuild or include: decision 11, task "Tables".
 
 - The mechanism is V.34's retrain (11.5): silence and then tone B from a
   client that starts it, tone A from a server. The far end, spotting the
-  tone in data mode, joins in. Both repeat Phase 2 (INFO1a flagged again)
+  tone in data mode, joins in. Both repeat Phase 2 (INFO1)
   and then the whole training from silence 1 with the scrambler and sums
   cleared; there is no second CONNECT.
 - A tone A from the server is misread by SM56: it hunts for a
@@ -820,10 +823,12 @@ boundary comes from a level or low-band step, ± about 5 at onsets):
 ## Oracle
 
 The oracles are D-Modem's encoder and training, built outside the
-repository, run on our inputs; their output is pinned in our tests as data.
-D-Modem is cloned at `c06a380d` in `~/modem-research/D-Modem` (checked: `git
-log -1` gives `c06a380d86105b2309c8cb8958e41120856bb84b`, 2026-11-20). Not
-built in this task.
+repository and run on our inputs; their output is pinned in our tests as
+data. D-Modem is cloned at `c06a380d` in `~/modem-research/D-Modem` (`git
+log -1`: `c06a380d86105b2309c8cb8958e41120856bb84b`, 2026-11-20) and built
+there unmodified ("Harness"). The drivers are ours, in
+`~/modem-research/k56-oracle/` (`enc.cpp`, `train.cpp`, its `README.md`),
+never in the repository (k56 2, 2026-11-21).
 
 - Encoder oracle: `K56Enc` (`dsp/k56flex.cpp`): data bits (one per byte,
   time order) to 8 codes per frame, for a `K56Line` {rate, pad 0..2, law,
@@ -832,11 +837,65 @@ built in this task.
   code]. It is D-Modem's reading of SM56's tables; SM56's own decoder
   took its octets in 351 cases (PR #39). It is not independent truth (the
   echo chamber of the spec).
-- Training oracle: `K56Train` (`dsp/k56flex_train.cpp`) driven as
-  `v34_k56.h` drives it: `init(law)`, `js = 0x89b0`, the pad from the J24
-  octet, silence 2 ended on the J24 and rounded up to 8, TRN2B held until
-  the MP and the grid, MP and MP' from `k56_make_mp()`. [RE: D-Modem,
-  code].
+  - **`K56Enc::frame` scrambles internally** (GPA, one bit at a time, before
+    the shell index is taken), so `enc` feeds it the unscrambled bits.
+    [RE: D-Modem, code]. The pipeline Task 7's test must reproduce, for an
+    encoder that takes scrambled bits: for each rate code r (1..13), pad
+    (0..2) and mask (0..63), a fresh xorshift32 from 1 (`x ^= x << 13; x ^=
+    x >> 17; x ^= x << 5`, bit = `x & 1`, one step a bit), each bit through
+    a GPA scrambler from state 0, into an encoder at frame 0, running sum 0,
+    shaping counter 0, mu-law; 600 frames, each taking the encoder's bit
+    count for it; FNV-1a (32 bits) over the 4800 mu-law octets
+    (`test/data/k56enc_oracle.h`: `k56enc_oracle_fnv[r-1][pad][mask]`, and
+    `k56enc_oracle_frames[r-1][pad][k]` with mask 0 for frames 0, 1 and 599).
+    [our observation: the oracle run].
+  - At 32000 and 34000 every mask gives the same octets (no robbed bits
+    below 36000, "Robbed bits"); 1920 different FNVs in the 2496. [our
+    observation].
+- Training oracle: `K56Train` (`dsp/k56flex_train.cpp`) with `K56Enc` for
+  B1 and `V34Mp::build` (`dsp/v34_modem.cpp`, from the built
+  `libdmodem.a`) for our MP, driven as `v34_k56.h` drives them, at fixed
+  symbols instead of on a received J and MP: `init(law)`, `js = 0x89b0`,
+  silence 2 held until the J, the pad from the J's octet, silence 2 ended
+  at max(12288, J rounded up to 8), TRN2B held until the MP, MP once TRN2B
+  has 2048 and the grid holds, MP and MP' as `k56_make_mp()` builds them
+  (rate_ca, rate_ac, mask `0x3fff`, asymmetric; ack 0 and 1), a new
+  encoder at each MP, B1 (6 frames of ones) first. [RE: D-Modem, code].
+  `K56Train` can be driven alone; `open_k56flex` was not needed.
+  - Cases (`test/data/k56tx_oracle.h`, `k56tx_oracle_case[]`): J octets
+    `00`, `40`, `80`, `04`, `12`, `98`, each with the J after 12000 and
+    13000 symbols of silence 2 and the MP after 3000 of TRN2B; and a
+    renegotiation: J `12` after 12000, the first MP after 3000, 1001 data
+    frames, then R2 at that frame boundary and the client's MP after 1500
+    of the new TRN2B. Our MP: rate_ca 13, rate_ac 13 (56000); its 11 octets
+    (and MP''s) are in the header as `k56tx_oracle_mp`. Recorded per
+    segment from silence 1 (from R2 in the renegotiation) to the first
+    data frame: length, FNV-1a of its mu-law octets, the first 8 octets.
+    [our observation].
+  - "After j_at symbols": the J is taken before symbol j_at of silence 2 is
+    sent; when j_at is already a multiple of 8 above 12288 (13000), silence
+    2 ends there (13000 symbols). `v34_k56.h` sets the length after the
+    symbol is sent, which would give 13001 for a J seen right after symbol
+    13000; the driver does not follow that. [inf] (read in `k56_step` and
+    `K56Train::next`).
+  - Seen in the output: TRN2B 3012 symbols with the J after 12000 (silence
+    2 12288) and 3020 after 13000, the grid then holding (48980 + 1420 =
+    2100 x 24; 49700 + 1420 = 2130 x 24), whatever the J's octet; in
+    the renegotiation TRN2B is 2064 (2048 and the grid); TRN2B, MP, MP' and
+    E use the J's pad's magnitudes, 1 bit a symbol in the renegotiation
+    (`c2 aa 2a 42` at pad 0); R1 and R2 are the same octets; the first data
+    frame after the renegotiation equals the first one of the call (Ruling
+    C4: the encoder restarts). [our observation].
+- SM56's decoder as a check (`~/modem-research/k56-oracle/sm56dec/`, ours,
+  32-bit): `sm56.ko` linked with its imports renamed by objcopy,
+  `pstn_reset_rx`, the octet callback at state + `0x20`, the pad at
+  `0x1110`, per cycle symbol k `0x10f8` + 4 k (0 robbed, 2 not),
+  `pstn_init_rx(st, 30 + 2 r)`, `putBIOS` per code. [RE: D-Modem, code
+  `dsp/test/k56flex_sm56.cpp`] for the calls. On `K56Enc`'s output (600
+  frames): 32000 pad 0 mask 0, 44000 pad 1 mask `0x12`, 56000 pad 2 mask
+  `0x3f`: all three decode to the data bits sent, one frame short (SM56
+  decodes a frame when the next starts); a corrupted octet and a wrong mask
+  are caught. [our observation].
 
 ## Harness
 
@@ -845,17 +904,55 @@ built in this task.
   (sm56-06.09.05); D-Modem's `dsp/test/half_sm56.cpp` runs it in user
   space; `dsp/test/k56flex_sm56.cpp` feeds encoder output to its decoder.
   `dsp/test/NOTICE.md` grants no rights to the binaries. [RE: D-Modem].
-- Both are 32-bit and need `glibc-devel.i686`: **not installed on
-  2026-11-21** (`rpm -q glibc-devel.i686`: not installed; `libgcc.i686`
-  15.3.1 is). Until the owner installs it the SM56 gates cannot run and
-  the release is L0.
+- `glibc-devel.i686` (with `libxcrypt-devel.i686`) installed by the owner on
+  2026-11-21: the SM56 gates run.
+- D-Modem built (k56 2, unmodified):
+
+      cd ~/modem-research/D-Modem
+      cmake -B build -DCMAKE_C_FLAGS=-mstackrealign -DCMAKE_CXX_FLAGS=-mstackrealign
+      cmake --build build -j16
+
+  Built with the plain `cmake -B build` of its README first, `half_sm56`
+  faulted at once (`movapd` to a misaligned stack, GCC 15.3.1, in a
+  callback from the module, which keeps 4-byte alignment); `-mstackrealign`
+  cures it. Then `ctest -R k56flex -L sm56` passes: `sm56_k56flex`,
+  `sm56_k56flex_rbs`, `k56flex_sm56`. [our observation].
+- **The reference call** (D-Modem's server, `half_open8`, against SM56,
+  `ATX3;AT+MS=K56FLEX`, netsim at 8000 Hz mu-law with `NET_LOOP=0.45`; log
+  in `~/modem-research/k56-oracle/ref-call/`). Times in D-Modem's line ms
+  from its ATA: MRe 200; CRd at 700, our CL from 1639; SM56's MS `11 c9 80
+  80 80 07 b5 02 00 94 81 83 21` at 2950; ACK(1) and V.8 from 3650; CM `e0
+  c1 65 13 94 27 0d` at 5235; INFO1c (offset `0x1`) and the flagged INFO1a
+  at about 7800; Phase 3 from 8002 (SM56 at 3200 baud); its J24 (16 point,
+  octet `00`) at 14420; R2 at once; its MP (rate_ca 13, rate_ac 7, mask
+  `3fff`) at 18672; E at 18875: **CONNECT 44000/31200**, SM56 `CONNECT
+  44000/LAPM`; 22.7 s of the test's clock to CONNECT. [our observation:
+  D-Modem's log]. This is SM56 with D-Modem's MRe; Ruling C1's CRe is
+  untried with SM56 until Task 5.
 - SM56 answers V.8bis only after its blind-dial wait (2 s from ATD): the
   bridge answers 3 s after ATD. With `+MS=K56FLEX,0` it offers no V.90.
   [RE: D-Modem, notes 1].
+- **Our bridge** (`tools/k56-peer/`, `make test-k56-sm56`): with
+  `AT+MS=K56FLEX,0` and K56flex not offered by us, SM56 gets no V.8bis
+  answer, sends a CM for V.34 and connects **V.34 28800/28800** with LAPM to
+  our answerer; 4 KiB each way identical; its `AT&V1` says V.34 / V.34,
+  3200 baud, 1829 / 1920 Hz carriers, 35/33 good EC packets, none bad.
+  Also so with `RBS=0x08`. So SM56 falls back from K56flex without
+  automode (Ruling F2's automode is not needed for a fall-back to V.34).
+  [our observation].
+- With automode (`AT+MS=K56FLEX,1`) or `AT+MS=V90`, SM56's CM offers V.90,
+  we select it, and **our V.90 answerer fails against SM56 in Phase 2**: our
+  INFO1d sent, no INFO1a from SM56 within the 1 s wait, start-up failed
+  about 5.7 s after our answer, SM56 NO CARRIER; with and without the loop
+  model. D-Modem's server passes the same call (`sm56_v90_ulaw`: 50666
+  down). Not investigated (outside the K56flex work; replay of the
+  recording: `build/k56-peer/call.rec`). [our observation].
 - netsim's robbed-bit model is in "Robbed bits"; `NET_RBS_TO=a` (or `b`)
   applies the pad and robbed bits to the codes toward an 8000 Hz PCM client
-  with no codec filter (as SM56 takes them). [RE: D-Modem, code
-  `netsim.cpp`].
+  with no codec filter (as SM56 takes them). Without it, D-Modem's SM56
+  calls put `NET_LOOP=0.45` on the codes toward SM56 (a 0.45-sample delay
+  and a 300 Hz high pass); the bridge models both. [RE: D-Modem, code
+  `netsim.cpp`; `interop_test.cpp`].
 
 ## Unsettled
 
@@ -871,8 +968,9 @@ frame (C6).
 
 Still [unk]:
 
-- Whether SM56 accepts the real server's CL (`81 c2` S field): its harness
-  has not run.
+- Whether SM56 accepts the real server's CL (`81 c2` S field) and our CRe:
+  the harness runs now (k56 2), the V.8bis side comes in Task 5.
+- Why our V.90 answerer fails against SM56's V.90 in Phase 2 ("Harness").
 - Whether the repository's `v34_shell_map` handles M = 16 (54000), where
   z8's total is 2^32: for the tables task to check.
 - **The real server's training lengths** (TRN1A about 16650, TRN1B about
