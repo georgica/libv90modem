@@ -166,7 +166,7 @@ as they were.
 | `V90M_END_NO_ANSWER_TONE` | calling only: no answer tone came |
 | `V90M_END_NO_JM` | calling only: ANSam came, but no JM in answer to CM (V.8) |
 | `V90M_END_NO_COMMON` | calling only: the answerer has no modulation in common with us |
-| `V90M_END_RETRAIN_FAILED` | calling V.90 / V.92 (appended): a retrain failed, or one more was due past the limit (see `v90m_retrain`) |
+| `V90M_END_RETRAIN_FAILED` | calling V.90 / V.92 (appended): a retrain failed, or one more was due past the limit (see `v90m_retrain`); answering x2: the client asked for a retrain in data mode or its rate change (its Tone A), which x2 cannot serve |
 | `V90M_END_X2_FAILED` | answering (appended): the client took up x2 (its marker came) and the x2 start-up, or a rate change of the client's, did not complete |
 
 ## Stats

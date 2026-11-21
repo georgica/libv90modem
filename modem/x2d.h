@@ -19,7 +19,12 @@
  * upstream rates it can send (the highest, at most 28800, is taken).
  * Anything else ends the call: once the marker has come there is no way
  * back to V.34. So does a client that goes silent, at any point, within the
- * time limits below (all well under 10 s).
+ * time limits below (all well under 10 s), and one that asks for a retrain
+ * in data mode or in its rate change: its Tone A (2400 Hz, with its 1800 Hz
+ * guard tone) for more than 50 ms ends the call (X2D_ERR_RETRAIN). What a
+ * client's retrain leads to in x2 is not known (x2-facts.md "Unsettled");
+ * the U.S. Robotics 56K, left unanswered, sends it for some 17 s and hangs
+ * up ("Unable to Retrain").
  *
  * A client's rate change in data mode (x2-facts.md "Rate change"): its S
  * (X2D_RENEG; the data stops up, goes on down), S-bar, a short TRN and its
@@ -37,6 +42,7 @@
 #include "ecdly.h"
 #include "v34train.h"
 #include "x2tx.h"
+#include "tonedet.h"
 #include "../v34/v34.h"
 
 typedef int  (*x2d_getbit_fn)(void *user);
@@ -85,7 +91,8 @@ enum {
     X2D_ERR_B1,         /* B1 not received in time, or wrong */
     X2D_ERR_CARRIER,    /* the upstream signal lost in data mode */
     X2D_ERR_RENEG,      /* a rate change of the client's not back in data mode in time */
-    X2D_ERR_HANGUP      /* we cleared down (x2d_cleardown) */
+    X2D_ERR_HANGUP,     /* we cleared down (x2d_cleardown) */
+    X2D_ERR_RETRAIN     /* the client asked for a retrain (its Tone A): x2 has none */
 };
 
 typedef struct {
@@ -122,6 +129,7 @@ typedef struct {
     int        tx_ready, rx_ready;
     int        down_rate, up_rate;  /* bit/s */
     int32_t    q_dead;
+    tonedet_t  tone_a;              /* the client's Tone A (a retrain) in data mode and its rate change */
 } x2d_t;
 
 /* Returns 0, or -1 (state X2D_ENDED, X2D_ERR_CFG) */

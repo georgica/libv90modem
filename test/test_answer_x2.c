@@ -227,6 +227,11 @@ static struct { int ms, index, index2, md, md0, hangup; uint16_t mask; } RN;
  * from its new data on, the check goes on from at (lost: those of the
  * first that never came). */
 static struct { int armed, done; uint32_t st; long at, lost, extra; } UG;
+/* the client's retrain in data mode, for the next x2_call (which clears
+ * it): ms into data mode it falls silent, and 70 ms later sends Tone A with
+ * its 1800 Hz guard tone (80 % / 20 % of the power, as the U.S. Robotics
+ * 56K did on 2026-11-21) until the call ends; at (sample) when the tone began */
+static struct { int ms; long at; } TA;
 static long up_taken;
 /* downstream: our getbit to the client's putbit; upstream the other way */
 static int s_get(void *u) { (void)u; return rnext(&DN.tx); }
@@ -269,8 +274,9 @@ static void x2_call(int pad, int index, uint16_t up_mask, int silent, int echo_d
     const int e = echo_delay < 0 ? 300 : echo_delay;
     answer_cfg ac; x2call_cfg xc; rng_t rng;
     uint8_t arx = 0xff;
-    long n;
+    long n, ta_n = 0;
     int nr = 0;
+    TA.at = -1;
     memset(o, 0, sizeof *o);
     o->x2_at = o->quiet_at = o->end_at = -1;
     o->rn_at = o->rn_seen = o->rn_back = o->dn0 = o->up0 = -1; o->cd_ret = 1;
@@ -298,6 +304,14 @@ static void x2_call(int pad, int index, uint16_t up_mask, int silent, int echo_d
         down[i] = atx;
         dl[i] = (double)ulaw_to_linear(atx);
         up[i] = x2call_tick(&X, down[(n - d_ac) & (XD - 1)]);
+        if (TA.ms && o->connected_once && ++ta_n > (long)TA.ms * 8) {
+            long k = ta_n - (long)TA.ms * 8 - 560;          /* 70 ms of silence first */
+            up[i] = 0;
+            if (k >= 0) {
+                if (TA.at < 0) TA.at = n;
+                up[i] = (int16_t)lround(5000.0 * sin(6.283185307179586 * 2400.0 * k / 8000) + 2500.0 * sin(6.283185307179586 * 1800.0 * k / 8000));
+            }
+        }
         /* what reaches us: the client, our own echo off the line's hybrid, noise */
         v = 0.5 * up[(n - d_ca) & (XD - 1)]
             + 0.12 * dl[(n - e - 2) & (XD - 1)] + 0.08 * dl[(n - e - 4) & (XD - 1)] - 0.05 * dl[(n - e - 9) & (XD - 1)]
@@ -327,7 +341,7 @@ static void x2_call(int pad, int index, uint16_t up_mask, int silent, int echo_d
             if (o->renegs == (RN.index2 ? 2 : 1) && UG.done && DN.n - o->dn0 >= data_bits && UP.n - o->up0 >= data_bits) break;
         }
     }
-    memset(&RN, 0, sizeof RN);
+    memset(&RN, 0, sizeof RN); TA.ms = 0;
     o->ok = A.connected && A.phase == ANS_X2 && x2call_state(&X) == X2C_DATA;
     o->down = A.bitrate; o->up = A.rx_bitrate; o->mod = A.modulation;
     o->error = A.u.x2.error; o->x2_failed = A.x2_failed;
@@ -497,6 +511,22 @@ static void x2_tests(void)
                 CHECK(X.mp_count >= 2);
             }
         }
+    }
+    /* 6. the client's retrain in data mode (its Tone A with the guard tone):
+     *    x2 has no way to serve it (docs/history/x2-facts.md "Unsettled"):
+     *    the call ends within a fraction of a second of the tone, said as a
+     *    retrain that failed (V90M_END_RETRAIN_FAILED), not left in data
+     *    mode while the client gives up */
+    {
+        TA.ms = 1500;
+        x2_call(0, 1, 0x03FE, X2C_SIL_NONE, 0, 20, 0, &o);
+        printf("  x2 client's Tone A in data mode: ended %.3f s after the tone began, error %d, x2_failed %d\n",
+               TA.at < 0 || o.end_at < 0 ? -1.0 : (o.end_at - TA.at) / 8000.0, o.error, o.x2_failed);
+        CHECK_EQ_I(o.connected_once, 1); CHECK(TA.at > 0);
+        CHECK_EQ_I(A.phase, ANS_FAILED);
+        CHECK_EQ_I(o.error, X2D_ERR_RETRAIN);
+        CHECK_EQ_I(o.x2_failed, 2);
+        CHECK(o.end_at > TA.at && o.end_at - TA.at <= 8000L / 5);
     }
 }
 

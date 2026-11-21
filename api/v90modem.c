@@ -228,6 +228,7 @@ static v90m_end end_of(const v90m_t *m)
     } else {
         const answer_t *a = &m->u.a;
         if (a->phase != ANS_FAILED) return V90M_END_NONE;
+        if (a->x2_failed == 2) return V90M_END_RETRAIN_FAILED;
         if (a->x2_failed) return V90M_END_X2_FAILED;
         if (a->k56_failed) return V90M_END_K56_FAILED;
         if (a->k56_lost) return V90M_END_LOST;

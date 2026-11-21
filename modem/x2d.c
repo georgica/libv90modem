@@ -76,6 +76,7 @@ int x2d_init(x2d_t *d, const x2d_cfg *cfg)
     d->sdet.div = 16;               /* nothing but S can be on the line */
     qamrx_init(&d->rx, d->sym_rate, d->car_num, d->car_den);
     v34_tdem_init(&d->tdem, V34_GPA, 4);
+    tonedet_init(&d->tone_a, TONEDET_2400);
     return 0;
 }
 
@@ -162,6 +163,7 @@ static void rx_begin_data(x2d_t *d)
     d->quiet = 0; d->q_dead = 0;
     d->t_mark = d->now;
     sdet_init(&d->sdet, d->sym_rate, d->car_num, d->car_den);     /* watches for S from here on */
+    tonedet_init(&d->tone_a, TONEDET_2400);
 }
 
 /* ---- descrambled bits ---- */
@@ -411,6 +413,11 @@ uint8_t x2d_tick(x2d_t *d, int16_t rxs)
             /* the client's S in data mode: its rate change (facts "Rate change") */
             (void)sdet_tick(&d->sdet, x);
             if (d->sdet.present >= SDET_PRESENT) reneg_begin(d);
+        }
+        /* its Tone A from data mode on: a retrain, which x2 does not have */
+        if ((d->state == X2D_DATA || d->state == X2D_RENEG) && tonedet_tick(&d->tone_a, x)) {
+            end(d, X2D_ERR_RETRAIN);
+            return 0x7f;
         }
     }
 

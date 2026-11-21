@@ -626,7 +626,15 @@ takes what the mask says.
 - What sets the I-modem's alternate levels A table (`d241`): not used.
 - The meaning of the server record's `7FFF 0000` and of word 0's other bits:
   sent as the I-modem sends them.
-- The client's full retrain during x2: unknown; the design clears down.
+- The client's full retrain during x2: what it leads to is unknown; the
+  design clears down. **Live call (2026-11-21, U.S. Robotics 56K FAX EXT,
+  flash 5.1.4)**: some 153 s into data mode the client fell silent for 70 ms
+  and then sent Tone A with its 1800 Hz guard tone (about 80 % / 20 % of the
+  power, as it does in V.90) without a break until the call ended 17.6 s
+  later, unanswered; its ATI6 gave "Unable to Retrain". x2d now ends the
+  call on it within some 70 ms (`X2D_ERR_RETRAIN`, V90M_END_RETRAIN_FAILED).
+  Nothing in the recording (upstream, our downstream, the echo path, LAPM)
+  changed before it.
 - A rate change to an index we have no bank for (since x2 8 only index 0
   is left: D-Modem saw a Courier ask for "rate 0" once), with MD other than
   5 or a pad mode above 2: we clear down (V90M_END_X2_FAILED), as at the
