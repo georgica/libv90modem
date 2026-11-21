@@ -475,6 +475,13 @@ void v42ec_rx_octets(v42ec_t *e, const uint8_t *buf, size_t n)
 /* ------------------------------------------------------------------- time */
 void v42ec_line_restored(v42ec_t *e)
 {
+    /* What went out before the line stopped may not have reached the far
+     * end whole (an x2 rate change resumes after fill ones): a frame the
+     * stop cut is aborted, and the next one opens with whole flags */
+    if (e->hdlc_tx_on) {
+        v42hdlc_tx_abort(&e->htx);
+        v42hdlc_tx_flags(&e->htx, 2);
+    }
     v42lapm_line_restored(&e->lapm);
 }
 

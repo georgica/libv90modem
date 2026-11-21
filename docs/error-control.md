@@ -94,7 +94,12 @@ transmitter.
 **Retrains and renegotiations.** The modem stops the data
 (`V90M_EV_DATA_STOPPED`) and reports when it moves again both ways
 (`V90M_EV_DATA_MOVING`): pass that on with `v90m_ec_line_restored`, which
-has LAPM poll the far end when frames are still unacknowledged. v90d also
+aborts a frame the stop cut, opens the next one with two whole flags (what
+went out just before the stop may not have arrived whole: an x2 rate change
+resumes after fill ones), and has LAPM poll the far end when frames are
+still unacknowledged. The receiver for its part takes a frame whose opening
+flag was lost after a run of ones when its FCS holds (`v42/v42_hdlc.h`),
+which is how a U.S. Robotics x2 client resumes after its rate change. v90d also
 holds V.42's timers while the data are stopped (`DESIGN.md`, 4.2).
 
 **The end.** `v90m_ec_release` is orderly (DISC, then wait for UA);

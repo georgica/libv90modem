@@ -441,7 +441,9 @@ uint8_t x2d_tick(x2d_t *d, int16_t rxs)
         else if (!d->got_e && d->now - d->t_mark > MS(T_E_MS)) end(d, X2D_ERR_NO_E);
         break;
     case X2D_START:
-        if (d->tx.seg == X2TX_DATA) d->tx_ready = 1;
+        /* data moves from our start's last frame: the owner hears of it
+         * (V90M_EV_DATA_MOVING) before the first bit of data is taken */
+        if (x2tx_data_next(&d->tx)) d->tx_ready = 1;
         if (d->tx_ready && d->rx_ready) {
             d->down_rate = x2tx_rate(&d->tx);
             enter(d, X2D_DATA);
@@ -451,7 +453,7 @@ uint8_t x2d_tick(x2d_t *d, int16_t rxs)
         break;
     case X2D_RENEG:
         /* our answer is out once x2tx is back in data with no change pending */
-        if (d->got_mp && d->tx.seg == X2TX_DATA && !d->tx.go) d->tx_ready = 1;
+        if (d->got_mp && x2tx_data_next(&d->tx)) d->tx_ready = 1;
         if (d->tx_ready && d->rx_ready) {
             d->down_rate = x2tx_rate(&d->tx);
             enter(d, X2D_DATA);

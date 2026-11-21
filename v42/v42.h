@@ -180,7 +180,9 @@ void   v42ec_rx_octets(v42ec_t *e, const uint8_t *buf, size_t n);
 /* Time. */
 void   v42ec_tick(v42ec_t *e, unsigned ms);
 /* the modem carries data again after a retrain or a rate renegotiation:
- * see v42lapm_line_restored() */
+ * a frame the stop cut is aborted, the next frame is opened by two whole
+ * flags (what was sent before the stop may not have arrived whole), and
+ * LAPM polls if frames are unacknowledged (v42lapm_line_restored()) */
 void   v42ec_line_restored(v42ec_t *e);
 
 /* User side. v42ec_write() returns how many octets were taken (0..len);

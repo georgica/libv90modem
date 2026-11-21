@@ -234,7 +234,13 @@ static struct { int armed, done; uint32_t st; long at, lost, extra; } UG;
 static struct { int ms; long at; } TA;
 static long up_taken;
 /* downstream: our getbit to the client's putbit; upstream the other way */
-static int s_get(void *u) { (void)u; return rnext(&DN.tx); }
+/* our data bits taken from the point x2tx left data mode for its answer to
+ * the client's rate change, until data moves again (x2d back in X2D_DATA):
+ * the host learns that the line is back (V90M_EV_DATA_MOVING, and with it
+ * v90m_ec_line_restored) before any of the new data goes, so that V.42 can
+ * open it with flags */
+static long dn_taken, dn_mark = -1, dn_early;
+static int s_get(void *u) { (void)u; dn_taken++; return rnext(&DN.tx); }
 static void s_put(void *u, int bit)
 {
     (void)u;
@@ -280,7 +286,7 @@ static void x2_call(int pad, int index, uint16_t up_mask, int silent, int echo_d
     memset(o, 0, sizeof *o);
     o->x2_at = o->quiet_at = o->end_at = -1;
     o->rn_at = o->rn_seen = o->rn_back = o->dn0 = o->up0 = -1; o->cd_ret = 1;
-    memset(&UG, 0, sizeof UG); up_taken = 0;
+    memset(&UG, 0, sizeof UG); up_taken = 0; dn_taken = 0; dn_mark = -1; dn_early = 0;
     memset(down, 0x7f, sizeof down); memset(up, 0, sizeof up); memset(dl, 0, sizeof dl);
     memset(&DN, 0, sizeof DN); memset(&UP, 0, sizeof UP);
     DN.tx = DN.rx = 0x2468ace1u; UP.tx = UP.rx = 0x13579bdfu;
@@ -330,7 +336,11 @@ static void x2_call(int pad, int index, uint16_t up_mask, int silent, int echo_d
             o->rn_seen = n;
             if (RN.hangup) o->cd_ret = answer_cleardown(&A);
         }
+        if (o->rn_seen >= 0 && o->rn_back < 0 && dn_mark < 0 && A.phase == ANS_X2 && A.u.x2.tx.seg != X2TX_DATA)
+            dn_mark = dn_taken;
         if (o->rn_seen >= 0 && o->rn_back < 0 && A.phase == ANS_X2 && A.u.x2.state == X2D_DATA) {
+            if (dn_mark >= 0) dn_early += dn_taken - dn_mark;
+            dn_mark = -1;
             o->rn_back = n;
             if (o->renegs < 2) o->downs[o->renegs] = x2d_down_rate(&A.u.x2);
             o->renegs++;
@@ -481,6 +491,7 @@ static void x2_tests(void)
         CHECK_EQ_I(DN.bad, 0); CHECK(o.dn0 > 0); CHECK(DN.n - o.dn0 >= 50000);
         CHECK_EQ_I(UP.bad, 0); CHECK(o.up0 > 0); CHECK(UP.n - o.up0 >= 50000);
         CHECK_EQ_I(UG.done, 1); CHECK(UG.lost >= 0 && UG.lost <= 2 * 512); CHECK(UG.extra <= 2 * 512);
+        CHECK_EQ_I(dn_early, 0);        /* no data bit before data moves again */
     }
 
     /* 5. a rate change we cannot serve: an index without a bank (0), or

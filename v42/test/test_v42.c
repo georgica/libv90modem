@@ -763,6 +763,47 @@ static void test_resume_without_flag(void)
     CHECK(both(V42EC_CONNECTED));
 }
 
+/* The line stopped mid-flag and is back (a rate change, a retrain): our
+ * next frame must not rely on what went out before the stop. On
+ * v42ec_line_restored the transmitter sends whole flags before it (two),
+ * and a frame the stop cut is aborted, not finished. Seen without this on
+ * a live x2 call (2026-11-21): our REJ after each of the client's rate
+ * changes went out after the start segment's ones with no flag of its own,
+ * and the client never took it. */
+static void restore_case(int in_frame, int *got, unsigned long *resynced, unsigned long *aborts)
+{
+    v42hdlc_rx_t h; uint8_t buf[60];
+    int i, r;
+    setup();
+    connect_pair();
+    memset(buf, 'x', sizeof buf);
+    if (in_frame) {
+        v42ec_write(&A, buf, sizeof buf);
+        while (!(A.htx.in_frame && A.htx.pos > 10)) (void)v42ec_tx_bit(&A);
+    } else {
+        while (!(!A.htx.in_frame && A.htx.raw && A.htx.nbits == 4)) (void)v42ec_tx_bit(&A);
+        v42ec_write(&A, buf, sizeof buf);
+    }
+    v42ec_line_restored(&A);
+    v42hdlc_rx_init(&h); v42hdlc_rx_set_fcs(&h, V42HDLC_FCS_EITHER);
+    for (i = 0; i < 49; i++) (void)v42hdlc_rx_bit(&h, 1);      /* the fill in between */
+    *got = 0;
+    for (i = 0; i < 4000; i++) {
+        r = v42hdlc_rx_bit(&h, v42ec_tx_bit(&A));
+        if (r > 3) (*got)++;
+    }
+    *resynced = h.resynced; *aborts = A.htx.aborts;
+}
+
+static void test_restore_flags(void)
+{
+    int got; unsigned long rs, ab;
+    restore_case(0, &got, &rs, &ab);
+    CHECK_EQ_I(got, 1); CHECK_EQ_I(rs, 0); CHECK_EQ_I(ab, 0);
+    restore_case(1, &got, &rs, &ab);
+    CHECK_EQ_I(ab, 1); CHECK_EQ_I(rs, 0);
+}
+
 /* ----------------------------------------------------- orderly release */
 static void test_release(int from_a)
 {
@@ -1174,6 +1215,7 @@ int main(void)
     test_no_answer();
     test_line_cut();
     test_resume_without_flag();
+    test_restore_flags();
     test_release(1);
     test_release(0);
     test_release_unanswered();
