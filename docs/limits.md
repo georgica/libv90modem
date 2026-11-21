@@ -114,6 +114,31 @@ bank's octets sent arrive as its levels under the pad model, except two
 levels of the 3 dB banks that the Quad and the I-modem send one code off
 the model (`test/test_x2map.c`).
 
+## Included tables (K56flex)
+
+K56flex has no published specification either. Its data mode's tables,
+per rate (32000 to 56000 bit/s) and the pad the client reports (none,
+3 dB, 6 dB), are in `modem/k56tab.c` (`docs/history/k56-facts.md`,
+"Tables"):
+
+- **The ring lists** (39 lists, 468 octets: the constellation group of
+  each of the shell mapper's rings) and **the constellations** (39
+  lists, 1382 octets: the mu-law magnitude of each point), about 1.9 KB:
+  Motorola's SM56 driver's tables as published by D-Modem
+  (github.com/D-Modem/D-Modem `dsp/k56flex_tables.cpp` at `c06a380d`),
+  generated from those published values by `tools/gen_k56_tables.py`.
+- K, u and r of each rate and the number of rings per pad are the facts'
+  and are checked by the generator and `test/test_k56tab.c` (the frame
+  identity K + 8 (u - 1) + 8 - 8 / r = R / 1000, M^8 >= 2^K, each ring list
+  a permutation, each constellation M << (u - 1) magnitudes without
+  repeats).
+
+Tried as a rule first, without success: the rings in order of their
+group's energy matches none of the 39 lists; the magnitudes as a
+minimum-distance ladder in linear terms behind the pad reproduces 25 of
+the 39 constellations, and only when each table's first point and
+spacing are given, and none of the 3 dB tables but 32000's.
+
 ## CPU
 
 All figures are ARM instructions counted under qemu (ARMv5, gcc -O2);

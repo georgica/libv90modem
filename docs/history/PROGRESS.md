@@ -3273,3 +3273,24 @@ renegotiation sends R (not R2); a retrain repeats Phase 2 (INFO1), not
 "INFO1a flagged again".
 
 `make check`: ALL HOST CHECKS PASS (nothing new runs in it).
+
+## k56 3: the rate tables (2026-11-21)
+
+`modem/k56tab.{h,c}`: K, u, r and M per pad of the 13 rates, the 39 ring
+lists (468 octets) and the 39 constellations (1382 octets), `k56_ring(rate,
+pad)` and `k56_bios(rate, pad)`. The rule was tried first, in a scratch
+script outside the repository (`k56-facts.md` "Tables"): rings by group
+energy, 0 of 39; magnitudes as a minimum-distance ladder, 25 of 39 behind
+the pad and only with each table's first point and spacing given. So the
+rings and magnitudes are included, generated from D-Modem's published
+values (`docs/limits.md`, "Included tables (K56flex)"):
+
+    python3 tools/gen_k56_tables.py ~/modem-research/D-Modem/dsp/k56flex_tables.cpp > modem/k56tab.c
+      gen_k56_tables: 468 ring octets, 1382 constellation octets
+    make build/test_k56tab && build/test_k56tab
+      test_k56tab: 3838 checks, 0 failures
+
+The generator checks K, u, r and M against the facts, the frame identity,
+M^8 >= 2^K, each ring list a permutation and each constellation M << (u -
+1) increasing magnitudes. Not in the signal path yet (Task 7's encoder
+uses it); no check-arm.
