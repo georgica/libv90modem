@@ -3593,7 +3593,8 @@ both sides, the J octet's pad and robbed symbols in `k56d_pad`/`k56d_rbs`
 and in k56tx (`pad`, `d_pad`, `d_rbs`), the training on that pad's levels
 checked octet by octet (0 bad), 16 MP and MP', E, B1, the first data
 symbol on the grid of 24 from TRN1B, 100000 bits each way with no error.
-`TEST_SHORT` (ARM): r = 13 at pad 0 and 6 dB with robbed none and `0x24`,
+Both variants: r = 1 with robbed `0x24` at pad 0 and 6 dB (no bit to rob
+at 32000: ignored; fix round 1). `TEST_SHORT` (ARM): r = 13 at pad 0 and 6 dB with robbed none and `0x24`,
 r = 1 at 6 dB (r = 1, pad 0 is k56 9's).
 
 The engine (`modem/k56d.c`, k56tx, k56enc) passed every one unchanged. The

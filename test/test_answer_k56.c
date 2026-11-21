@@ -22,7 +22,8 @@
  *     and 0x1f (5 taken as 6) at r = 13 and 3, pad 0 and 6 dB: the rate both
  *     sides, the J octet's pad and robbed symbols in k56d and k56tx, the
  *     training checked octet by octet on the pad's levels, the first data
- *     symbol on the grid of 24, the data check both ways (TEST_SHORT: r = 13
+ *     symbol on the grid of 24, the data check both ways; r = 1 with 0x24 at
+ *     pad 0 and 6 dB (no bit to rob at 32000) (TEST_SHORT: those two, r = 13
  *     at pad 0 and 6 dB with and without 0x24, r = 1 at 6 dB);
  *   - Review Focus 3: the agreed client with INFO1c 0x200, or one that
  *     cannot transmit at 3200 baud: INFO1a unflagged, V.34 at the rates of
@@ -605,6 +606,10 @@ static void kr_call(int rate, int pad, int rbs)
 
 static void k56_rate_tests(void)
 {
+    /* r = 1 (32000, q = 0: no bit to rob) with robbed bits 0x24 on the
+     * line, pad 0 and 6 dB: the server ignores them (both variants) */
+    kr_call(1, 0, 0x24);
+    kr_call(1, 2, 0x24);
 #ifdef TEST_SHORT
     /* r = 1 and 13, pad 0 and 2, no robbed bits and 0x24 (r = 1, pad 0,
      * none: k56_data_tests) */
