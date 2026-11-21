@@ -25,6 +25,16 @@
  *     symbol on the grid of 24, the data check both ways; r = 1 with 0x24 at
  *     pad 0 and 6 dB (no bit to rob at 32000) (TEST_SHORT: those two, r = 13
  *     at pad 0 and 6 dB with and without 0x24, r = 1 at 6 dB);
+ *   - the client's renegotiation (Task 11): 5 s into data mode from r = 13
+ *     to 10, 5 s into that data to 12 (TEST_SHORT: 2 s), pad 0, robbed bits
+ *     none and 0x24: our answer checked by the client octet by octet (R at a
+ *     frame boundary, TRN2A 2048, MARK, TRN2B, MP and MP' at 1 bit a symbol,
+ *     E 24, the grid of 24), the data check in each of the three data
+ *     segments each way, tx_bps 56000, 50000, 54000, answer_moving 0 in
+ *     between; a renegotiation MP with rate 0: the far end's cleardown; the
+ *     client silent after its renegotiation's S: K56flex's end within 10 s;
+ *     60 s of data mode (TEST_SHORT: 15 s) with no R of ours (the events
+ *     and end reasons through the API: test/api/test_api.c);
  *   - Review Focus 3: the agreed client with INFO1c 0x200, or one that
  *     cannot transmit at 3200 baud: INFO1a unflagged, V.34 at the rates of
  *     the same client without K56flex;
@@ -330,7 +340,14 @@ typedef struct {
     int echo_delay;         /* answer_v90_line's: 0, or -1 (measured on our TRN1A) */
     int early_e, b1_bad;    /* k56call_cfg's */
     int cleardown;          /* answer_cleardown once the data check has passed */
+    int reneg_ms, reneg_rate, reneg_ms2, reneg_rate2, reneg_rate0;    /* k56call_cfg's */
+    int hold;               /* seconds of data mode to run (no end at the data check) */
 } kd_opts;
+
+/* the data check of one data segment (from data mode, or from data mode
+ * again after a renegotiation, to the client's next S or the end), each way */
+typedef struct { long dn, dbad, un, ubad; int balanced; } kd_seg;
+#define KD_SEGS 3
 
 typedef struct {
     int connected_once, mod, down, up, client_down, client_up;
@@ -338,7 +355,22 @@ typedef struct {
     int k56_failed, k56_lost, cleared, error, phase;
     int retrain_ret, cd_ret; uint8_t cd_octet; int cd_phase;
     v34_mp_t mp;            /* ours, as the client decoded it */
+    /* renegotiations: the data segments, our tx_bps as each began, samples
+     * with answer_moving during K56D_RENEG, the client's last S */
+    int nseg, nmove; kd_seg seg[KD_SEGS]; int seg_bps[KD_SEGS];
+    long moving_in_reneg, rn_at, reneg_seen;
 } kd_out;
+
+/* the data check from here on: the counts cleared, the 64 good bits again */
+static void p23_restart(p23_t *p) { p->good = 0; p->n = p->bad = p->ones = 0; }
+static void kd_seg_close(kd_out *o)
+{
+    kd_seg *g;
+    if (o->nseg >= KD_SEGS) return;
+    g = &o->seg[o->nseg++];
+    g->dn = DC.n; g->dbad = DC.bad; g->un = DA.n; g->ubad = DA.bad;
+    g->balanced = BALANCED(DA) && BALANCED(DC);
+}
 
 static void kd_default(kd_opts *k)
 {
@@ -353,7 +385,7 @@ static void kd_call(const kd_opts *ko, long secs, kd_out *o)
     answer_cfg ac; k56call_cfg kc; rng_t rng;
     uint8_t arx = 0xff;
     long n;
-    int passed = 0;
+    int passed = 0, rn = 0, was_mv = 0;
     memset(o, 0, sizeof *o);
     o->k56_at = o->flag_at = o->quiet_at = o->end_at = o->data_at = -1;
     memset(down, 0xff, sizeof down); memset(up, 0, sizeof up); memset(dl, 0, sizeof dl);
@@ -367,8 +399,11 @@ static void kd_call(const kd_opts *ko, long secs, kd_out *o)
     kc.rate = ko->rate; kc.pad_mode = ko->pad; kc.rbs = ko->rbs; kc.j_octet = ko->j_octet;
     kc.up_mask = ko->up_mask; kc.silent = ko->silent; kc.mp_bad = ko->mp_bad;
     kc.early_e = ko->early_e; kc.b1_bad = ko->b1_bad;
+    kc.reneg_ms = ko->reneg_ms; kc.reneg_rate = ko->reneg_rate; kc.reneg_ms2 = ko->reneg_ms2;
+    kc.reneg_rate2 = ko->reneg_rate2; kc.reneg_rate0 = ko->reneg_rate0;
     kc.getbit = kd_cget; kc.putbit = kd_cput; kc.user = NULL;
     k56call_init(&K, &kc);
+    o->rn_at = o->reneg_seen = -1;
     for (n = 0; n < 8000L * secs; n++) {
         int i = (int)(n & (XD - 1));
         double v;
@@ -386,8 +421,29 @@ static void kd_call(const kd_opts *ko, long secs, kd_out *o)
             + 2.0 * rng_gauss(&rng);
         arx = linear_to_ulaw((int32_t)lround(v));
         if (K.state == K56C_K56 && o->flag_at < 0) o->flag_at = n;
+        if (ko->reneg_ms) {
+            /* a segment ends at the client's S (what is received after it is
+             * not data); the next one is checked from data mode again */
+            int mv = answer_moving(&A);
+            if (K.renegs > rn) { rn = K.renegs; o->rn_at = n; kd_seg_close(o); }
+            if (A.phase == ANS_K56 && A.u.k56.state == K56D_RENEG) {
+                if (o->reneg_seen < 0) o->reneg_seen = n;
+                if (mv) o->moving_in_reneg++;
+            }
+            if (mv && !was_mv) {
+                if (o->nmove < KD_SEGS) o->seg_bps[o->nmove] = A.bitrate;
+                o->nmove++;
+                p23_restart(&DA); p23_restart(&DC);
+            }
+            was_mv = mv;
+            if (rn == (ko->reneg_ms2 ? 2 : 1) && o->nmove == rn + 1 && DA.n >= DBITS && DC.n >= DBITS) {
+                kd_seg_close(o);
+                break;
+            }
+        }
         if (A.phase == ANS_FAILED) { o->end_at = n; break; }
-        if (!passed && DA.n >= DBITS && DC.n >= DBITS) {
+        if (ko->hold && o->data_at >= 0 && n - o->data_at >= 8000L * ko->hold) break;
+        if (!passed && !ko->reneg_ms && DA.n >= DBITS && DC.n >= DBITS) {
             passed = 1;
             o->retrain_ret = answer_retrain(&A);
             if (ko->cleardown) {
@@ -399,7 +455,7 @@ static void kd_call(const kd_opts *ko, long secs, kd_out *o)
                 o->end_at = n;
                 break;
             }
-            if (!ko->silent) break;
+            if (!ko->silent && !ko->hold) break;
         }
     }
     o->quiet_at = K.quiet_at; o->e_at = K.e_at;
@@ -632,6 +688,99 @@ static void k56_rate_tests(void)
 #endif
 }
 
+
+/* ---- the client's renegotiation (plan Task 11) ---- */
+
+#ifdef TEST_SHORT
+#define RN_MS  2000         /* into data mode, and into the data after the first */
+#define HOLD_S 15
+#else
+#define RN_MS  5000
+#define HOLD_S 60
+#endif
+
+static void k56_reneg_tests(void)
+{
+    kd_opts ko; kd_out o;
+    char what[96];
+    int j, k;
+
+    /* r = 13, RN_MS into data mode down to 10, RN_MS into that data up to
+     * 12; pad 0, no robbed bits and 0x24. The client checks our answer octet
+     * by octet: R (at a frame boundary: a whole frame of R's) 288, TRN2A
+     * 2048 (its first renegotiation's at 2 bits an even symbol, the second's
+     * at 1), MARK 32, TRN2B until its MP, MP and MP' on the pad's 2
+     * magnitudes (8 of each), E 24, B1 and the data on the grid of 24, the
+     * training's scrambler and running sum going on from the last E. The
+     * data check in each of the three segments, each way; answer_moving 0
+     * from its S to data again */
+    for (j = 0; j < 2; j++) {
+        uint8_t oct = 0;
+        kd_default(&ko); ko.rbs = j ? 0x24 : 0;
+        ko.reneg_ms = RN_MS; ko.reneg_rate = 10; ko.reneg_ms2 = RN_MS; ko.reneg_rate2 = 12;
+        kd_call(&ko, 60, &o);
+        for (k = 0; k < 8; k++) oct = (uint8_t)(oct | K.j24[16 + k] << k);
+        snprintf(what, sizeof what, "renegotiations 13 -> 10 -> 12, robbed %02X", ko.rbs);
+        kd_report(what, &o);
+        printf("     tx_bps %d, %d, %d; the last TRN2A %d, TRN2B %d symbols; bad octets by segment:",
+               o.seg_bps[0], o.seg_bps[1], o.seg_bps[2], (int)K.trn2a_n, (int)K.trn2b_n);
+        for (k = 0; k < K56TX_DATA; k++) printf(" %ld", K.seg_bad[k]);
+        printf("\n");
+        for (k = 0; k < o.nseg && k < KD_SEGS; k++)
+            printf("     segment %d: down %ld bits %ld bad, up %ld bits %ld bad\n", k, o.seg[k].dn, o.seg[k].dbad,
+                   o.seg[k].un, o.seg[k].ubad);
+        CHECK_EQ_I(K.renegs, 2); CHECK_EQ_I(o.nseg, 3); CHECK_EQ_I(o.nmove, 3);
+        CHECK_EQ_I(o.seg_bps[0], 56000); CHECK_EQ_I(o.seg_bps[1], 50000); CHECK_EQ_I(o.seg_bps[2], 54000);
+        for (k = 0; k < KD_SEGS; k++) {
+            CHECK(o.seg[k].dn >= DBITS); CHECK(o.seg[k].un >= DBITS);
+            CHECK_EQ_I(o.seg[k].dbad, 0); CHECK_EQ_I(o.seg[k].ubad, 0); CHECK(o.seg[k].balanced);
+        }
+        CHECK_EQ_I(o.moving_in_reneg, 0); CHECK(o.reneg_seen > 0);
+        CHECK_EQ_I(o.down, 54000); CHECK_EQ_I(o.client_down, 54000); CHECK_EQ_I(o.mp.max_ac, 12);
+        CHECK_EQ_I(o.up, 31200); CHECK_EQ_I(o.client_up, 31200);
+        CHECK_EQ_I(seg_bad_sum(), 0);
+        CHECK_EQ_I(K.mp_good, 16 + 2 * 8); CHECK_EQ_I(K.mpa_good, 16 + 2 * 8); CHECK_EQ_I(K.mp_wrong, 0);
+        CHECK_EQ_I(K.e_seen, 1); CHECK_EQ_I(K.b1_bad, 0); CHECK_EQ_I(K.data_lost, 0); CHECK_EQ_I(K.r_unasked, 0);
+        CHECK_EQ_I(K.trn2a_n, K56TX_RN_TRN2A_N); CHECK(K.trn2b_n >= K56TX_TRN2B_MIN);
+        CHECK(K.data_at > K.trn1b_at); CHECK_EQ_I((K.data_at - K.trn1b_at) % 24, 0);
+        CHECK_EQ_I(A.phase, ANS_K56); CHECK_EQ_I(A.u.k56.state, K56D_DATA); CHECK(answer_moving(&A));
+        CHECK_EQ_I(A.u.k56.tx.d_rate, 12); CHECK_EQ_I(A.u.k56.tx.d_rbs, oct & 0x3f); CHECK_EQ_I(A.u.k56.tx.nb, 1);
+        CHECK_EQ_I(o.k56_failed, 0); CHECK_EQ_I(o.error, 0);
+    }
+
+    /* its renegotiation's MP with rate 0 both ways (V.34's cleardown): the
+     * call ends as the far end's cleardown (V90M_END_CLEARDOWN_FAR) */
+    kd_default(&ko); ko.rate = 1; ko.reneg_ms = 1000; ko.reneg_rate = 1; ko.reneg_rate0 = 1;
+    kd_call(&ko, 60, &o);
+    printf("  K56flex client, a renegotiation MP with rate 0: ended %.2f s after its S, error %d, cleared %d,"
+           " k56_failed %d, lost %d\n", (o.end_at - o.rn_at) / 8000.0, o.error, o.cleared, o.k56_failed, o.k56_lost);
+    CHECK_EQ_I(K.renegs, 1); CHECK(o.rn_at > 0); CHECK(o.end_at > o.rn_at); CHECK(o.end_at - o.rn_at <= 8000L * 2);
+    CHECK_EQ_I(o.phase, ANS_FAILED); CHECK_EQ_I(o.error, K56D_ERR_CLEARDOWN);
+    CHECK_EQ_I(o.cleared, 1); CHECK_EQ_I(o.k56_failed, 0); CHECK_EQ_I(o.k56_lost, 0); CHECK_EQ_I(o.connected_once, 1);
+
+    /* the client silent after its renegotiation's S: the call ends within
+     * 10 s, as K56flex's (V90M_END_K56_FAILED) */
+    kd_default(&ko); ko.rate = 1; ko.reneg_ms = 1000; ko.reneg_rate = 1; ko.silent = K56C_SIL_RENEG;
+    kd_call(&ko, 60, &o);
+    printf("  K56flex client silent after its renegotiation's S: ended %.2f s later, error %d, k56_failed %d, lost %d\n",
+           (o.end_at - o.quiet_at) / 8000.0, o.error, o.k56_failed, o.k56_lost);
+    CHECK_EQ_I(K.renegs, 1); CHECK(o.quiet_at > 0); CHECK(o.end_at > o.quiet_at);
+    CHECK(o.end_at - o.quiet_at <= 8000L * 10);
+    CHECK_EQ_I(o.phase, ANS_FAILED); CHECK_EQ_I(o.error, K56D_ERR_RENEG);
+    CHECK_EQ_I(o.k56_failed, 1); CHECK_EQ_I(o.k56_lost, 0); CHECK_EQ_I(o.cleared, 0); CHECK_EQ_I(o.connected_once, 1);
+
+    /* we never start one: HOLD_S of data mode without the client's, no R in
+     * our data (the client finds none), data on all of it */
+    kd_default(&ko); ko.hold = HOLD_S;
+    kd_call(&ko, 30 + HOLD_S, &o);
+    kd_report("K56flex client, no renegotiation", &o);
+    printf("     %d s of data mode, R in our data %ld times\n", HOLD_S, K.r_unasked);
+    CHECK_EQ_I(o.phase, ANS_K56); CHECK_EQ_I(A.u.k56.state, K56D_DATA); CHECK(o.data_at > 0);
+    CHECK_EQ_I(K.renegs, 0); CHECK_EQ_I(K.r_unasked, 0); CHECK_EQ_I(A.u.k56.tx.reneg, 0);
+    CHECK(K.data_frames >= (long)HOLD_S * 1000 - 100); CHECK_EQ_I(K.data_lost, 0);
+    CHECK(DA.n >= (long)HOLD_S * 31200 - 31200); CHECK(DC.n >= (long)HOLD_S * 56000 - 56000);
+    CHECK_EQ_I(DA.bad, 0); CHECK_EQ_I(DC.bad, 0);
+}
 
 /* ---- a caller without V.8bis: sim/v34peer over test/line34.h ---- */
 
@@ -867,6 +1016,7 @@ int main(void)
     k56_client_tests();
     k56_data_tests();
     k56_rate_tests();
+    k56_reneg_tests();
     v34peer_tests();
 #ifndef TEST_SHORT          /* on ARM under qemu (test.h): the K56flex client and v34peer only */
     orig_tests();

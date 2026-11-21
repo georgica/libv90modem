@@ -38,6 +38,16 @@
  *   with the options our MP asked for. silent: where it falls quiet for
  *   good (the server's time limits).
  *
+ *   Its renegotiation ("Rate renegotiation"), reneg_ms into data mode (and
+ *   reneg_ms2 into the data after it): up, V.34's (11.6) S, S-bar, TRN, its
+ *   MP (rate_ac reneg_rate, or 0 both ways with reneg_rate0) until it has
+ *   decoded our MP, MP' until our MP', E, all on 4 points, then B1 and data
+ *   at our new MP's rate_ca. Down, the server's answer is checked as the
+ *   training is: R in place of a whole data frame (an R it did not ask for
+ *   is counted, r_unasked), TRN2A 2048 (the server's bits a symbol tracked,
+ *   nb), MARK, TRN2B, MP and MP' on the pad's 2 magnitudes, E 24, the data
+ *   on the grid of 24 at min(the server's rate_ac, reneg_rate).
+ *
  * The line is digital, as x2call's: one octet from the server in (mu-law,
  * as it left it), one linear sample back. Test side. */
 #ifndef V90D_SIM_K56CALL_H
@@ -61,7 +71,7 @@
 
 /* where the client falls silent for good (cfg.silent) */
 enum { K56C_SIL_NONE, K56C_SIL_BEFORE_S, K56C_SIL_BEFORE_J, K56C_SIL_BEFORE_MP,
-       K56C_SIL_BEFORE_E, K56C_SIL_DATA };
+       K56C_SIL_BEFORE_E, K56C_SIL_DATA, K56C_SIL_RENEG };
 /* an MP the server cannot take (cfg.mp_bad) */
 enum { K56C_MP_GOOD, K56C_MP_RATE0, K56C_MP_MASK0, K56C_MP_UP_NONE };
 
@@ -78,12 +88,17 @@ typedef struct {
     int rate;               /* its MP's rate_ac: the downstream rate code it asks, 1..13 */
     uint16_t up_mask;       /* its MP's upstream rates (bit n - 1 for n x 2400 bit/s) */
     int silent;             /* K56C_SIL_*: before its S, its J24, its J' (and MP), its E,
-                               or 1 s into data mode */
+                               1 s into data mode, or after its renegotiation's S */
     int mp_bad;             /* K56C_MP_*: rate_ac 0, mask 0, or only 33600 (nothing a
                                3200-baud receiver takes) */
     int early_e;            /* sends E after this many MPs, without waiting for our MP' (not
                                conforming: our E detection before our MP state) */
     int b1_bad;             /* its B1 is wrong (every point of the first symbols inverted) */
+    /* its renegotiation ("Rate renegotiation"): reneg_ms into data mode, its
+     * S, S-bar, TRN and MP asking rate_ac reneg_rate; a second one reneg_ms2
+     * into the data after it, asking reneg_rate2 (0: none). reneg_rate0: the
+     * (first) renegotiation's MP has rate 0 both ways (V.34's cleardown) */
+    int reneg_ms, reneg_rate, reneg_ms2, reneg_rate2, reneg_rate0;
     int  (*getbit)(void *user);
     void (*putbit)(void *user, int bit);
     void *user;
@@ -159,6 +174,16 @@ typedef struct {
     int         quiet;              /* cfg.silent has struck */
     int32_t     quiet_at;           /* when, -1 not yet */
     int32_t     e_at;               /* when its E began, -1 not yet */
+    /* ---- its renegotiation ---- */
+    int         rate_now;           /* the rate_ac its MPs ask now */
+    int         rn;                 /* its renegotiation under way: its S to its data */
+    int         renegs;             /* renegotiations begun (its S) */
+    int32_t     rn_at;              /* when its last S began, -1 none */
+    int         rn_down;            /* the server's Phase 4 being received is a renegotiation's */
+    int         nb;                 /* the server's bits a symbol in TRN2A and MARK's even
+                                       symbols (k56-facts.md "Bits a symbol") */
+    int         rmatch;             /* octets of this data frame that are R's */
+    long        r_unasked;          /* an R in the data it did not ask for */
 } k56call_t;
 
 /* a client that takes K56flex up: the whole V.8bis exchange, INFO1c 0x001 */

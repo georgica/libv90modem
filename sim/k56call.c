@@ -41,6 +41,7 @@ void k56call_init(k56call_t *c, const k56call_cfg *cfg)
     c->bst = cfg->v8bis == K56C_V8BIS_NONE ? B_OFF : B_CRE;
     c->crd_at = -1; c->ms_at = -1; c->v8_sel = -1;
     c->data_at = -1; c->j24_at = -1; c->quiet_at = -1; c->e_at = -1;
+    c->rn_at = -1; c->rate_now = cfg->rate; c->nb = 1;
     /* the CM of v34peer's own V.8; with cm_pcm, an analogue modem's PCM octet too */
     memset(&cm, 0, sizeof cm);
     cm.call_function = V8_CALLF_DATA;
@@ -176,13 +177,17 @@ static int16_t responder(k56call_t *c, int16_t x)
 #define J24_SYMS    12
 #define B1_FRAMES   6
 #define PATIENCE    6000        /* its J24 to our R2: about 0.75 s ("Training down") */
+#define RN_TRN      512         /* its renegotiation's TRN, T (4 points, as modem/v34dx's) */
 
-enum { SIG_SIL, SIG_S, SIG_SBAR, SIG_PP, SIG_TRN, SIG_J24, SIG_JP, SIG_TRN16, SIG_MP, SIG_E, SIG_DATA };
+/* SIG_RTRN: a renegotiation's TRN; there, TRN, MP, MP' and E are on 4 points
+ * (V.34 11.6, as modem/v34dx sends them) */
+enum { SIG_SIL, SIG_S, SIG_SBAR, SIG_PP, SIG_TRN, SIG_J24, SIG_JP, SIG_TRN16, SIG_MP, SIG_E, SIG_DATA, SIG_RTRN };
 
 static const uint8_t trn1b_mag[8] = { 0x40, 0x41, 0x4b, 0x4c, 0x50, 0x51, 0x50, 0x51 };
 static const uint8_t pad2_mag[3][4] = {
     { 0x2f, 0x45, 0x51, 0x57 }, { 0x35, 0x4d, 0x58, 0x60 }, { 0x3d, 0x54, 0x61, 0x67 }
 };
+static const uint8_t pad1_mag[3][2] = { { 0x3d, 0x55 }, { 0x44, 0x5d }, { 0x4c, 0x65 } };
 
 int k56call_down_rate(const k56call_t *c) { return c->data_at >= 0 && c->r_used ? 30000 + 2000 * c->r_used : 0; }
 
@@ -252,14 +257,14 @@ static void our_mp(k56call_t *c, const v34_mp_t *m)
     /* what it must be: type 0, our rate code and its up rate, a mask,
      * asymmetric, for our transmitter 16 states, linear, minimum shaping */
     for (n = 13; n >= 1; n--) if ((c->cfg.up_mask >> (n - 1)) & 1) { up_n = n; break; }
-    if (m->type || !m->max_ac || m->max_ac > 13 || m->max_ac > c->cfg.rate || !m->max_ca || m->max_ca > up_n
+    if (m->type || !m->max_ac || m->max_ac > 13 || m->max_ac > c->rate_now || !m->max_ca || m->max_ca > up_n
         || !m->rates || !m->asym || m->trellis || m->nonlinear || m->shaping) {
         c->mp_wrong++;
         return;
     }
     if (m->ack) c->mpa_good++; else c->mp_good++;
     c->our_mp = *m;
-    if (!c->got_our_mp) c->r_used = m->max_ac < c->cfg.rate ? m->max_ac : c->cfg.rate;
+    if (!c->got_our_mp) c->r_used = m->max_ac < c->rate_now ? m->max_ac : c->rate_now;
     c->got_our_mp = 1;
     if (m->ack) c->got_our_mpa = 1;
 }
@@ -343,6 +348,9 @@ static int one_octet(k56call_t *c, uint8_t r, int want)
     if (!(c->alt & 1)) {
         d = tbit(c, pos);
         if (want >= 0 && d >= 0 && d != want) bad(c);
+        /* at 2 bits a symbol the second, a scrambled zero, is not on the
+         * line: what GPA makes of it from the history */
+        if (c->nb == 2) (void)tbit(c, (int)(((c->hist >> 4) ^ (c->hist >> 22)) & 1));
     } else if (pos != sum_sign(c)) {
         bad(c);
     }
@@ -366,6 +374,31 @@ static int p4_octet(k56call_t *c, uint8_t r, int in[2])
     return 1;
 }
 
+/* a renegotiation's MP, MP' and E: 1 scrambled bit a symbol on the pad's 2
+ * magnitudes; signs as p4_octet's. The input bit in *in, -1 unknown; 0 when
+ * the octet is neither of them. */
+static int p1_octet(k56call_t *c, uint8_t r, int *in)
+{
+    int pos, k = which(c, r, pad1_mag[pad_of(c)], 2, &pos);
+    *in = -1;
+    if (k < 0) { bad(c); c->tknown = 0; return 0; }
+    *in = tbit(c, k);
+    if (!(c->alt & 1) ? pos != !((c->hist >> 24) & 1) : pos != sum_sign(c)) bad(c);
+    add_sum(c, pad1_mag[pad_of(c)][k], pos);
+    c->alt++;
+    return 1;
+}
+
+/* R in place of a data frame: the server's renegotiation (R2 onward, its
+ * scrambler, history and running sum going on from its last E) */
+static void r2_begin(k56call_t *c)
+{
+    if (!c->rn) c->r_unasked++;
+    go_seg(c, K56TX_R2);
+    c->dn = K56ENC_N;               /* the frame's 8 octets were R's */
+    c->rn_down = 1;
+}
+
 static void data_begin(k56call_t *c)
 {
     uint8_t rbs = (uint8_t)(c->j24[16] | c->j24[17] << 1 | c->j24[18] << 2 | c->j24[19] << 3 | c->j24[20] << 4 | c->j24[21] << 5);
@@ -374,7 +407,8 @@ static void data_begin(k56call_t *c)
     if ((c->data_at - c->trn1b_at) % 24) c->seg_bad[K56TX_TRN2B]++;     /* the grid of 24 */
     k56enc_init(&c->dec, c->r_used ? c->r_used : 1, pad_of(c), rbs);
     v90_scr_init(&c->ddscr);
-    c->dfpos = 0; c->dframes = 0;
+    c->dfpos = 0; c->dframes = 0; c->rmatch = 0;
+    c->rn_down = 0;
 }
 
 static void down_octet(k56call_t *c, uint8_t r)
@@ -446,15 +480,28 @@ static void down_octet(k56call_t *c, uint8_t r)
             /* 16 ones, then MARK's zeros */
             if (c->tones < 16) bad(c);
             c->trn2a_n = c->dn - 1;
-            if (c->trn2a_n != K56TX_TRN2A_N) bad(c);
+            if (c->trn2a_n != (c->rn_down ? K56TX_RN_TRN2A_N : K56TX_TRN2A_N)) bad(c);
             go_seg(c, K56TX_MARK); c->dn = 1;
         }
         break;
     case K56TX_MARK:
         (void)one_octet(c, r, 0);
-        if (++c->dn == K56TX_MARK_N) go_seg(c, K56TX_TRN2B);
+        if (++c->dn == K56TX_MARK_N) { go_seg(c, K56TX_TRN2B); c->nb = 2; }
         break;
     case K56TX_TRN2B:
+        if (c->rn_down && which(c, r, pad1_mag[pad_of(c)], 2, &pos) >= 0) {
+            /* a renegotiation's MP, 1 bit a symbol: its frame sync from here */
+            c->trn2b_n = c->dn;
+            if (c->dn < K56TX_TRN2B_MIN) c->seg_bad[K56TX_TRN2B]++;
+            if ((c->line_n - c->trn1b_at + K56TX_RN_TO_DATA) % 24) c->seg_bad[K56TX_TRN2B]++;
+            go_seg(c, K56TX_MP);
+            c->nb = 1;
+            c->mpfn = 0; c->mpones = 0;
+            if (p1_octet(c, r, &d) && d >= 0) mp_bit(c, d);
+            if (d != 1) bad(c);
+            c->dn = 1;
+            break;
+        }
         if (!p4_octet(c, r, in)) { c->dn++; break; }
         if (in[0] == 1 && in[1] == 1) {
             /* the MP's frame sync: MP from this symbol */
@@ -472,19 +519,26 @@ static void down_octet(k56call_t *c, uint8_t r)
         break;
     case K56TX_MP:
     case K56TX_MPA:
-        if (p4_octet(c, r, in) && in[0] >= 0) { mp_bit(c, in[0]); mp_bit(c, in[1]); }
+        if (c->rn_down) { if (p1_octet(c, r, &d) && d >= 0) mp_bit(c, d); }
+        else if (p4_octet(c, r, in) && in[0] >= 0) { mp_bit(c, in[0]); mp_bit(c, in[1]); }
         if (++c->dn == K56TX_MP_N) go_seg(c, c->dseg + 1);
         break;
     case K56TX_E:
-        if (p4_octet(c, r, in) && (in[0] != 1 || in[1] != 1)) bad(c);
-        if (++c->dn == K56TX_E_N) {
+        if (c->rn_down) { if (p1_octet(c, r, &d) && d != 1) bad(c); }
+        else if (p4_octet(c, r, in) && (in[0] != 1 || in[1] != 1)) bad(c);
+        if (++c->dn == (c->rn_down ? K56TX_RN_E_N : K56TX_E_N)) {
             c->e_seen = c->seg_bad[K56TX_E] == 0;
             data_begin(c);
         }
         break;
-    default:    /* data: B1 first */
+    default:    /* data: B1 first; R in place of a frame, the server's renegotiation */
+        if (arrive(c, mag_octet(R_MAG, !((c->dfpos >> 1) & 1))) == r) c->rmatch++;
         c->dfr[c->dfpos++] = data_sent(c, r);
-        if (c->dfpos == K56ENC_N) { c->dfpos = 0; data_frame(c); }
+        if (c->dfpos == K56ENC_N) {
+            c->dfpos = 0;
+            if (c->rmatch == K56ENC_N) r2_begin(c); else data_frame(c);
+            c->rmatch = 0;
+        }
         break;
     }
 }
@@ -501,7 +555,8 @@ static void build_mp(k56call_t *c, int ack)
     v34_mp_t m;
     memset(&m, 0, sizeof m);
     m.max_ca = 13;
-    m.max_ac = (uint8_t)(c->cfg.mp_bad == K56C_MP_RATE0 ? 0 : c->cfg.rate);
+    m.max_ac = (uint8_t)(c->cfg.mp_bad == K56C_MP_RATE0 ? 0 : c->rate_now);
+    if (c->rn && c->cfg.reneg_rate0) m.max_ca = m.max_ac = 0;     /* V.34's cleardown (11.7) */
     m.rates = c->cfg.mp_bad == K56C_MP_MASK0 ? 0 : c->cfg.mp_bad == K56C_MP_UP_NONE ? 0x2000 : c->cfg.up_mask;
     m.asym = 1;
     m.ack = (uint8_t)ack;
@@ -511,12 +566,31 @@ static void build_mp(k56call_t *c, int ack)
 
 static void go_sig(k56call_t *c, int sig) { c->sig = sig; c->sn = 0; }
 
+/* its renegotiation, due at this data symbol: S, S-bar, TRN, MP asking
+ * rate_now, MP' once it has our MP, E once it has our MP', then data */
+static int rn_due(const k56call_t *c)
+{
+    if (c->sig != SIG_DATA) return 0;
+    if (c->renegs == 0 && c->cfg.reneg_ms) return c->sn == (int32_t)c->cfg.reneg_ms * 16 / 5;
+    if (c->renegs == 1 && c->cfg.reneg_ms2) return c->sn == (int32_t)c->cfg.reneg_ms2 * 16 / 5;
+    return 0;
+}
+
+static void rn_begin(k56call_t *c)
+{
+    c->rn = 1; c->renegs++; c->rn_at = c->now;
+    c->rate_now = c->renegs == 1 ? c->cfg.reneg_rate : c->cfg.reneg_rate2;
+    c->got_our_mp = c->got_our_mpa = 0; c->mps_sent = 0;
+    go_sig(c, SIG_S);
+}
+
 static void tx_symbol(k56call_t *c, int32_t *re, int32_t *im)
 {
     v34_pt_t pt;
     int32_t g = 16384;
     int k;
     *re = *im = 0;
+    if (rn_due(c)) rn_begin(c);
     switch (c->sig) {
     case SIG_SIL:
         if (!c->js_seen) return;
@@ -525,12 +599,22 @@ static void tx_symbol(k56call_t *c, int32_t *re, int32_t *im)
         /* fall through */
     case SIG_S:
         v34_s(c->sn, V34_S_LEN, re, im);
-        if (++c->sn == V34_S_LEN) go_sig(c, SIG_SBAR);
+        if (++c->sn == V34_S_LEN) {
+            if (c->rn) strike(c, K56C_SIL_RENEG);
+            go_sig(c, SIG_SBAR);
+        }
         return;
     case SIG_SBAR:
         v34_sbar(c->sn, re, im);
-        if (++c->sn == V34_SBAR_LEN) go_sig(c, SIG_PP);
+        if (++c->sn == V34_SBAR_LEN) {
+            if (c->rn) { v34_tmod_init(&c->tmod, V34_GPC, 4); go_sig(c, SIG_RTRN); }
+            else go_sig(c, SIG_PP);
+        }
         return;
+    case SIG_RTRN:
+        pt = v34_tmod_trn(&c->tmod);
+        if (++c->sn == RN_TRN) { build_mp(c, 0); go_sig(c, SIG_MP); }
+        break;
     case SIG_PP:
         v34_pp(c->sn, re, im);
         if (++c->sn == V34_PP_LEN) { v34_tmod_init(&c->tmod, V34_GPC, 4); go_sig(c, SIG_TRN); }
@@ -559,9 +643,11 @@ static void tx_symbol(k56call_t *c, int32_t *re, int32_t *im)
         break;
     case SIG_MP: {
         unsigned b = 0;
-        for (k = 0; k < 4; k++) b |= (unsigned)c->mpbits[c->mpn + k] << k;
-        pt = v34_tmod_put(&c->tmod, b); g = c->g16;
-        c->mpn += 4;
+        int bps = c->rn ? 2 : 4;
+        for (k = 0; k < bps; k++) b |= (unsigned)c->mpbits[c->mpn + k] << k;
+        pt = v34_tmod_put(&c->tmod, b);
+        if (!c->rn) g = c->g16;
+        c->mpn += bps;
         if (c->mpn >= V34_MP0_BITS) {
             c->mps_sent++;
             if ((c->mp_ack && c->got_our_mpa) || (c->cfg.early_e && c->mps_sent >= c->cfg.early_e)) {
@@ -590,8 +676,13 @@ static void tx_symbol(k56call_t *c, int32_t *re, int32_t *im)
         break;
     }
     case SIG_E:
-        pt = v34_tmod_put(&c->tmod, 15); g = c->g16;
-        if (++c->sn * 4 >= 20) { v34_tx_init(&c->vtx, &c->tpar, c->cfg.getbit, c->cfg.user); go_sig(c, SIG_DATA); }
+        if (c->rn) pt = v34_tmod_put(&c->tmod, 3);
+        else { pt = v34_tmod_put(&c->tmod, 15); g = c->g16; }
+        if (++c->sn * (c->rn ? 2 : 4) >= 20) {
+            v34_tx_init(&c->vtx, &c->tpar, c->cfg.getbit, c->cfg.user);
+            c->rn = 0;
+            go_sig(c, SIG_DATA);
+        }
         break;
     default:    /* SIG_DATA: B1, then data */
         v34_tx_symbol(&c->vtx, &pt, NULL); g = c->tx_dg;

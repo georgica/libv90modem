@@ -15,7 +15,13 @@
  *   K56D_MP: our MP, MP', E; the client's MP', E, B1 ->
  *   K56D_DATA: k56enc frames down (B1 first), V.34 up (16 states, linear,
  *   minimum shaping: what our MP asked; GPC) through qamrx and v34/, as in
- *   x2d and p34d.
+ *   x2d and p34d. The client's S here is its renegotiation ->
+ *   K56D_RENEG ("Rate renegotiation"): our data stops at the frame's end,
+ *   then R2, TRN2A 2048, MARK, TRN2B until its MP and the grid, MP and MP'
+ *   at 1 bit a symbol, E 24 (k56tx_reneg); its S-bar, TRN, MP (4 points,
+ *   V.34 11.6), MP', E; data again both ways (B1 first) at the rates of its
+ *   new MP -> K56D_DATA. An MP with rate 0 both ways is V.34's cleardown
+ *   (K56D_ERR_CLEARDOWN). We never start one (decision 13).
  *
  * Our MP: type 0, rate_ac = r, rate_ca = the upstream rate, mask 0x3fff
  * (D-Modem's server's), asymmetric; for the client's transmitter 16 states,
@@ -50,6 +56,7 @@
 #define K56D_T_MP   4000    /* the start of our TRN2B to its MP (Ruling F4) */
 #define K56D_T_E    2000    /* the start of our MP' to its E */
 #define K56D_T_B1   1000    /* its E to B1 received, our B1 sent */
+#define K56D_T_RENEG 6000   /* its renegotiation's S to data again both ways (as x2d's) */
 
 typedef struct {
     int rtd;                /* round-trip delay from Phase 2, samples */
@@ -107,6 +114,7 @@ typedef struct {
     int32_t    ec_n;                /* samples of our TRN1A.. TRN1C seen by the canceller */
     ecdly_t    ecd;                 /* what we sent; ecd.delay the echo delay in use */
     sdet_t     sdet;
+    sres_t     sres;                /* its S out of data mode: a renegotiation */
     qamrx_t    rx;
     int        rxmode;
     v34trn_t   ref;

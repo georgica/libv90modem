@@ -34,7 +34,7 @@
 #define Q_BAD_SYMS     3200
 #define Q_DEAD_MSE     (65536 / 8)  /* -9 dB: nothing is being received */
 
-enum { RX_OFF, RX_WAIT_S, RX_KNOWN, RX_J, RX_P4, RX_DATA, RX_IDLE };
+enum { RX_OFF, RX_WAIT_S, RX_KNOWN, RX_J, RX_P4, RX_DATA, RX_SRES, RX_RN, RX_IDLE };
 
 static void end(k56d_t *d, int err)
 {
@@ -129,6 +129,9 @@ static void on_mp(k56d_t *d, const v34_mp_t *m)
     if (d->got_mp) return;
     TR("K56D %.3f MP rate_ca %d rate_ac %d mask %04X\n", d->now / 8000.0, m->max_ca, m->max_ac, m->rates);
     d->far_mp = *m;
+    /* in a renegotiation, rate 0 both ways is V.34's cleardown (11.7; "Rate
+     * renegotiation") */
+    if (d->state == K56D_RENEG && !m->max_ac && !m->max_ca) { end(d, K56D_ERR_CLEARDOWN); return; }
     /* the client clears down unless all three are non-zero ("Phase 4");
      * we cannot go on either */
     if (!m->max_ac || !m->rates) { end(d, K56D_ERR_RATE); return; }
@@ -164,6 +167,7 @@ static void rx_begin_data(k56d_t *d)
     d->rxmode = RX_DATA;
     d->quiet = 0; d->q_dead = 0;
     d->t_mark = d->now;
+    sdet_init(&d->sdet, SYM_RATE, d->car_num, d->car_den);     /* its S from here on: a renegotiation */
 }
 
 /* ---- descrambled bits ---- */
@@ -237,6 +241,23 @@ static void seq_bit(k56d_t *d, int bit)
     if (d->fn >= K56D_FBUF) d->fn = 0;
 }
 
+/* The client's S in data mode: its renegotiation ("Rate renegotiation").
+ * Our data stops at the end of the frame being sent and R2 follows
+ * (k56tx_reneg); its S-bar, TRN, MP and MP' and E as V.34's renegotiation
+ * (11.6); our answer once its MP is in (on_mp), its E, then data both ways.
+ * The carrier is locked: S is believed at once (as x2d). */
+static void reneg_begin(k56d_t *d)
+{
+    d->rx_ready = d->tx_ready = 0;
+    d->got_mp = d->got_e = 0; d->cand_ok = 0;
+    d->fn = d->ones = 0;
+    sres_resume(&d->sres);
+    d->rxmode = RX_SRES;
+    k56tx_reneg(&d->tx);
+    TR("K56D %.3f S in data mode\n", d->now / 8000.0);
+    enter(d, K56D_RENEG);
+}
+
 /* ---- one received symbol ---- */
 
 static int16_t clip16(int32_t v) { return (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v); }
@@ -267,6 +288,28 @@ static void rx_symbol(k56d_t *d)
         pt.re = (int16_t)(dr < 0 ? -V34_ONE : V34_ONE); pt.im = (int16_t)(di < 0 ? -V34_ONE : V34_ONE);
         bits = v34_tdem_put(&d->tdem, pt);
         for (k = 0; k < 2 && d->rxmode == RX_J; k++) j_bit(d, (int)((bits >> k) & 1));
+        break;
+    }
+
+    case RX_SRES:
+        if (!sres_symbol(&d->sres, r)) break;
+        /* its TRN, MP, MP' and E on 4 points; the descrambler finds its way
+         * within 23 bits */
+        v34_tdem_init(&d->tdem, V34_GPC, 4);
+        d->fn = d->ones = 0;
+        TR("K56D %.3f S-bar ended (renegotiation)\n", d->now / 8000.0);
+        d->rxmode = RX_RN;
+        break;
+
+    case RX_RN: {
+        /* 4-point decisions. The equaliser stays as data mode left it (the
+         * signal's scale is not data's); carrier and timing follow (as x2d) */
+        v34_pt_t pt; unsigned bits;
+        dr = r->zr < 0 ? -QRX_REF : QRX_REF; di = r->zi < 0 ? -QRX_REF : QRX_REF;
+        qamrx_update(r, dr, di, QRX_CARRIER | QRX_TIMING, 12);
+        pt.re = (int16_t)(dr < 0 ? -V34_ONE : V34_ONE); pt.im = (int16_t)(di < 0 ? -V34_ONE : V34_ONE);
+        bits = v34_tdem_put(&d->tdem, pt);
+        for (k = 0; k < 2 && d->rxmode == RX_RN; k++) seq_bit(d, (int)((bits >> k) & 1));
         break;
     }
 
@@ -380,6 +423,10 @@ uint8_t k56d_tick(k56d_t *d, int16_t rxs)
     } else {
         if (qamrx_tick(&d->rx, x)) rx_symbol(d);
         if (d->state == K56D_ENDED) return 0xff;
+        if (d->rxmode == RX_DATA && d->state == K56D_DATA) {
+            (void)sdet_tick(&d->sdet, x);
+            if (d->sdet.present >= SDET_PRESENT) reneg_begin(d);
+        }
     }
 
     switch (d->state) {
@@ -430,6 +477,17 @@ uint8_t k56d_tick(k56d_t *d, int16_t rxs)
             enter(d, K56D_DATA);
         } else if (d->now - d->t_mark > MS(K56D_T_B1)) {
             end(d, K56D_ERR_B1);
+        }
+        break;
+    case K56D_RENEG:
+        /* its E comes after its MP, long after our R2: B1 sent is the new data's */
+        if (d->got_e && seg == K56TX_DATA && d->tx.b1 == 0 && d->tx.fpos == K56ENC_N) d->tx_ready = 1;
+        if (d->tx_ready && d->rx_ready) {
+            d->down_rate = k56tx_rate(&d->tx);
+            TR("K56D %.3f data again %d / %d\n", d->now / 8000.0, d->down_rate, d->up_rate);
+            enter(d, K56D_DATA);
+        } else if (d->t > MS(K56D_T_RENEG)) {
+            end(d, K56D_ERR_RENEG);
         }
         break;
     default:

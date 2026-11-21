@@ -3658,3 +3658,44 @@ in our MP). Not profiled further.
       answer_k56: 396 checks, 0 failures (TEST_SHORT; 9.3 s under qemu here)
       api: 502 checks, 0 failures (pin 118512 holds)
       ALL ARM CHECKS PASS
+
+## k56 11: the client's rate renegotiation (2026-11-21)
+
+`modem/k56d`: the client's S in data mode starts `K56D_RENEG` (design
+decision 13, k56-facts.md "Rate renegotiation"). Our data stops at the end
+of the frame being sent (`k56tx_reneg`), then R2, TRN2A 2048, MARK,
+TRN2B until its MP and the grid of 24, MP and MP' at 1 bit a symbol, E 24
+and data (B1 first, a new encoder: Ruling C4). Upstream its S-bar, TRN, MP,
+MP' and E on 4 points (V.34 11.6, as `modem/v34dx` and x2d's rate change),
+then V.34 data at the rate our new MP gives. An MP with rate 0 both ways
+ends the call as the far end's cleardown (`K56D_ERR_CLEARDOWN`,
+`V90M_END_CLEARDOWN_FAR`); not back in data mode within `K56D_T_RENEG`
+(6 s from its S) is `K56D_ERR_RENEG` (`V90M_END_K56_FAILED`).
+`answer_moving` is 0 in between, so the API gives DATA_STOPPED, RATES,
+DATA_MOVING. `v90m_mem_size()` unchanged (118824 x86-64, 118512 ARM).
+
+`sim/k56call` renegotiates (`reneg_ms`, `reneg_rate`, `reneg_ms2`,
+`reneg_rate2`, `reneg_rate0`, `K56C_SIL_RENEG`) and checks our answer as
+it checks the training: R as a whole frame, TRN2A's length, the hidden
+second bit of TRN2A's and MARK's even symbols at 2 bits a symbol (so the
+training's scrambler, history and running sum are checked going on from
+the last E), MP / MP' / E on the 2 magnitudes, the grid; R in data it did
+not ask for is counted.
+
+    test_answer_k56 (host): 13 -> 10 -> 12, 5 s apart, pad 0, robbed none and 0x24:
+      tx_bps 56000, 50000, 54000; every training octet as the facts; MP 32, MP' 32;
+      3 data segments each way, 0 bad (e.g. none: down 274985 / 246186 / 173114,
+      up 153362 / 153729 / 100065 bits); rate 0: cleardown 0.26 s after its S;
+      silent after its S: ended 5.98 s later; 60 s of data, no R of ours
+    test_api: events 1 4 3 2 4 3 2 4 3 5, RATES at 50000 then 54000;
+      CLEARDOWN_FAR; K56_FAILED
+    make check: ALL HOST CHECKS PASS
+    PAR=$(nproc) make check-arm ARM_CC=...armv7-eabihf musl...: ALL ARM CHECKS PASS
+      (answer_k56 586 checks, api 525, TEST_SHORT)
+
+SM56 (information, `make test-k56-sm56 MODS=k56 STRICT_RENEG=1`, 120 s of
+line): it did not renegotiate. Data at 52000 / 31200 from 22.1 s, the first
+4 KiB each way byte for byte, then 98 s of data mode with no S from it and
+no rate change; the same with `RBS=24`. So our renegotiation is checked by
+the simulated client only; what SM56 does after one is still not seen
+[our observation].

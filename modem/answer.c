@@ -609,9 +609,11 @@ int16_t answer_tick(answer_t *a, int16_t rx)
         tx = (int16_t)v90_octet_linear(0, a->pcm);
         if (d->state == K56D_ENDED) {
             /* past the point of no return (k56 design, decision 7): a
-             * start-up that did not reach data mode is said as K56flex's;
-             * in data mode the upstream's loss and our cleardown end it */
+             * start-up or a renegotiation that did not reach data mode is
+             * said as K56flex's; in data mode the upstream's loss, our
+             * cleardown and the client's (an MP with rate 0) end it */
             if (d->error == K56D_ERR_HANGUP) a->cleared = 2;
+            else if (d->error == K56D_ERR_CLEARDOWN) a->cleared = 1;     /* its renegotiation MP, rate 0 */
             else if (a->connected && d->error == K56D_ERR_CARRIER) a->k56_lost = 1;
             else a->k56_failed = 1;
             fail(a); tx = 0;
