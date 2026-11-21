@@ -120,8 +120,7 @@ static uint32_t shell_energy_q8(const v34_params_t *p, unsigned lg,
 
 int v34_params_init(v34_params_t *p, const v34_cfg_t *cfg)
 {
-    unsigned M, i, k, n, rot, maxc = 0;
-    uint64_t g8, z;
+    unsigned M, i, n, rot, maxc = 0;
     uint32_t esum[V34_MAX_M];
 
     memset(p, 0, sizeof *p);
@@ -138,26 +137,8 @@ int v34_params_init(v34_params_t *p, const v34_cfg_t *cfg)
         if (cfg->h[i][0] || cfg->h[i][1])
             p->precode = 1;
 
-    /* (9-3) to (9-6) */
     M = p->map.M;
-    for (i = 0; i <= 2 * (M - 1); i++)
-        p->g2[i] = (uint8_t)(i < M ? i + 1 : 2 * M - 1 - i);
-    for (i = 0; i <= 4 * (M - 1); i++) {
-        unsigned t = 0;
-        /* k within both g2's ranges: the terms the tests let through */
-        unsigned k0 = i > 2 * (M - 1) ? i - 2 * (M - 1) : 0, k1 = i < 2 * (M - 1) ? i : 2 * (M - 1);
-        for (k = k0; k <= k1; k++) t += (unsigned)p->g2[k] * p->g2[i - k];
-        p->g4[i] = (uint16_t)t;
-    }
-    z = 0;
-    for (i = 0; i <= 8 * (M - 1); i++) {
-        p->z8[i] = z > 0xFFFFFFFFu ? 0xFFFFFFFFu : (uint32_t)z;
-        unsigned k0 = i > 4 * (M - 1) ? i - 4 * (M - 1) : 0, k1 = i < 4 * (M - 1) ? i : 4 * (M - 1);
-        g8 = 0;
-        for (k = k0; k <= k1; k++) g8 += (uint64_t)p->g4[k] * p->g4[i - k];
-        z += g8;
-    }
-    p->z8[i] = z > 0xFFFFFFFFu ? 0xFFFFFFFFu : (uint32_t)z;   /* = M^8 */
+    v34_shell_tables(p, M);             /* (9-3) to (9-6) */
 
     /* constellation: labels 0 .. L/4-1 and their rotations */
     p->npts = (uint16_t)(p->map.L / 4);

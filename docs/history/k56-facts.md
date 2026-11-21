@@ -926,6 +926,12 @@ never in the repository (k56 2, 2026-11-21).
   `0x3f`: all three decode to the data bits sent, one frame short (SM56
   decodes a frame when the next starts); a corrupted octet and a wrong mask
   are caught. [our observation].
+  - **Our encoder** (`modem/k56enc`, k56 7, 2026-11-21): `make k56-dump`
+    (`tools/k56enc_dump.c`, the pipeline above at every rate, pad and mask,
+    600 frames) then `sm56dec/check.sh build/k56dump`: **2496 of 2496**
+    decode to the data sent. Its FNVs equal `k56enc_oracle_fnv` at all 2496
+    and its frames 0, 1 and 599 equal `k56enc_oracle_frames` at all 39
+    (`test/test_k56enc.c`). [our observation].
 
 ## Harness
 
@@ -1001,8 +1007,9 @@ Still [unk]:
 - Whether SM56 accepts the real server's CL (`81 c2` S field) and our CRe:
   the harness runs now (k56 2), the V.8bis side comes in Task 5.
 - Why our V.90 answerer fails against SM56's V.90 in Phase 2 ("Harness").
-- Whether the repository's `v34_shell_map` handles M = 16 (54000), where
-  z8's total is 2^32: for the tables task to check.
+- (Settled, k56 7: the repository's `v34_shell_map` handles M = 16 at
+  54000, z8's total 2^32 saturated; index 2^31 - 1 maps and unmaps, and
+  54000 equals the oracle at every pad and mask, `test/test_k56enc.c`.)
 - **The real server's training lengths** (TRN1A about 16650, TRN1B about
   8180, TRN1C and Js about 18470, TRN2A and MARK about 8380) differ from
   SM56's; whether a hardware client takes SM56's (decision 8) is unknown.

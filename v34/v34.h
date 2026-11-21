@@ -192,6 +192,9 @@ v34_pt_t v34_nl_decode(const v34_params_t *p, v34_pt_t xp);
 
 /* ---- shell mapper, 9.4 --------------------------------------------- */
 
+/* the mapper's tables for M rings (1..V34_MAX_M): sets map.M, g2, g4 and
+ * z8 alone (v34_params_init calls it; K56flex sets M from its own table) */
+void     v34_shell_tables(v34_params_t *p, unsigned M);
 void     v34_shell_map(const v34_params_t *p, uint32_t r0, uint8_t ring[8]);
 uint32_t v34_shell_unmap(const v34_params_t *p, const uint8_t ring[8]);
 

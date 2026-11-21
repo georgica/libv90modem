@@ -13,6 +13,34 @@ static inline uint32_t G4(const v34_params_t *p, int i)
     return (i < 0 || i > 4 * (p->map.M - 1)) ? 0 : p->g4[i];
 }
 
+/* (9-3) to (9-6): g2, g4 and z8 for M rings; z8 saturates at 0xFFFFFFFF
+ * (M^8 = 2^32 at M = 16) */
+void v34_shell_tables(v34_params_t *p, unsigned M)
+{
+    unsigned i, k;
+    uint64_t g8, z;
+
+    p->map.M = (uint8_t)M;
+    for (i = 0; i <= 2 * (M - 1); i++)
+        p->g2[i] = (uint8_t)(i < M ? i + 1 : 2 * M - 1 - i);
+    for (i = 0; i <= 4 * (M - 1); i++) {
+        unsigned t = 0;
+        /* k within both g2's ranges: the terms the tests let through */
+        unsigned k0 = i > 2 * (M - 1) ? i - 2 * (M - 1) : 0, k1 = i < 2 * (M - 1) ? i : 2 * (M - 1);
+        for (k = k0; k <= k1; k++) t += (unsigned)p->g2[k] * p->g2[i - k];
+        p->g4[i] = (uint16_t)t;
+    }
+    z = 0;
+    for (i = 0; i <= 8 * (M - 1); i++) {
+        unsigned k0 = i > 4 * (M - 1) ? i - 4 * (M - 1) : 0, k1 = i < 4 * (M - 1) ? i : 4 * (M - 1);
+        p->z8[i] = z > 0xFFFFFFFFu ? 0xFFFFFFFFu : (uint32_t)z;
+        g8 = 0;
+        for (k = k0; k <= k1; k++) g8 += (uint64_t)p->g4[k] * p->g4[i - k];
+        z += g8;
+    }
+    p->z8[i] = z > 0xFFFFFFFFu ? 0xFFFFFFFFu : (uint32_t)z;   /* = M^8 */
+}
+
 /* (9-17) to (9-24): split a pair sum s into two ring indices given the
  * index e of the pair among the g2(s) pairs with that sum */
 static void split(int M, int s, int e, uint8_t *m0, uint8_t *m1)

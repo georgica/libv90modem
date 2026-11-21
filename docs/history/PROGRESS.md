@@ -3419,3 +3419,35 @@ Replay proof: `~/k56-base` (704b370) against this tree, the 106 recordings
 of `~/sync-build/live-050`, flags `""`, `-9`, `-x`, `-x -9`: every `.txt`
 (424) and `.bits` (122) byte-identical. `-k` and `-k -9`: 106 of 106
 complete, the final modulation line as without `-k` in 106 of 106.
+
+## k56 7: the data encoder (2026-11-21)
+
+`modem/k56enc` (frames of 8 symbols, "Data" and "Robbed bits" of
+`k56-facts.md`): the K' shell bits (shifted left by L - n on a robbed-bit
+line; K' = K, no shift, at 3 robbed in 6) through V.34's shell mapper, then
+per symbol a sign bit (none on every r-th symbol over the call, whose sign
+is set against the running sum: positive at 0 or below) and q bits (bit 0
+not sent on a robbed symbol), ring to group by `k56_ring`, point to
+magnitude by `k56_bios`, mu-law. 5 robbed count as 6; no robbing at 32000
+and 34000. `k56enc_set_rate` is a new encoder (Ruling C4: nothing carries
+across an MP). `k56enc_unframe` inverts it for the tests and the coming sim
+client. V.34's shell-table construction moved out of `v34_params_init`
+into `v34_shell_tables(p, M)` (same arithmetic; v34's own tests and every
+V.34 test unchanged) so that K56flex sets the tables for its own M; the
+encoder holds a `v34_params_t` (1044 bytes on x86-64) for them.
+`tools/k56enc_dump.c`, `make k56-dump`: our octets and data bits for SM56's
+decoder harness.
+
+    make build/test_k56enc             (first: k56enc.h: No such file or directory)
+      frame / unframe: 78 of 78 rate x pad x mask, 2000 frames each
+      shaping: 2416 symbols, 0 with the wrong sign, 0 frames whose shaping signs carried data
+      oracle: 2496 of 2496 rate x pad x mask equal to D-Modem's; frames 0, 1, 599 at mask 0: 0 of 39 differ
+      k56enc: 98 checks, 0 failures   (0.28 s; also clean under clang -fsanitize=undefined)
+    mutations: shaping sign `< 0` for `<= 0`: 57 of 2496 differ; 5 robbed not
+      folded to 6: 198 differ (the n6 = 3 entry of the loss table is not used)
+    make k56-dump; ~/modem-research/k56-oracle/sm56dec/check.sh build/k56dump
+      sm56dec: 2496 of 2496 decode to the data sent
+    make check                         ALL HOST CHECKS PASS
+    make -j8 check-arm ARM_CC=...armv7-eabihf musl...
+      k56enc (TEST_SHORT, masks 00 24 3f 15): oracle 156 of 156, 98 checks, 0 failures
+      ALL ARM CHECKS PASS

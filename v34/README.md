@@ -17,8 +17,8 @@ code; nothing here derives from any other implementation.
 | `v34.h` | public API, scaling convention |
 | `v34_priv.h` | internal declarations |
 | `v34_core.c` | scrambler, Figure 9 / Table 13, convolutional encoders, Table 12, precoder arithmetic, mapper |
-| `v34_params.c` | Tables 7, 8, 10 from the formulas; shell mapper tables; nominal energy |
-| `v34_shell.c` | shell mapper and its inverse (9.4) |
+| `v34_params.c` | Tables 7, 8, 10 from the formulas; nominal energy |
+| `v34_shell.c` | shell mapper tables, the mapper and its inverse (9.4) |
 | `v34_train.c` | S, S-bar, PP, TRN, J-type modulator and demodulator |
 | `v34_tx.c` | data mode encoder (clauses 8 and 9) |
 | `v34_rx.c` | data mode decoder: slicers, Viterbi, inverse precoder, inverse mapping |

@@ -13,6 +13,7 @@
 | `gen_*.py` | generators of the constant tables in `modem/` |
 | `gen_x2_banks.py` | `modem/x2bank.c`, x2's level banks, from D-Modem's published values (its `dsp/x2_tables.cpp`, kept outside the repository; the numbers only, `docs/limits.md` "Included tables (x2)") |
 | `x2_pad.c`, `x2_pad.h` (host only, tested by `build/test_x2_pad`) | x2's pad octets: the octet the server sends so that the client receives a given level behind a 3 or 6 dB digital pad (`docs/history/x2-facts.md`, "Pads") |
+| `k56enc_dump.c` (`make k56-dump`, host only) | K56flex's data encoder on the oracle's pipeline at every rate, pad and robbed mask: `build/k56dump/r<R>p<PAD>m<MASK>.{oct,bits}` for SM56's decoder harness outside the repository (`docs/history/k56-facts.md`, "Oracle") |
 
 ## The call recording format
 

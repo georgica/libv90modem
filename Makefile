@@ -90,7 +90,7 @@ MODEM_SRC := modem/v21.c modem/ansam.c modem/v8msg.c modem/async.c modem/v8rx.c 
              modem/scramble.c modem/v22tx.c modem/v22rx.c modem/v22bis.c modem/v14.c modem/answer.c \
              modem/info.c modem/dpsk.c modem/probe.c modem/p2d.c modem/qamrx.c modem/ec.c modem/ecdly.c modem/tonedet.c modem/v34train.c modem/p34d.c modem/pcmenc.c \
              modem/v34mp.c modem/p2ans.c modem/v34mod.c modem/v34dx.c modem/v34ans.c modem/anstone.c modem/v8orig.c modem/orig.c modem/p2call.c modem/v34orig.c modem/v90arx.c modem/v90adec.c modem/v90dil.c modem/v90a.c modem/pcmtx.c modem/v92aseq.c modem/belltone.c \
-             modem/x2rec.c modem/x2map.c modem/x2tab.c modem/x2bank.c modem/x2tx.c modem/x2d.c modem/k56tab.c modem/v8bismsg.c modem/v8bis.c \
+             modem/x2rec.c modem/x2map.c modem/x2tab.c modem/x2bank.c modem/x2tx.c modem/x2d.c modem/k56tab.c modem/k56enc.c modem/v8bismsg.c modem/v8bis.c \
              $(wildcard v90/*.c) $(wildcard v34/*.c) $(wildcard v32/*.c) $(wildcard v92/*.c)
 T_SRC    := $(SIM_SRC) $(MODEM_SRC)
 HDRS     := $(wildcard modem/*.h sim/*.h test/*.h v90/*.h v34/*.h v92/*.h v90/test/v90_dec.h)
@@ -99,7 +99,7 @@ TESTS    := test_g711 test_noise test_filt test_resamp test_channel test_v21 tes
             test_v22tx test_v22rx test_v22bis test_v14 test_answer test_info test_dpsk test_probe test_p2 test_qamrx test_ec test_ecdly test_v34train test_sres test_answer_v90 test_p34 test_pcmenc \
             test_v34mp test_p2ans test_v34mod test_v34dx test_v34call test_answer_v34 test_answer_v32 test_answer_v90_v34 \
             test_p2_v92 test_v92call test_answer_v92 test_v92real test_answer_lin \
-            test_anstone test_v8orig test_orig test_orig_v32 test_p2call test_orig_v34 test_v90arx test_v90arx_robust test_v90adec test_v90dil test_p2v90 test_v90a test_orig_v90 test_orig_v90_te test_orig_seeds test_orig_retrain test_pcmtx test_v92aseq test_p2v92a test_v92a test_orig_v92 test_belltone test_orig_bell test_realcheck test_x2_pad test_answer_x2 test_x2rec test_x2map test_x2tx test_k56tab test_v8bismsg test_v8bis test_answer_k56
+            test_anstone test_v8orig test_orig test_orig_v32 test_p2call test_orig_v34 test_v90arx test_v90arx_robust test_v90adec test_v90dil test_p2v90 test_v90a test_orig_v90 test_orig_v90_te test_orig_seeds test_orig_retrain test_pcmtx test_v92aseq test_p2v92a test_v92a test_orig_v92 test_belltone test_orig_bell test_realcheck test_x2_pad test_answer_x2 test_x2rec test_x2map test_x2tx test_k56tab test_k56enc test_v8bismsg test_v8bis test_answer_k56
 # the public API, against the library as it is installed
 API_TESTS := test_api
 SUBS     := v34 v90 v92 v42 v32
@@ -262,6 +262,17 @@ $(BUILD)/k56-crd-scan: tools/k56_crd_scan.c modem/v8bis.c modem/v8bismsg.c modem
 crd-scan: $(BUILD)/k56-crd-scan
 	@if [ -z "$(RECS)" ]; then echo "RECS not set (a directory of recordings)"; exit 1; fi; \
 	$(abspath $(BUILD))/k56-crd-scan $(RECS)/*.raw | tail -1
+# our K56flex encoder's octets and data bits at every rate, pad and robbed
+# mask (tools/k56enc_dump.c), for SM56's decoder harness outside the
+# repository (docs/history/k56-facts.md "Oracle"). Host only, not part of check.
+K56ENC_DUMP_SRC := tools/k56enc_dump.c modem/k56enc.c modem/k56tab.c v34/v34_shell.c v90/v90_pcm.c v90/v90_scr.c
+$(BUILD)/k56enc-dump: $(K56ENC_DUMP_SRC) $(LIB_HDR)
+	@mkdir -p $(BUILD)
+	$(CC) $(T_CFLAGS) -o $@ $(K56ENC_DUMP_SRC) $(LDLIBS)
+.PHONY: k56-dump
+k56-dump: $(BUILD)/k56enc-dump
+	@mkdir -p $(BUILD)/k56dump
+	$(abspath $(BUILD))/k56enc-dump $(BUILD)/k56dump
 # what the caller of a recorded call sent, field by field (tools/v90m_fields.c;
 # not installed): the answering modem as v90m-replay runs it, without the
 # trace hooks, and the library's receivers on the caller's signal
