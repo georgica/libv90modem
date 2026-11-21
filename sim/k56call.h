@@ -120,6 +120,8 @@ typedef struct {
     v34peer_t   peer;
     /* ---- K56flex: downstream ---- */
     int32_t     line_n;             /* line samples, for the robbed-bit model */
+    uint8_t     sent;               /* this octet as it left the server: breaks a robbed tie
+                                       in the training checks only (which()) */
     int         dseg;               /* the server's segment (k56tx_seg) being received */
     int32_t     dn;                 /* its symbols so far */
     int32_t     alt;                /* the alternating count (from TRN1B, from TRN2A) */

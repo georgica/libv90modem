@@ -12,6 +12,7 @@
 #   make bench-v90       record a simulated V.90 call, replay it on the host and
 #                        under qemu, through the internals and the public API
 #   make bench-x2        the same for x2 (a call of the simulated client); cost-x2 counts
+#   make bench-k56       the same for K56flex (the simulated client at 56000); cost-k56 counts
 #   make bench-v90a      the same for the V.90 analogue modem's downstream receiver
 #   make bench-v90c      the same for the whole V.90 calling modem (orig, v90a)
 #   make bench-v92c      ... and for it in V.92 (PCM upstream); cost-v92c counts
@@ -332,6 +333,32 @@ cost-x2: bench-x2 bench-v90
 	 echo "x2 data mode: $$((b - a)) ARM instructions per second of line (second 15 to 16 of the call)"; \
 	 echo "V.90 data mode: $$((d - c)) ARM instructions per second of line (second 15 to 16 of the call)"; \
 	 echo "ratio x2 / V.90: $$(( (b - a) * 100 / (d - c) )) %"
+
+# ---- K56flex answering: the same with a call of the simulated K56flex
+# client (tools/rec_k56, 56000 down, replayed by bench_v90 -k); cost-k56
+# counts ARM instructions per second of data mode for K56flex (from second
+# 20: its data mode starts at 16.2 s, after V.8bis) and for V.90, as cost-x2
+# does ----
+K56_REC := $(BUILD)/k56_call.rec
+bench-k56: $(BUILD)/rec_k56 $(BUILD)/bench_v90 $(BUILD)/bench_v90.arm
+	$(abspath $(BUILD))/rec_k56 40 0 $(K56_REC) | tail -2
+	$(abspath $(BUILD))/bench_v90 -k $(K56_REC)
+	$(QEMU) $(abspath $(BUILD))/bench_v90.arm -k $(K56_REC)
+$(BUILD)/rec_k56: tools/rec_k56.c $(SIM_SRC) $(MODEM_SRC) $(HDRS)
+	@mkdir -p $(BUILD)
+	$(CC) $(T_CFLAGS) -o $@ tools/rec_k56.c $(SIM_SRC) $(MODEM_SRC) $(LDLIBS)
+.PHONY: bench-k56 cost-k56
+cost-k56: bench-k56 bench-v90
+	@head -c $$((8000 * 20)) $(K56_REC) > $(BUILD)/k56_a.rec; head -c $$((8000 * 21)) $(K56_REC) > $(BUILD)/k56_b.rec; \
+	 head -c $$((8000 * 15)) $(V90_REC) > $(BUILD)/v90_c.rec; head -c $$((8000 * 16)) $(V90_REC) > $(BUILD)/v90_d.rec; \
+	 for r in k56_a k56_b v90_c v90_d; do \
+	   case $$r in k56*) x=-k;; *) x=;; esac; \
+	   ( $(CNT) $(abspath $(BUILD))/bench_v90.arm $$x $(BUILD)/$$r.rec 2>&1 | grep -c '^Trace' > $(BUILD)/$$r.cnt ) & \
+	 done; wait; \
+	 a=$$(cat $(BUILD)/k56_a.cnt); b=$$(cat $(BUILD)/k56_b.cnt); c=$$(cat $(BUILD)/v90_c.cnt); d=$$(cat $(BUILD)/v90_d.cnt); \
+	 echo "k56 data mode: $$((b - a)) ARM instructions per second of line (second 20 to 21 of the call)"; \
+	 echo "V.90 data mode: $$((d - c)) ARM instructions per second of line (second 15 to 16 of the call)"; \
+	 echo "ratio k56 / V.90: $$(( (b - a) * 100 / (d - c) )) %"
 
 # ---- V.34 answering: record a simulated call, replay it on host and ARM ----
 V34_REC ?= $(BUILD)/v34_call.rec

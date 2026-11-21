@@ -6,11 +6,14 @@
  * modem code (integer only, so the result must be identical: the transmit
  * hash is compared with the host's) and times it per phase of the call.
  *
- *   bench_v90 [-x] RECORDING [HOST-HASH-HEX]
+ *   bench_v90 [-x | -k] RECORDING [HOST-HASH-HEX]
  *
  * -x: the recording is of an x2 call (tools/rec_x2): x2 is offered, and
  * its phases are counted as V.90's (Phase 2 is V.34's, then the x2
- * start-up, then data mode). */
+ * start-up, then data mode).
+ * -k: of a K56flex call (tools/rec_k56): K56flex is offered, and its
+ * phases are counted the same way (V.8bis with V.8, Phase 2 V.34's, then
+ * the K56flex start-up, then data mode). */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -43,20 +46,22 @@ int main(int argc, char **argv)
     uint32_t hash = 2166136261u;
     FILE *f;
     size_t got;
-    int x2 = 0;
+    int x2 = 0, k56 = 0;
 
     if (argc > 1 && !strcmp(argv[1], "-x")) { x2 = 1; argv++; argc--; }
-    if (argc < 2 || !(f = fopen(argv[1], "rb"))) { fprintf(stderr, "usage: bench_v90 [-x] RECORDING [HASH]\n"); return 2; }
+    else if (argc > 1 && !strcmp(argv[1], "-k")) { k56 = 1; argv++; argc--; }
+    if (argc < 2 || !(f = fopen(argv[1], "rb"))) { fprintf(stderr, "usage: bench_v90 [-x | -k] RECORDING [HASH]\n"); return 2; }
     src.s = 5; sink.s = 9; io[0] = &src; io[1] = &sink;
     memset(&ac, 0, sizeof ac);
     ac.level = 3000; ac.modes = V8_MOD_V22 | V8_MOD_V21 | ANS_MODE_V90; ac.getbit = get; ac.putbit = put; ac.user = io;
     if (x2) ac.modes |= V8_MOD_V34 | ANS_MODE_X2;
+    if (k56) ac.modes |= V8_MOD_V34 | ANS_MODE_K56;
     answer_init(&a, &ac);
-    if (x2) answer_v90_line(&a, -1, 0, 0);     /* as tools/rec_x2 */
+    if (x2 || k56) answer_v90_line(&a, -1, 0, 0);     /* as tools/rec_x2, tools/rec_k56 */
 
     while ((got = fread(in, 1, BLK, f)) == BLK) {
-        int ph = (a.phase == ANS_V90 || a.phase == ANS_X2) && a.connected ? PH_DATA
-                 : a.phase == ANS_P3 || a.phase == ANS_V90 || a.phase == ANS_X2 ? PH_P3
+        int ph = (a.phase == ANS_V90 || a.phase == ANS_X2 || a.phase == ANS_K56) && a.connected ? PH_DATA
+                 : a.phase == ANS_P3 || a.phase == ANS_V90 || a.phase == ANS_X2 || a.phase == ANS_K56 ? PH_P3
                  : a.phase == ANS_P2 || a.phase == ANS_V34 ? PH_P2 : PH_V8;
         double t0 = now(), dt;
         int i;

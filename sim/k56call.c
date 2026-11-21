@@ -188,25 +188,43 @@ int k56call_down_rate(const k56call_t *c) { return c->data_at >= 0 && c->r_used 
 
 static int pad_of(const k56call_t *c) { return c->cfg.pad_mode >= 0 && c->cfg.pad_mode <= 2 ? c->cfg.pad_mode : 0; }
 
+/* this line sample's octet has its last bit robbed */
+static int robbed_now(const k56call_t *c) { return (c->cfg.rbs >> (c->line_n % 6)) & 1; }
+
 /* what octet o, sent now, arrives as: the pad, then the robbed bit */
 static uint8_t arrive(const k56call_t *c, uint8_t o)
 {
     uint8_t a = x2call_pad(o, pad_of(c));
-    if ((c->cfg.rbs >> (c->line_n % 6)) & 1) a |= 1;
+    if (robbed_now(c)) a |= 1;
     return a;
 }
 
 static uint8_t mag_octet(int m, int positive) { return (uint8_t)(positive ? 0xff - m : 0x7f - m); }
 
 /* the octet sent among magnitudes mags[0..n) (both signs) that arrives as r:
- * its index, its sign in *pos; -1 none */
+ * its index, its sign in *pos; -1 none. A robbed bit can make two of them
+ * arrive alike (TRN1A's 0x4e and 0x4f, TRN1B's pairs), before the server
+ * knows the line: the real client averages over them ("Robbed bits"); this
+ * one, to go on checking the server's sequence and its running sum, breaks
+ * the tie with the octet as it left the server (c->sent), and counts it bad
+ * when that is neither */
 static int which(const k56call_t *c, uint8_t r, const uint8_t *mags, int n, int *pos)
 {
-    int k, s;
+    int k, s, found = -1, fpos = 0, ties = 0;
     for (k = 0; k < n; k++)
         for (s = 0; s < 2; s++)
-            if (arrive(c, mag_octet(mags[k], s)) == r) { *pos = s; return k; }
-    return -1;
+            if (arrive(c, mag_octet(mags[k], s)) == r) {
+                if (found < 0) { found = k; fpos = s; }
+                else ties = 1;
+            }
+    if (ties) {
+        found = -1;
+        for (k = 0; k < n && found < 0; k++)
+            for (s = 0; s < 2; s++)
+                if (mag_octet(mags[k], s) == c->sent && arrive(c, c->sent) == r) { found = k; fpos = s; break; }
+    }
+    *pos = fpos;
+    return found;
 }
 
 static void bad(k56call_t *c) { if (c->dseg < K56TX_DATA) c->seg_bad[c->dseg]++; }
@@ -272,7 +290,10 @@ static uint8_t data_sent(const k56call_t *c, uint8_t r)
     const k56_rate_t *t = &k56_rates[ru - 1];
     const uint8_t *bios = k56_bios(ru, pad_of(c));
     int n = t->M[pad_of(c)] << (t->u - 1), k, s;
-    for (k = 0; k < n; k++)
+    /* on a robbed symbol the server sends only points with bit 0 clear
+     * ("Robbed bits"; none to rob at q = 0) */
+    int step = robbed_now(c) && t->u > 1 ? 2 : 1;
+    for (k = 0; k < n; k += step)
         for (s = 0; s < 2; s++)
             if (arrive(c, mag_octet(bios[k], s)) == r) return mag_octet(bios[k], s);
     return r;
@@ -609,6 +630,7 @@ static void set_octet(k56call_t *c)
 static int16_t k56_tick(k56call_t *c, uint8_t octet)
 {
     if (c->dseg == K56TX_TRN1B && c->dn == 0) set_octet(c);
+    c->sent = octet;
     down_octet(c, arrive(c, octet));
     if (v34mod_due(&c->umod)) {
         int32_t re, im;

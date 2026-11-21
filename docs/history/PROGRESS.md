@@ -3582,3 +3582,78 @@ The old second-order high pass also spoiled SM56's data above 32000 (error
     the default model, 12 repeats (fractions 0 and 0.1)    24 / 24 PASS
     bridge sweep, k56 2 model: pass 0-0.35, 0.65-0.95; fail 0.40-0.60
     make check                                      ALL HOST CHECKS PASS
+
+## k56 10: every rate, the pads and robbed bits; the CPU figure (2026-11-21)
+
+`test/test_answer_k56.c` `k56_rate_tests`: the client (sim/k56call, data
+check as k56 9) asking r = 1, 2, 7, 12 (54000, M = 16) and 13 at pad 0;
+pads 3 and 6 dB at r = 13 and 7; robbed `0x24`, `0x12`, `0x3f`, `0x1f` (5
+taken as 6) at r = 13 and 3, pad 0 and 6 dB. Each: `tx_bps` 30000 + 2000 r
+both sides, the J octet's pad and robbed symbols in `k56d_pad`/`k56d_rbs`
+and in k56tx (`pad`, `d_pad`, `d_rbs`), the training on that pad's levels
+checked octet by octet (0 bad), 16 MP and MP', E, B1, the first data
+symbol on the grid of 24 from TRN1B, 100000 bits each way with no error.
+`TEST_SHORT` (ARM): r = 13 at pad 0 and 6 dB with robbed none and `0x24`,
+r = 1 at 6 dB (r = 1, pad 0 is k56 9's).
+
+The engine (`modem/k56d.c`, k56tx, k56enc) passed every one unchanged. The
+first run failed only in the test's own models (43 failures), all three
+fixed test-side:
+
+- the sim's training checks: a robbed bit makes two training octets arrive
+  alike (TRN1A's `0x4e`/`0x4f`, TRN1B's pairs); the sim took the first and
+  its running sum drifted (thousands of "bad" octets, E missed). It now
+  breaks such a tie with the octet as it left the server, and counts it bad
+  if that is neither;
+- the sim's data decoding looked for the received octet among all points;
+  on a robbed symbol the server sends only points with bit 0 clear
+  (k56-facts "Robbed bits"), and behind a 6 dB pad another point can arrive
+  alike: 40000 bad bits at r = 13. It now looks among those points only;
+- the test line's echo was of our octets before the network's pad: 6 dB
+  too loud behind a 6 dB pad, and the upstream (31200, SNR about 35 dB)
+  took 45 to 166 bad bits in some calls (pad 2, with or without robbed
+  bits). The echo is now of what the client's line card plays, after the
+  pad (pad 0: unchanged).
+
+Mutations (throwaway, reverted): `k56tx_data` given robbed 0: 84 failures;
+`k56tx_got_j` given pad 0: 204 failures.
+
+    build/test_answer_k56 (first run)    1064 checks, 43 failures (the three above)
+    build/test_answer_k56                1064 checks, 0 failures (3.7 s host)
+      r = 1 / 2 / 7 / 12 / 13, pad 0: 32000 / 34000 / 44000 / 54000 / 56000 down, 31200 up
+      pad 3 and 6 dB at r = 13, 7: J octet 40 / 80, 0 bad
+      robbed 24 / 12 / 3F / 1F on the line: J octets 09 / 24 / 3F / 37 (pad 2: 89 / A4 / BF / B7)
+    a sweep (scratch, not kept): all 13 rates x pads 0, 3, 6 dB x robbed
+      none, 24, 12, 3F, 1F, 08, 01: 273 calls, 0 failures
+    make check                           ALL HOST CHECKS PASS
+    SM56 decoder harness: make k56-dump; ~/modem-research/k56-oracle/sm56dec/check.sh build/k56dump
+                                         2496 of 2496 decode to the data sent
+    make test-k56-sm56 DMODEM=... MODS=k56 (SM56's own rate; no pad run, SM56
+      cannot train behind one):
+      RBS none                           PASS, 52000 / 31200, SM56 CONNECT 52000, RBS 00
+      RBS=0x24                           PASS, 52000 / 31200, SM56 RBS 09
+      RBS=0x12, 0x3f, 0x1f, 0x01         PASS, 52000 / 31200, SM56 RBS 12, 3F, 3E, 20
+      DOWN=34000 / 40000 / 48000         PASS at that rate
+      DOWN=36000 / 44000 / 48000 RBS=0x24, DOWN=50000 RBS=0x12   PASS at that rate
+
+CPU: `tools/rec_k56` (`rec_x2`'s link with K56flex offered, 56000 down,
+optional pad and robbed bits), `bench_v90 -k`, `make bench-k56` and
+`make cost-k56` (as `cost-x2`, but K56flex's data mode starts at 16.2 s,
+after V.8bis, so its second is 20 to 21; V.90's stays 15 to 16). Host and
+ARM give the same transmit hash (52c83abc), 742404 bits up, 0 bad.
+
+    make cost-k56 ARM_CC=...armv7-eabihf musl...
+      k56 data mode: 34749835 ARM instructions per second of line (second 20 to 21 of the call)
+      V.90 data mode: 38722338 ARM instructions per second of line (second 15 to 16 of the call)
+      ratio k56 / V.90: 89 %
+
+Under the plan's 120 %, as the design expected: the upstream receiver is
+set as the V.90 answerer's (16 states, linear, minimum shaping, asked for
+in our MP). Not profiled further.
+
+    replay proof (106 recordings, against 0.4.0's v90m-replay):
+      flags '', -9, -x, '-x -9': identical (.txt and .bits); -k, -k -9: 106/106 exit 0
+    make -j16 check-arm ARM_CC=...armv7-eabihf musl...
+      answer_k56: 396 checks, 0 failures (TEST_SHORT; 9.3 s under qemu here)
+      api: 502 checks, 0 failures (pin 118512 holds)
+      ALL ARM CHECKS PASS

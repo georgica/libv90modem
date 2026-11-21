@@ -17,6 +17,13 @@
  *     client silent at five points: the end within 10 s, K56flex's, in
  *     data mode the line's loss) and 5 (pad code 3, MPs with rate_ac 0,
  *     mask 0, no upstream rate: K56flex's end);
+ *   - every rate, the pads and robbed bits (Task 10): r = 1, 2, 7, 12 and
+ *     13 at pad 0; pads 3 and 6 dB at r = 13 and 7; robbed 0x24, 0x12, 0x3f
+ *     and 0x1f (5 taken as 6) at r = 13 and 3, pad 0 and 6 dB: the rate both
+ *     sides, the J octet's pad and robbed symbols in k56d and k56tx, the
+ *     training checked octet by octet on the pad's levels, the first data
+ *     symbol on the grid of 24, the data check both ways (TEST_SHORT: r = 13
+ *     at pad 0 and 6 dB with and without 0x24, r = 1 at 6 dB);
  *   - Review Focus 3: the agreed client with INFO1c 0x200, or one that
  *     cannot transmit at 3200 baud: INFO1a unflagged, V.34 at the rates of
  *     the same client without K56flex;
@@ -369,7 +376,9 @@ static void kd_call(const kd_opts *ko, long secs, kd_out *o)
         if (A.connected) { o->connected_once = 1; o->mod = A.modulation; o->down = A.bitrate; o->up = A.rx_bitrate; }
         if (A.phase == ANS_K56 && A.connected && o->data_at < 0) o->data_at = n;
         down[i] = atx;
-        dl[i] = (double)ulaw_to_linear(atx);
+        /* the echo is of what the client's line card plays: after the
+         * network's pad (its robbed bit, one level step, left out) */
+        dl[i] = (double)ulaw_to_linear(x2call_pad(atx, ko->pad));
         up[i] = k56call_tick(&K, down[(n - d_ac) & (XD - 1)]);
         v = 0.5 * up[(n - d_ca) & (XD - 1)]
             + 0.12 * dl[(n - 2) & (XD - 1)] + 0.08 * dl[(n - 4) & (XD - 1)] - 0.05 * dl[(n - 9) & (XD - 1)]
@@ -552,6 +561,70 @@ static void k56_data_tests(void)
     CHECK(o.e_at > 0); CHECK(o.data_at > o.e_at); CHECK(o.data_at - o.e_at < MS(K56D_T_B1) + MS(1000));
     CHECK_EQ_I(o.connected_once, 1); CHECK_EQ_I(o.mod, ANS_MOD_K56); CHECK_EQ_I(o.k56_failed, 0);
     CHECK_EQ_I(o.error, 0); CHECK_EQ_I(o.phase, ANS_K56);
+}
+
+
+/* ---- every rate, the pads, robbed bits (plan Task 10) ---- */
+
+/* one call of the client asking r behind pad and rbs, j_octet the truth:
+ * tx_bps 30000 + 2000 r both sides; the J octet's pad and robbed symbols
+ * reach k56d (k56d_pad, k56d_rbs) and k56tx (TRN2B, MP, E on that pad's
+ * levels: the client checks every octet of them, seg_bad); the first data
+ * symbol on the grid of 24 from TRN1B's first; the data check both ways */
+static void kr_call(int rate, int pad, int rbs)
+{
+    kd_opts ko; kd_out o;
+    char what[80];
+    uint8_t oct = 0;
+    int k, n_rob = 0, n_oct = 0;
+    kd_default(&ko); ko.rate = rate; ko.pad = pad; ko.rbs = rbs;
+    kd_call(&ko, 60, &o);
+    for (k = 0; k < 8; k++) oct = (uint8_t)(oct | K.j24[16 + k] << k);
+    for (k = 0; k < 6; k++) { n_rob += (rbs >> k) & 1; n_oct += (oct >> k) & 1; }
+    snprintf(what, sizeof what, "r = %d, pad %d, robbed %02X (J octet %02X)", rate, pad, rbs, oct);
+    kd_report(what, &o);
+    if (seg_bad_sum()) {
+        printf("     bad octets by segment:");
+        for (k = 0; k < K56TX_DATA; k++) printf(" %ld", K.seg_bad[k]);
+        printf("\n");
+    }
+    CHECK_EQ_I(o.connected_once, 1); CHECK_EQ_I(o.mod, ANS_MOD_K56);
+    CHECK_EQ_I(o.down, 30000 + 2000 * rate); CHECK_EQ_I(o.client_down, o.down);
+    CHECK_EQ_I(o.mp.max_ac, rate); CHECK_EQ_I(o.up, 31200); CHECK_EQ_I(o.client_up, o.up);
+    CHECK_EQ_I(oct >> 6, pad); CHECK_EQ_I(n_oct, n_rob);
+    CHECK_EQ_I(k56d_pad(&A.u.k56), pad); CHECK_EQ_I(k56d_rbs(&A.u.k56), oct & 0x3f);
+    CHECK_EQ_I(A.u.k56.tx.pad, pad);
+    CHECK_EQ_I(A.u.k56.tx.d_rate, rate); CHECK_EQ_I(A.u.k56.tx.d_pad, pad); CHECK_EQ_I(A.u.k56.tx.d_rbs, oct & 0x3f);
+    CHECK(K.data_at > K.trn1b_at); CHECK_EQ_I((K.data_at - K.trn1b_at) % 24, 0);
+    CHECK_EQ_I(seg_bad_sum(), 0); CHECK_EQ_I(K.mp_good, 16); CHECK_EQ_I(K.mpa_good, 16); CHECK_EQ_I(K.mp_wrong, 0);
+    CHECK_EQ_I(K.e_seen, 1); CHECK_EQ_I(K.b1_bad, 0); CHECK_EQ_I(K.data_lost, 0);
+    CHECK(DA.n >= DBITS); CHECK(DC.n >= DBITS); CHECK_EQ_I(DA.bad, 0); CHECK_EQ_I(DC.bad, 0);
+    CHECK(BALANCED(DA)); CHECK(BALANCED(DC));
+    CHECK_EQ_I(A.u.k56.state, K56D_DATA);
+}
+
+static void k56_rate_tests(void)
+{
+#ifdef TEST_SHORT
+    /* r = 1 and 13, pad 0 and 2, no robbed bits and 0x24 (r = 1, pad 0,
+     * none: k56_data_tests) */
+    kr_call(13, 0, 0);
+    kr_call(1, 2, 0);
+    kr_call(13, 2, 0);
+    kr_call(13, 0, 0x24);
+    kr_call(13, 2, 0x24);
+#else
+    static const int rates[5] = { 1, 2, 7, 12, 13 };
+    static const int robbed[4] = { 0x24, 0x12, 0x3f, 0x1f };   /* 0x1f: 5, taken as 6 */
+    int i, p;
+    /* the rates, pad 0 (12: 54000, M = 16) */
+    for (i = 0; i < 5; i++) kr_call(rates[i], 0, 0);
+    /* the pads, 3 and 6 dB, at r = 13 and r = 7 */
+    for (p = 1; p <= 2; p++) { kr_call(13, p, 0); kr_call(7, p, 0); }
+    /* robbed bits at r = 13 and r = 3, pad 0 and pad 2 */
+    for (i = 0; i < 4; i++)
+        for (p = 0; p <= 2; p += 2) { kr_call(13, p, robbed[i]); kr_call(3, p, robbed[i]); }
+#endif
 }
 
 
@@ -788,6 +861,7 @@ int main(void)
 {
     k56_client_tests();
     k56_data_tests();
+    k56_rate_tests();
     v34peer_tests();
 #ifndef TEST_SHORT          /* on ARM under qemu (test.h): the K56flex client and v34peer only */
     orig_tests();
