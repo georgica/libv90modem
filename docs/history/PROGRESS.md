@@ -3494,3 +3494,58 @@ recurrence), checked for the call and two renegotiations.
     make -j8 check-arm ARM_CC=...armv7-eabihf musl...
       k56tx: 84 checks, 0 failures (oracle 13 of 13 under qemu-arm)
       ALL ARM CHECKS PASS   (6 min 49 s)
+
+## k56 9: training, MP and data at 32000 against a simulated client (2026-11-21)
+
+`modem/k56d` (the engine from our flagged INFO1a on, as `x2d` for x2; `x2d`
+untouched): `k56tx` down; up, the client as V.34's call modem (GPC): our
+echo canceller (and the echo delay, when not given) on our TRN1A to TRN1C
+while the client is silent; from our Js its S, PP, TRN (4 points), its J24
+(two J words 24 bits apart, the octet between: pad and robbed symbols; pad
+code 3 ends the call, Ruling F3), J' 24 bits after the last J word, TRN, MP,
+MP' and E on 16 points (MP: two in a row that agree), then V.34 data (16
+states, linear, minimum shaping: what our MP asks) with p34d's watchdog. Our
+MP: type 0, rate_ac r = min(its rate_ac, max_down's code, 13), rate_ca the
+highest rate of its mask at 3200 baud (at most its rate_ca and max_up),
+mask 3FFF, asymmetric. Time limits: S 3 s from our Js, J24 3.2 s from its S
+(Ruling F4: 2.14 s + 1 s), MP 4 s from our TRN2B, E 2 s from our MP', B1 1 s.
+`answer`: `u.k56` in the union, `ANS_K56` runs it, `ANS_MOD_K56`,
+cleardown (silence 0xff at once), no retrain, SNR, rtd, `k56_lost` (the API's
+`V90M_END_LOST` in data mode; `fail()` clears `connected`, so the general
+rule could not say it). API: `echo_delay` from `u.k56.ecd`.
+
+`sim/k56call` from the flagged INFO1a: the pad and robbed-bit line model,
+every training segment checked against the facts (`seg_bad[]`), Js, MP and
+MP' decoded and checked, E, B1 dropped, data through `k56enc_unframe` and
+GPA; up, V.34's call modem with the J24 (the truth of the line or
+`j_octet`), its MP (`rate`, `up_mask`, `mp_bad`), `silent` at five points.
+
+    make build/test_answer_k56 (engine a stub)   272 checks, 62 failures
+    build/test_answer_k56                          273 checks, 0 failures (2.7 s)
+      r = 1, pad 0, no robbed bits: 32000 / 31200 (client 32000 / 31200),
+        102057 bits down, 100065 up, 0 bad; 0 bad training octets, Js, 16 MP,
+        16 MP', E, B1 good; data 8.33 s after ANS_K56; silence 2 12288,
+        TRN2A 16336, TRN2B 2052
+      mask 0FFF, echo delay measured (0): 32000 / 28800 = sim/v34peer's 28800 up (F9)
+      max_down 32000, client asking 13: r = 1, 32000
+      our cleardown: octet FF at once, cleared 2
+      silent before S / J24 / MP / E / in data: ended 3.00 / 1.87 / 6.04 /
+        1.99 / 0.53 s later, K56flex failed (data: lost)
+      J24 octet C0: K56D_ERR_J; MP rate_ac 0, mask 0, mask 2000: K56D_ERR_RATE
+    make test-api      502 checks, 0 failures: V90M_CONN_K56FLEX 32000 / 31200,
+                       SNR 38.1 dB, retrain V90M_ESTATE, cleardown
+                       V90M_END_CLEARDOWN_OURS, silent in data V90M_END_LOST; pin holds
+    sizes (x86-64): k56d_t 21424 (u's largest is v92d_t 45096), answer_t 106184
+    make check         ALL HOST CHECKS PASS
+    replay proof (106 recordings, against 0.4.0's v90m-replay):
+      flags '', -9, -x, '-x -9': identical (.txt and .bits); -k, -k -9: 106/106 exit 0
+    make test-k56-sm56 MODS=k56 DOWN=32000   FAIL (k56-facts.md "Unsettled"):
+      SM56 sends INFO1c 0x001 to us, takes our flagged INFO1a, the training to
+      Js; we receive its S, J24 (octet 00) and J' with GPC (GPC confirmed);
+      it then stays in its front end state 19 during our TRN2A, sends no MP,
+      cause 0x21; we end K56D_ERR_NO_MP 4 s into TRN2B. Our octets from R1 to
+      TRN2B equal D-Modem's oracle with the same J time, byte for byte.
+    make -j16 check-arm ARM_CC=...armv7-eabihf musl...
+      answer_k56: 225 checks, 0 failures (TEST_SHORT: 20000 bits each way)
+      api: 502 checks, 0 failures (pin 118512 holds)
+      ALL ARM CHECKS PASS

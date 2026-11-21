@@ -488,7 +488,10 @@ notes 3]:
   caller", `v34_k56.h` `k56_start`), and `V34Rx::init` takes `tap = caller
   ? 5 : 18`. [RE: D-Modem, code `v34_k56.h`, `v34_modem.cpp`]. This
   settles decision 9's GPC; the SM56 call of Task 9 is to confirm it as our
-  observation.
+  observation. **Confirmed (k56 9, 2026-11-21):** against SM56 (`make
+  test-k56-sm56 MODS=k56`), our receiver, descrambling with GPC, found
+  SM56's S, its J24 (`0x89b0`, octet `00`) twice 24 bits apart, and its J'
+  24 bits after the last J word. [our observation: the SM56 call].
 - **J24**: a 24-bit word sent least significant bit first, 2 bits a symbol
   (12 symbols), 4-point, scrambled and differentially encoded as V.34's J:
   bits 0-15 the V.34 J (`0x89b0` asks for 16-point Phase 4, `0x8990` for
@@ -1025,6 +1028,19 @@ restarts the data encoder (C4); the A-law call is facts only, mu-law only
 frame (C6).
 
 Still [unk]:
+
+- **Why SM56 does not get past our TRN2A** (k56 9, 2026-11-21, [our
+  observation: the SM56 call]): SM56 sends INFO1c `0x001`, takes our
+  flagged INFO1a, our training to Js and silence 2 (its front end goes
+  through states 4 to 17 exactly as in D-Modem's passing reference call),
+  sends S, J24 and J' (front end state 19); then, where D-Modem's call moves
+  on to front end state 21 (phase 4 rx state 2) early in TRN2A, SM56 stays
+  in state 19, sends no MP, and gives up with cause `0x21` (840 handler
+  calls). Our octets from R1 to TRN2B equal D-Modem's training oracle driven
+  with the same J time, byte for byte (71280 octets); unchanged with the
+  bridge's loop model off, with R2 held 50 ms after the J, and with SM56 in
+  automode (`AT+MS=K56FLEX`, our V.90 off). The cause is in the path to
+  SM56 or in SM56's state, not yet found.
 
 - Whether SM56 accepts the real server's CL (`81 c2` S field) and our CRe:
   the harness runs now (k56 2), the V.8bis side comes in Task 5.

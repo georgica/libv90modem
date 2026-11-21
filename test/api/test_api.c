@@ -1167,47 +1167,79 @@ static void test_x2(void)
 
 /* ---- K56flex: the simulated client (sim/k56call) calls the library. Its
  * INFO1c takes K56flex up at 3200 baud: our INFO1a goes out flagged, and
- * (until the K56flex engine, plan Task 9) the call ends at once as
- * K56flex's ---- */
-static void test_k56(void)
+ * K56flex's start-up to data mode, 32000 down (it asks r = 1). There we
+ * never retrain (V90M_ESTATE); our cleardown ends the call as ours. With
+ * the client silent in data mode, the call ends as the line's loss. ---- */
+static void k56_call(int silent, long *data_at, v90m_state *st, v90m_stats *sx, int *rt)
 {
     static k56call_t k;
     static uint8_t down[64];
-    k56call_cfg kc; v90m_cfg c; v90m_state st;
+    k56call_cfg kc; v90m_cfg c;
     v90m_t *m; int err;
-    long n, flag_at = -1, end_at = -1;
+    long n;
     uint8_t rx = 0xff, tx;
 
     v90m_cfg_default(&c);
     c.modulations |= V90M_MOD_K56;
     c.getbit = ones_get; c.putbit = bits_put; c.on_event = x2_on_event;
-    x2_nev = 0;
+    x2_nev = 0; *data_at = -1; *rt = 0;
+    memset(sx, 0, sizeof *sx);
     m = v90m_create(&c, &err);
     CHECK(m != NULL);
     if (!m) return;
     k56call_default(&kc, 3000);
+    kc.rate = 1; kc.silent = silent;
     kc.getbit = ones_get; kc.putbit = bits_put;
     k56call_init(&k, &kc);
     memset(down, 0xff, sizeof down);
-    for (n = 0; n < 8000L * 15; n++) {
+    for (n = 0; n < 8000L * 40; n++) {
         int16_t s;
         v90m_process_g711(m, &rx, &tx, 1);
         down[n & 63] = tx;
         s = k56call_tick(&k, down[(n - 30) & 63]);
         rx = v90m_g711_encode(0, (int16_t)(s / 2));
-        if (flag_at < 0 && k.state == K56C_V34 && k.peer.state == VP_K56) flag_at = n;
-        v90m_get_state(m, &st);
-        if (st.end != V90M_END_NONE) { end_at = n; break; }
+        v90m_get_state(m, st);
+        if (st->connected && *data_at < 0) *data_at = n;
+        if (!silent && *data_at >= 0 && n == *data_at + 8000) {
+            v90m_get_stats(m, sx);
+            *rt = v90m_retrain(m);
+            CHECK_EQ_I(v90m_cleardown(m), V90M_OK);
+            /* silence at once */
+            v90m_process_g711(m, &rx, &tx, 1);
+            CHECK_EQ_I(tx, 0xff);
+        }
+        if (st->end != V90M_END_NONE) break;
     }
-    printf("  API K56flex call: the client took our flagged INFO1a at %.3f s, end %d %.1f ms after that\n",
-           flag_at / 8000.0, (int)st.end, (end_at - flag_at) / 8.0);
-    CHECK(flag_at > 0); CHECK(end_at >= flag_at);
-    CHECK(end_at - flag_at <= 8 * 100);
-    CHECK_EQ_I(st.end, V90M_END_K56_FAILED);
-    CHECK_EQ_I(st.connected, 0); CHECK_EQ_I(st.used_v8, 1);
-    CHECK(x2_nev >= 1 && x2_nev <= 8);
-    if (x2_nev >= 1 && x2_nev <= 8) CHECK_EQ_I(x2_ev[x2_nev - 1], V90M_EV_ENDED);
+    v90m_get_state(m, st);
+    if (!silent) CHECK_EQ_I(v90m_cleardown(m), V90M_ESTATE);    /* over: nothing to send */
     v90m_destroy(m);
+}
+
+static void test_k56(void)
+{
+    v90m_state st; v90m_stats sx;
+    long data_at;
+    int rt;
+
+    k56_call(K56C_SIL_NONE, &data_at, &st, &sx, &rt);
+    printf("  API K56flex call: mod %d, %d / %d bit/s, SNR %.1f dB, rtd %d, echo delay %d; retrain %d; end %d\n",
+           sx.modulation, sx.tx_bps, sx.rx_bps, sx.snr_db10 / 10.0, sx.rtd, sx.echo_delay, rt, (int)st.end);
+    CHECK(data_at > 0);
+    CHECK_EQ_I(sx.modulation, V90M_CONN_K56FLEX);
+    CHECK_EQ_I(sx.tx_bps, 32000); CHECK_EQ_I(sx.rx_bps, 31200);
+    CHECK(sx.snr_db10 > 200); CHECK(sx.rtd > 0); CHECK(sx.echo_delay >= 0);
+    CHECK_EQ_I(rt, V90M_ESTATE);
+    CHECK_EQ_I(st.end, V90M_END_CLEARDOWN_OURS); CHECK_EQ_I(st.used_v8, 1);
+    CHECK(x2_nev >= 3 && x2_nev <= 8);
+    if (x2_nev >= 3 && x2_nev <= 8) {
+        CHECK_EQ_I(x2_ev[0], V90M_EV_CONNECTED); CHECK_EQ_I(x2_ev[1], V90M_EV_DATA_MOVING);
+        CHECK_EQ_I(x2_ev[x2_nev - 1], V90M_EV_ENDED);
+    }
+
+    k56_call(K56C_SIL_DATA, &data_at, &st, &sx, &rt);
+    printf("  API K56flex call, the client silent in data mode: end %d\n", (int)st.end);
+    CHECK(data_at > 0);
+    CHECK_EQ_I(st.end, V90M_END_LOST);
 }
 
 int main(void)

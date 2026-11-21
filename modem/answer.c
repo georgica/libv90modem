@@ -148,7 +148,7 @@ void answer_init(answer_t *a, const answer_cfg *cfg)
     a->pcm_up = local.has_pcm && (cfg->modes & ANS_MODE_V92) != 0;
     a->x2_failed = 0;
     x2_offer(a);
-    a->k56_agreed = a->k56_failed = 0;
+    a->k56_agreed = a->k56_failed = a->k56_lost = 0;
     k56_offer(a);
 }
 
@@ -273,6 +273,23 @@ static void start_x2(answer_t *a)
     c.getbit = a->cfg.getbit; c.putbit = a->cfg.putbit; c.user = a->cfg.user;
     a->phase = ANS_X2; a->t = 0; a->pcm = 0x7f;
     if (x2d_init(&a->u.x2, &c) != 0) { a->x2_failed = 1; fail(a); }
+}
+
+/* Our flagged INFO1a ended Phase 2 (p2ans P2N_K56): no way back to V.34.
+ * The upstream's carrier (our choice in INFO1a) and the round trip from
+ * there; a configuration k56d cannot serve ends the call, said as
+ * K56flex's. */
+static void start_k56(answer_t *a)
+{
+    k56d_cfg c;
+    memset(&c, 0, sizeof c);
+    c.rtd = a->v34.p2.rtd;
+    c.echo_delay = a->echo_delay;
+    c.hi_carrier = a->v34.p2.info1a.hi_carrier;
+    c.max_up_rate = a->max_up; c.max_down_rate = a->max_down;
+    c.getbit = a->cfg.getbit; c.putbit = a->cfg.putbit; c.user = a->cfg.user;
+    a->phase = ANS_K56; a->t = 0; a->pcm = 0xff;
+    if (a->v34.p2.sym_rate != 3200 || k56d_init(&a->u.k56, &c) != 0) { a->k56_failed = 1; fail(a); }
 }
 
 /* V.8 selected V.34 as the data mode: INFO0a starts right after the 75 ms
@@ -531,7 +548,7 @@ int16_t answer_tick(answer_t *a, int16_t rx)
             break;
         }
         if (a->v34.state == V34A_K56) {          /* our flagged INFO1a: no way back to V.34 */
-            a->phase = ANS_K56; a->t = 0; tx = 0;
+            start_k56(a); tx = 0;
             break;
         }
         if (a->v34.state == V34A_ENDED) {
@@ -586,12 +603,27 @@ int16_t answer_tick(answer_t *a, int16_t rx)
         break;
     }
 
-    case ANS_K56:
-        /* past the point of no return; until the K56flex engine comes, the
-         * call ends here (k56 plan, Task 6) */
-        a->k56_failed = 1;
-        fail(a); tx = 0;
+    case ANS_K56: {
+        k56d_t *d = &a->u.k56;
+        a->pcm = k56d_tick(d, rx);
+        tx = (int16_t)v90_octet_linear(0, a->pcm);
+        if (d->state == K56D_ENDED) {
+            /* past the point of no return (k56 design, decision 7): a
+             * start-up that did not reach data mode is said as K56flex's;
+             * in data mode the upstream's loss and our cleardown end it */
+            if (d->error == K56D_ERR_HANGUP) a->cleared = 2;
+            else if (a->connected && d->error == K56D_ERR_CARRIER) a->k56_lost = 1;
+            else a->k56_failed = 1;
+            fail(a); tx = 0;
+        } else if (d->state == K56D_DATA) {
+            a->connected = 1; a->modulation = ANS_MOD_K56;
+            a->bitrate = k56d_down_rate(d); a->rx_bitrate = k56d_up_rate(d);
+            a->retraining = 0;
+        } else if (a->connected) {
+            a->retraining = 1;              /* the client's renegotiation or retrain */
+        }
         break;
+    }
 
     case ANS_FAILED:
         break;
@@ -608,7 +640,8 @@ uint8_t answer_tick_lin(answer_t *a, int16_t rx)
 {
     int alaw = a->p2cfg.alaw;
     int16_t tx = answer_tick(a, rx);
-    if (a->phase == ANS_P3 || a->phase == ANS_V90 || a->phase == ANS_P3X || a->phase == ANS_V92 || a->phase == ANS_X2) return a->pcm;
+    if (a->phase == ANS_P3 || a->phase == ANS_V90 || a->phase == ANS_P3X || a->phase == ANS_V92 || a->phase == ANS_X2
+        || a->phase == ANS_K56) return a->pcm;
     return pcm_encode(alaw, tx);
 }
 
@@ -642,6 +675,7 @@ int answer_snr_db10(const answer_t *a)
     }
     case ANS_MOD_V34: num = 65536; den = a->v34.dx.rx.mse; break;
     case ANS_MOD_X2: num = 65536; den = a->u.x2.rx.mse; break;           /* the V.34 upstream */
+    case ANS_MOD_K56: num = 65536; den = a->u.k56.rx.mse; break;         /* the V.34 upstream */
     case ANS_MOD_V22: case ANS_MOD_V22BIS:
         /* 4096 = one unit squared; the points (1 and 3 units on each axis)
          * have a mean power of 10, and the four of 1200 bit/s have just that */
@@ -657,7 +691,7 @@ int answer_rtd(const answer_t *a)
     if (!a->connected) return -1;
     switch (a->modulation) {
     case ANS_MOD_V90: case ANS_MOD_V92: return a->p2.rtd;
-    case ANS_MOD_X2: return a->v34.p2.rtd;
+    case ANS_MOD_X2: case ANS_MOD_K56: return a->v34.p2.rtd;
     /* V.34 after V.90 Phase 2 has that Phase 2's figure */
     case ANS_MOD_V34: return a->v8.selected == V8_SEL_V90 ? a->p2.rtd : a->v34.p2.rtd;
     default: return -1;
@@ -669,6 +703,7 @@ int answer_cleardown(answer_t *a)
     if (a->phase == ANS_V34) return v34ans_cleardown(&a->v34);
     if (a->phase == ANS_V92) return v92d_cleardown(&a->u.v92);
     if (a->phase == ANS_X2) return x2d_cleardown(&a->u.x2);
+    if (a->phase == ANS_K56) return k56d_cleardown(&a->u.k56);
     if (a->phase != ANS_V90) return -1;
     return p34d_cleardown(&a->p34);
 }
@@ -678,6 +713,7 @@ int answer_retrain(answer_t *a)
     if (a->phase == ANS_V34) return v34ans_retrain(&a->v34);
     if (a->phase == ANS_V32) return v32_retrain(&a->u.v32);
     if (a->phase == ANS_V92) return v92d_retrain(&a->u.v92);
+    if (a->phase == ANS_K56) return -1;     /* we never retrain K56flex (k56 design, decision 14) */
     if (a->phase != ANS_V90) return -1;
     return p34d_retrain(&a->p34);
 }
@@ -688,6 +724,7 @@ int answer_moving(const answer_t *a)
     if (a->phase == ANS_V90) return a->p34.tx_ready && a->p34.rx_ready;
     if (a->phase == ANS_V92) return a->u.v92.tx_ready && a->u.v92.rx_ready;
     if (a->phase == ANS_X2) return a->u.x2.state == X2D_DATA;
+    if (a->phase == ANS_K56) return a->u.k56.state == K56D_DATA;
     return 1;
 }
 

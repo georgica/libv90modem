@@ -4,7 +4,12 @@
 #include <string.h>
 #include "k56call.h"
 #include "g711.h"
+#include "x2call.h"
 #include "../modem/v8msg.h"
+#include "../modem/p2ans.h"
+#include "../modem/v34train.h"
+#include "../modem/k56tab.h"
+#include "../v90/v90_pcm.h"
 
 #define MS(ms) ((int32_t)(ms) * 8)
 #define TWO_PI 6.283185307179586
@@ -22,6 +27,9 @@ void k56call_default(k56call_cfg *cfg, int level)
     cfg->level = level;
     cfg->v8bis = K56C_V8BIS_FULL;
     cfg->info1c_k56 = 1;
+    cfg->j_octet = -1;
+    cfg->rate = 13;
+    cfg->up_mask = 0x3fff;
 }
 
 void k56call_init(k56call_t *c, const k56call_cfg *cfg)
@@ -32,6 +40,7 @@ void k56call_init(k56call_t *c, const k56call_cfg *cfg)
     c->state = K56C_V8BIS;
     c->bst = cfg->v8bis == K56C_V8BIS_NONE ? B_OFF : B_CRE;
     c->crd_at = -1; c->ms_at = -1; c->v8_sel = -1;
+    c->data_at = -1; c->j24_at = -1; c->quiet_at = -1;
     /* the CM of v34peer's own V.8; with cm_pcm, an analogue modem's PCM octet too */
     memset(&cm, 0, sizeof cm);
     cm.call_function = V8_CALLF_DATA;
@@ -157,11 +166,456 @@ static int16_t responder(k56call_t *c, int16_t x)
     return (int16_t)lround(y);
 }
 
+/* ==== K56flex, from our flagged INFO1a on (k56-facts.md) ==== */
+
+#define R_MAG       0x54
+#define ONE_MAG     0x4f
+#define SIL_ARM     256         /* octets of silence before R1 is looked for */
+#define P3_TRN      4000        /* its Phase 3 TRN, T ("echo delay + 4000 to 6430 T") */
+#define P4_TRN      1280        /* its Phase 4 TRN, T (16 points) */
+#define J24_SYMS    12
+#define B1_FRAMES   6
+#define PATIENCE    6000        /* its J24 to our R2: about 0.75 s ("Training down") */
+
+enum { SIG_SIL, SIG_S, SIG_SBAR, SIG_PP, SIG_TRN, SIG_J24, SIG_JP, SIG_TRN16, SIG_MP, SIG_E, SIG_DATA };
+
+static const uint8_t trn1b_mag[8] = { 0x40, 0x41, 0x4b, 0x4c, 0x50, 0x51, 0x50, 0x51 };
+static const uint8_t pad2_mag[3][4] = {
+    { 0x2f, 0x45, 0x51, 0x57 }, { 0x35, 0x4d, 0x58, 0x60 }, { 0x3d, 0x54, 0x61, 0x67 }
+};
+
+int k56call_down_rate(const k56call_t *c) { return c->data_at >= 0 && c->r_used ? 30000 + 2000 * c->r_used : 0; }
+
+static int pad_of(const k56call_t *c) { return c->cfg.pad_mode >= 0 && c->cfg.pad_mode <= 2 ? c->cfg.pad_mode : 0; }
+
+/* what octet o, sent now, arrives as: the pad, then the robbed bit */
+static uint8_t arrive(const k56call_t *c, uint8_t o)
+{
+    uint8_t a = x2call_pad(o, pad_of(c));
+    if ((c->cfg.rbs >> (c->line_n % 6)) & 1) a |= 1;
+    return a;
+}
+
+static uint8_t mag_octet(int m, int positive) { return (uint8_t)(positive ? 0xff - m : 0x7f - m); }
+
+/* the octet sent among magnitudes mags[0..n) (both signs) that arrives as r:
+ * its index, its sign in *pos; -1 none */
+static int which(const k56call_t *c, uint8_t r, const uint8_t *mags, int n, int *pos)
+{
+    int k, s;
+    for (k = 0; k < n; k++)
+        for (s = 0; s < 2; s++)
+            if (arrive(c, mag_octet(mags[k], s)) == r) { *pos = s; return k; }
+    return -1;
+}
+
+static void bad(k56call_t *c) { if (c->dseg < K56TX_DATA) c->seg_bad[c->dseg]++; }
+
+/* a sent code into the running sum (of what was sent) */
+static void add_sum(k56call_t *c, int m, int pos) { c->sum += v90_octet_linear(0, mag_octet(m, pos)); }
+
+/* the sign of a symbol set against the running sum (before it) */
+static int sum_sign(const k56call_t *c) { return c->sum <= 0; }
+
+/* one scrambled training bit: into the history and the descrambler; the
+ * input bit once 23 known bits are in, else -1 */
+static int tbit(k56call_t *c, int b)
+{
+    int d = v90_descramble_gpa(&c->tdscr, b);
+    c->hist = c->hist << 1 | (uint32_t)b;
+    return c->tknown++ >= 23 ? d : -1;
+}
+
+/* ---- the server's MP and MP' ---- */
+
+static void our_mp(k56call_t *c, const v34_mp_t *m)
+{
+    int up_n = 0, n;
+    /* what it must be: type 0, our rate code and its up rate, a mask,
+     * asymmetric, for our transmitter 16 states, linear, minimum shaping */
+    for (n = 13; n >= 1; n--) if ((c->cfg.up_mask >> (n - 1)) & 1) { up_n = n; break; }
+    if (m->type || !m->max_ac || m->max_ac > 13 || m->max_ac > c->cfg.rate || !m->max_ca || m->max_ca > up_n
+        || !m->rates || !m->asym || m->trellis || m->nonlinear || m->shaping) {
+        c->mp_wrong++;
+        return;
+    }
+    if (m->ack) c->mpa_good++; else c->mp_good++;
+    c->our_mp = *m;
+    if (!c->got_our_mp) c->r_used = m->max_ac < c->cfg.rate ? m->max_ac : c->cfg.rate;
+    c->got_our_mp = 1;
+    if (m->ack) c->got_our_mpa = 1;
+}
+
+/* the descrambled bits of MP and MP': frame sync (17 ones), then the
+ * sequence (as v34dx collects them) */
+static void mp_bit(k56call_t *c, int bit)
+{
+    if (c->mpfn > 0 && c->mpfn < (int)sizeof c->mpb) c->mpb[c->mpfn++] = (uint8_t)bit;
+    if (c->mpfn >= V34_MP0_BITS) {
+        v34_mp_t m;
+        memset(&m, 0, sizeof m);
+        if (v34_mp_parse(c->mpb, c->mpfn, &m) == V34_MP0_BITS) our_mp(c, &m);
+        c->mpfn = 0;
+    }
+    if (bit) { c->mpones++; return; }
+    if (c->mpones >= 17 && c->mpfn == 0) { memset(c->mpb, 1, 17); c->mpb[17] = 0; c->mpfn = 18; }
+    c->mpones = 0;
+}
+
+/* ---- data ---- */
+
+/* the octet sent (a point of the constellation of the rate and pad) that
+ * arrives as r here; r itself when none does */
+static uint8_t data_sent(const k56call_t *c, uint8_t r)
+{
+    const k56_rate_t *t = &k56_rates[c->r_used - 1];
+    const uint8_t *bios = k56_bios(c->r_used, pad_of(c));
+    int n = t->M[pad_of(c)] << (t->u - 1), k, s;
+    for (k = 0; k < n; k++)
+        for (s = 0; s < 2; s++)
+            if (arrive(c, mag_octet(bios[k], s)) == r) return mag_octet(bios[k], s);
+    return r;
+}
+
+static void data_frame(k56call_t *c)
+{
+    uint8_t bits[64];
+    int n = k56enc_unframe(&c->dec, c->dfr, bits), i, ones = 0;
+    if (n < 0) { if (c->dframes < B1_FRAMES) c->b1_bad++; else c->data_lost++; c->dframes++; return; }
+    for (i = 0; i < n; i++) { bits[i] = (uint8_t)v90_descramble_gpa(&c->ddscr, bits[i]); ones += bits[i]; }
+    if (c->dframes < B1_FRAMES) {
+        /* B1: ones once the descrambler has its 23 bits; dropped */
+        int from = c->dframes == 0 ? 23 : 0;
+        for (i = from; i < n; i++) if (!bits[i]) { c->b1_bad++; break; }
+    } else {
+        c->data_frames++;
+        if (c->cfg.putbit) for (i = 0; i < n; i++) c->cfg.putbit(c->cfg.user, bits[i]);
+    }
+    c->dframes++;
+}
+
+/* ---- the server's training, octet by octet ---- */
+
+static void go_seg(k56call_t *c, int seg) { c->dseg = seg; c->dn = 0; }
+
+/* R1 / R2: 0x54, signs + + - -, the last 24 inverted */
+static void r_octet(k56call_t *c, uint8_t r)
+{
+    int pos = !((c->dn >> 1) & 1);
+    if (c->dn >= 264) pos = !pos;
+    if (arrive(c, mag_octet(R_MAG, pos)) != r) bad(c);
+    if (++c->dn == 288) {
+        if (c->dseg == K56TX_R1) go_seg(c, K56TX_TRN1A);
+        else { go_seg(c, K56TX_TRN2A); c->alt = 0; c->tones = 0; c->trn2a_seen = 1; }
+    }
+}
+
+/* TRN1C, Js, TRN2A, MARK: even symbols 0x4f with a scrambled bit as the
+ * sign (want: the input bit, -1 anything); odd ones 0x4f against the sum.
+ * Returns the even symbol's descrambled bit (-1 unknown or odd). */
+static int one_octet(k56call_t *c, uint8_t r, int want)
+{
+    static const uint8_t one[1] = { ONE_MAG };
+    int pos, d = -1;
+    if (which(c, r, one, 1, &pos) < 0) { bad(c); c->tknown = 0; return -1; }
+    if (!(c->alt & 1)) {
+        d = tbit(c, pos);
+        if (want >= 0 && d >= 0 && d != want) bad(c);
+    } else if (pos != sum_sign(c)) {
+        bad(c);
+    }
+    add_sum(c, ONE_MAG, pos);
+    c->alt++;
+    return d;
+}
+
+/* TRN2B, MP, MP', E: 2 scrambled bits a symbol on the pad's 4 magnitudes;
+ * even: negative when hist bit 24 is set; odd: against the sum. The two
+ * input bits in in[], -1 unknown; 0 when the octet is none of them. */
+static int p4_octet(k56call_t *c, uint8_t r, int in[2])
+{
+    int pos, k = which(c, r, pad2_mag[pad_of(c)], 4, &pos);
+    in[0] = in[1] = -1;
+    if (k < 0) { bad(c); c->tknown = 0; return 0; }
+    in[0] = tbit(c, k & 1); in[1] = tbit(c, k >> 1);
+    if (!(c->alt & 1) ? pos != !((c->hist >> 24) & 1) : pos != sum_sign(c)) bad(c);
+    add_sum(c, pad2_mag[pad_of(c)][k], pos);
+    c->alt++;
+    return 1;
+}
+
+static void data_begin(k56call_t *c)
+{
+    uint8_t rbs = (uint8_t)(c->j24[16] | c->j24[17] << 1 | c->j24[18] << 2 | c->j24[19] << 3 | c->j24[20] << 4 | c->j24[21] << 5);
+    go_seg(c, K56TX_DATA);
+    c->data_at = c->line_n + 1;         /* (this octet is E's last) */
+    if ((c->data_at - c->trn1b_at) % 24) c->seg_bad[K56TX_TRN2B]++;     /* the grid of 24 */
+    k56enc_init(&c->dec, c->r_used ? c->r_used : 1, pad_of(c), rbs);
+    v90_scr_init(&c->ddscr);
+    c->dfpos = 0; c->dframes = 0;
+}
+
+static void down_octet(k56call_t *c, uint8_t r)
+{
+    int pos, k, in[2], d;
+    switch (c->dseg) {
+    case K56TX_SIL1:
+        if (r == 0xff) { c->dn++; break; }
+        if (c->dn < SIL_ARM) { c->dn = 0; break; }      /* the tail of INFO1a */
+        /* R1: the scrambler, its history and the running sum start here */
+        go_seg(c, K56TX_R1);
+        v90_scr_init(&c->tdscr); c->hist = 0; c->sum = 0; c->tknown = 0;
+        r_octet(c, r);
+        break;
+    case K56TX_R1:
+    case K56TX_R2:
+        r_octet(c, r);
+        break;
+    case K56TX_TRN1A: {
+        static const uint8_t m[2] = { 0x4e, 0x4f };
+        k = which(c, r, m, 2, &pos);
+        if (k < 0) { bad(c); c->tknown = 0; }
+        else {
+            d = tbit(c, pos);
+            if (d == 0 || k != (int)((c->hist >> 24) & 1)) bad(c);
+            add_sum(c, m[k], pos);
+        }
+        if (++c->dn == K56TX_TRN1A_N) { go_seg(c, K56TX_TRN1B); c->alt = 0; c->trn1b_at = c->line_n + 1; }
+        break;
+    }
+    case K56TX_TRN1B:
+        /* 3 scrambled bits a symbol, not all of them seen: the magnitudes,
+         * and the odd signs against the sum */
+        k = which(c, r, trn1b_mag, 6, &pos);
+        if (k < 0) bad(c);
+        else {
+            if ((c->alt & 1) && pos != sum_sign(c)) bad(c);
+            add_sum(c, trn1b_mag[k], pos);
+        }
+        c->tknown = 0;
+        c->alt++;
+        if (++c->dn == K56TX_TRN1B_N) go_seg(c, K56TX_TRN1C);
+        break;
+    case K56TX_TRN1C:
+        (void)one_octet(c, r, 1);
+        if (++c->dn == K56TX_TRN1C_N) { go_seg(c, K56TX_JS); c->js_ok = 1; }
+        break;
+    case K56TX_JS:
+        d = one_octet(c, r, -1);
+        if (!(c->dn & 1) && d != v34_j16[(c->dn >> 1) & 15]) c->js_ok = 0;
+        if (++c->dn == K56TX_JS_N) {
+            go_seg(c, K56TX_SIL2);
+            if (c->js_ok) c->js_seen = 1;           /* our Phase 3 */
+        }
+        break;
+    case K56TX_SIL2:
+        if (r == 0xff) { c->dn++; break; }
+        c->sil2_n = c->dn;
+        if (c->dn < K56TX_SIL2_MIN || (c->dn & 7)) bad(c);
+        if (c->j24_at < 0 || c->line_n - c->j24_at > PATIENCE) bad(c);
+        go_seg(c, K56TX_R2);
+        r_octet(c, r);
+        break;
+    case K56TX_TRN2A:
+        d = one_octet(c, r, -1);
+        c->dn++;
+        if (d == 1) c->tones++;
+        else if (d == 0) {
+            /* 16 ones, then MARK's zeros */
+            if (c->tones < 16) bad(c);
+            c->trn2a_n = c->dn - 1;
+            if (c->trn2a_n != K56TX_TRN2A_N) bad(c);
+            go_seg(c, K56TX_MARK); c->dn = 1;
+        }
+        break;
+    case K56TX_MARK:
+        (void)one_octet(c, r, 0);
+        if (++c->dn == K56TX_MARK_N) go_seg(c, K56TX_TRN2B);
+        break;
+    case K56TX_TRN2B:
+        if (!p4_octet(c, r, in)) { c->dn++; break; }
+        if (in[0] == 1 && in[1] == 1) {
+            /* the MP's frame sync: MP from this symbol */
+            c->trn2b_n = c->dn;
+            if (c->dn < K56TX_TRN2B_MIN) c->seg_bad[K56TX_TRN2B]++;
+            if ((c->line_n - c->trn1b_at + K56TX_TO_DATA) % 24) c->seg_bad[K56TX_TRN2B]++;
+            go_seg(c, K56TX_MP);
+            c->mpfn = 0; c->mpones = 0;
+            mp_bit(c, 1); mp_bit(c, 1);
+            c->dn = 1;
+            break;
+        }
+        if (in[0] >= 0 && (in[0] != 1 || in[1] != 0)) bad(c);
+        c->dn++;
+        break;
+    case K56TX_MP:
+    case K56TX_MPA:
+        if (p4_octet(c, r, in) && in[0] >= 0) { mp_bit(c, in[0]); mp_bit(c, in[1]); }
+        if (++c->dn == K56TX_MP_N) go_seg(c, c->dseg + 1);
+        break;
+    case K56TX_E:
+        if (p4_octet(c, r, in) && (in[0] != 1 || in[1] != 1)) bad(c);
+        if (++c->dn == K56TX_E_N) {
+            c->e_seen = c->seg_bad[K56TX_E] == 0;
+            data_begin(c);
+        }
+        break;
+    default:    /* data: B1 first */
+        c->dfr[c->dfpos++] = data_sent(c, r);
+        if (c->dfpos == K56ENC_N) { c->dfpos = 0; data_frame(c); }
+        break;
+    }
+}
+
+/* ---- its upstream: V.34's call modem ---- */
+
+static void strike(k56call_t *c, int when)
+{
+    if (c->cfg.silent == when && !c->quiet) { c->quiet = 1; c->quiet_at = c->now; }
+}
+
+static void build_mp(k56call_t *c, int ack)
+{
+    v34_mp_t m;
+    memset(&m, 0, sizeof m);
+    m.max_ca = 13;
+    m.max_ac = (uint8_t)(c->cfg.mp_bad == K56C_MP_RATE0 ? 0 : c->cfg.rate);
+    m.rates = c->cfg.mp_bad == K56C_MP_MASK0 ? 0 : c->cfg.mp_bad == K56C_MP_UP_NONE ? 0x2000 : c->cfg.up_mask;
+    m.asym = 1;
+    m.ack = (uint8_t)ack;
+    if (v34_mp_build(&m, c->mpbits) != V34_MP0_BITS) memset(c->mpbits, 0, sizeof c->mpbits);
+    c->mp_ack = ack; c->mpn = 0;
+}
+
+static void go_sig(k56call_t *c, int sig) { c->sig = sig; c->sn = 0; }
+
+static void tx_symbol(k56call_t *c, int32_t *re, int32_t *im)
+{
+    v34_pt_t pt;
+    int32_t g = 16384;
+    int k;
+    *re = *im = 0;
+    switch (c->sig) {
+    case SIG_SIL:
+        if (!c->js_seen) return;
+        strike(c, K56C_SIL_BEFORE_S);
+        go_sig(c, SIG_S);
+        /* fall through */
+    case SIG_S:
+        v34_s(c->sn, V34_S_LEN, re, im);
+        if (++c->sn == V34_S_LEN) go_sig(c, SIG_SBAR);
+        return;
+    case SIG_SBAR:
+        v34_sbar(c->sn, re, im);
+        if (++c->sn == V34_SBAR_LEN) go_sig(c, SIG_PP);
+        return;
+    case SIG_PP:
+        v34_pp(c->sn, re, im);
+        if (++c->sn == V34_PP_LEN) { v34_tmod_init(&c->tmod, V34_GPC, 4); go_sig(c, SIG_TRN); }
+        return;
+    case SIG_TRN:
+        pt = v34_tmod_trn(&c->tmod);
+        if (++c->sn == P3_TRN) { strike(c, K56C_SIL_BEFORE_J); go_sig(c, SIG_J24); }
+        break;
+    case SIG_J24:
+        k = (int)c->sn * 2;
+        pt = v34_tmod_put(&c->tmod, (unsigned)(c->j24[k] | (c->j24[k + 1] << 1)));
+        if (++c->sn == J24_SYMS) {
+            if (c->j24_at < 0) c->j24_at = c->now;
+            c->sn = 0;
+            if (c->trn2a_seen) { strike(c, K56C_SIL_BEFORE_MP); go_sig(c, SIG_JP); }
+        }
+        break;
+    case SIG_JP:
+        k = (int)c->sn * 2;
+        pt = v34_tmod_put(&c->tmod, (unsigned)(v34_jprime[k] | (v34_jprime[k + 1] << 1)));
+        if (++c->sn == 8) { v34_tmod_init(&c->tmod, V34_GPC, 16); go_sig(c, SIG_TRN16); }
+        break;
+    case SIG_TRN16:
+        pt = v34_tmod_trn(&c->tmod); g = c->g16;
+        if (++c->sn == P4_TRN) { build_mp(c, 0); go_sig(c, SIG_MP); }
+        break;
+    case SIG_MP: {
+        unsigned b = 0;
+        for (k = 0; k < 4; k++) b |= (unsigned)c->mpbits[c->mpn + k] << k;
+        pt = v34_tmod_put(&c->tmod, b); g = c->g16;
+        c->mpn += 4;
+        if (c->mpn >= V34_MP0_BITS) {
+            c->mps_sent++;
+            if (c->mp_ack && c->got_our_mpa) {
+                v34_cfg_t vc;
+                strike(c, K56C_SIL_BEFORE_E);
+                memset(&vc, 0, sizeof vc);
+                vc.symbol_rate = 3200; vc.data_rate = (uint16_t)(c->our_mp.max_ca * 2400);
+                vc.trellis = c->our_mp.trellis; vc.expanded = c->our_mp.shaping;
+                vc.nonlinear = c->our_mp.nonlinear; vc.scrambler = V34_GPC;
+                if (v34_params_init(&c->tpar, &vc) == 0) {
+                    c->up_rate = vc.data_rate;
+                    c->tx_dg = (int32_t)v34_gain_q14(c->tpar.energy_tx_q8);
+                    go_sig(c, SIG_E);
+                } else {
+                    go_sig(c, SIG_SIL); c->js_seen = 0;     /* nothing it can send */
+                }
+            } else {
+                build_mp(c, c->mp_ack || c->got_our_mp);
+            }
+        }
+        break;
+    }
+    case SIG_E:
+        pt = v34_tmod_put(&c->tmod, 15); g = c->g16;
+        if (++c->sn * 4 >= 20) { v34_tx_init(&c->vtx, &c->tpar, c->cfg.getbit, c->cfg.user); go_sig(c, SIG_DATA); }
+        break;
+    default:    /* SIG_DATA: B1, then data */
+        v34_tx_symbol(&c->vtx, &pt, NULL); g = c->tx_dg;
+        if (++c->sn == 3200) strike(c, K56C_SIL_DATA);
+        break;
+    }
+    *re = (pt.re * g) >> 9; *im = (pt.im * g) >> 9;
+}
+
+/* the flagged INFO1a has come: silent until our Js; the J24 it will send */
+static void k56_begin(k56call_t *c)
+{
+    const info1a_t *i = &c->peer.p2.info1a;
+    int idx = i->down_sr, num, den, k;
+    v34_carrier(idx, i->hi_carrier, &num, &den);
+    (void)v34mod_init(&c->umod, v34_symbol_rate(idx), num, den, i->preemph > 10 ? 0 : i->preemph,
+                      c->cfg.level, i->min_pwr_red);
+    c->g16 = (int32_t)v34_gain_q14(V34_ENERGY_16PT_Q8);
+    c->dseg = K56TX_SIL1; c->dn = 0;
+    for (k = 0; k < 16; k++) c->j24[k] = v34_j16[k];
+    c->state = K56C_K56;
+}
+
+/* the J24's octet, once TRN1B has shown where the 6-cycle starts */
+static void set_octet(k56call_t *c)
+{
+    int o = c->cfg.j_octet, k;
+    if (o < 0) {
+        o = pad_of(c) << 6;
+        for (k = 0; k < 6; k++) if ((c->cfg.rbs >> ((c->trn1b_at + k) % 6)) & 1) o |= 1 << k;
+    }
+    for (k = 0; k < 8; k++) c->j24[16 + k] = (uint8_t)((o >> k) & 1);
+}
+
+static int16_t k56_tick(k56call_t *c, uint8_t octet)
+{
+    if (c->dseg == K56TX_TRN1B && c->dn == 0) set_octet(c);
+    down_octet(c, arrive(c, octet));
+    if (v34mod_due(&c->umod)) {
+        int32_t re, im;
+        tx_symbol(c, &re, &im);
+        v34mod_put(&c->umod, re, im);
+    }
+    return v34mod_tick(&c->umod);
+}
+
 int16_t k56call_tick(k56call_t *c, uint8_t octet)
 {
     int16_t x = (int16_t)ulaw_to_linear(octet), out = 0, v = 0;
     int32_t s;
-    c->now++;
+    c->now++; c->line_n++;
     switch (c->state) {
     case K56C_V8BIS:
     case K56C_V8:
@@ -190,6 +644,11 @@ int16_t k56call_tick(k56call_t *c, uint8_t octet)
     case K56C_V34:
         v = v34peer_tick(&c->peer, x);
         if (c->peer.state == VP_ENDED) c->state = K56C_ENDED;
+        else if (c->peer.state == VP_K56) k56_begin(c);
+        break;
+    case K56C_K56:
+        v = k56_tick(c, octet);
+        if (c->quiet) v = 0;
         break;
     default:
         break;

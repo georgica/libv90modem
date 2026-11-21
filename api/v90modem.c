@@ -230,6 +230,7 @@ static v90m_end end_of(const v90m_t *m)
         if (a->phase != ANS_FAILED) return V90M_END_NONE;
         if (a->x2_failed) return V90M_END_X2_FAILED;
         if (a->k56_failed) return V90M_END_K56_FAILED;
+        if (a->k56_lost) return V90M_END_LOST;
         if (a->cleared == 1) return V90M_END_CLEARDOWN_FAR;
         if (a->cleared == 2) return V90M_END_CLEARDOWN_OURS;
         return a->connected ? V90M_END_LOST : V90M_END_FAILED;
@@ -352,6 +353,7 @@ void v90m_get_stats(const v90m_t *m, v90m_stats *st)
         if (a->modulation == ANS_MOD_V92 || a->phase == ANS_P3X || a->phase == ANS_V92) st->echo_delay = a->u.v92.ecd.delay;
         else if (a->modulation == ANS_MOD_V90 || a->phase == ANS_P3 || a->phase == ANS_V90) st->echo_delay = a->p34.ecd.delay;
         else if (a->modulation == ANS_MOD_X2 || a->phase == ANS_X2) st->echo_delay = a->u.x2.ecd.delay;
+        else if (a->modulation == ANS_MOD_K56 || a->phase == ANS_K56) st->echo_delay = a->u.k56.ecd.delay;
         else st->echo_delay = -1;
         st->retrains = (unsigned)a->retrains;
     }

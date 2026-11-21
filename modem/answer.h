@@ -27,8 +27,10 @@
  * client whose MS carries the K56flex block is agreed (k56_agreed): x2 is
  * then not offered, and V.34 is told (v34ans_cfg.k56). V.34's Phase 2 then
  * flags our INFO1a when the client's INFO1c takes K56flex up and the symbol
- * rate is 3200 (modem/p2ans): the point of no return, ANS_K56. Until the
- * K56flex engine exists, ANS_K56 ends the call at once with k56_failed.
+ * rate is 3200 (modem/p2ans): the point of no return, ANS_K56: modem/k56d
+ * (PCM downstream, V.34 upstream) to data mode. A K56flex start-up that
+ * does not reach data mode ends the call with k56_failed; in data mode the
+ * upstream's loss ends it with k56_lost, our cleardown with cleared = 2.
  * One sample in, one sample out. The data interface is a bit pump: getbit is
  * called for every transmitted line bit, putbit for every received one, once
  * the connection is up. Characters travel start-stop framed in that bit stream
@@ -44,6 +46,7 @@
 #include "p34d.h"
 #include "v34ans.h"
 #include "x2d.h"
+#include "k56d.h"
 #include "v8bis.h"
 #include "../v32/v32.h"
 #include "../v92/v92_p34d.h"
@@ -63,7 +66,7 @@ typedef enum {
     ANS_V92,             /* V.92 data mode, its rate renegotiations included; retrains: ANS_RETRAIN */
     ANS_X2,              /* x2: the client sent the marker; its start-up and data mode (u.x2) */
     ANS_V8BIS,           /* K56flex offered: V.8bis before V.8 (u.v8b), then ANS_V8 */
-    ANS_K56              /* K56flex: from our flagged INFO1a on (for now: k56_failed, the end) */
+    ANS_K56              /* K56flex: from our flagged INFO1a on (u.k56), its data mode included */
 } ans_phase;
 
 /* in answer_cfg.modes, next to the V8_MOD_ bits (which fit 16 bits): offer
@@ -129,13 +132,15 @@ typedef struct {
     info0_t    info0a;       /* the caller's INFO0a from V.90 Phase 2 (a retrain's has none) */
     p34d_t     p34;
     v34ans_t   v34;
-    /* V.32bis, V.92 and x2 never meet in one call (V.92 needs the PCM mode of
-     * V.8, x2 a CM without it and V.34 selected, V.32 is what V.8 selects
-     * without V.34 or a caller without V.8 asks for with AA, and no phase
-     * leads back to V.8): they share their storage. u.v92 holds a call's
-     * V.92 engine from ANS_P3X on, u.x2 the x2 engine from ANS_X2 on; u.v8b
-     * K56flex's V.8bis, during ANS_V8BIS only (before any of the others). */
-    union { v32_t v32; v92d_t v92; x2d_t x2; v8bis_t v8b; } u;
+    /* V.32bis, V.92, x2 and K56flex never meet in one call (V.92 needs the
+     * PCM mode of V.8, x2 a CM without it and V.34 selected, K56flex the
+     * V.8bis agreement, which turns x2 off; V.32 is what V.8 selects without
+     * V.34 or a caller without V.8 asks for with AA, and no phase leads back
+     * to V.8): they share their storage. u.v92 holds a call's V.92 engine
+     * from ANS_P3X on, u.x2 the x2 engine from ANS_X2 on; u.v8b K56flex's
+     * V.8bis, during ANS_V8BIS only (before any of the others), u.k56 the
+     * K56flex engine from ANS_K56 on. */
+    union { v32_t v32; v92d_t v92; x2d_t x2; v8bis_t v8b; k56d_t k56; } u;
     v32_aadet_t aadet;       /* 1800 Hz from the caller while the answer tone runs */
     uint8_t    pcm;          /* the codeword of this sample while V.90 runs */
     v21mod_t   fmod; v21demod_t fdem; arx_t uart;
@@ -167,8 +172,8 @@ typedef struct {
     int        k56_agreed;   /* the client's MS carried the K56flex block (we sent ACK(1));
                                 x2 is then not offered in this call */
     int        k56_failed;   /* past the point of no return, the K56flex start-up or a rate
-                                change did not complete: the call ended (for now: every
-                                call that reaches ANS_K56) */
+                                change did not complete: the call ended */
+    int        k56_lost;     /* K56flex data mode ended by the upstream's loss */
 } answer_t;
 
 void    answer_init(answer_t *a, const answer_cfg *cfg);
