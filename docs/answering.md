@@ -24,6 +24,7 @@ V.92 and Bell:
 | `V90M_MOD_V21` | V.21 | on |
 | `V90M_MOD_BELL103` | Bell 103, for a caller without V.8 | off |
 | `V90M_MOD_BELL212A` | Bell 212A, with `V90M_MOD_V22`, for a caller without V.8 | off |
+| `V90M_MOD_X2` | x2, U.S. Robotics' 56k of 1997, as its server; only with `V90M_MOD_V34` (without: `V90M_ENOTSUP`) | off |
 
 At least one is required (0 gives `V90M_EINVAL`).
 
@@ -52,6 +53,11 @@ CM, our JM, its CJ. The menu decides:
   answer sequence has gone unanswered for 4 s by a caller without V.8, the
   2225 Hz Bell answer tone replaces the unscrambled ones for 4 s; a caller
   that then starts as V.22 does is a Bell 212A call at 1200 bit/s.
+- **x2** (`V90M_MOD_X2` with `V90M_MOD_V34`, mu-law only): when the
+  caller's CM offers V.34 and no PCM, our JM and INFO0a are an x2
+  server's. A U.S. Robotics x2 client then sends its marker after our L1
+  and the call goes x2 (below); any other caller gets V.34 exactly as
+  without x2.
 
 `v90m_state.used_v8` says whether the caller spoke V.8.
 
@@ -65,12 +71,44 @@ CM, our JM, its CJ. The menu decides:
 - `V90M_EV_RATES` when the rates or the modulation changed.
 - `V90M_EV_ENDED` once, with `v90m_state.end`: `V90M_END_FAILED` (no
   connection was made), `V90M_END_LOST`, `V90M_END_CLEARDOWN_FAR`,
-  `V90M_END_CLEARDOWN_OURS`. The other end codes are the calling role's.
+  `V90M_END_CLEARDOWN_OURS`, `V90M_END_X2_FAILED` (x2, below). The other
+  end codes are the calling role's.
 
 `v90m_get_stats` adds the receiver's signal to error (`snr_db10`, 0.1 dB),
 the round-trip delay measured in the handshake (`rtd`, samples: V.34, V.90,
 V.92), the echo delay in use (V.90 / V.92), and the counts of retrains and
 of rate renegotiations that stopped the data (V.90, V.92).
+
+## x2
+
+x2 has no published specification; it is built from the facts in
+`docs/history/x2-facts.md`. It is offered only with `V90M_MOD_X2` and
+`V90M_MOD_V34`, answering, to a caller whose CM offers V.34 and no PCM, on
+a mu-law line: never with `alaw` set. Robbed-bit lines are not handled.
+
+- **Start-up.** After the client's marker: its training, our sync frames
+  and records, then data at the rate the client asks for, at first
+  32000 bit/s (rate index 1). `V90M_EV_CONNECTED` with `V90M_CONN_X2`;
+  `tx_bps` is the downstream payload (32000 to 56000), `rx_bps` the
+  client's V.34 upstream (up to 28800). U.S. Robotics prints a rate one
+  step of 1333 above the payload (33333 for 32000); the emulated
+  Courier's CONNECT figure did not follow our rate at all (48000 or
+  50666; `docs/history/x2-facts.md`, "Harness").
+- **Rate changes.** The client asks for a new rate in data mode (a
+  Courier about 12 s in, and again later); we answer at the rate and for
+  the pad (none, 3 dB, 6 dB) its request names: `V90M_EV_DATA_STOPPED`,
+  then `V90M_EV_RATES` and `V90M_EV_DATA_MOVING`, about 0.75 s later.
+- **No way back to V.34.** Once the marker has come, a start-up or rate
+  change that does not complete, or a request we cannot serve, ends the
+  call with `V90M_END_X2_FAILED`. `v90m_retrain` gives `V90M_ESTATE`;
+  `v90m_cleardown` ends the call at once (`V90M_END_CLEARDOWN_OURS`).
+- **What has been shown.** At 32000, decoded by the emulated U.S.
+  Robotics Courier, V.42 data acknowledged. Above 32000, octet-identical
+  to the U.S. Robotics I-modem and D-Modem's server; the published
+  courier-emu decodes no server above index 1; not yet confirmed on a
+  real modem ([limits.md](limits.md)).
+- **CPU.** x2 data mode costs about twice V.90's (the upstream the client
+  dictates): one x2 call per ARM926 box ([limits.md](limits.md)).
 
 ## Retrains, rate renegotiation, cleardown
 
@@ -114,11 +152,12 @@ of rate renegotiations that stopped the data (V.90, V.92).
 ## Limits
 
 - No V.92 quick connect, short Phase 2 or modem-on-hold.
-- x2 and K56flex, the 56k schemes from before V.90, are not spoken; a
-  modem with nothing newer connects at V.34 (`DESIGN.md`, 4.2b).
+- K56flex is not spoken; a K56flex-only modem connects at V.34
+  (`DESIGN.md`, 4.2b). x2: above, and its limits in [limits.md](limits.md)
+  (A-law, robbed bits, no way back to V.34, the free sign).
 - No fax (V.17, V.29, V.27ter), no V.23, no half-duplex V.34.
 - Bell 212A answering was tried only on a test build with the 2225 Hz tone
   from the start, by a modem that would also have taken V.22.
 - The V.92 upstream design's noise model is about 2 dB short at the top
   upstream rates, on the simulator's lines ([limits.md](limits.md)).
-- Only the three modems above have called it.
+- Only the three modems above have called it; none of them in x2.

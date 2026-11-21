@@ -1,7 +1,8 @@
 # libv90modem
 
 A voice-band data modem in software: V.92, V.90, V.34, V.32bis, V.22bis,
-V.22, V.21, Bell 212A and Bell 103, started by V.8, with V.42 error control
+V.22, V.21, Bell 212A and Bell 103, started by V.8, and U.S. Robotics' x2
+on the answering side, with V.42 error control
 (LAPM) and V.42bis / V.44 compression. It answers (for V.90 and V.92 as the
 digital, server side) and calls (for V.90 and V.92 as the analogue, client
 side). Portable C99, fixed-point in the signal path, no allocation after
@@ -13,7 +14,7 @@ analogue telephone adapter, from the ITU-T recommendations. The answering
 side has answered real modems there (see "Tried on real modems"); the
 calling side has not yet called one.
 
-**The API is not stable before version 1.0.** This is 0.3.0; what changed
+**The API is not stable before version 1.0.** This is 0.4.0; what changed
 from one version to the next is in `CHANGELOG.md`.
 
 ## How to use
@@ -109,6 +110,7 @@ built and why; `docs/history/` keeps the development logs.
 | V.90 | digital (server) side | analogue (client) side | PCM downstream, V.34 upstream. Both: retrains and rate renegotiation begun by either end, cleardown. Calling: the DIL measured (pads, robbed bits, the law); its receiver asks for a renegotiation or a retrain when the line changes |
 | V.92 | digital side | analogue side | PCM upstream (24000 to 48000 bit/s) after V.90's start-up, retrains and rate renegotiation as V.90; falls back to V.90 when the other end does not take PCM upstream |
 | Bell 103 | `V90M_MOD_BELL103`, not in the defaults | the same | 300 bit/s FSK; answering a caller without V.8 that sends 1270 Hz; calling on the 2225 Hz Bell answer tone or a carrier in the Bell answer channel |
+| x2 | `V90M_MOD_X2` with V.34, not in the defaults: the server side | no | U.S. Robotics' 56k of 1997: PCM downstream 32000 to 56000 bit/s, V.34 upstream; the client's rate changes followed; mu-law only; no way back to V.34 once the client takes it up (below, and [docs/answering.md](docs/answering.md)) |
 | Bell 212A | `V90M_MOD_BELL212A` with V.22, not in the defaults | the same | 1200 bit/s; answering with 2225 Hz after 4 s of an unanswered V.22bis answer sequence; calling on hearing 2225 Hz (Bell 103 when no 1200 bit/s answer comes) |
 | V.14 | yes | yes | start-stop characters on the synchronous bit pump |
 | V.42 | yes | yes | LAPM, detection phase, start-stop fallback, breaks |
@@ -121,6 +123,14 @@ built and why; `docs/history/` keeps the development logs.
   only on a test build with the 2225 Hz tone from the start, by a modem
   that would also have taken V.22; no modem that calls as 212A and nothing
   else has been on the line.
+- **x2 (answering), against the emulated U.S. Robotics Courier, not yet
+  a real modem:** at 32000 bit/s (rate index 1, the start-up rate) x2 is
+  decoded by the emulated U.S. Robotics Courier, V.42 data acknowledged.
+  Above 32000 it is octet-identical to the U.S. Robotics I-modem and
+  D-Modem's server; the published courier-emu decodes no server above
+  index 1; not yet confirmed on a real modem. A Courier asks for a higher
+  rate about 12 s into data, so a real U.S. Robotics call decides those
+  rates ([docs/limits.md](docs/limits.md)).
 - **Calling, in simulation only:** every modulation of the calling side has
   run against simulated lines and this library's own answerer, never
   against a real modem or a real server. What it sends has been compared,
@@ -142,9 +152,10 @@ built and why; `docs/history/` keeps the development logs.
 - A rate renegotiation of the calling side's own is not in the public API
   (the analogue V.90 / V.92 modem does one by itself when its receiver
   needs it).
-- x2 and K56flex, the two 56k schemes from before V.90: not spoken. A modem
-  that has nothing newer connects at V.34. (Neither was published; see
-  `DESIGN.md`, 4.2b.)
+- K56flex, the other 56k scheme from before V.90: not spoken; a K56flex-only
+  modem connects at V.34 (`DESIGN.md`, 4.2b). x2: answering only, off
+  unless `V90M_MOD_X2` is set; no A-law, no robbed-bit lines, no calling
+  side ([docs/limits.md](docs/limits.md)).
 - Fax (V.17, V.29, V.27ter), V.23, half-duplex V.34.
 
 ## Building
@@ -202,7 +213,7 @@ calling side.
 ## Memory and CPU
 
 One modem, either role, takes `v90m_mem_size()` octets, at most
-`V90M_MEM_SIZE` (120 KiB) on every platform: 118816 on x86-64, 118504 on
+`V90M_MEM_SIZE` (120 KiB) on every platform: 118824 on x86-64, 118512 on
 ARMv5 (the calling side's state is the larger; the answering side's alone
 is some 104 KiB). A V.42 endpoint takes at most `V90M_EC_MEM_SIZE` (50 KiB;
 49760 octets on x86-64), a start-stop framer `V90M_ASYNC_MEM_SIZE` (2 KiB;
@@ -221,6 +232,12 @@ which makes it about 123 M counted instructions a second.
 | calling, V.90 (0 / 100 ppm clock offset) | 54.6 / 58.8 | 98 k (start of Phase 2) |
 | calling, V.92 (0 / 100 ppm) | 69.4 / 73.9 | 98 k |
 | calling, Bell 103 / Bell 212A | 9.84 / 4.43 | 2.3 k / 2.8 k |
+| answering, x2 (32000 / 56000) | 81.9 / 83.7 | not measured |
+
+x2 costs about twice V.90 (`make cost-x2`, which measures V.90 answering
+at 38.9 M the same way): the V.34 upstream the client dictates (64-state
+trellis, non-linear encoding, expanded shaping). One x2 call fits the box;
+two do not.
 
 The calling side's retrains and rate renegotiations stay under 98 k a tick
 (a 10 ms block of the box is about 1.23 M). The measurements and how they
@@ -244,7 +261,7 @@ clears down; `-m` picks what the caller offers:
 
 ```
 $ build/call_loop
-libv90modem 0.3.0
+libv90modem 0.4.0
 caller   CONNECT 40000/50666 V.92
 answerer CONNECT 50666/40000 V.92
 caller   got "hello from the answerer"

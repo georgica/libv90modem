@@ -25,8 +25,8 @@ static void test_cfg(void)
     static uint8_t buf[1 << 20] __attribute__((aligned(16)));
 
     /* the version: the library's string, the header's numbers, and the two agree */
-    CHECK(strcmp(v90m_version(), "0.3.0") == 0);
-    CHECK_EQ_I(V90M_VERSION_MAJOR * 10000 + V90M_VERSION_MINOR * 100 + V90M_VERSION_PATCH, 300);
+    CHECK(strcmp(v90m_version(), "0.4.0") == 0);
+    CHECK_EQ_I(V90M_VERSION_MAJOR * 10000 + V90M_VERSION_MINOR * 100 + V90M_VERSION_PATCH, 400);
     {
         char hv[32];
         snprintf(hv, sizeof hv, "%d.%d.%d", V90M_VERSION_MAJOR, V90M_VERSION_MINOR, V90M_VERSION_PATCH);

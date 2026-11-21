@@ -932,3 +932,13 @@ Looking for a setup in which the emulated Courier decodes x2 above index 1
   any server. The bridge is not at fault (its line is exact), so it is
   unchanged.
 
+
+The harness since then (x2 9, the release ruling): `make test-x2-courier
+MODS=x2` passes when the Courier acknowledges our V.42 data at the
+start-up rate (32000, the control burst) and prints what happens after
+its rate change as information; `STRICT_RENEG=1` (bridge `-r`) requires
+that data to be acknowledged too, which no server does on the published
+courier-emu (`tools/x2-peer/README.md`). At 0.4.0 (2026-11-20), the
+default run at PAD=0, 3 and 6: PASS each (control 33 of 33 I frames
+acknowledged in 1.22 s; after the change 0 of 615, 1 of 658 with 2 REJ,
+0 of 600); `STRICT_RENEG=1` at PAD=0: FAIL, as expected.

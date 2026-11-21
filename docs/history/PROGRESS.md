@@ -2733,6 +2733,35 @@ of the recordings is an x2 caller, so no marker was taken.
 was run in full (46 checks). It now has a TEST_SHORT version for ARM that
 leaves out the access-octet call and the A-law pair: 30 checks, 3.4 s.
 
+## x2 5: records with their CRC, and the downstream mapper at 32000 (2026-11-20)
+
+Written up at release (x2 9); from the Task 5 report, commits b4b95cf and
+109c2d0. No change to what the modem sends yet: the pieces Task 6 runs.
+
+- `modem/x2rec`: `x2_crc16` (from FFFF, 0x8408 reflected, no final
+  inversion), `x2rec_build` (17 ones, a zero, each word LSB first and a
+  zero, the CRC of the word bits LSB first; `ack` sets word 0 bit 15) and
+  `x2rec_parse` (from the sync; `X2REC_SHORT`, `X2REC_BAD`), with the MP
+  field accessors.
+- `modem/x2tab`: levels A (`a5 a7 ad af b7 bd c5 cf e5`) and levels B,
+  and the levels received / octets sent behind each pad (the octets sent
+  derived by `tools/x2_pad.c`'s rule, equal to the Quad's).
+- `modem/x2map`: index 1 (24 bits a frame): six positions, signs
+  differential, the free sign by the levels A rule (negative when the
+  other five sum to more than 805 in 14-bit units) or, in the data levels,
+  the running sum. `x2map_unframe` takes the octets as received.
+
+Tests (each seen failing first: `test_x2rec: 29 checks, 20 failures`,
+`test_x2map: 40 checks, 35 failures`):
+
+    test_x2rec: 29 checks, 0 failures   (the facts' four CRCs 14AD 92B0 73F3 F9A6; 2000 random records round trip, every single flipped bit BAD)
+    x2map: data levels, running sum within +-35840 from 500 frames after the switch
+    test_x2map: 45 checks, 0 failures   (10000 random frames each in levels B, A, B behind 3 and 6 dB, A behind 6 dB, against a model of the facts)
+
+Mutation checks: the free sign's tie rule `<=` to `<` gives 17 failures,
+its threshold +2 or -5 six each. clang UBSan clean; ARM prints the host's
+lines (`make check-arm`: ALL ARM CHECKS PASS).
+
 ## x2 6: training, records and data at 32000; a simulated client; the emulated Courier (2026-11-20)
 
 The client's marker now leads to the x2 start-up and data mode at rate
@@ -3094,3 +3123,46 @@ change, for us (best: 15 of 265 I frames at 52000, 6 dB down) or for
 D-Modem (best: 3 of some 72 lines). Nothing passed in the time box; the
 bridge is unchanged and the acceptance check still fails at every pad.
 
+
+### x2 9, continued: release 0.4.0 (2026-11-20/21)
+
+After x2 8b (the emulator, not our octets, fails above index 1) the
+ruling: labels as below, the post-change data check opt-in, the free sign
+listed as a known difference, then the release.
+
+- **Labels** (CHANGELOG, README, docs/limits.md, docs/answering.md): at
+  32000, "decoded by the emulated USR Courier, V.42 data acknowledged";
+  above 32000, "octet-identical to the USR I-modem and D-Modem's server;
+  the published courier-emu decodes no server above index 1; not yet
+  confirmed on a real modem".
+- **Harness** (d09ce5b): `make test-x2-courier MODS=x2` passes on the
+  control burst at 32000 and prints the post-change counts as
+  information; `STRICT_RENEG=1` requires them. PAD=0, 3, 6: PASS; PAD=0
+  strict: FAIL (0 of 615), as for every server on this emulator.
+- **Version 0.4.0**: Makefile, header, `v90m_version()` (test_api first:
+  `api: 458 checks, 1 failures` on the string, then on the numbers, then
+  0). `v90m_mem_size()` 118824 on x86-64, 118512 on ARMv5 (8 octets more
+  than 0.3.0); `V90M_MEM_SIZE` unchanged.
+- **Docs**: CHANGELOG 0.4.0; README (x2 in the list, the standards table,
+  what was tried, the CPU table: x2 81.9 / 83.7 M at 32000 / 56000);
+  DESIGN 4.2b (x2 done, the stated exception to "written from the
+  recommendations"; K56flex not); docs/answering.md (an x2 section),
+  api.md (`V90M_MOD_X2`, `V90M_CONN_X2`, `V90M_END_X2_FAILED`, retrain and
+  cleardown in x2), limits.md (an x2 section: offered only, A-law, robbed
+  bits, no way back, the free sign, 3 dB octets; CPU twice V.90's, one x2
+  call per box), testing.md; the header's comments on retrain and
+  cleardown. The "x2 5" section above was missing and is added.
+
+Checks on the release tree:
+
+| check | result |
+| --- | --- |
+| `make check` | ALL HOST CHECKS PASS (api 458, answer_x2 359, test_x2map 59 checks, 0 failures) |
+| `make check-ubsan` | ALL UBSAN CHECKS PASS |
+| `PAR=16 make check-arm ARM_CC=...armv5...` | ALL ARM CHECKS PASS (answer_x2 247 TEST_SHORT; x2map's lines as the host's) |
+| `PAR=1 tools/check-ports.sh build/ports-t9 host-gcc host-clang i686-musl aarch64be-musl mips-musl win32-mingw` | host-clang, i686-musl, aarch64be-musl, mips-musl, win32-mingw: 115 of 115 programs identical to host-gcc each; ALL PORTS PASS (17:11 to 00:06) |
+| replay proof, 106 live-050 recordings, 19ba2c6 (0.3.0) against this tree | `""` and `-9`: identical (106 .txt; 21 / 40 .bits). `-x` and `-x -9`: the same 6 differ as at x2 4 (ab_cc_v34, ab_cl_v34, v34a, v34b, v34c, x1), each only in +2094 transmit samples (x1 110394 -> 112488), no other line, .bits identical |
+| `make test-x2-courier MODS=x2` PAD=0 / 3 / 6 | PASS each; `STRICT_RENEG=1` PAD=0 FAIL (by design) |
+
+(The tag `v0.3.0` in /home/georgica/libv90modem points at a v90d commit,
+90687bd; the base was 19ba2c6, origin/main at 0.3.0, as at x2 4.)

@@ -7,8 +7,8 @@ these pages follow it.
   minimal answering and calling program.
 - [The line interface](line-interface.md): samples, the G.711 law, block
   lengths, clocks, echo delay, levels, and what the program does itself.
-- [Answering](answering.md): the answering role, modulation by modulation,
-  with its events, retrains, cleardown and limits.
+- [Answering](answering.md): the answering role, modulation by modulation
+  (x2 included), with its events, retrains, cleardown and limits.
 - [Calling](calling.md): the calling role, the same way (simulation and own
   answerer only).
 - [Error control](error-control.md): the V.14 start-stop framer and the

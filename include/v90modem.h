@@ -34,9 +34,9 @@ extern "C" {
 #endif
 
 #define V90M_VERSION_MAJOR 0
-#define V90M_VERSION_MINOR 3
+#define V90M_VERSION_MINOR 4
 #define V90M_VERSION_PATCH 0
-/* "0.3.0": the version of the library linked in (may differ from the header) */
+/* "0.4.0": the version of the library linked in (may differ from the header) */
 const char *v90m_version(void);
 
 /* error codes (negative returns) */
@@ -228,8 +228,8 @@ int      v90m_process_g711(v90m_t *m, const uint8_t *rx, uint8_t *tx, size_t n);
 int      v90m_process_lin_rx(v90m_t *m, const int16_t *rx, uint8_t *tx, size_t n);
 int      v90m_process_linear(v90m_t *m, const int16_t *rx, int16_t *tx, size_t n);
 
-/* Ask for a retrain. Answering: in data mode of V.92, V.90, V.34, V.32bis.
- * Calling: once connected in V.22bis at 2400 bit/s, V.32bis, V.34, V.90,
+/* Ask for a retrain. Answering: in data mode of V.92, V.90, V.34, V.32bis
+ * (x2: V90M_ESTATE). Calling: once connected in V.22bis at 2400 bit/s, V.32bis, V.34, V.90,
  * V.92. V90M_OK, or V90M_ESTATE (none of those, or one under way).
  * Calling V.90 / V.92: 70 ms of silence and Tone A, Phase 2 to data mode
  * again (some 7 to 11 s); also during a rate renegotiation; V90M_ESTATE when
@@ -242,7 +242,8 @@ int      v90m_retrain(v90m_t *m);
  * 9.7, V.92 9.11, V.34 11.7, either role): V90M_OK when that has begun
  * (V90M_EV_ENDED follows within a fraction of a second); V90M_ESTATE when
  * there is nothing to send (V.21, V.22, V.22bis, V.32bis, Bell, or not in
- * data mode): just stop calling v90m_process_*. */
+ * data mode): just stop calling v90m_process_*. x2 (answering, in data mode
+ * or a rate change): V90M_OK, and the call ends at once with nothing sent. */
 int      v90m_cleardown(v90m_t *m);
 
 typedef enum {

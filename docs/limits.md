@@ -1,6 +1,6 @@
 # Known limits
 
-What is not done, not tried, or measured in simulation only, as of 0.3.0.
+What is not done, not tried, or measured in simulation only, as of 0.4.0.
 Each item names where it is recorded.
 
 ## Not tried
@@ -23,6 +23,14 @@ Each item names where it is recorded.
   and a U.S. Robotics 56K of 1998 have called it (README, "Tried on real
   modems"). Bell 212A answering was tried only on a test build with the
   2225 Hz tone from the start, by a modem that would also have taken V.22.
+- **x2 (answering): no real modem yet.** At 32000 (rate index 1, the
+  start-up rate) x2 is decoded by the emulated U.S. Robotics Courier, V.42
+  data acknowledged. Above 32000 it is octet-identical to the U.S.
+  Robotics I-modem and D-Modem's server; the published courier-emu decodes
+  no server above index 1; not yet confirmed on a real modem. A Courier
+  asks for a higher rate about 12 s into data, so a real U.S. Robotics
+  call decides the rates above 32000. (`docs/history/x2-facts.md`,
+  "Harness" and "Oracle: D-Modem's mapper"; `tools/x2-peer/README.md`.)
 
 ## Measured in simulation only
 
@@ -43,6 +51,33 @@ Each item names where it is recorded.
   answerer (and the U.S. Robotics 5686 that called it) accepts: no Bell
   212A specification document was to hand. The 3 s and 6 s fallbacks to
   Bell 103 are this library's choices. (README, `DESIGN.md` 4.2e.)
+
+## x2 (answering)
+
+- **Offered only** with `V90M_MOD_X2` and `V90M_MOD_V34`, answering, to a
+  caller whose V.8 CM offers V.34 and no PCM, on a mu-law line. Not in the
+  defaults.
+- **A-law: not supported.** x2 is not offered when `alaw` is set; no
+  A-law x2 client is known.
+- **Robbed bits: not handled.** No field of the client's MP for them is
+  known; on a line with robbed-bit signalling the downstream would carry
+  errors. The pad (none, 3 dB, 6 dB) the client reports is handled.
+- **No way back to V.34.** Once the client's marker has come, a start-up
+  or rate change that does not complete, or a request we cannot serve
+  (rate index 0, a pad other than none / 3 / 6 dB, MD other than 5),
+  ends the call with `V90M_END_X2_FAILED`. A full retrain asked for by the
+  client during x2 is not handled either: the design clears down.
+- **The free sign differs from the I-modem's.** In data mode the sign of
+  the one position left free is chosen from a running sum, as D-Modem's
+  server does; the I-modem's choice differs in about 25 % of frames (219
+  of the 863 frames of a rate change on the emulated line, x2 8b; D-Modem
+  gives some 87 % agreement for the data levels). The client is believed
+  not to check it (RE, D-Modem), which is unproven above index 1. A known
+  difference, not a known fault. (`docs/history/x2-facts.md`, "Free sign";
+  `docs/history/PROGRESS.md`, x2 8b.)
+- **Behind 3 dB** we send the Quad's octets `dc` for the level `e2` and
+  `ed` for `f1`, as the Quad and the I-modem do; under the pad model they
+  arrive one code off (below).
 
 ## Included tables (x2)
 
@@ -86,16 +121,21 @@ which makes it about 123 M counted instructions a second.
 - The heaviest single tick of a calling V.90 / V.92 call is some 98 k
   instructions (8 % of a 10 ms block of the box), after the heavy designs
   were spread over many samples.
+- **x2 data mode costs about twice V.90's: one x2 call per box.** 81.9 M
+  instructions a second at 32000 and 83.7 M at 56000, against V.90
+  answering's 38.9 M measured the same way (`make cost-x2`, second 15 to
+  16 of the call); some two thirds of the box. The cause is the upstream the
+  client dictates: V.34 with the 64-state trellis, non-linear encoding and
+  expanded shaping, which x2 gives the server no way to refuse.
+  (`docs/history/PROGRESS.md`, x2 6 and x2 8.)
 
 ## Not implemented
 
 - V.92 quick connect, short Phase 2 and modem-on-hold, either role.
-- K56flex, and most of x2, the 56k schemes from before V.90: neither has a
-  published specification. x2's answering (server) side is there, from the
-  facts in `docs/history/x2-facts.md`: 32000 to 56000 down, as the client
-  asks at the start-up and in its rate changes in data mode (all 15 rate
-  indices, behind no pad, 3 dB or 6 dB). There is no x2 calling side. A
-  modem with nothing newer connects at V.34 (`DESIGN.md`, 4.2b).
+- K56flex: not supported; a K56flex-only modem connects at V.34
+  (`DESIGN.md`, 4.2b).
+- x2's calling (client) side. The answering (server) side is there since
+  0.4.0 (above).
 - Fax (V.17, V.29, V.27ter), V.23, half-duplex V.34.
 - A public call for a rate renegotiation of the calling side's own: the
   analogue V.90 / V.92 modem does one by itself when its receiver needs it.

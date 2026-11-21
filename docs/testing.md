@@ -116,7 +116,15 @@ There is no m68k hardware here to settle it
   should not alter what the modem sends shows the same hash
   (`CONTRIBUTING.md`).
 - `cost-*` and `prof-v90c` / `prof-v92c`: ARM instruction counts per
-  second of line and per tick, from qemu (slow).
+  second of line and per tick, from qemu (slow). `bench-x2` and `cost-x2`
+  do the same for an x2 call of the simulated client.
+- `make test-x2-courier COURIER_EMU=DIR [PAD=0|3|6] [MODS=x2]
+  [STRICT_RENEG=1]`: an emulated U.S. Robotics Courier (courier-emu, kept
+  outside the repository) calls the answering modem (host only;
+  `tools/x2-peer/README.md`). With x2 it passes when the Courier
+  acknowledges our V.42 data at 32000; `STRICT_RENEG=1` also requires it
+  after the Courier's rate change, which no server passes on the published
+  emulator.
 
 ## Recorded calls and the replay tool
 
@@ -125,13 +133,14 @@ recorded call into the answering modem and reports what it made of it,
 phase by phase:
 
 ```
-v90m-replay [-a] [-9] [-u BPS] [-d BPS] [-l DBM0] [-e SAMPLES] [-P CODE] RECORDING
+v90m-replay [-a] [-9] [-x] [-u BPS] [-d BPS] [-l DBM0] [-e SAMPLES] [-P CODE] RECORDING
 ```
 
 | | |
 |---|---|
 | `-a` | A-law line (mu-law otherwise) |
 | `-9` | V.92 offered (PCM upstream up to 48000 bit/s unless `-u`) |
+| `-x` | x2 offered (`V90M_MOD_X2`) |
 | `-u`, `-d BPS` | upstream / downstream rate ceilings |
 | `-l DBM0` | transmit level (default -12) |
 | `-e SAMPLES` | the echo delay, as the recording modem was told (default: measured) |
