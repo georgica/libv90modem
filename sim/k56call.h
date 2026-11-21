@@ -77,7 +77,7 @@
 
 /* where the client falls silent for good (cfg.silent) */
 enum { K56C_SIL_NONE, K56C_SIL_BEFORE_S, K56C_SIL_BEFORE_J, K56C_SIL_BEFORE_MP,
-       K56C_SIL_BEFORE_E, K56C_SIL_DATA, K56C_SIL_RENEG };
+       K56C_SIL_BEFORE_E, K56C_SIL_DATA, K56C_SIL_RENEG, K56C_SIL_RETRAIN };
 /* an MP the server cannot take (cfg.mp_bad) */
 enum { K56C_MP_GOOD, K56C_MP_RATE0, K56C_MP_MASK0, K56C_MP_UP_NONE };
 
@@ -94,7 +94,8 @@ typedef struct {
     int rate;               /* its MP's rate_ac: the downstream rate code it asks, 1..13 */
     uint16_t up_mask;       /* its MP's upstream rates (bit n - 1 for n x 2400 bit/s) */
     int silent;             /* K56C_SIL_*: before its S, its J24, its J' (and MP), its E,
-                               1 s into data mode, or after its renegotiation's S */
+                               1 s into data mode, after its renegotiation's S, or after
+                               200 ms of its retrain's tone B */
     int mp_bad;             /* K56C_MP_*: rate_ac 0, mask 0, or only 33600 (nothing a
                                3200-baud receiver takes) */
     int early_e;            /* sends E after this many MPs, without waiting for our MP' (not

@@ -789,6 +789,9 @@ int16_t k56call_tick(k56call_t *c, uint8_t octet)
         break;
     case K56C_V34:
         v = v34peer_tick(&c->peer, x);
+        /* its retrain: 70 ms of silence, then tone B */
+        if (c->retrains && c->now - c->rt_at >= MS(70 + 200)) strike(c, K56C_SIL_RETRAIN);
+        if (c->quiet) v = 0;
         if (c->peer.state == VP_ENDED) c->state = K56C_ENDED;
         else if (c->peer.state == VP_K56) k56_begin(c);
         break;

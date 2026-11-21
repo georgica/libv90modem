@@ -904,6 +904,20 @@ static void k56_retrain_tests(void)
     CHECK(K.peer.p2.info1a.freq_off != 1);
     CHECK_EQ_I(o.phase, ANS_FAILED); CHECK(o.end_at > o.rt_at); CHECK(o.end_at - o.rt_at < 8000L * 10);
     CHECK_EQ_I(o.k56_failed, 1); CHECK_EQ_I(o.k56_lost, 0); CHECK_EQ_I(o.cleared, 0);
+
+    /* the client silent after 200 ms of its retrain's tone B: our Phase 2
+     * of the retrain hears nothing more; the call ends within 10 s of its
+     * tone B, as K56flex's (V90M_END_K56_FAILED) */
+    kd_default(&ko); ko.retrain_ms = 1000; ko.retrains = 1; ko.silent = K56C_SIL_RETRAIN;
+    kd_call(&ko, 60, &o);
+    printf("  K56flex client silent after its retrain's tone B: ended %.2f s after its tone B began,"
+           " error %d, k56_failed %d, lost %d\n", (o.end_at - o.rt_at - 560) / 8000.0, o.error, o.k56_failed,
+           o.k56_lost);
+    CHECK_EQ_I(K.retrains, 1); CHECK_EQ_I(A.retrains, 1);
+    CHECK(o.k56rt_at > o.rt_at); CHECK(o.quiet_at > 0);
+    CHECK_EQ_I(o.phase, ANS_FAILED); CHECK(o.end_at > o.quiet_at);
+    CHECK(o.end_at - (o.rt_at + 560) <= 8000L * 10);
+    CHECK_EQ_I(o.k56_failed, 1); CHECK_EQ_I(o.k56_lost, 0); CHECK_EQ_I(o.cleared, 0); CHECK_EQ_I(o.connected_once, 1);
 #endif
 }
 
