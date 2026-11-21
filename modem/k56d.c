@@ -408,7 +408,11 @@ uint8_t k56d_tick(k56d_t *d, int16_t rxs)
     case K56D_TRAIN2:
         /* K56D_T_MP from the start of our TRN2B (Ruling F4) */
         if (seg == K56TX_TRN2B && d->t_mark < 0) d->t_mark = d->now;
-        if (seg >= K56TX_MP) { d->t_mark = -1; enter(d, K56D_MP); }
+        if (seg >= K56TX_MP) {
+            /* its E may be in already (rx_begin_data set t_mark for T_B1): keep that */
+            if (!d->got_e) d->t_mark = -1;
+            enter(d, K56D_MP);
+        }
         else if (!d->got_mp && d->t_mark >= 0 && d->now - d->t_mark > MS(K56D_T_MP)) end(d, K56D_ERR_NO_MP);
         break;
     case K56D_MP:

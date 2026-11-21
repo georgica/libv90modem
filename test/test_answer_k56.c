@@ -290,7 +290,7 @@ static void k56_client_tests(void)
 #else
 #define DBITS 100000L
 #endif
-typedef struct { uint32_t tx, rx; int good; long n, bad; } p23_t;
+typedef struct { uint32_t tx, rx; int good; long n, bad, ones; } p23_t;
 static int p23_get(void *u)
 {
     p23_t *p = (p23_t *)u;
@@ -303,11 +303,13 @@ static void p23_put(void *u, int bit)
     p23_t *p = (p23_t *)u;
     int want = (int)(((p->rx >> 22) ^ (p->rx >> 17)) & 1);
     bit &= 1;
-    if (p->good >= 64) { p->n++; if (bit != want) p->bad++; }
+    if (p->good >= 64) { p->n++; p->ones += bit; if (bit != want) p->bad++; }
     else p->good = bit == want ? p->good + 1 : 0;
     p->rx = ((p->rx << 1) | (uint32_t)bit) & 0x7fffff;
 }
 static void p23_init(p23_t *p, uint32_t seed) { memset(p, 0, sizeof *p); p->tx = seed & 0x7fffff; }
+/* an all-zero receiver predicts itself: the counted bits must be about half ones */
+#define BALANCED(p) ((p).ones * 10 > (p).n * 4 && (p).ones * 10 < (p).n * 6)
 static p23_t DA, DC;    /* up: the client sends, we check; down: we send, the client checks */
 static int  kd_aget(void *u) { (void)u; return p23_get(&DC); }
 static void kd_aput(void *u, int b) { (void)u; p23_put(&DA, b); }
@@ -318,12 +320,13 @@ typedef struct {
     int rate, pad, rbs, j_octet, silent, mp_bad; uint16_t up_mask;
     int max_down, max_up;
     int echo_delay;         /* answer_v90_line's: 0, or -1 (measured on our TRN1A) */
+    int early_e, b1_bad;    /* k56call_cfg's */
     int cleardown;          /* answer_cleardown once the data check has passed */
 } kd_opts;
 
 typedef struct {
     int connected_once, mod, down, up, client_down, client_up;
-    long k56_at, flag_at, quiet_at, end_at, data_at;
+    long k56_at, flag_at, quiet_at, end_at, data_at, e_at;
     int k56_failed, k56_lost, cleared, error, phase;
     int retrain_ret, cd_ret; uint8_t cd_octet; int cd_phase;
     v34_mp_t mp;            /* ours, as the client decoded it */
@@ -355,6 +358,7 @@ static void kd_call(const kd_opts *ko, long secs, kd_out *o)
     k56call_default(&kc, 3000);
     kc.rate = ko->rate; kc.pad_mode = ko->pad; kc.rbs = ko->rbs; kc.j_octet = ko->j_octet;
     kc.up_mask = ko->up_mask; kc.silent = ko->silent; kc.mp_bad = ko->mp_bad;
+    kc.early_e = ko->early_e; kc.b1_bad = ko->b1_bad;
     kc.getbit = kd_cget; kc.putbit = kd_cput; kc.user = NULL;
     k56call_init(&K, &kc);
     for (n = 0; n < 8000L * secs; n++) {
@@ -388,7 +392,7 @@ static void kd_call(const kd_opts *ko, long secs, kd_out *o)
             if (!ko->silent) break;
         }
     }
-    o->quiet_at = K.quiet_at;
+    o->quiet_at = K.quiet_at; o->e_at = K.e_at;
     o->k56_failed = A.k56_failed; o->k56_lost = A.k56_lost; o->cleared = A.cleared; o->phase = A.phase;
     o->error = A.u.k56.error;
     o->client_down = k56call_down_rate(&K); o->client_up = K.up_rate;
@@ -449,6 +453,7 @@ static void k56_data_tests(void)
     CHECK_EQ_I(o.up, ref_up(0x3fff)); CHECK_EQ_I(o.up, 31200); CHECK_EQ_I(o.client_up, o.up);
     CHECK_EQ_I(o.mp.max_ac, 1); CHECK_EQ_I(o.mp.max_ca * 2400, o.up);
     CHECK(DA.n >= DBITS); CHECK(DC.n >= DBITS); CHECK_EQ_I(DA.bad, 0); CHECK_EQ_I(DC.bad, 0);
+    CHECK(BALANCED(DA)); CHECK(BALANCED(DC));
     CHECK_EQ_I(seg_bad_sum(), 0);
     CHECK_EQ_I(K.js_ok, 1); CHECK_EQ_I(K.mp_good, 16); CHECK_EQ_I(K.mpa_good, 16); CHECK_EQ_I(K.mp_wrong, 0);
     CHECK_EQ_I(K.e_seen, 1); CHECK_EQ_I(K.b1_bad, 0); CHECK_EQ_I(K.data_lost, 0);
@@ -527,7 +532,28 @@ static void k56_data_tests(void)
             CHECK_EQ_I(o.k56_failed, 1); CHECK_EQ_I(o.connected_once, 0);
         }
     }
+    /* B1 wrong (the client's first 400 symbols of it damaged): the call
+     * fails as K56D_ERR_B1, a K56flex failure, never connected */
+    kd_default(&ko); ko.rate = 1; ko.b1_bad = 1;
+    kd_call(&ko, 60, &o);
+    printf("  K56flex client, B1 wrong: ended %.2f s after ANS_K56, error %d, k56_failed %d\n",
+           (o.end_at - o.k56_at) / 8000.0, o.error, o.k56_failed);
+    CHECK(o.end_at > 0); CHECK_EQ_I(o.phase, ANS_FAILED); CHECK_EQ_I(o.error, K56D_ERR_B1);
+    CHECK_EQ_I(o.k56_failed, 1); CHECK_EQ_I(o.k56_lost, 0); CHECK_EQ_I(o.connected_once, 0);
+
+    /* its E before our MP state (not conforming; it comes 0.5 s before we
+     * enter K56D_MP): the 1 s for B1 counts from its E, which the entry into
+     * K56D_MP must not reset. Reset, the call failed as B1 at the entry;
+     * kept, our B1 goes out in time and the call connects */
+    kd_default(&ko); ko.rate = 1; ko.early_e = 200;
+    kd_call(&ko, 60, &o);
+    printf("  K56flex client, E early: E at %.3f s, data mode at %.3f s, ended %.3f s, error %d, connected %d, k56_failed %d\n",
+           o.e_at / 8000.0, o.data_at / 8000.0, o.end_at / 8000.0, o.error, o.connected_once, o.k56_failed);
+    CHECK(o.e_at > 0); CHECK(o.data_at > o.e_at); CHECK(o.data_at - o.e_at < MS(K56D_T_B1) + MS(1000));
+    CHECK_EQ_I(o.connected_once, 1); CHECK_EQ_I(o.mod, ANS_MOD_K56); CHECK_EQ_I(o.k56_failed, 0);
+    CHECK_EQ_I(o.error, 0); CHECK_EQ_I(o.phase, ANS_K56);
 }
+
 
 /* ---- a caller without V.8bis: sim/v34peer over test/line34.h ---- */
 

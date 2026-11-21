@@ -40,7 +40,7 @@ void k56call_init(k56call_t *c, const k56call_cfg *cfg)
     c->state = K56C_V8BIS;
     c->bst = cfg->v8bis == K56C_V8BIS_NONE ? B_OFF : B_CRE;
     c->crd_at = -1; c->ms_at = -1; c->v8_sel = -1;
-    c->data_at = -1; c->j24_at = -1; c->quiet_at = -1;
+    c->data_at = -1; c->j24_at = -1; c->quiet_at = -1; c->e_at = -1;
     /* the CM of v34peer's own V.8; with cm_pcm, an analogue modem's PCM octet too */
     memset(&cm, 0, sizeof cm);
     cm.call_function = V8_CALLF_DATA;
@@ -268,8 +268,9 @@ static void mp_bit(k56call_t *c, int bit)
  * arrives as r here; r itself when none does */
 static uint8_t data_sent(const k56call_t *c, uint8_t r)
 {
-    const k56_rate_t *t = &k56_rates[c->r_used - 1];
-    const uint8_t *bios = k56_bios(c->r_used, pad_of(c));
+    int ru = c->r_used ? c->r_used : 1;     /* the server's MP was never accepted: any rate */
+    const k56_rate_t *t = &k56_rates[ru - 1];
+    const uint8_t *bios = k56_bios(ru, pad_of(c));
     int n = t->M[pad_of(c)] << (t->u - 1), k, s;
     for (k = 0; k < n; k++)
         for (s = 0; s < 2; s++)
@@ -542,16 +543,21 @@ static void tx_symbol(k56call_t *c, int32_t *re, int32_t *im)
         c->mpn += 4;
         if (c->mpn >= V34_MP0_BITS) {
             c->mps_sent++;
-            if (c->mp_ack && c->got_our_mpa) {
+            if ((c->mp_ack && c->got_our_mpa) || (c->cfg.early_e && c->mps_sent >= c->cfg.early_e)) {
                 v34_cfg_t vc;
                 strike(c, K56C_SIL_BEFORE_E);
                 memset(&vc, 0, sizeof vc);
                 vc.symbol_rate = 3200; vc.data_rate = (uint16_t)(c->our_mp.max_ca * 2400);
                 vc.trellis = c->our_mp.trellis; vc.expanded = c->our_mp.shaping;
                 vc.nonlinear = c->our_mp.nonlinear; vc.scrambler = V34_GPC;
+                if (!c->got_our_mpa) {          /* early E: what our MP' will ask for */
+                    vc.data_rate = 31200;     /* the client's best at 3200 baud */
+                    vc.trellis = V34_TRELLIS_16; vc.expanded = 0; vc.nonlinear = 0;
+                }
                 if (v34_params_init(&c->tpar, &vc) == 0) {
                     c->up_rate = vc.data_rate;
                     c->tx_dg = (int32_t)v34_gain_q14(c->tpar.energy_tx_q8);
+                    c->e_at = c->now;
                     go_sig(c, SIG_E);
                 } else {
                     go_sig(c, SIG_SIL); c->js_seen = 0;     /* nothing it can send */
@@ -568,6 +574,7 @@ static void tx_symbol(k56call_t *c, int32_t *re, int32_t *im)
         break;
     default:    /* SIG_DATA: B1, then data */
         v34_tx_symbol(&c->vtx, &pt, NULL); g = c->tx_dg;
+        if (c->cfg.b1_bad && c->sn < 400 && c->sn % 3 == 0) { pt.re = (int16_t)-pt.re; pt.im = (int16_t)-pt.im; }  /* not all: a 180 degree turn alone is differentially coded away */
         if (++c->sn == 3200) strike(c, K56C_SIL_DATA);
         break;
     }

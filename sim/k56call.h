@@ -81,6 +81,9 @@ typedef struct {
                                or 1 s into data mode */
     int mp_bad;             /* K56C_MP_*: rate_ac 0, mask 0, or only 33600 (nothing a
                                3200-baud receiver takes) */
+    int early_e;            /* sends E after this many MPs, without waiting for our MP' (not
+                               conforming: our E detection before our MP state) */
+    int b1_bad;             /* its B1 is wrong (every point of the first symbols inverted) */
     int  (*getbit)(void *user);
     void (*putbit)(void *user, int bit);
     void *user;
@@ -153,6 +156,7 @@ typedef struct {
     v34_params_t tpar; v34_tx_t vtx; int32_t tx_dg;
     int         quiet;              /* cfg.silent has struck */
     int32_t     quiet_at;           /* when, -1 not yet */
+    int32_t     e_at;               /* when its E began, -1 not yet */
 } k56call_t;
 
 /* a client that takes K56flex up: the whole V.8bis exchange, INFO1c 0x001 */
