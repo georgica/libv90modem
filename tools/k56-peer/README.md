@@ -36,12 +36,12 @@ another).
   as many samples.
 - The bridge is the network: SM56's samples to the nearest mu-law octet into
   `v90m_process_g711`, our octets decoded back to SM56 through an analogue
-  loop model (a fractional delay of 0.45 sample and a 300 Hz high pass, as
-  D-Modem's SM56 calls set its netsim's `NET_LOOP`; `LOOP=<fraction>|none`).
+  loop model: a delay of 1 + `LOOP` samples (4-point Lagrange; default
+  `LOOP=0`, a plain one-sample delay) and a first-order 300 Hz high pass, a
+  line transformer's (`LOOP=<fraction>|none`; none: the codes as they are).
   With `RBS` set, the octets toward SM56 are robbed as netsim's
-  `NET_RBS_TO`: in the samples whose count mod 6 has its bit in `RBS`, the
-  least significant bit is set to 1, and no loop (a PCM client sampling the
-  codes).
+  `NET_RBS_TO` (in the samples whose count mod 6 has its bit in `RBS`, the
+  least significant bit is set to 1), then go through the same loop.
 - SM56: `ATZ`, `ATX3`, `AT+MS=K56FLEX,0` (`SM56_MS=<command>` for another),
   `ATD`; we answer 3 s of line after `ATD` (SM56 answers V.8bis only after
   its 2 s blind-dial wait). With `AT+MS=K56FLEX,0` SM56 offers K56flex by
@@ -68,9 +68,27 @@ blocks of 80 `ff` heard and 80 `fe` sent). Other knobs: `LINE_SECONDS` (default 
 
 ## Known
 
-- `SM56_MS=AT+MS=K56FLEX,1` (automode) adds V.90 to SM56's CM; our V.90
-  answerer then fails against SM56 in Phase 2 (no INFO1a from SM56 within 1 s
-  of our INFO1d), with and without the loop model, as does `AT+MS=V90`.
-  D-Modem's server passes the same (its `sm56_v90_ulaw`, 50666 down). Not
-  investigated here (`docs/history/k56-facts.md` "Harness").
+- **The line model decides whether SM56 gets past our TRN2A** (k56 9b,
+  `docs/history/k56-facts.md` "Harness"). With the codes as they are
+  (`LOOP=none`), with the earlier model (a second-order high pass,
+  fraction 0.45), and with some other fractions and extra delays, SM56 stays
+  in its front end state 19, sends no MP and gives up with cause `0x21`.
+  D-Modem's own server fails the same way under the same conditions
+  (through its netsim: `NET_LOOP` unset or 0; with `AT+MS=K56FLEX,0` also
+  0.45, 0.6 and 0.75), so it is not our modem. The default model (`LOOP=0`,
+  first-order high pass) passed every call of the gate tried: 32000 and
+  52000, robbed bits `0x08` and `0x24`, 12 of 12 repeats. But no model passed
+  for every extra delay added toward SM56 (the default fails with 30 to 100
+  extra samples, passes with 0 to 13). If the gate fails with SM56 in state
+  19 (`SM56_TRACE=1`, `sm56.log`), try another `LOOP` before suspecting the
+  modem.
+- The earlier second-order high pass also spoils SM56's PCM decisions above
+  32000 bit/s (its data error 80 to 140 against 5 to 7, then it drops the
+  call).
+- `SM56_MS=AT+MS=K56FLEX,1` (automode) adds V.90 to SM56's CM, and our
+  answerer then connects V.90, not K56flex. `AT+MS=V90` against our V.90
+  answerer depends on the line model as well: it passed with the earlier
+  high pass at fraction 0 (50666), failed with it at 0.45 and with the
+  default (Phase 2: no INFO1a from SM56), and passes through D-Modem's netsim
+  (`NET_LOOP` 0.45 or 0.2: 45333 and 50666). Not investigated further.
 - On this line SM56 and our V.34 settle at 28800 both ways.

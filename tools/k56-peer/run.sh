@@ -8,7 +8,7 @@
 # bits toward SM56, 0..3f), DOWN (our max_down_bps), STRICT_RENEG (1: a rate
 # change and a second burst after it as well), KB (KiB each way, default 4),
 # SM56_MS (SM56's modulation command; default AT+MS=K56FLEX,0), LOOP (the analogue loop's fractional delay to
-# SM56, or none; default 0.45, none with RBS), LINE_SECONDS (default 120), TIMEOUT
+# SM56, or none; default 0), LINE_SECONDS (default 120), TIMEOUT
 # (wall seconds, default 600). Prints SM56's CONNECT line, its AT&V1 report
 # and our state; exit 0 when both sides reached data mode and the octets
 # each side sent arrived at the other byte for byte, otherwise 1.

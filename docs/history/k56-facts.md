@@ -1002,12 +1002,54 @@ never in the repository (k56 2, 2026-11-21).
   automode (Ruling F2's automode is not needed for a fall-back to V.34).
   [our observation].
 - With automode (`AT+MS=K56FLEX,1`) or `AT+MS=V90`, SM56's CM offers V.90,
-  we select it, and **our V.90 answerer fails against SM56 in Phase 2**: our
-  INFO1d sent, no INFO1a from SM56 within the 1 s wait, start-up failed
-  about 5.7 s after our answer, SM56 NO CARRIER; with and without the loop
-  model. D-Modem's server passes the same call (`sm56_v90_ulaw`: 50666
-  down). Not investigated (outside the K56flex work; replay of the
-  recording: `build/k56-peer/call.rec`). [our observation].
+  we select it, and our V.90 answerer failed against SM56 in Phase 2 in the
+  bridge (k56 2): our INFO1d sent, no INFO1a from SM56 within the 1 s wait,
+  SM56 NO CARRIER. **k56 9b: this depends on the line model, not on our
+  modem**: through D-Modem's netsim (our answerer as a half program, below)
+  our V.90 connects with SM56 at 45333 and 50666 (`NET_LOOP` 0.45 and 0.2);
+  in the bridge it passed with the k56 2 high pass at fraction 0 (50666)
+  and fails with the k56 9b default. Not investigated further. In automode
+  our answerer, offered both, connects V.90 (29333 with `DOWN=32000`), not
+  K56flex. [our observation].
+- **SM56's TRN2A depends on the line, not on the server** (k56 9b,
+  2026-11-21). [our observation: the cross-experiment, below]:
+  - The cross-experiment. Our answerer, wrapped as a "half" program
+    (`half_ours`, outside the repository: line on fd 3 / 4, AT commands on
+    a pty) in D-Modem's `interop_call` with its netsim (`NET=8000:8000:ulaw`,
+    `NET_LOOP=0.45`, SM56 `ATX3;AT+MS=K56FLEX,0`): **K56flex connects**,
+    SM56 `CONNECT 32000`, front end to state 25, our MP from it rate_ca 13,
+    rate_ac 7. So the k56 9 failure was not in our modem.
+  - Then, through the same netsim: with `NET_LOOP` unset or 0, **D-Modem's
+    own server fails exactly as ours did** (SM56 stays in front end state
+    19, no MP, cause `0x21` after 841 calls); with `AT+MS=K56FLEX,0` it
+    fails at 0.45, 0.6 and 0.75 too and passes at 0.15, 0.3 and 0.9 (two
+    calls each); its own test (`AT+MS=K56FLEX`, 0.45) passes. Ours, same
+    netsim, `,0`: fails at 0, 0.75, passes at 0.3, 0.45, 0.6, mixed at
+    0.15 and 0.9. Both servers' outcomes move with the line model and with
+    the call's timing alike.
+  - In the bridge (deterministic, lock step), fraction swept 0 to 0.95 with
+    the k56 2 model (second-order 300 Hz Butterworth high pass): pass 0 to
+    0.35 and 0.65 to 0.95, fail 0.40 to 0.60 (0.45, the k56 2 default,
+    among them); `LOOP=none` fails. Extra delay toward SM56 (0 to 300
+    samples) moves the failing region irregularly; at fraction 0 with a
+    first-order high pass: pass with 0 to 13 extra samples, fail with 30,
+    50, 100, 192, 250, pass with 150. Not explained by: the codec's noise
+    (`SM56_NOISE` 0, 1, 20: same), a slip of one sample in silence 2 (+1 or
+    -1: no outcome changes), or a modulus of the delay we could find.
+  - The second-order high pass also spoiled SM56's data above 32000 bit/s
+    (error about 80 at 48000, 140 at 44000, then it drops the call); a
+    first-order one, or none, gives about 5 to 7 at 50000 and 52000.
+  - SM56's codec runs at 9600 Hz in K56flex (`codec rate 9600 Hz` before its
+    front end state 4); half_sm56 resamples the 8000 Hz line to it.
+  - D-Modem's notes see the same failure (state 19, cause `0x21`) in about
+    half of its retrains and suspect SM56's adapted code-level table
+    (`State_TRN2A_DecDir`, MOD + 0x3840); we see it in first trainings,
+    which use the power-up table, so that cannot be the whole cause. [RE:
+    D-Modem, `docs/dsp/k56flex-details.md` "Retrains"].
+  - The bridge's default is now a one-sample delay and a first-order 300 Hz
+    high pass, robbed bits through it as well (`tools/k56-peer/README.md`
+    "Known"); with it `make test-k56-sm56 MODS=k56` passes at 32000 and
+    52000, with robbed bits `0x08` and `0x24`.
 - netsim's robbed-bit model is in "Robbed bits"; `NET_RBS_TO=a` (or `b`)
   applies the pad and robbed bits to the codes toward an 8000 Hz PCM client
   with no codec filter (as SM56 takes them). Without it, D-Modem's SM56
@@ -1029,22 +1071,19 @@ frame (C6).
 
 Still [unk]:
 
-- **Why SM56 does not get past our TRN2A** (k56 9, 2026-11-21, [our
-  observation: the SM56 call]): SM56 sends INFO1c `0x001`, takes our
-  flagged INFO1a, our training to Js and silence 2 (its front end goes
-  through states 4 to 17 exactly as in D-Modem's passing reference call),
-  sends S, J24 and J' (front end state 19); then, where D-Modem's call moves
-  on to front end state 21 (phase 4 rx state 2) early in TRN2A, SM56 stays
-  in state 19, sends no MP, and gives up with cause `0x21` (840 handler
-  calls). Our octets from R1 to TRN2B equal D-Modem's training oracle driven
-  with the same J time, byte for byte (71280 octets); unchanged with the
-  bridge's loop model off, with R2 held 50 ms after the J, and with SM56 in
-  automode (`AT+MS=K56FLEX`, our V.90 off). The cause is in the path to
-  SM56 or in SM56's state, not yet found.
+- **What in SM56 makes TRN2A fail** (k56 9 found it, k56 9b placed it,
+  [our observation]): SM56 stays in front end state 19 during our TRN2A,
+  sends no MP and gives up with cause `0x21`, for some line models and
+  delays toward it, against D-Modem's server and ours alike ("Harness").
+  So it is SM56's (as half_sm56 runs it), not our modem's; which condition
+  inside it fails (its decision-directed TRN2A check, its timing, its
+  echo canceller while it sends J' and TRN) is not known. Whether a real
+  SM56, or a hardware K56flex client, is as sensitive is not known.
 
 - Whether SM56 accepts the real server's CL (`81 c2` S field) and our CRe:
   the harness runs now (k56 2), the V.8bis side comes in Task 5.
-- Why our V.90 answerer fails against SM56's V.90 in Phase 2 ("Harness").
+- Why our V.90 answerer fails against SM56's V.90 in Phase 2 with some
+  bridge line models and not through D-Modem's netsim ("Harness").
 - (Settled, k56 7: the repository's `v34_shell_map` handles M = 16 at
   54000, z8's total 2^32 saturated; index 2^31 - 1 maps and unmaps, and
   54000 equals the oracle at every pad and mask, `test/test_k56enc.c`.)

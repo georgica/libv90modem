@@ -3549,3 +3549,36 @@ GPA; up, V.34's call modem with the J24 (the truth of the line or
       answer_k56: 225 checks, 0 failures (TEST_SHORT: 20000 bits each way)
       api: 502 checks, 0 failures (pin 118512 holds)
       ALL ARM CHECKS PASS
+
+## k56 9b: SM56's TRN2A, the bridge's line model (2026-11-21)
+
+k56 9's SM56 gate failure (SM56 stays in front end state 19 during our
+TRN2A, no MP, cause `0x21`) was the bridge, not the modem. The
+cross-experiment (D-Modem run as a black box, nothing of it in the tree):
+our answerer, wrapped as a half program (`half_ours`, outside the
+repository), called by SM56 through D-Modem's `interop_call` and netsim
+(`NET_LOOP=0.45`, `AT+MS=K56FLEX,0`): K56flex connects, 32000 / 31200,
+SM56 `CONNECT 32000`. Through the same netsim with the loop off or at 0,
+D-Modem's own server fails exactly as ours did; with `AT+MS=K56FLEX,0` it
+fails at 0.45, 0.6 and 0.75 as well. SM56's TRN2A acceptance moves with the
+line model and the delay toward it, for either server; what inside SM56
+decides it is not known (k56-facts "Harness", "Unsettled").
+
+`tools/k56-peer/bridge.c`: the loop model is now a one-sample delay
+(`LOOP=0`; a fraction still through the Lagrange interpolator) and a
+first-order 300 Hz high pass (bilinear), and robbed bits go through it too.
+The old second-order high pass also spoiled SM56's data above 32000 (error
+80 to 140 against 5 to 7). No library change.
+
+    make test-k56-sm56 ... MODS=k56 DOWN=32000      before: FAIL (state 19, cause 0x21)
+                                                    after:  PASS, 32000 / 31200, 4 KiB each way
+      MODS=k56 (no cap)                             PASS, 52000 / 31200
+      MODS=k56 DOWN=32000 RBS=0x08                  PASS (J24 octet 08)
+      MODS=k56 RBS=0x24                             PASS, 52000 / 31200
+      MODS=none, and RBS=0x08                       PASS, V.34 28800 / 28800
+      SM56_MS=AT+MS=V90                             FAIL (Phase 2), as before
+      SM56_MS=AT+MS=K56FLEX,1                       PASS, but V.90 29333 (we pick V.90)
+      STRICT_RENEG=1                                FAIL (no renegotiation yet: Task 11)
+    the default model, 12 repeats (fractions 0 and 0.1)    24 / 24 PASS
+    bridge sweep, k56 2 model: pass 0-0.35, 0.65-0.95; fail 0.40-0.60
+    make check                                      ALL HOST CHECKS PASS

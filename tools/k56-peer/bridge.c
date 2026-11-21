@@ -14,12 +14,18 @@
  * This end is the network and our modem behind it, a digital line with no
  * loss: SM56's samples to the nearest mu-law octet into v90m_process_g711,
  * our octets decoded and, unless -l none, through a model of an analogue
- * path to SM56's codec (-l FRAC, default 0.45, the delay D-Modem's SM56
- * calls give their line: a fractional delay of FRAC of a sample and a high
- * pass at 300 Hz; our own model, see analog_init). With -r RBS the octets to SM56 are robbed as netsim's NET_RBS_TO:
- * in the samples whose count (from the line's first) mod 6 has its bit in
- * RBS, the octet's least significant bit is set to 1, and the codes reach
- * SM56 as they are (no loop: a PCM client sampling the codes).
+ * path to SM56's codec (-l FRAC, default 0: a delay of 1 + FRAC samples and
+ * a first-order high pass at 300 Hz, a line transformer's; our own model,
+ * see analog_init). With -r RBS the octets to SM56 are robbed as netsim's
+ * NET_RBS_TO: in the samples whose count (from the line's first) mod 6 has
+ * its bit in RBS, the octet's least significant bit is set to 1, before
+ * the analogue path.
+ *
+ * The line model decides whether SM56 gets through our TRN2A (README.md,
+ * "Known"): with the codes as they are (-l none), with a second-order high
+ * pass, or with some fractions and delays, SM56 stays in TRN2A (front end
+ * state 19) and gives up with cause 0x21, against D-Modem's own server as
+ * well. The default is the model under which every call we tried passed.
  *
  * The call: ATZ, ATX3 (blind dial), the AT+MS command, ATD; 3 s of line
  * after ATD we answer (until then SM56 hears silence and we hear nothing).
@@ -37,8 +43,7 @@
  *             and V.34 from V.8 when no V.8bis answers it; with automode,
  *             AT+MS=K56FLEX,1, its CM offers V.90 as well)
  *   -r RBS    robbed bits toward SM56 (hex or decimal, 0..63; default 0)
- *   -l FRAC   the loop's fractional delay (0..1), or "none" (default 0.45;
- *             none when RBS is not 0)
+ *   -l FRAC   the loop's fractional delay (0..1), or "none" (default 0)
  *   -d DOWN   our max_down_bps (default 0: none)
  *   -s SEC    give up after SEC seconds of line (default 120)
  *   -k KB     KiB each way after CONNECT (default 4)
@@ -83,20 +88,21 @@ static int ec_on, connected, moving, rate_changes;
 
 static double line_s(void) { return (double)line_n / RATE; }
 
-/* The analogue path to SM56's codec (-l): the codes reach it a fraction of a
- * sample late and without their lowest frequencies. Our model: a 4-point
- * Lagrange interpolator for the fractional delay (total delay 1 + frac
- * samples, so it stays causal), then a second-order Butterworth high pass
- * at 300 Hz (bilinear transform, Direct Form I). */
+/* The analogue path to SM56's codec (-l): the codes reach it late (1 + frac
+ * samples) and without their lowest frequencies. Our model: a 4-point
+ * Lagrange interpolator for the delay (at frac 0 a plain one-sample delay),
+ * then a first-order high pass at 300 Hz (bilinear transform). A
+ * second-order high pass here (k56 2 to k56 9) spoils SM56's PCM decisions
+ * above 32000 bit/s (k56 9b). */
 static int analog_on;
 static double lag_c[4];             /* weights on x[n], x[n-1], x[n-2], x[n-3] */
 static double lag_x[4];             /* the last 4 inputs, newest first */
-static double hp_b[3], hp_a[3], hp_in[2], hp_out[2];
+static double hp_b0, hp_a1, hp_in, hp_out;
 
 static void analog_init(double frac)
 {
     const double pi = 3.14159265358979323846;
-    double d = 1 + frac, w, cw, alpha, a0;
+    double d = 1 + frac, t;
     int k, j;
     for (k = 0; k < 4; k++) {   /* Lagrange basis polynomial k at d */
         lag_c[k] = 1;
@@ -104,15 +110,9 @@ static void analog_init(double frac)
             if (j != k)
                 lag_c[k] *= (d - j) / (double)(k - j);
     }
-    w = 2 * pi * 300 / RATE;
-    cw = cos(w);
-    alpha = sin(w) / (2 * sqrt(0.5));   /* Q = 1/sqrt(2) */
-    a0 = 1 + alpha;
-    hp_b[0] = (1 + cw) / 2 / a0;
-    hp_b[1] = -(1 + cw) / a0;
-    hp_b[2] = (1 + cw) / 2 / a0;
-    hp_a[1] = -2 * cw / a0;
-    hp_a[2] = (1 - alpha) / a0;
+    t = tan(pi * 300 / RATE);           /* y = b0 (x - x[n-1]) - a1 y[n-1] */
+    hp_b0 = 1 / (1 + t);
+    hp_a1 = (t - 1) / (t + 1);
     analog_on = 1;
 }
 
@@ -124,11 +124,9 @@ static int16_t analog_sample(int16_t x)
     lag_x[1] = lag_x[0];
     lag_x[0] = x;
     v = lag_c[0] * lag_x[0] + lag_c[1] * lag_x[1] + lag_c[2] * lag_x[2] + lag_c[3] * lag_x[3];
-    y = hp_b[0] * v + hp_b[1] * hp_in[0] + hp_b[2] * hp_in[1] - hp_a[1] * hp_out[0] - hp_a[2] * hp_out[1];
-    hp_in[1] = hp_in[0];
-    hp_in[0] = v;
-    hp_out[1] = hp_out[0];
-    hp_out[0] = y;
+    y = hp_b0 * (v - hp_in) - hp_a1 * hp_out;
+    hp_in = v;
+    hp_out = y;
     y = floor(y + 0.5);
     return (int16_t)(y > 32767 ? 32767 : y < -32768 ? -32768 : y);
 }
@@ -391,7 +389,7 @@ int main(int argc, char **argv)
         return 2;
     }
     if (!loop)
-        loop = rbs ? "none" : "0.45";
+        loop = "0";
     if (strcmp(loop, "none")) {
         double f = atof(loop);
         if (f < 0 || f > 1) {
