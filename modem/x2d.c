@@ -17,6 +17,9 @@
 #include "v34mp.h"
 #include "p2ans.h"
 #include "../v90/v90_pcm.h"
+#ifdef P34D_TRACE
+int16_t x2d_trace_tx(const x2d_t *d, int16_t y);    /* tools/trace.c: what the box really sent */
+#endif
 
 #define MS(ms) ((int32_t)(ms) * 8)
 
@@ -382,7 +385,11 @@ uint8_t x2d_tick(x2d_t *d, int16_t rxs)
     if (d->state == X2D_ENDED) return 0x7f;
     octet = x2tx_tick(&d->tx);
     /* the echo of this octet begins ecd.delay samples from now */
+#ifdef P34D_TRACE
+    ecdly_put(&d->ecd, x2d_trace_tx(d, (int16_t)v90_octet_linear(0, octet)));
+#else
     ecdly_put(&d->ecd, (int16_t)v90_octet_linear(0, octet));
+#endif
     x = ec_tick(&d->ec, ecdly_ref(&d->ecd, 0), rxs, d->ec_mu);
     ecdly_next(&d->ecd);
 
