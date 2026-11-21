@@ -31,6 +31,11 @@
  * (PCM downstream, V.34 upstream) to data mode. A K56flex start-up that
  * does not reach data mode ends the call with k56_failed; in data mode the
  * upstream's loss ends it with k56_lost, our cleardown with cleared = 2.
+ * The client's retrain (its tone B in data mode) is ANS_K56RT: Phase 2 of
+ * a retrain with INFO1a flagged again, then ANS_K56 from the start
+ * (retraining until data mode); anything but our flagged INFO1a, or a
+ * third retrain in a row (none forgotten until data mode holds 2 s), ends
+ * the call with k56_failed. We never retrain K56flex.
  * One sample in, one sample out. The data interface is a bit pump: getbit is
  * called for every transmitted line bit, putbit for every received one, once
  * the connection is up. Characters travel start-stop framed in that bit stream
@@ -66,7 +71,10 @@ typedef enum {
     ANS_V92,             /* V.92 data mode, its rate renegotiations included; retrains: ANS_RETRAIN */
     ANS_X2,              /* x2: the client sent the marker; its start-up and data mode (u.x2) */
     ANS_V8BIS,           /* K56flex offered: V.8bis before V.8 (u.v8b), then ANS_V8 */
-    ANS_K56              /* K56flex: from our flagged INFO1a on (u.k56), its data mode included */
+    ANS_K56,             /* K56flex: from our flagged INFO1a on (u.k56), its data mode included */
+    ANS_K56RT            /* K56flex: the client's retrain (its tone B in data mode): 70 ms of
+                            silence, then V.34's Phase 2 of a retrain (v34.p2, INFO1a flagged
+                            again), then ANS_K56 from the start */
 } ans_phase;
 
 /* in answer_cfg.modes, next to the V8_MOD_ bits (which fit 16 bits): offer

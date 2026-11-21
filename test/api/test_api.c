@@ -1321,6 +1321,75 @@ static void test_k56_reneg(void)
     CHECK(x2_nev >= 4 && x2_ev[2] == V90M_EV_DATA_STOPPED);
 }
 
+/* K56flex: the client's retrain (sim/k56call) 1 s into data mode: DATA_STOPPED
+ * (retraining 1, not a renegotiation), DATA_MOVING again at the same rates,
+ * retrains 1; v90m_retrain in it V90M_ESTATE (we never retrain); then our
+ * cleardown. Three in a row, 300 ms into data mode each: the third ends the
+ * call as K56flex's. */
+static void k56_retrain_call(int three, v90m_state *st, v90m_stats *sx, int *rt_ret, int *rt_seen)
+{
+    static k56call_t k;
+    static uint8_t down[64];
+    k56call_cfg kc; v90m_cfg c;
+    v90m_t *m; int err, nmove = 0, last = 0;
+    long n, cd_at = -1;
+    uint8_t rx = 0xff, tx;
+
+    v90m_cfg_default(&c);
+    c.modulations |= V90M_MOD_K56;
+    c.getbit = ones_get; c.putbit = bits_put; c.on_event = x2_on_event;
+    x2_nev = 0; *rt_ret = 1; *rt_seen = 0;
+    m = v90m_create(&c, &err);
+    CHECK(m != NULL);
+    if (!m) return;
+    k56call_default(&kc, 3000);
+    kc.rate = 1;
+    kc.retrain_ms = three ? 300 : 1000; kc.retrains = three ? 3 : 1;
+    kc.getbit = ones_get; kc.putbit = bits_put;
+    k56call_init(&k, &kc);
+    memset(down, 0xff, sizeof down);
+    for (n = 0; n < 8000L * 60; n++) {
+        int16_t s;
+        v90m_process_g711(m, &rx, &tx, 1);
+        down[n & 63] = tx;
+        s = k56call_tick(&k, down[(n - 30) & 63]);
+        rx = v90m_g711_encode(0, (int16_t)(s / 2));
+        v90m_get_state(m, st);
+        if (st->retraining && !*rt_seen) { *rt_seen = 1; *rt_ret = v90m_retrain(m); }
+        for (; last < x2_nev && last < NEV; last++)
+            if (x2_ev[last] == V90M_EV_DATA_MOVING && ++nmove == 2 && !three) cd_at = n + 8000;
+        if (n == cd_at) CHECK_EQ_I(v90m_cleardown(m), V90M_OK);
+        if (st->end != V90M_END_NONE) break;
+    }
+    v90m_get_state(m, st);
+    v90m_get_stats(m, sx);
+    v90m_destroy(m);
+}
+
+static void test_k56_retrain(void)
+{
+    static const int want[6] = { V90M_EV_CONNECTED, V90M_EV_DATA_MOVING, V90M_EV_DATA_STOPPED,
+                                 V90M_EV_DATA_MOVING, V90M_EV_DATA_STOPPED, V90M_EV_ENDED };
+    v90m_state st; v90m_stats sx;
+    int rt_ret, rt_seen, k;
+
+    k56_retrain_call(0, &st, &sx, &rt_ret, &rt_seen);
+    printf("  API K56flex call, the client's retrain: %d events (", x2_nev);
+    for (k = 0; k < x2_nev && k < NEV; k++) printf("%s%d", k ? " " : "", x2_ev[k]);
+    printf("), retrains %u, renegotiations %u, v90m_retrain in it %d; end %d\n", sx.retrains,
+           sx.renegotiations, rt_ret, (int)st.end);
+    CHECK_EQ_I(x2_nev, 6);
+    for (k = 0; k < 6 && k < x2_nev; k++) CHECK_EQ_I(x2_ev[k], want[k]);
+    CHECK_EQ_I(rt_seen, 1); CHECK_EQ_I(rt_ret, V90M_ESTATE);
+    CHECK_EQ_I(sx.retrains, 1); CHECK_EQ_I(sx.renegotiations, 0);
+    CHECK_EQ_I(st.end, V90M_END_CLEARDOWN_OURS);
+
+    k56_retrain_call(1, &st, &sx, &rt_ret, &rt_seen);
+    printf("  API K56flex call, three retrains in a row: retrains %u, end %d\n", sx.retrains, (int)st.end);
+    CHECK_EQ_I(sx.retrains, 3);
+    CHECK_EQ_I(st.end, V90M_END_K56_FAILED);
+}
+
 int main(void)
 {
     test_cfg();
@@ -1335,5 +1404,6 @@ int main(void)
     test_x2();
     test_k56();
     test_k56_reneg();
+    test_k56_retrain();
     T_REPORT("api");
 }

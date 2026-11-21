@@ -48,6 +48,12 @@
  *   nb), MARK, TRN2B, MP and MP' on the pad's 2 magnitudes, E 24, the data
  *   on the grid of 24 at min(the server's rate_ac, reneg_rate).
  *
+ *   Its retrain ("Retrain"), retrain_ms into data mode and into the data
+ *   after each one, retrains times: V.34's (11.5): 70 ms of silence, then
+ *   v34peer's Phase 2 of a retrain (tone B, ...; INFO1c 0x001 again, or
+ *   0x200 with retrain_200), and after our INFO1a flagged again the whole
+ *   training from silence 1 as above: what it found is counted on.
+ *
  * The line is digital, as x2call's: one octet from the server in (mu-law,
  * as it left it), one linear sample back. Test side. */
 #ifndef V90D_SIM_K56CALL_H
@@ -99,6 +105,10 @@ typedef struct {
      * into the data after it, asking reneg_rate2 (0: none). reneg_rate0: the
      * (first) renegotiation's MP has rate 0 both ways (V.34's cleardown) */
     int reneg_ms, reneg_rate, reneg_ms2, reneg_rate2, reneg_rate0;
+    /* its retrain ("Retrain"): retrain_ms into data mode, and into the data
+     * after each retrain, until it has begun retrains of them. retrain_200:
+     * a retrain's INFO1c says 0x200 (no K56flex) */
+    int retrain_ms, retrains, retrain_200;
     int  (*getbit)(void *user);
     void (*putbit)(void *user, int bit);
     void *user;
@@ -184,6 +194,11 @@ typedef struct {
                                        symbols (k56-facts.md "Bits a symbol") */
     int         rmatch;             /* octets of this data frame that are R's */
     long        r_unasked;          /* an R in the data it did not ask for */
+    /* ---- its retrain ---- */
+    int         rt_due;             /* due at this data symbol: begun after it */
+    int         retrains;           /* retrains begun (its silence, then tone B) */
+    int32_t     rt_at;              /* when its last one began, -1 none */
+    int         k56_starts;         /* flagged INFO1a received (the first, then a retrain's) */
 } k56call_t;
 
 /* a client that takes K56flex up: the whole V.8bis exchange, INFO1c 0x001 */

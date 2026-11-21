@@ -3699,3 +3699,41 @@ line): it did not renegotiate. Data at 52000 / 31200 from 22.1 s, the first
 no rate change; the same with `RBS=24`. So our renegotiation is checked by
 the simulated client only; what SM56 does after one is still not seen
 [our observation].
+
+## k56 12: following the client's retrain (2026-11-21)
+
+`modem/k56d`: the client's tone B (1200 Hz, `tonedet`, more than 50 ms) on
+the upstream in data mode is its retrain (design decision 14, k56-facts.md
+"Retrain") -> `K56D_RETRAIN`, silent. `modem/answer`: phase `ANS_K56RT`,
+70 ms of silence, then `p2ans_init_retrain` on `v34.p2` with
+`p2ans_cfg.k56 = 1` and the INFO0c of the first Phase 2; on `P2N_K56` (our
+INFO1a flagged again) `start_k56`: the whole training from silence 1 and
+data. Any other end of that Phase 2 (INFO1c 0x200: `P2N_DONE`; a failure;
+not done 9 s after the retrain began) ends the call with `k56_failed`
+(`V90M_END_K56_FAILED`): no way back to V.34. `retraining` is 1 from the
+retrain to data again, so the API gives DATA_STOPPED, DATA_MOVING and no
+renegotiation; `retrains` counts them; `v90m_retrain` stays `V90M_ESTATE`.
+
+Retrains in a row: the third ends the call (`MAX_RETRAINS`, as K56flex's:
+`rt_recent` reaching 3). K56flex forgets them all once data mode has held
+2 s (`K56_RT_DATA_MS`), not one a minute as V.90, so three retrains 5 s of
+data apart go on. V.90, V.92, V.34 and x2 retrain counting is not touched.
+`v90m_mem_size()` unchanged (118824 x86-64, 118512 ARM).
+
+`sim/k56call` retrains (`retrain_ms` into data mode and into the data
+after each, `retrains` of them, `retrain_200`): 70 ms of silence, then
+v34peer's Phase 2 of a retrain, and after our INFO1a flagged again its
+whole training afresh (`k56_starts`), checked octet by octet as the first.
+
+    test_answer_k56 (host): one retrain 5 s into data mode, r = 13, pad 0, robbed
+      none and 0x24: ANS_K56RT 0.143 s after its retrain began, Phase 2 2.03 s, data
+      again 10.50 s after it (the first training: 8.33 s); every training octet as
+      the facts, MP 32, MP' 32; data before and after, each way, 0 bad. Three
+      300 ms apart: the third ends the call 0.143 s after it began, K56_FAILED;
+      three 5 s apart: 4 data segments, 0 bad, still in data; INFO1c 0x200 in the
+      retrain: ended 2.17 s after it began, K56_FAILED
+    test_api: events 1 4 3 4 3 5, retrains 1, renegotiations 0, v90m_retrain
+      V90M_ESTATE in it; three in a row: retrains 3, K56_FAILED
+    make check: ALL HOST CHECKS PASS (answer_k56 1407 checks, api 542)
+    make check-arm (armv7 musl, TEST_SHORT: the single retrain only):
+      ALL ARM CHECKS PASS (answer_k56 636 checks)

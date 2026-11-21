@@ -6,7 +6,11 @@
 #include "../v90/v90_pcm.h"
 
 #define MS(ms) ((int32_t)(ms) * 8)
-#define MAX_RETRAINS 3       /* V.90 retrains in a row (one is forgotten per minute of data mode) */
+#define MAX_RETRAINS 3       /* V.90 retrains in a row (one is forgotten per minute of data mode);
+                                K56flex's: the third in a row ends the call (all forgotten
+                                once data mode holds K56_RT_DATA_MS) */
+#define K56_RT_DATA_MS  2000 /* K56flex data mode this long: its retrains are not "in a row" */
+#define K56_RT_MS       9000 /* K56flex: the client's retrain to our Phase 2's end */
 
 #define V22_TOTAL_MS     30000   /* give up on V.22bis start-up */
 #define V22_LEGACY_MS     8000   /* pre-V.8 caller silent this long: try V.21 */
@@ -617,15 +621,51 @@ int16_t answer_tick(answer_t *a, int16_t rx)
             else if (a->connected && d->error == K56D_ERR_CARRIER) a->k56_lost = 1;
             else a->k56_failed = 1;
             fail(a); tx = 0;
+        } else if (d->state == K56D_RETRAIN) {
+            /* its tone B in data mode (decision 14): retrains in a row, the
+             * third ends the call as K56flex's */
+            a->retrains++; a->retraining = 1; a->rt_clock = 0;
+            if (++a->rt_recent >= MAX_RETRAINS) { a->k56_failed = 1; fail(a); tx = 0; break; }
+            a->phase = ANS_K56RT; a->t = 0; tx = 0;
         } else if (d->state == K56D_DATA) {
             a->connected = 1; a->modulation = ANS_MOD_K56;
             a->bitrate = k56d_down_rate(d); a->rx_bitrate = k56d_up_rate(d);
             a->retraining = 0;
+            /* data again: once it holds, the retrains before it are not in a row */
+            if (a->rt_recent && ++a->rt_clock >= MS(K56_RT_DATA_MS)) { a->rt_clock = 0; a->rt_recent = 0; }
         } else if (a->connected) {
             a->retraining = 1;              /* the client's renegotiation or retrain */
         }
         break;
     }
+
+    case ANS_K56RT:
+        /* the client's retrain (k56 design, decision 14; V.34 11.5): 70 ms
+         * of silence, then Phase 2 of a retrain with INFO1a flagged again
+         * (no INFO0: its INFO0c of the first holds); our flagged INFO1a
+         * starts K56flex afresh. Anything else (INFO1c 0x200, Phase 2
+         * failed, too long) ends the call: no way back to V.34. */
+        if (a->t <= MS(70)) {
+            if (a->t == MS(70)) {
+                p2ans_cfg c;
+                memset(&c, 0, sizeof c);
+                c.level = a->v34.cfg.level;
+                c.io_delay = a->v34.cfg.io_delay > 0 ? a->v34.cfg.io_delay : 0;
+                c.sr_mask = a->v34.cfg.sr_mask;
+                c.max_rate = a->v34.cfg.max_rx_rate;
+                c.k56 = 1;
+                p2ans_init_retrain(&a->v34.p2, &c, &a->v34.info0c);
+            }
+            break;
+        }
+        tx = p2ans_tick(&a->v34.p2, rx);
+        if (a->v34.p2.state == P2N_K56) {
+            start_k56(a); tx = 0;
+        } else if (a->v34.p2.state == P2N_DONE || a->v34.p2.state == P2N_FAILED || a->v34.p2.state == P2N_X2
+                   || a->t > MS(K56_RT_MS)) {
+            a->k56_failed = 1; fail(a); tx = 0;
+        }
+        break;
 
     case ANS_FAILED:
         break;
@@ -715,7 +755,7 @@ int answer_retrain(answer_t *a)
     if (a->phase == ANS_V34) return v34ans_retrain(&a->v34);
     if (a->phase == ANS_V32) return v32_retrain(&a->u.v32);
     if (a->phase == ANS_V92) return v92d_retrain(&a->u.v92);
-    if (a->phase == ANS_K56) return -1;     /* we never retrain K56flex (k56 design, decision 14) */
+    if (a->phase == ANS_K56 || a->phase == ANS_K56RT) return -1;   /* we never retrain K56flex (k56 design, decision 14) */
     if (a->phase != ANS_V90) return -1;
     return p34d_retrain(&a->p34);
 }

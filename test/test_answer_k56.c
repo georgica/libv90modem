@@ -35,6 +35,15 @@
  *     client silent after its renegotiation's S: K56flex's end within 10 s;
  *     60 s of data mode (TEST_SHORT: 15 s) with no R of ours (the events
  *     and end reasons through the API: test/api/test_api.c);
+ *   - the client's retrain (Task 12): one 5 s into data mode (TEST_SHORT:
+ *     2 s, robbed bits none only), r = 13, pad 0, robbed bits none and
+ *     0x24: ANS_K56RT at once, Phase 2 again with INFO1a flagged, the whole
+ *     training checked by the client as the first, the data check before and
+ *     after each way, retraining from ANS_K56RT to data again, answer_retrain
+ *     -1 in it; three in a row 300 ms into data mode each: the third ends
+ *     the call as K56flex's; three 5 s of data apart: the call goes on; a
+ *     retrain with INFO1c 0x200: K56flex's end (the events through the API:
+ *     test/api/test_api.c);
  *   - Review Focus 3: the agreed client with INFO1c 0x200, or one that
  *     cannot transmit at 3200 baud: INFO1a unflagged, V.34 at the rates of
  *     the same client without K56flex;
@@ -341,13 +350,15 @@ typedef struct {
     int early_e, b1_bad;    /* k56call_cfg's */
     int cleardown;          /* answer_cleardown once the data check has passed */
     int reneg_ms, reneg_rate, reneg_ms2, reneg_rate2, reneg_rate0;    /* k56call_cfg's */
+    int retrain_ms, retrains, retrain_200;                          /* k56call_cfg's */
     int hold;               /* seconds of data mode to run (no end at the data check) */
 } kd_opts;
 
 /* the data check of one data segment (from data mode, or from data mode
- * again after a renegotiation, to the client's next S or the end), each way */
+ * again after a renegotiation or a retrain, to the client's next S or
+ * retrain, or the end), each way */
 typedef struct { long dn, dbad, un, ubad; int balanced; } kd_seg;
-#define KD_SEGS 3
+#define KD_SEGS 4
 
 typedef struct {
     int connected_once, mod, down, up, client_down, client_up;
@@ -359,6 +370,11 @@ typedef struct {
      * with answer_moving during K56D_RENEG, the client's last S */
     int nseg, nmove; kd_seg seg[KD_SEGS]; int seg_bps[KD_SEGS];
     long moving_in_reneg, rn_at, reneg_seen;
+    /* retrains: the client's last, our first ANS_K56RT, samples in ANS_K56RT,
+     * samples from its retrain to data again without retraining set (and
+     * not ended), answer_retrain in ANS_K56RT */
+    long rt_at, k56rt_at, rt_in, rt_not_retraining, move_at;
+    int rt_ret;
 } kd_out;
 
 /* the data check from here on: the counts cleared, the 64 good bits again */
@@ -401,9 +417,11 @@ static void kd_call(const kd_opts *ko, long secs, kd_out *o)
     kc.early_e = ko->early_e; kc.b1_bad = ko->b1_bad;
     kc.reneg_ms = ko->reneg_ms; kc.reneg_rate = ko->reneg_rate; kc.reneg_ms2 = ko->reneg_ms2;
     kc.reneg_rate2 = ko->reneg_rate2; kc.reneg_rate0 = ko->reneg_rate0;
+    kc.retrain_ms = ko->retrain_ms; kc.retrains = ko->retrains; kc.retrain_200 = ko->retrain_200;
     kc.getbit = kd_cget; kc.putbit = kd_cput; kc.user = NULL;
     k56call_init(&K, &kc);
-    o->rn_at = o->reneg_seen = -1;
+    o->rn_at = o->reneg_seen = o->rt_at = o->k56rt_at = -1;
+    o->rt_ret = 1;
     for (n = 0; n < 8000L * secs; n++) {
         int i = (int)(n & (XD - 1));
         double v;
@@ -421,29 +439,40 @@ static void kd_call(const kd_opts *ko, long secs, kd_out *o)
             + 2.0 * rng_gauss(&rng);
         arx = linear_to_ulaw((int32_t)lround(v));
         if (K.state == K56C_K56 && o->flag_at < 0) o->flag_at = n;
-        if (ko->reneg_ms) {
-            /* a segment ends at the client's S (what is received after it is
-             * not data); the next one is checked from data mode again */
+        if (ko->retrain_ms) {
+            if (A.phase == ANS_K56RT) {
+                if (o->k56rt_at < 0) { o->k56rt_at = n; o->rt_ret = answer_retrain(&A); }
+                o->rt_in++;
+            }
+            if (K.retrains && A.phase != ANS_FAILED && !answer_moving(&A) && !A.retraining) o->rt_not_retraining++;
+        }
+        if (ko->reneg_ms || ko->retrain_ms) {
+            /* a segment ends at the client's S or retrain (what is received
+             * after it is not data); the next one is checked from data mode
+             * again */
             int mv = answer_moving(&A);
-            if (K.renegs > rn) { rn = K.renegs; o->rn_at = n; kd_seg_close(o); }
+            if (K.renegs + K.retrains > rn) { rn = K.renegs + K.retrains; o->rn_at = n; kd_seg_close(o); }
+            if (K.retrains) o->rt_at = o->rn_at;
             if (A.phase == ANS_K56 && A.u.k56.state == K56D_RENEG) {
                 if (o->reneg_seen < 0) o->reneg_seen = n;
                 if (mv) o->moving_in_reneg++;
             }
             if (mv && !was_mv) {
+                o->move_at = n;
                 if (o->nmove < KD_SEGS) o->seg_bps[o->nmove] = A.bitrate;
                 o->nmove++;
                 p23_restart(&DA); p23_restart(&DC);
             }
             was_mv = mv;
-            if (rn == (ko->reneg_ms2 ? 2 : 1) && o->nmove == rn + 1 && DA.n >= DBITS && DC.n >= DBITS) {
+            if (rn == (ko->retrain_ms ? ko->retrains : ko->reneg_ms2 ? 2 : 1) && o->nmove == rn + 1
+                && DA.n >= DBITS && DC.n >= DBITS) {
                 kd_seg_close(o);
                 break;
             }
         }
         if (A.phase == ANS_FAILED) { o->end_at = n; break; }
         if (ko->hold && o->data_at >= 0 && n - o->data_at >= 8000L * ko->hold) break;
-        if (!passed && !ko->reneg_ms && DA.n >= DBITS && DC.n >= DBITS) {
+        if (!passed && !ko->reneg_ms && !ko->retrain_ms && DA.n >= DBITS && DC.n >= DBITS) {
             passed = 1;
             o->retrain_ret = answer_retrain(&A);
             if (ko->cleardown) {
@@ -731,7 +760,7 @@ static void k56_reneg_tests(void)
                    o.seg[k].un, o.seg[k].ubad);
         CHECK_EQ_I(K.renegs, 2); CHECK_EQ_I(o.nseg, 3); CHECK_EQ_I(o.nmove, 3);
         CHECK_EQ_I(o.seg_bps[0], 56000); CHECK_EQ_I(o.seg_bps[1], 50000); CHECK_EQ_I(o.seg_bps[2], 54000);
-        for (k = 0; k < KD_SEGS; k++) {
+        for (k = 0; k < 3; k++) {
             CHECK(o.seg[k].dn >= DBITS); CHECK(o.seg[k].un >= DBITS);
             CHECK_EQ_I(o.seg[k].dbad, 0); CHECK_EQ_I(o.seg[k].ubad, 0); CHECK(o.seg[k].balanced);
         }
@@ -780,6 +809,102 @@ static void k56_reneg_tests(void)
     CHECK(K.data_frames >= (long)HOLD_S * 1000 - 100); CHECK_EQ_I(K.data_lost, 0);
     CHECK(DA.n >= (long)HOLD_S * 31200 - 31200); CHECK(DC.n >= (long)HOLD_S * 56000 - 56000);
     CHECK_EQ_I(DA.bad, 0); CHECK_EQ_I(DC.bad, 0);
+}
+
+/* ---- the client's retrain (plan Task 12) ---- */
+
+/* one retrain RN_MS into data mode (r = 13, pad 0; robbed bits none and
+ * 0x24): its silence and tone B, our ANS_K56RT at once, Phase 2 again with
+ * our INFO1a flagged, the whole training (checked by the client octet by
+ * octet as the first), data again; the data check before and after, each
+ * way; retraining 1 from our ANS_K56RT to data again, 0 after; we never
+ * retrain (answer_retrain -1 in ANS_K56RT) */
+static void kt_one(int rbs)
+{
+    kd_opts ko; kd_out o;
+    char what[96];
+    int k;
+    kd_default(&ko); ko.rbs = rbs; ko.retrain_ms = RN_MS; ko.retrains = 1;
+    kd_call(&ko, 60, &o);
+    snprintf(what, sizeof what, "K56flex client, a retrain %d ms into data mode, robbed %02X", RN_MS, rbs);
+    kd_report(what, &o);
+    printf("     ANS_K56RT %.3f s after its retrain began, %.2f s in it, data again %.2f s after it"
+           " (the first training: %.2f s from ANS_K56); answer_retrain %d\n", (o.k56rt_at - o.rt_at) / 8000.0,
+           o.rt_in / 8000.0, (o.move_at - o.rt_at) / 8000.0, (o.data_at - o.k56_at) / 8000.0, o.rt_ret);
+    for (k = 0; k < o.nseg && k < KD_SEGS; k++)
+        printf("     segment %d: down %ld bits %ld bad, up %ld bits %ld bad\n", k, o.seg[k].dn, o.seg[k].dbad,
+               o.seg[k].un, o.seg[k].ubad);
+    CHECK_EQ_I(K.retrains, 1); CHECK_EQ_I(A.retrains, 1); CHECK_EQ_I(K.renegs, 0);
+    CHECK_EQ_I(K.k56_starts, 2); CHECK_EQ_I(A.v34.p2.k56, 1); CHECK_EQ_I(K.peer.p2.info1a.freq_off, 1);
+    CHECK(o.rt_at > 0); CHECK(o.k56rt_at > o.rt_at); CHECK(o.k56rt_at - o.rt_at < 8000L / 4);
+    CHECK(o.rt_in > 0); CHECK_EQ_I(o.rt_ret, -1); CHECK_EQ_I(o.rt_not_retraining, 0);
+    /* Phase 2 of the retrain, then a training as long as the first */
+    CHECK(o.move_at > o.rt_at); CHECK(o.move_at - o.rt_at - o.rt_in < o.data_at - o.k56_at + 8000L);
+    CHECK_EQ_I(o.nseg, 2); CHECK_EQ_I(o.nmove, 2);
+    CHECK_EQ_I(o.seg_bps[0], 56000); CHECK_EQ_I(o.seg_bps[1], 56000);
+    for (k = 0; k < 2; k++) {
+        CHECK(o.seg[k].dn >= DBITS); CHECK(o.seg[k].un >= DBITS);
+        CHECK_EQ_I(o.seg[k].dbad, 0); CHECK_EQ_I(o.seg[k].ubad, 0); CHECK(o.seg[k].balanced);
+    }
+    CHECK_EQ_I(seg_bad_sum(), 0);
+    CHECK_EQ_I(K.mp_good, 2 * 16); CHECK_EQ_I(K.mpa_good, 2 * 16); CHECK_EQ_I(K.mp_wrong, 0);
+    CHECK_EQ_I(K.e_seen, 1); CHECK_EQ_I(K.b1_bad, 0); CHECK_EQ_I(K.data_lost, 0); CHECK_EQ_I(K.r_unasked, 0);
+    CHECK(K.data_at > K.trn1b_at); CHECK_EQ_I((K.data_at - K.trn1b_at) % 24, 0);
+    CHECK_EQ_I(A.phase, ANS_K56); CHECK_EQ_I(A.u.k56.state, K56D_DATA); CHECK(answer_moving(&A));
+    CHECK_EQ_I(A.connected, 1); CHECK_EQ_I(A.retraining, 0);
+    CHECK_EQ_I(o.down, 56000); CHECK_EQ_I(o.up, 31200); CHECK_EQ_I(o.client_down, 56000); CHECK_EQ_I(o.client_up, 31200);
+    CHECK_EQ_I(A.u.k56.tx.d_rate, 13); CHECK_EQ_I(o.k56_failed, 0); CHECK_EQ_I(o.error, 0);
+}
+
+static void k56_retrain_tests(void)
+{
+#ifndef TEST_SHORT
+    kd_opts ko; kd_out o;
+    int k;
+#endif
+    kt_one(0);
+#ifndef TEST_SHORT
+    kt_one(0x24);
+
+    /* three retrains in a row, 300 ms of data mode between them (no data to
+     * speak of): the third ends the call as K56flex's (V90M_END_K56_FAILED) */
+    kd_default(&ko); ko.retrain_ms = 300; ko.retrains = 3;
+    kd_call(&ko, 90, &o);
+    printf("  K56flex client, three retrains 300 ms into data mode each: %d begun (ours %d), data again %d times,"
+           " ended %.3f s after the third, k56_failed %d\n", K.retrains, A.retrains, o.nmove,
+           (o.end_at - o.rt_at) / 8000.0, o.k56_failed);
+    CHECK_EQ_I(K.retrains, 3); CHECK_EQ_I(A.retrains, 3); CHECK_EQ_I(o.nmove, 3);
+    CHECK_EQ_I(o.phase, ANS_FAILED); CHECK(o.end_at > o.rt_at); CHECK(o.end_at - o.rt_at < 8000L / 4);
+    CHECK_EQ_I(o.k56_failed, 1); CHECK_EQ_I(o.k56_lost, 0); CHECK_EQ_I(o.cleared, 0); CHECK_EQ_I(o.connected_once, 1);
+
+    /* three separated by data (RN_MS of it before each): the call goes on */
+    kd_default(&ko); ko.retrain_ms = RN_MS; ko.retrains = 3;
+    kd_call(&ko, 120, &o);
+    kd_report("K56flex client, three retrains with data between", &o);
+    for (k = 0; k < o.nseg && k < KD_SEGS; k++)
+        printf("     segment %d: down %ld bits %ld bad, up %ld bits %ld bad\n", k, o.seg[k].dn, o.seg[k].dbad,
+               o.seg[k].un, o.seg[k].ubad);
+    CHECK_EQ_I(K.retrains, 3); CHECK_EQ_I(A.retrains, 3); CHECK_EQ_I(K.k56_starts, 4);
+    CHECK_EQ_I(o.nseg, 4); CHECK_EQ_I(o.nmove, 4); CHECK_EQ_I(o.rt_not_retraining, 0);
+    for (k = 0; k < KD_SEGS; k++) {
+        CHECK(o.seg[k].dn >= DBITS); CHECK(o.seg[k].un >= DBITS);
+        CHECK_EQ_I(o.seg[k].dbad, 0); CHECK_EQ_I(o.seg[k].ubad, 0); CHECK(o.seg[k].balanced);
+    }
+    CHECK_EQ_I(seg_bad_sum(), 0); CHECK_EQ_I(K.mp_good, 4 * 16); CHECK_EQ_I(K.mp_wrong, 0);
+    CHECK_EQ_I(A.phase, ANS_K56); CHECK_EQ_I(A.u.k56.state, K56D_DATA); CHECK_EQ_I(A.retraining, 0);
+    CHECK_EQ_I(o.k56_failed, 0);
+
+    /* a retrain whose INFO1c comes back 0x200: our INFO1a unflagged, and no
+     * way back to V.34 (V90M_END_K56_FAILED) */
+    kd_default(&ko); ko.retrain_ms = 1000; ko.retrains = 1; ko.retrain_200 = 1;
+    kd_call(&ko, 60, &o);
+    printf("  K56flex client, a retrain with INFO1c 0x200: INFO1a offset %d, ended %.2f s after it began,"
+           " k56_failed %d\n", (int)K.peer.p2.info1a.freq_off, (o.end_at - o.rt_at) / 8000.0, o.k56_failed);
+    CHECK_EQ_I(K.retrains, 1); CHECK_EQ_I(A.retrains, 1); CHECK_EQ_I(A.v34.p2.k56, 0);
+    CHECK(K.peer.p2.info1a.freq_off != 1);
+    CHECK_EQ_I(o.phase, ANS_FAILED); CHECK(o.end_at > o.rt_at); CHECK(o.end_at - o.rt_at < 8000L * 10);
+    CHECK_EQ_I(o.k56_failed, 1); CHECK_EQ_I(o.k56_lost, 0); CHECK_EQ_I(o.cleared, 0);
+#endif
 }
 
 /* ---- a caller without V.8bis: sim/v34peer over test/line34.h ---- */
@@ -1017,6 +1142,7 @@ int main(void)
     k56_data_tests();
     k56_rate_tests();
     k56_reneg_tests();
+    k56_retrain_tests();
     v34peer_tests();
 #ifndef TEST_SHORT          /* on ARM under qemu (test.h): the K56flex client and v34peer only */
     orig_tests();

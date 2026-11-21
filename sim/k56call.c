@@ -42,6 +42,7 @@ void k56call_init(k56call_t *c, const k56call_cfg *cfg)
     c->crd_at = -1; c->ms_at = -1; c->v8_sel = -1;
     c->data_at = -1; c->j24_at = -1; c->quiet_at = -1; c->e_at = -1;
     c->rn_at = -1; c->rate_now = cfg->rate; c->nb = 1;
+    c->rt_at = -1;
     /* the CM of v34peer's own V.8; with cm_pcm, an analogue modem's PCM octet too */
     memset(&cm, 0, sizeof cm);
     cm.call_function = V8_CALLF_DATA;
@@ -688,16 +689,30 @@ static void tx_symbol(k56call_t *c, int32_t *re, int32_t *im)
         v34_tx_symbol(&c->vtx, &pt, NULL); g = c->tx_dg;
         if (c->cfg.b1_bad && c->sn < 400 && c->sn % 3 == 0) { pt.re = (int16_t)-pt.re; pt.im = (int16_t)-pt.im; }  /* not all: a 180 degree turn alone is differentially coded away */
         if (++c->sn == 3200) strike(c, K56C_SIL_DATA);
+        if (c->retrains < c->cfg.retrains && c->cfg.retrain_ms && c->sn == (int32_t)c->cfg.retrain_ms * 16 / 5)
+            c->rt_due = 1;
         break;
     }
     *re = (pt.re * g) >> 9; *im = (pt.im * g) >> 9;
 }
 
-/* the flagged INFO1a has come: silent until our Js; the J24 it will send */
+/* the flagged INFO1a has come: silent until our Js; the J24 it will send.
+ * After a retrain the whole training again: what it found so far is kept
+ * (seg_bad, the MP counts, the data counts, ...), the rest starts afresh. */
 static void k56_begin(k56call_t *c)
 {
     const info1a_t *i = &c->peer.p2.info1a;
     int idx = i->down_sr, num, den, k;
+    if (c->k56_starts++) {
+        c->alt = 0; c->trn1b_at = 0; c->sum = 0; c->hist = 0; c->tknown = 0; c->tones = 0;
+        c->mpfn = c->mpones = 0;
+        memset(&c->our_mp, 0, sizeof c->our_mp);
+        c->got_our_mp = c->got_our_mpa = 0; c->r_used = 0;
+        c->dfpos = 0; c->dframes = 0; c->data_at = -1; c->rmatch = 0;
+        c->sig = SIG_SIL; c->sn = 0; c->mpn = 0; c->mp_ack = 0; c->mps_sent = 0;
+        c->js_seen = c->trn2a_seen = 0; c->j24_at = -1; c->up_rate = 0; c->e_at = -1;
+        c->rate_now = c->cfg.rate; c->rn = 0; c->rn_down = 0; c->nb = 1;
+    }
     v34_carrier(idx, i->hi_carrier, &num, &den);
     (void)v34mod_init(&c->umod, v34_symbol_rate(idx), num, den, i->preemph > 10 ? 0 : i->preemph,
                       c->cfg.level, i->min_pwr_red);
@@ -718,6 +733,16 @@ static void set_octet(k56call_t *c)
     for (k = 0; k < 8; k++) c->j24[16 + k] = (uint8_t)((o >> k) & 1);
 }
 
+/* its retrain (V.34 11.5): v34peer's, from its 70 ms of silence; after our
+ * INFO1a, flagged again, K56flex's training from the start (k56_begin) */
+static void rt_begin(k56call_t *c)
+{
+    c->rt_due = 0; c->retrains++; c->rt_at = c->now;
+    if (c->cfg.retrain_200) c->peer.cfg.p2.k56 = P2C_K56_DECLINE;
+    c->peer.state = VP_RETRAIN; c->peer.t = 0;
+    c->state = K56C_V34;
+}
+
 static int16_t k56_tick(k56call_t *c, uint8_t octet)
 {
     if (c->dseg == K56TX_TRN1B && c->dn == 0) set_octet(c);
@@ -728,6 +753,7 @@ static int16_t k56_tick(k56call_t *c, uint8_t octet)
         tx_symbol(c, &re, &im);
         v34mod_put(&c->umod, re, im);
     }
+    if (c->rt_due) { rt_begin(c); return 0; }
     return v34mod_tick(&c->umod);
 }
 

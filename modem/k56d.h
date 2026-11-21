@@ -21,7 +21,10 @@
  *   at 1 bit a symbol, E 24 (k56tx_reneg); its S-bar, TRN, MP (4 points,
  *   V.34 11.6), MP', E; data again both ways (B1 first) at the rates of its
  *   new MP -> K56D_DATA. An MP with rate 0 both ways is V.34's cleardown
- *   (K56D_ERR_CLEARDOWN). We never start one (decision 13).
+ *   (K56D_ERR_CLEARDOWN). We never start one (decision 13). The client's
+ *   tone B (1200 Hz, more than 50 ms) here is its retrain ("Retrain") ->
+ *   K56D_RETRAIN: silent; the owner goes on with V.34's Phase 2 of a
+ *   retrain and a fresh k56d (decision 14). We never start one either.
  *
  * Our MP: type 0, rate_ac = r, rate_ca = the upstream rate, mask 0x3fff
  * (D-Modem's server's), asymmetric; for the client's transmitter 16 states,
@@ -41,6 +44,7 @@
 #include "qamrx.h"
 #include "ec.h"
 #include "ecdly.h"
+#include "tonedet.h"
 #include "v34train.h"
 #include "v34mp.h"
 #include "k56tx.h"
@@ -78,7 +82,8 @@ typedef enum {
     K56D_MP,        /* our MP, MP', E until its E (and B1 both ways) */
     K56D_DATA,      /* data both ways */
     K56D_RENEG,     /* the client's renegotiation (k56 plan, Task 11) */
-    K56D_RETRAIN,   /* the client's retrain (Task 12) */
+    K56D_RETRAIN,   /* its tone B in data mode: the client's retrain; silent, the owner's
+                       Phase 2 next */
     K56D_ENDED      /* silent; error says why */
 } k56d_state;
 
@@ -115,6 +120,7 @@ typedef struct {
     ecdly_t    ecd;                 /* what we sent; ecd.delay the echo delay in use */
     sdet_t     sdet;
     sres_t     sres;                /* its S out of data mode: a renegotiation */
+    tonedet_t  tone_b;              /* its tone B in data mode: a retrain */
     qamrx_t    rx;
     int        rxmode;
     v34trn_t   ref;

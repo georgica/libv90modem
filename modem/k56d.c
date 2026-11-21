@@ -168,6 +168,7 @@ static void rx_begin_data(k56d_t *d)
     d->quiet = 0; d->q_dead = 0;
     d->t_mark = d->now;
     sdet_init(&d->sdet, SYM_RATE, d->car_num, d->car_den);     /* its S from here on: a renegotiation */
+    tonedet_init(&d->tone_b, TONEDET_1200);                     /* its tone B: a retrain */
 }
 
 /* ---- descrambled bits ---- */
@@ -401,7 +402,7 @@ uint8_t k56d_tick(k56d_t *d, int16_t rxs)
     k56tx_seg seg;
 
     d->now++; d->t++;
-    if (d->state == K56D_ENDED) return 0xff;
+    if (d->state == K56D_ENDED || d->state == K56D_RETRAIN) return 0xff;
     seg = k56tx_segment(&d->tx);
     octet = k56tx_tick(&d->tx);
     /* the echo of this octet begins ecd.delay samples from now */
@@ -426,6 +427,15 @@ uint8_t k56d_tick(k56d_t *d, int16_t rxs)
         if (d->rxmode == RX_DATA && d->state == K56D_DATA) {
             (void)sdet_tick(&d->sdet, x);
             if (d->sdet.present >= SDET_PRESENT) reneg_begin(d);
+            else if (tonedet_tick(&d->tone_b, x)) {
+                /* its retrain (V.34 11.5, "Retrain"): silent from here; the
+                 * owner's Phase 2 next */
+                TR("K56D %.3f tone B in data mode\n", d->now / 8000.0);
+                d->tx_ready = d->rx_ready = 0;
+                d->rxmode = RX_IDLE;
+                enter(d, K56D_RETRAIN);
+                return 0xff;
+            }
         }
     }
 
