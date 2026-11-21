@@ -13,11 +13,10 @@
  *
  * This end is the network and our modem behind it, a digital line with no
  * loss: SM56's samples to the nearest mu-law octet into v90m_process_g711,
- * our octets decoded and, unless -l none, through an analogue loop to SM56's
- * codec (-l FRAC, default 0.45, as D-Modem's SM56 calls set netsim's
- * NET_LOOP: a delay of FRAC of a sample by a 32-tap Hann-windowed sinc, then
- * a first-order high pass at 300 Hz; SM56's V.90 did not start up without
- * it). With -r RBS the octets to SM56 are robbed as netsim's NET_RBS_TO:
+ * our octets decoded and, unless -l none, through a model of an analogue
+ * path to SM56's codec (-l FRAC, default 0.45, the delay D-Modem's SM56
+ * calls give their line: a fractional delay of FRAC of a sample and a high
+ * pass at 300 Hz; our own model, see analog_init). With -r RBS the octets to SM56 are robbed as netsim's NET_RBS_TO:
  * in the samples whose count (from the line's first) mod 6 has its bit in
  * RBS, the octet's least significant bit is set to 1, and the codes reach
  * SM56 as they are (no loop: a PCM client sampling the codes).
@@ -84,41 +83,54 @@ static int ec_on, connected, moving, rate_changes;
 
 static double line_s(void) { return (double)line_n / RATE; }
 
-/* the analogue loop to SM56's codec (-l): fractional delay, high pass */
-#define LOOP_TAPS 32
-static int loop_on;
-static double loop_h[LOOP_TAPS], loop_x[LOOP_TAPS], hp_x, hp_y, hp_a;
-static unsigned loop_pos;
+/* The analogue path to SM56's codec (-l): the codes reach it a fraction of a
+ * sample late and without their lowest frequencies. Our model: a 4-point
+ * Lagrange interpolator for the fractional delay (total delay 1 + frac
+ * samples, so it stays causal), then a second-order Butterworth high pass
+ * at 300 Hz (bilinear transform, Direct Form I). */
+static int analog_on;
+static double lag_c[4];             /* weights on x[n], x[n-1], x[n-2], x[n-3] */
+static double lag_x[4];             /* the last 4 inputs, newest first */
+static double hp_b[3], hp_a[3], hp_in[2], hp_out[2];
 
-static void loop_init(double frac)
+static void analog_init(double frac)
 {
     const double pi = 3.14159265358979323846;
-    double sum = 0;
-    int k;
-    for (k = 0; k < LOOP_TAPS; k++) {
-        double t = k - LOOP_TAPS / 2 + 1 - frac, w = 0.5 - 0.5 * cos(2 * pi * (k + 0.5) / LOOP_TAPS);
-        loop_h[k] = (t == 0 ? 1 : sin(pi * t) / (pi * t)) * w;
-        sum += loop_h[k];
+    double d = 1 + frac, w, cw, alpha, a0;
+    int k, j;
+    for (k = 0; k < 4; k++) {   /* Lagrange basis polynomial k at d */
+        lag_c[k] = 1;
+        for (j = 0; j < 4; j++)
+            if (j != k)
+                lag_c[k] *= (d - j) / (double)(k - j);
     }
-    for (k = 0; k < LOOP_TAPS; k++)
-        loop_h[k] /= sum;
-    hp_a = 1 / (1 + 2 * pi * 300 / RATE);
-    loop_on = 1;
+    w = 2 * pi * 300 / RATE;
+    cw = cos(w);
+    alpha = sin(w) / (2 * sqrt(0.5));   /* Q = 1/sqrt(2) */
+    a0 = 1 + alpha;
+    hp_b[0] = (1 + cw) / 2 / a0;
+    hp_b[1] = -(1 + cw) / a0;
+    hp_b[2] = (1 + cw) / 2 / a0;
+    hp_a[1] = -2 * cw / a0;
+    hp_a[2] = (1 - alpha) / a0;
+    analog_on = 1;
 }
 
-static int16_t loop_sample(int16_t x)
+static int16_t analog_sample(int16_t x)
 {
-    double y = 0, h;
-    int k;
-    loop_x[loop_pos] = x;
-    for (k = 0; k < LOOP_TAPS; k++)   /* loop_h[k] on the sample k back */
-        y += loop_h[k] * loop_x[(loop_pos + LOOP_TAPS - (unsigned)k) % LOOP_TAPS];
-    loop_pos = (loop_pos + 1) % LOOP_TAPS;
-    h = hp_a * (hp_y + y - hp_x);
-    hp_x = y;
-    hp_y = h;
-    h = floor(h + 0.5);
-    return (int16_t)(h > 32767 ? 32767 : h < -32768 ? -32768 : h);
+    double v, y;
+    lag_x[3] = lag_x[2];
+    lag_x[2] = lag_x[1];
+    lag_x[1] = lag_x[0];
+    lag_x[0] = x;
+    v = lag_c[0] * lag_x[0] + lag_c[1] * lag_x[1] + lag_c[2] * lag_x[2] + lag_c[3] * lag_x[3];
+    y = hp_b[0] * v + hp_b[1] * hp_in[0] + hp_b[2] * hp_in[1] - hp_a[1] * hp_out[0] - hp_a[2] * hp_out[1];
+    hp_in[1] = hp_in[0];
+    hp_in[0] = v;
+    hp_out[1] = hp_out[0];
+    hp_out[0] = y;
+    y = floor(y + 0.5);
+    return (int16_t)(y > 32767 ? 32767 : y < -32768 ? -32768 : y);
 }
 
 /* a pattern stream and what came of it */
@@ -386,7 +398,7 @@ int main(int argc, char **argv)
             fprintf(stderr, "k56-bridge: -l %s: 0..1 or none\n", loop);
             return 2;
         }
-        loop_init(f);
+        analog_init(f);
     }
     half = argv[1];
     outdir = argv[2];
@@ -526,8 +538,8 @@ int main(int argc, char **argv)
                 if ((rbs >> ((line_n + (unsigned)i) % 6)) & 1)
                     o |= 1;
                 out[i] = v90m_g711_decode(0, o);
-                if (loop_on)
-                    out[i] = loop_sample(out[i]);
+                if (analog_on)
+                    out[i] = analog_sample(out[i]);
             }
         } else
             memset(out, 0, 2 * (size_t)n);
