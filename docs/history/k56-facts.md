@@ -402,14 +402,36 @@ is above 0, else positive**.
 | Js | 128 | alternating. Even: 1 scrambled bit of J (`0x89b0`, least significant bit first, 16 bits round and round: 4 Js), `0x4f`, positive when the scrambled bit is 1. Odd: as TRN1C |
 | Silence 2 | until the client's J24, at least 12288, rounded up to a multiple of 8 | code `0x80` |
 | R2 | 288 | as R1, but the scrambler and running sum go on |
-| TRN2A | 16336 (2048 in a renegotiation) | as TRN1C (alternation restarts at 0) |
+| TRN2A | 16336 (2048 in a renegotiation) | as TRN1C (alternation restarts at 0), but see "Bits a symbol" below for a renegotiation |
 | MARK | 32 | as TRN1C with input zeros |
-| TRN2B | until the client's MP, at least 2048, then until the grid below | alternating. Even and odd scramble 2 input ones (b0 first); magnitude `pad2[b0 + 2 b1]`; even: **negative when hist bit 24 is 1**; odd: the running sum's |
+| TRN2B | until the client's MP, at least 2048, then until the grid below | alternating. Even and odd scramble 2 input bits, **a one then a zero** (the 2-bit value 1, lowest bit first; corrected in k56 8, see below), b0 first; magnitude `pad2[b0 + 2 b1]`; even: **negative when hist bit 24 is 1**; odd: the running sum's |
 | MP | 704 | as TRN2B, input the 88 bits of our MP (11 octets, each least significant bit first) round and round: 16 MPs at 2 bits a symbol (8 at 1 bit) |
 | MP' | 704 | the same with our MP' (the acknowledge bit set) |
 | E | 12 (24 in a renegotiation) | as TRN2B, input ones: 24 ones |
 | data | | B1 first (see "Phase 4") |
 
+- **Corrections (k56 8, 2026-11-21)**, found when our transmitter was
+  compared with the training oracle ("Oracle") and confirmed in
+  `K56Train::next` / `level` / `segment` (`dsp/k56flex_train.cpp`).
+  [RE: D-Modem, code], [our observation: the oracle]:
+  - TRN2B's input is not ones: each symbol scrambles the 2-bit value 1,
+    lowest bit first, so a one and then a zero. E's input is ones (the
+    value 3).
+  - **Bits a symbol.** The even symbols of TRN1C, Js, TRN2A and MARK
+    scramble as many bits as the last TRN2B, MP, MP' or E symbol did: the
+    input value (1, J's bit, or 0 for MARK) lowest bit first, the sign the
+    first scrambled bit. The count is 1 from the start of the training; 2
+    from the first TRN2B on; 1 after a renegotiation's MP. So the first
+    renegotiation's TRN2A and MARK scramble 2 bits an even symbol (a one
+    and a zero; two zeros), a later one's 1; a retrain (the training from
+    silence 1) is back to 1. The oracle's renegotiation equals ours only
+    this way.
+  - The client is not disturbed by it: GPA's output taken every second bit
+    obeys the same recurrence (squaring maps the roots of 1 + x^5 + x^23
+    onto themselves over GF(2)), so the even signs of TRN2A still
+    descramble one bit a symbol to ones, and MARK's to zeros, after 23
+    bits. [derived]; checked in `test/test_k56tx.c` for the call, a first
+    and a second renegotiation [our observation].
 - Pad magnitudes ("pad2", 2 bits a symbol, `d0 + 2 d1` = 0..3; "pad1", 1
   bit a symbol, 0 then 1). TRN2B, MP, MP' and E use the pad the client's
   J reports; the data uses the rate's constellation for that pad. [RE: D-Modem, notes 4, 5; code `k56_trn2b_mag`, `k56_trn2b_mag1`]:

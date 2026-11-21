@@ -3451,3 +3451,46 @@ decoder harness.
     make -j8 check-arm ARM_CC=...armv7-eabihf musl...
       k56enc (TEST_SHORT, masks 00 24 3f 15): oracle 156 of 156, 98 checks, 0 failures
       ALL ARM CHECKS PASS
+
+## k56 8: the training transmitter (2026-11-21)
+
+`modem/k56tx` ("Training down", "Phase 4", "Rate renegotiation" of
+`k56-facts.md`): silence 1, R1, TRN1A, TRN1B, TRN1C, Js, silence 2 (until
+the client's J: max(12288, J) rounded up to 8), R2, TRN2A, MARK, TRN2B
+(until our MP, at least 2048, and the grid of 24), MP, MP', E, then the
+data through `k56enc` (B1 first, a new encoder and data scrambler at each
+data start, Ruling C4), one mu-law octet a tick. One GPA scrambler, its
+history and the running sum from R1 through E, carried across a
+renegotiation (`k56tx_reneg`: R2 now, or at the end of the frame being
+sent; TRN2A 2048, MP / MP' 1 bit a symbol, E 24). `k56tx_got_j` refuses
+pad code 3 (silence 2 goes on; Ruling F3, k56d checks the J first). Our MP
+and MP' from `v34_mp_build`, J from `v34_j16`, the scrambler `v90_scr`.
+
+Two facts corrected (`k56-facts.md` "Training down", "Corrections (k56
+8)"), found against the oracle and confirmed in D-Modem's `K56Train`:
+TRN2B scrambles a one and a zero a symbol (not two ones); the even
+symbols of TRN1C, Js, TRN2A and MARK scramble as many bits as the last
+TRN2B / MP / E symbol did, so the first renegotiation's TRN2A and MARK
+take 2 bits an even symbol (a later one's 1). The client still
+descrambles TRN2A to ones (GPA's sequence decimated by 2 obeys the same
+recurrence), checked for the call and two renegotiations.
+
+    make build/test_k56tx              (first: undefined references to k56tx_*)
+      our MP and MP' equal the oracle's: yes
+      oracle: 13 of 13 cases equal to D-Modem's, segment by segment
+        (before the corrections: 0 of 13; TRN2B on from the first TRN2B,
+        then the renegotiation's TRN2A on)
+      TRN1B: 0 of 8448 magnitudes not 40 41 4b 4c 50 51 50 51 by 3 scrambled bits
+      Js: 4 words of 0x89b0, 0 bits wrong
+      pad 1: 0 of 4432 TRN2B / MP / MP' / E symbols off 35 4d 58 60
+      pad 1, renegotiation: 0 of 1432 MP / MP' / E symbols off 44 5d; E 24
+      silence 2: max(12288, J) rounded up to 8 at J 0 .. 13007
+      J with pad 3 refused: silence 2 still after 32000; a good J then ends it
+      grid: MP at 2048 .. 2071: 0 with the data off the grid of 24
+      renegotiation in mid-frame: R2 at the frame's end
+      TRN2A's even signs descrambled, not ones: call 0, first renegotiation 0, second 0
+      k56tx: 84 checks, 0 failures   (0.04 s; also clean under clang -fsanitize=undefined,address)
+    make check                         ALL HOST CHECKS PASS
+    make -j8 check-arm ARM_CC=...armv7-eabihf musl...
+      k56tx: 84 checks, 0 failures (oracle 13 of 13 under qemu-arm)
+      ALL ARM CHECKS PASS   (6 min 49 s)
