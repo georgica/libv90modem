@@ -30,7 +30,7 @@ typedef struct {
      * L1 the caller is silent and, mk_at ms after that start, an x2 client's
      * marker frame with body mk_body goes out on its carrier (1200 Hz); 0 =
      * no marker. mk_bad: one CRC bit inverted. */
-    int mk_at, mk_body, mk_bad;
+    int mk_at, mk_body, mk_bad, mk_nofill;
 } scen_t;
 
 /* our transmit from the start of our first L1 on, per run slot */
@@ -90,6 +90,7 @@ static void run(const scen_t *s, run_t *r, const p2ans_cfg *ac, const p2c_cfg *c
         dpsktx_init(&mk, DPSK_FC_B, cc->level, 0);
         nmk = p2ans_x2_info_frame((uint8_t)s->mk_body, mkbits);
         if (s->mk_bad) mkbits[2 + 4 + 8 + 7 + 3] ^= 1;
+        if (s->mk_nofill) mkbits[2 + 1] = 0;    /* a fill bit: sync and CRC stay good */
     }
     for (i = 0; i < 8000 * secs; i++) {
         double xa, xc, line_a;
@@ -449,10 +450,11 @@ int main(void)
         {
             static const struct { int at, body, bad; const char *what; } no[] = {
                 { 170, 0x4d, 1, "bad CRC" }, { 160 + 900, 0x4d, 0, "late" },
-                { 170, 0x49, 0, "index 4" }, { 170, 0x41, 0, "index 0" } };
+                { 170, 0x49, 0, "index 4" }, { 170, 0x41, 0, "index 0" },
+                { 170, 0x4d, 2, "fill bit 0" } };
             int j;
-            for (j = 0; j < 4; j++) {
-                s.mk_at = no[j].at; s.mk_body = no[j].body; s.mk_bad = no[j].bad; s.seconds = 4;
+            for (j = 0; j < 5; j++) {
+                s.mk_at = no[j].at; s.mk_body = no[j].body; s.mk_bad = no[j].bad & 1; s.mk_nofill = no[j].bad >> 1; s.seconds = 4;
                 ac.x2 = 1; g_slot = 0; run(&s, &r, &ac, &cc);
                 ac.x2 = 0; g_slot = 1; run(&s, &r0, &ac, &cc);
                 same = r0.ntx == r.ntx;
@@ -468,7 +470,7 @@ int main(void)
          * frame (its lead-in), not to its end: one that begins just inside
          * them is taken though it ends some 70 ms after them, one that begins
          * just after them is not (the frame reaches us 7 ms after it is sent) */
-        s.mk_bad = 0; s.mk_body = 0x4d; s.seconds = 4; ac.x2 = 1; g_slot = 0;
+        s.mk_bad = 0; s.mk_nofill = 0; s.mk_body = 0x4d; s.seconds = 4; ac.x2 = 1; g_slot = 0;
         s.mk_at = 160 + 800 - 15;
         run(&s, &r, &ac, &cc);
         printf("  p2ans x2 marker sent %d ms after L1 began: state %d\n", s.mk_at, (int)r.a.state);

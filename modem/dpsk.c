@@ -185,6 +185,8 @@ static int hunt_bit(dpskrx_t *r, int h, int bit)
     for (k = 0; k < r->expect; k++) pl[k] = hs[(start + 8 + k) & 127];
     if (!info_check(pl, r->expect)) return 0;
     for (k = 0; k < r->expect; k++) r->frame[k] = pl[k];
+    r->fill = 0;
+    for (k = 1; k <= 4; k++) r->fill = (uint8_t)(r->fill | (hs[(start - k) & 127] << (k - 1)));
     return 1;
 }
 

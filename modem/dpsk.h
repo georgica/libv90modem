@@ -68,6 +68,7 @@ typedef struct {
     } hunt[3];
     int      expect;                /* payload length hunted for, 0 = none */
     uint8_t  frame[INFO_MAX_BITS];
+    uint8_t  fill;                  /* the 4 bits before the sync of that frame, bit 0 the last */
 } dpskrx_t;
 
 void dpskrx_init(dpskrx_t *r, int fc);

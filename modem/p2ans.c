@@ -114,7 +114,7 @@ static void x2_stop(p2ans_t *p)
 }
 
 /* While our L1 / L2 run (and the tones after them), the x2 client's marker:
- * a frame that checks out, 6 in bits 1..3, within the window. Returns 1
+ * a frame that checks out (fill 1111 before the sync), 6 in bits 1..3, within the window. Returns 1
  * when it is there. */
 static int x2_marker(p2ans_t *p, int ev)
 {
@@ -125,6 +125,7 @@ static int x2_marker(p2ans_t *p, int ev)
     if (!(ev & DPSK_EV_FRAME) || p->now - X2_FRAME_SPAN > p->x2_until) return 0;
     for (k = 0; k < 7; k++) m |= p->rx.frame[k] << k;
     if (((m >> 1) & 7) != X2_INDEX_PCM) return 0;
+    if (p->rx.fill != 0xf) return 0;        /* the frame's fill, 1111 (p2ans_x2_info_frame) */
     p->x2_marker = m;
     p->x2_until = -1;
     dpsktx_off(&p->tx); p->probing = 0;

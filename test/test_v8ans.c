@@ -199,6 +199,12 @@ int main(void)
         same = 1;
         for (k = 0; k < o0.njm_tx && k < o1.njm_tx; k++) if (jm_tx[0][k] != jm_tx[1][k]) same = 0;
         CHECK(same);
+
+        /* a CM with digital PCM and V.34 and no analogue PCM: the plan's gate
+         * is "V.34 and no PCM", so no x2 */
+        cm.has_pcm = 1; cm.pcm = V8_PCM_DIGITAL;
+        g_x2 = 1; g_slot = 1; run(&cm, &local, -55.0, 0.2, 15, &o1);
+        CHECK_EQ_I(o1.x2, 0);
         g_x2 = 0;
     }
 
