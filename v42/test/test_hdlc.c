@@ -253,6 +253,104 @@ static void test_errors(void)
     CHECK_EQ_I(r.flag_run, 0);
 }
 
+/* A frame with no opening flag after a run of ones (seven or more: an abort,
+ * or the line at mark). A U.S. Robotics x2 client (56K FAX EXT, flash 5.1.4)
+ * sends this after each of its rate changes: B1, some fifty ones, and then
+ * the frame it had begun, the flag that opened it gone, its first bits run
+ * into the ones (a live call, 2026-11-21: both of its rate changes, and the
+ * caller's idle flags after them in another). The receiver takes it when its
+ * FCS holds with k = 0..5 of those ones as its first bits (k = 5: the zero
+ * that ends the run is an inserted one). Anything else after the ones is
+ * dropped silently, as it always was. */
+static int resync_case(const uint8_t *f, int len, int fcs32, int ones)
+{
+    v42hdlc_tx_t t; v42hdlc_rx_t r;
+    int i, ev, got = 0, nb = 0, b;
+    static uint8_t line[8 * (V42HDLC_MAX_FRAME + 64)];
+
+    v42hdlc_tx_init(&t); v42hdlc_rx_init(&r);
+    v42hdlc_rx_set_fcs(&r, V42HDLC_FCS_EITHER);
+    for (i = 0; i < 24; i++) line[nb++] = (uint8_t)v42hdlc_tx_bit(&t);    /* flags */
+    for (i = 0; i < ones; i++) line[nb++] = 1;
+    v42hdlc_tx_frame(&t, f, len, fcs32);
+    v42hdlc_tx_flags(&t, 1);
+    for (i = 0; i < 8; i++) (void)v42hdlc_tx_bit(&t);                     /* its opening flag: lost */
+    while (v42hdlc_tx_busy(&t)) line[nb++] = (uint8_t)v42hdlc_tx_bit(&t);
+    for (i = 0; i < 16; i++) line[nb++] = (uint8_t)v42hdlc_tx_bit(&t);
+    for (i = 0; i < nb; i++) {
+        b = line[i];
+        ev = v42hdlc_rx_bit(&r, b);
+        if (ev > 0) {
+            got++;
+            CHECK_EQ_I(ev, len);
+            CHECK(ev == len && memcmp(r.buf, f, (size_t)len) == 0);
+            CHECK_EQ_I(r.last_fcs32, fcs32);
+        }
+    }
+    CHECK_EQ_I(r.bad_fcs + r.runts + r.aborts + r.too_long + r.misaligned, 0);
+    return got;
+}
+
+/* bits from that call around the caller's first rate change, packed least
+ * significant first: flags, its I frame N(S) 68, flags; the rate change
+ * (its S to its B1, not delivered); 51 ones; N(S) 69 with no opening flag,
+ * a flag, N(S) 70, flags */
+static const char usr_reneg_hex[] =
+    "7e7e7e7e7e7e7e7e7e7e7e7e03881c7d01540431e40cd890f9c83504000083f9"
+    "527af5f3f3f3f3f3f3f3f3f3f3ffffffffff7f4091a32fc08ac00df0f1cc400d"
+    "70f6ed110df0420560039c752fb401ce799db4063836627e038c1c00c8c77d21"
+    "84f8f9fd";
+#define USR_RENEG_BITS 794
+
+static void test_resync(void)
+{
+    uint8_t f[V42HDLC_MAX_PAYLOAD];
+    static const uint8_t first[] = { 0x03, 0x01, 0x02, 0x07, 0x0F, 0x1F, 0x3F, 0xFF, 0x80 };
+    v42hdlc_rx_t r;
+    int i, k, fcs32, ev, n = 0;
+    uint8_t want[3] = { 0x88, 0x8A, 0x8C };
+
+    for (i = 0; i < 40; i++) f[i] = (uint8_t)(i * 29 + 5);
+    /* any first octet; LAPM's are 0x01 and 0x03 (k = 1, 2) */
+    for (fcs32 = 0; fcs32 <= 1; fcs32++)
+        for (k = 0; k < (int)sizeof first; k++) {
+            f[0] = first[k];
+            CHECK_EQ_I(resync_case(f, 3, fcs32, 49), 1);
+            CHECK_EQ_I(resync_case(f, 40, fcs32, 51), 1);
+            CHECK_EQ_I(resync_case(f, 12, fcs32, 7), 1);
+        }
+
+    /* what is not a frame after the ones is dropped and not counted */
+    v42hdlc_rx_init(&r);
+    for (i = 0; i < 16; i++) v42hdlc_rx_bit(&r, "01111110"[i % 8] - '0');
+    for (i = 0; i < 49; i++) CHECK(v42hdlc_rx_bit(&r, 1) == 0);
+    for (i = 0; i < 300; i++) {
+        int b = (int)(rnd() >> 3) & 1;
+        if (i % 5 == 4) b = 0;                      /* no flag or abort inside */
+        CHECK(v42hdlc_rx_bit(&r, b) <= 0);
+    }
+    for (i = 0; i < 16; i++) CHECK(v42hdlc_rx_bit(&r, "01111110"[i % 8] - '0') <= 0);
+    CHECK_EQ_I(r.good + r.bad_fcs + r.runts + r.aborts + r.too_long + r.misaligned, 0);
+
+    /* the caller's own bits: N(S) 68, 69 and 70, in order */
+    v42hdlc_rx_init(&r);
+    for (i = 0; i < USR_RENEG_BITS; i++) {
+        unsigned o = 0; int d;
+        for (d = 0; d < 2; d++) {
+            char c = usr_reneg_hex[2 * (i / 8) + d];
+            o = o * 16 + (unsigned)(c <= '9' ? c - '0' : c - 'a' + 10);
+        }
+        ev = v42hdlc_rx_bit(&r, (int)(o >> (i % 8)) & 1);
+        if (ev > 0) {
+            CHECK(n < 3 && r.buf[0] == 0x03);
+            if (n < 3) CHECK_EQ_I(r.buf[1], want[n]);
+            n++;
+        }
+    }
+    CHECK_EQ_I(n, 3);
+    CHECK_EQ_I(r.bad_fcs + r.runts + r.aborts + r.too_long + r.misaligned, 0);
+}
+
 /* random bit noise must never produce a crash or an oversized frame */
 static void test_noise(void)
 {
@@ -276,6 +374,7 @@ int main(void)
     test_tx_bits();
     test_loopback();
     test_errors();
+    test_resync();
     test_noise();
     T_REPORT("test_hdlc");
 }

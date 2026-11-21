@@ -704,6 +704,65 @@ static void test_line_cut(void)
     CHECK(!v42ec_tx_idle(&A));                          /* data was lost, not delivered */
 }
 
+/* ------------------------------------- a frame resumed without its flag */
+/* A rate change as a U.S. Robotics x2 client makes one (live call,
+ * 2026-11-21): its bits stop, and start again with some fifty ones and then
+ * the frame it had begun, whose opening flag never comes. The answerer
+ * takes the frame as it stands: nothing is rejected or sent twice, and the
+ * data arrive well inside T401. */
+#define RFIFO 4096
+static void test_resume_without_flag(void)
+{
+    static uint8_t q[RFIFO];
+    int head = 0, tail = 0, frames = 0, done = 0, wait = 0, t0, i, j;
+    int was_in = 0; uint32_t hist = 0;
+
+    setup();
+    connect_pair();
+    flow_fill(&ab, 600, F_TEXT);
+    ab.chunk = 40;
+    t0 = now_ms;
+    while (now_ms - t0 < 4000 && !(ab.pos == ab.len && ab.ngot == ab.len && v42ec_tx_idle(&A))) {
+        for (i = 0; i < BITS_PER_MS; i++) {
+            int a = v42ec_tx_bit(&A), b = v42ec_tx_bit(&B), in = A.htx.in_frame;
+            hist = (hist << 1) | (uint32_t)a;
+            if (in && !was_in && (A.htx.buf[1] & 1) == 0 && ++frames == 3 && ((hist >> 1) & 0xFFFF) == 0x7E7E) {
+                /* its third I frame, after idle flags: the flag that opened
+                 * it (the last eight bits queued) is lost, fill comes instead */
+                for (j = 1; j <= 8; j++) q[(tail - j + RFIFO) % RFIFO] = 1;
+                for (j = 0; j < 41; j++) { q[tail] = 1; tail = (tail + 1) % RFIFO; }
+                done = 1;
+            }
+            was_in = in;
+            q[tail] = (uint8_t)a; tail = (tail + 1) % RFIFO;
+            tap_bit(&ta, a); tap_bit(&tb, b);
+            if ((tail - head + RFIFO) % RFIFO > 8) { v42ec_rx_bit(&B, q[head]); head = (head + 1) % RFIFO; }
+            v42ec_rx_bit(&A, pipe_bit(&pba, b));
+        }
+        /* one chunk at a time, each after the line has been idle */
+        if (ab.pos < ab.len && v42ec_tx_idle(&A) && ++wait >= 40) {
+            wait = 0;
+            ab.pos += v42ec_write(&A, ab.src + ab.pos, ab.chunk);
+        }
+        {
+            uint8_t tmp[512]; size_t n;
+            while ((n = v42ec_read(&B, tmp, sizeof tmp)) > 0) {
+                if (ab.ngot + n <= DMAX) memcpy(ab.got + ab.ngot, tmp, n);
+                ab.ngot += n;
+            }
+        }
+        v42ec_tick(&A, 1); v42ec_tick(&B, 1);
+        now_ms++;
+    }
+    CHECK_EQ_I(done, 1);
+    check_flow(&ab);
+    CHECK_EQ_I(B.lapm.tx_rej, 0);
+    CHECK_EQ_I(B.lapm.rx_i_dropped, 0);
+    CHECK_EQ_I(A.lapm.tx_i_retx, 0);
+    CHECK_EQ_I(A.lapm.t401_expiries, 0);
+    CHECK(both(V42EC_CONNECTED));
+}
+
 /* ----------------------------------------------------- orderly release */
 static void test_release(int from_a)
 {
@@ -1114,6 +1173,7 @@ int main(void)
     test_fallback_originator();
     test_no_answer();
     test_line_cut();
+    test_resume_without_flag();
     test_release(1);
     test_release(0);
     test_release_unanswered();
