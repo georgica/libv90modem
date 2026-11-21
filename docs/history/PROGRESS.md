@@ -3166,3 +3166,54 @@ Checks on the release tree:
 
 (The tag `v0.3.0` in /home/georgica/libv90modem points at a v90d commit,
 90687bd; the base was 19ba2c6, origin/main at 0.3.0, as at x2 4.)
+
+
+## k56 1: the facts, written down (2026-11-21)
+
+`docs/history/k56-facts.md`, the K56flex counterpart of x2-facts.md: every
+value later tasks use, by section, each tagged documented / RE (who, from
+what) / our observation / derived. No product code.
+
+Sources fetched outside the repository:
+
+- D-Modem cloned to `~/modem-research/D-Modem` at `c06a380d` (`git log -1`:
+  `c06a380d86105b2309c8cb8958e41120856bb84b`); its `docs/dsp/k56flex-details.md`
+  is identical to the copy in `~/modem-research/sources/`. Code read for
+  values only. Not built.
+- ITU-T V.8 bis (11/2000) to `~/modem-research/itu/` (SHA-256 `1eddb79f...`);
+  the CL, SM56's MS and ACK(1) checked against Tables 3 to 6 and 8.2.3, 8.5,
+  octet by octet.
+- Gough Lui's recording `k56flex-48000.wav` to `~/modem-research/goughlui-k56/`
+  (SHA-256 `e45f73cc...`), decoded with throwaway Python there (V.21 FSK and
+  HDLC, V.34 INFO DPSK, tone and level steps) and two small C programs that
+  link the repository's `modem/info.c` and `modem/v8msg.c` read-only.
+
+What the recording settled (a real Rockwell RCV56DPF client and a real
+server):
+
+- The server sent **CRe** (segment 1 about 290 ms), not MRe; CL `12 c9 80
+  80 81 c2 09 b5 02 00 94 81 83 42 46 e0` (FCS `23 50` good): the 9-octet
+  block of decision 3 exactly, but with an S field offering data and V.42
+  (`81 c2`). The client's MS `11 c9 80 80 81 c2 09 b5 02 00 94 81 81 02 47
+  85` (FCS `71 d8`), ACK(1) `14` (FCS `dd a6`). CM and JM `e0 c1 45 13 94 2a
+  0d` (V.34, no PCM; no digital-access bit in the JM).
+- INFO1c offset `0x009`, INFO1a offset `0x005`: an **A-law** K56flex call,
+  confirming the law bits D-Modem inferred.
+- Training lengths: TRN1A about 16650, TRN1B about 8180, TRN1C and Js about
+  18470, TRN2A and MARK about 8380 (SM56-accepted: 16368, 8448, 8448 + 128,
+  16336 + 32); data at 48000 from about 2.2 s after TRN2A ends.
+
+Found while writing it down (in "Unsettled", for the controller):
+
+- D-Modem's MS check skips four level 1 blocks and would reject the real
+  client's MS (its S field has a data Par(2) block); the "MS test" section
+  parses the V.8bis trees instead.
+- D-Modem restarts the data scrambler, running sum, shaping counter and
+  3-frame cycle at every data start (each MP), and SM56 re-initialises its
+  decoder on each MP: they do not carry across a renegotiation.
+- V.8bis 10.2.2 asks for 400 ms of silence before MRe/CRe (spec: 200 ms);
+  9.8 asks for NAK(1) on an invalid frame (decision 2: never NAK).
+
+`glibc-devel.i686` is not installed (`rpm -q`): the SM56 harnesses cannot
+run yet ("Harness"). No build or test change in this task; `make check` run
+before the commit as the plan asks.
