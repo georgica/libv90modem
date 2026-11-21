@@ -322,6 +322,51 @@ static int trn2a_not_ones(void)
     return bad;
 }
 
+/* the training scrambler after the captured E (pad 0): its bits read back
+ * from the magnitudes, nb a symbol (b0 first) */
+static v90_scr_t e_state(int nb)
+{
+    static const uint8_t p2[4] = { 0x2f, 0x45, 0x51, 0x57 }, p1[2] = { 0x3d, 0x55 };
+    v90_scr_t r;
+    int32_t i;
+    int k;
+    r.reg = 0;
+    for (i = 0; i < cap_n; i++) {
+        if (cap_seg[i] != K56TX_E)
+            continue;
+        if (nb == 2) {
+            for (k = 0; k < 4 && p2[k] != mag(cap_oct[i]); k++)
+                ;
+            r.reg = r.reg << 2 | (uint32_t)(k & 1) << 1 | (uint32_t)(k >> 1);
+        } else {
+            r.reg = r.reg << 1 | (uint32_t)(p1[1] == mag(cap_oct[i]));
+        }
+    }
+    return r;
+}
+
+/* TRN2A's (and MARK's) even signs against a model scrambling nb bits an
+ * even symbol (the value 1, or 0 in MARK, lowest bit first) from the
+ * state s: the symbols that differ */
+static int trn2a_vs_model(v90_scr_t s, int nb)
+{
+    int32_t i, k = 0;
+    int bad = 0;
+    for (i = 0; i < cap_n; i++) {
+        int seg = cap_seg[i];
+        if (seg != K56TX_TRN2A && seg != K56TX_MARK)
+            continue;
+        if (!(k & 1)) {
+            int b = v90_scramble_gpa(&s, seg == K56TX_TRN2A);
+            if (nb == 2)
+                (void)v90_scramble_gpa(&s, 0);
+            bad += b != (cap_oct[i] >> 7);
+        }
+        k++;
+    }
+    return bad;
+}
+
 /* the bits a symbol carry into the next TRN2A and MARK, as in D-Modem
  * (the oracle's renegotiation): after the first Phase 4 (2 bits a symbol)
  * the renegotiation's TRN2A scrambles 2 bits an even symbol, a one and a
@@ -335,30 +380,94 @@ static void test_reneg_bits(void)
     drive_out out;
     uint32_t xs = 1;
     int32_t k;
-    int first, second, call;
+    int first, second, call, m[2][2];
+    v90_scr_t e1, e2;
 
     k56tx_init(&t);
     cap_n = 0;
     drive(&t, 0x00, 12000, 3000, &xs, NULL, 1, &out);
     call = trn2a_not_ones();
+    e1 = e_state(2);
     for (k = K56ENC_N; k < 10 * K56ENC_N; k++)
         (void)k56tx_tick(&t);
     k56tx_reneg(&t);
     cap_n = 0;
     drive(&t, 0x00, -1, 2048, &xs, NULL, 1, &out);
     first = trn2a_not_ones();
+    m[0][0] = trn2a_vs_model(e1, 1);
+    m[0][1] = trn2a_vs_model(e1, 2);
+    e2 = e_state(1);
     for (k = K56ENC_N; k < 10 * K56ENC_N; k++)
         (void)k56tx_tick(&t);
     k56tx_reneg(&t);
     cap_n = 0;
     drive(&t, 0x00, -1, 2048, &xs, NULL, 1, &out);
     second = trn2a_not_ones();
+    m[1][0] = trn2a_vs_model(e2, 1);
+    m[1][1] = trn2a_vs_model(e2, 2);
+    printf("  TRN2A / MARK even signs off a model from the last E's bits, 1 / 2 bits a symbol:"
+           " first renegotiation %d / %d, second %d / %d\n", m[0][0], m[0][1], m[1][0], m[1][1]);
+    CHECK(m[0][0] > 100);
+    CHECK_EQ_I(m[0][1], 0);
+    CHECK_EQ_I(m[1][0], 0);
+    CHECK(m[1][1] > 100);
     printf("  TRN2A's even signs descrambled, not ones: call %d, first renegotiation %d, second %d\n",
            call, first, second);
     CHECK_EQ_I(call, 0);
     CHECK_EQ_I(first, 0);
     CHECK_EQ_I(second, 0);
     CHECK_EQ_I(out.data_sym % 24, 0);
+}
+
+/* a J given before silence 2 is kept: silence 2 is then 12288 and the
+ * J's pad is used */
+static void test_early_j(void)
+{
+    static k56tx_t t;
+    int32_t n = 0, guard;
+    int bad = 0;
+    k56tx_init(&t);
+    while (k56tx_segment(&t) != K56TX_JS)
+        (void)k56tx_tick(&t);
+    k56tx_got_j(&t, 0x40);
+    for (guard = 0; guard < 100000 && k56tx_segment(&t) != K56TX_R2; guard++) {
+        n += k56tx_segment(&t) == K56TX_SIL2;
+        (void)k56tx_tick(&t);
+    }
+    CHECK_EQ_I(k56tx_segment(&t), K56TX_R2);
+    CHECK_EQ_I(n, K56TX_SIL2_MIN);
+    for (guard = 0; guard < 20000 && k56tx_segment(&t) != K56TX_TRN2B; guard++)
+        (void)k56tx_tick(&t);
+    CHECK_EQ_I(k56tx_segment(&t), K56TX_TRN2B);
+    for (guard = 0; guard < 100; guard++) {
+        int m = mag(k56tx_tick(&t));
+        bad += m != 0x35 && m != 0x4d && m != 0x58 && m != 0x60;
+    }
+    CHECK_EQ_I(bad, 0);
+    printf("  J in Js: silence 2 %d, TRN2B on pad 1's magnitudes (%d off)\n", (int)n, bad);
+}
+
+/* k56tx_reneg outside data: R2 at once, then the renegotiation's lengths */
+static void test_reneg_training(void)
+{
+    static k56tx_t t;
+    drive_out out;
+    uint32_t xs = 1;
+    k56tx_init(&t);
+    while (k56tx_segment(&t) != K56TX_TRN1A)
+        (void)k56tx_tick(&t);
+    (void)k56tx_tick(&t);
+    k56tx_reneg(&t);
+    CHECK_EQ_I(k56tx_segment(&t), K56TX_R2);
+    cap_n = 0;
+    drive(&t, 0x00, -1, 2048, &xs, NULL, 1, &out);
+    CHECK_EQ_I(seg_len(K56TX_R2), K56TX_R_N);
+    CHECK_EQ_I(seg_len(K56TX_TRN2A), K56TX_RN_TRN2A_N);
+    CHECK_EQ_I(seg_len(K56TX_MP), K56TX_MP_N);
+    CHECK_EQ_I(seg_len(K56TX_E), K56TX_RN_E_N);
+    CHECK_EQ_I(seg_len(K56TX_TRN1B), 0);
+    printf("  renegotiation in TRN1A: R2 at once; TRN2A %d, E %d\n",
+           (int)seg_len(K56TX_TRN2A), (int)seg_len(K56TX_E));
 }
 
 /* silence 2: max(12288, the J's symbol) rounded up to 8 */
@@ -485,5 +594,7 @@ int main(void)
     test_grid();
     test_reneg_frame();
     test_reneg_bits();
+    test_early_j();
+    test_reneg_training();
     T_REPORT("k56tx");
 }
