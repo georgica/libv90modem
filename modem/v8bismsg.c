@@ -76,6 +76,7 @@ int v8bis_frame(const uint8_t *o, int n, uint8_t *bits)
     uint16_t f;
     int i;
 
+    if (n < 1 || n > V8B_MAXOCT) return 0;
     w.bits = bits; w.n = 0; w.ones = 0;
     for (i = 0; i < PREAMBLE; i++) put_raw(&w, 1);
     for (i = 0; i < FLAGS_BEFORE; i++) put_flag(&w);
@@ -117,7 +118,7 @@ int v8bis_rx_bit(v8bis_rx_t *r, int bit, uint8_t *o)
     int res = 0;
 
     if (bit) {
-        r->ones++;
+        if (r->ones < 7) r->ones++;
         if (r->ones >= 7) {                  /* an abort, or the idle mark */
             if (r->in_frame && r->nbits > 7) res = -1;
             r->in_frame = 0;
@@ -137,12 +138,12 @@ int v8bis_rx_bit(v8bis_rx_t *r, int bit, uint8_t *o)
     }
     if (r->in_frame) {
         if (r->nbits >= 8 * (int)sizeof r->buf)
-            r->overflow = 1;
+            r->overflow = 1;        /* nbits stops here: no counter can wrap */
         else {
             if (bit) r->buf[r->nbits >> 3] |= (uint8_t)(1 << (r->nbits & 7));
             else r->buf[r->nbits >> 3] &= (uint8_t)~(1 << (r->nbits & 7));
+            r->nbits++;
         }
-        r->nbits++;
     }
     return 0;
 }

@@ -38,7 +38,7 @@ int main(void)
 {
     uint8_t o[V8B_MAXOCT + 4], b[V8B_MAXBITS], back[V8B_MAXOCT + 4], lo, hi, m[V8B_MAXOCT];
     v8bis_rx_t r;
-    int n, nb, i, k, res, bad = 0, neg = 0;
+    int n, nb, i, k, res, len_i, bad = 0, neg = 0;
 
     CHECK(v8bis_fcs16((const uint8_t *)"123456789", 9) == 0x906e);   /* CRC-16/X.25 */
 
@@ -207,6 +207,76 @@ int main(void)
       memcpy(b + p, fl, 8); p += 8;
       v8bis_rx_init(&r);
       CHECK_EQ_I(feed(&r, b, p, back), -1); }
+
+    /* the abort: seven ones inside a frame end it, once, as invalid */
+    n = v8bis_cl_octets(V8B_NS9, o);
+    nb = v8bis_frame(o, n, b);
+    { uint8_t ab[V8B_MAXBITS + 16]; int p = 32 + 24 + 40, res2 = 0;
+      memcpy(ab, b, (size_t)p);
+      for (i = 0; i < 9; i++) ab[p++] = 1;        /* then an idle mark */
+      v8bis_rx_init(&r);
+      for (i = 0; i < p; i++) {
+          int x = v8bis_rx_bit(&r, ab[i], back);
+          if (x == -1) res2++; else CHECK_EQ_I(x, 0);
+      }
+      CHECK_EQ_I(res2, 1); }
+    /* the idle mark after a good closing flag gives nothing, and the receiver
+     * takes the next frame */
+    nb = v8bis_frame(o, n, b);
+    { int cnt = 0, x;
+      v8bis_rx_init(&r);
+      for (i = 0; i < nb; i++) { x = v8bis_rx_bit(&r, b[i], back); if (x) cnt++; }
+      CHECK_EQ_I(cnt, 1);
+      for (i = 0; i < 40; i++) CHECK_EQ_I(v8bis_rx_bit(&r, 1, back), 0);
+      CHECK_EQ_I(feed(&r, b, nb, back), n); }
+    /* flags sharing their zeros: 0 111111 0 111111 0 then the body */
+    { static const uint8_t sh[15] = { 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0 };
+      uint8_t sb[V8B_MAXBITS]; int p = 0;
+      for (i = 0; i < 20; i++) sb[p++] = 1;
+      memcpy(sb + p, sh, 15); p += 15;
+      memcpy(sb + p, b + 32 + 24, (size_t)(nb - 32 - 24)); p += nb - 32 - 24;
+      v8bis_rx_init(&r);
+      CHECK_EQ_I(feed(&r, sb, p, back), n);
+      CHECK(memcmp(back, o, (size_t)n) == 0); }
+    CHECK_EQ_I(v8bis_frame(o, 0, b), 0);
+    CHECK_EQ_I(v8bis_frame(o, V8B_MAXOCT + 1, b), 0);
+
+    /* hostile input: random bits, biased to long runs, never crash and only
+     * return -1, 0 or a count of 1..32 whose octets the buffer holds */
+    v8bis_rx_init(&r);
+    { int run = 0, cur = 1, x;
+      for (i = 0; i < 400000; i++) {
+          if (run == 0) { run = 1 + (int)(rnd() % 12); cur = (int)(rnd() & 1); }
+          run--;
+          x = v8bis_rx_bit(&r, (rnd() % 17 == 0) ? !cur : cur, back);
+          CHECK(x >= -1 && x <= V8B_MAXOCT);
+      } }
+    /* random and truncated buffers into the parsers */
+    for (k = 0; k < 20000; k++) {
+        uint8_t h[40];
+        int len = (int)(rnd() % 40);
+        for (i = 0; i < len; i++) h[i] = (uint8_t)rnd();
+        if (k & 1) h[0] = (uint8_t)((h[0] & 0xf0) | 1);
+        if (k & 2 && len > 1) h[1] |= 0x40;
+        res = v8bis_ms_is_k56(h, len);
+        CHECK(res == 0 || res == 1);
+        res = v8bis_cl_is_k56(h, len);
+        CHECK(res == 0 || res == 1);
+    }
+    for (len_i = 0; len_i < 16; len_i++) {
+        /* every prefix of the real client MS: only the whole one passes;
+         * copied to an exact-size heap-free buffer so ASan sees an overrun */
+        uint8_t pre[16];
+        memcpy(pre, real_ms, (size_t)len_i);
+        CHECK_EQ_I(v8bis_ms_is_k56(pre, len_i), 0);
+        CHECK_EQ_I(v8bis_cl_is_k56(pre, len_i), 0);
+    }
+    for (len_i = 0; len_i < 10; len_i++) {
+        uint8_t pre[10];
+        memcpy(pre, cl9 + 6, (size_t)len_i);
+        CHECK_EQ_I(v8bis_cl_is_k56(pre, len_i), 0);
+    }
+
     /* pure preamble and flags: nothing */
     { int p = 0; static const uint8_t fl[8] = { 0, 1, 1, 1, 1, 1, 1, 0 };
       for (i = 0; i < 60; i++) b[p++] = 1;
