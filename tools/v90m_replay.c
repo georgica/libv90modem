@@ -156,7 +156,7 @@ int main(int argc, char **argv)
         else break;
     }
     if (arg >= argc || !(f = fopen(argv[arg], "rb"))) {
-        fprintf(stderr, "usage: v90m-replay [-a] [-9] [-x] [-k] [-u BPS] [-d BPS] [-l DBM0] [-e SAMPLES] [-P CODE] RECORDING\n");
+        fprintf(stderr, "usage: v90m-replay [-a] [-9] [-x] [-k] [-u BPS] [-d BPS] [-l DBM0] [-e SAMPLES] [-P CODE] [-b FILE] RECORDING\n");
         return 2;
     }
     len = (long)fread(file, 1, sizeof file, f);

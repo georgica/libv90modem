@@ -32,7 +32,9 @@ if [ "${1:-}" = --job ]; then
     mkdir -p "$w" || exit 2
     if [ "$RP_USEB" = 1 ]; then b="-b $RP_OUT/$set/$rec.bits"; else b=; fi
     # shellcheck disable=SC2086
-    (cd "$w" && "$RP_TOOL" $o $b "$RP_RECS/$rec.raw" > "$RP_OUT/$set/$rec.txt" 2>&1; echo $? > "$RP_OUT/$set/$rec.rc")
+    if command -v timeout >/dev/null 2>&1; then tm="timeout ${RP_TIMEOUT:-120}"; else tm=; fi
+    (cd "$w" && env -u V92_TRACE -u RXBITS -u TXBITS -u TXOWN $tm "$RP_TOOL" $o $b "$RP_RECS/$rec.raw" > "$RP_OUT/$set/$rec.txt" 2>&1
+     r=$?; echo $r > "$RP_OUT/$set/$rec.rc"; [ -n "$tm" ] && [ $r -eq 124 ] && : > "$RP_OUT/$set/$rec.timeout")
     [ "$RP_USEB" = 1 ] || mv "$w/bits.txt" "$RP_OUT/$set/$rec.bits" 2>/dev/null || : > "$RP_OUT/$set/$rec.bits"
     [ -f "$RP_OUT/$set/$rec.bits" ] || : > "$RP_OUT/$set/$rec.bits"
     rm -rf "$w"
@@ -58,7 +60,7 @@ diff) [ $# -eq 2 ] || mode= ;;
 esac
 [ -n "$mode" ] || { echo "usage: tools/replay-proof.sh check|record|diff REF" >&2; exit 2; }
 
-if [ -n "${V90M_NO_RECS:-}" ]; then echo "replay proof: skipped (V90M_NO_RECS)"; exit 0; fi
+if [ "${V90M_NO_RECS:-}" = 1 ]; then echo "replay proof: skipped (V90M_NO_RECS)"; exit 0; fi
 if [ "$mode" = check ] && [ ! -f "$MAN" ]; then echo "replay proof: no test/golden/replay.sha256"; exit 1; fi
 [ -d "$RECS" ] || { echo "replay proof: no recordings in $RECS (V90M_NO_RECS=1 skips)"; exit 1; }
 (cd "$RECS" && sha256sum -c --quiet "$RECMAN" >/dev/null 2>&1) || {
@@ -76,7 +78,12 @@ run_all() {
     rm -rf "$2"; mkdir -p "$2" || exit 1
     for s in $SETS; do mkdir -p "$2/$s"; done
     for s in $SETS; do for r in $RECLIST; do echo "$s $r"; done; done |
-        RP_TOOL=$1 RP_OUT=$2 RP_USEB=$3 RP_RECS=$RECS xargs -P "$JOBS" -L 1 sh "$SELF" --job
+        RP_TOOL=$1 RP_OUT=$2 RP_USEB=$3 RP_RECS=$RECS xargs -P "$JOBS" -L 1 sh "$SELF" --job ||
+        { echo "replay proof: a job failed to run"; exit 1; }
+    if [ -n "$(find "$2" -name '*.timeout' | head -1)" ]; then
+        echo "replay proof: replays timed out:"; find "$2" -name '*.timeout' | sort | head -10 | sed 's/^/  /'
+        exit 1
+    fi
 }
 
 # hashes OUT: the manifest of an output tree
@@ -93,7 +100,8 @@ hashes "$OUT" > "$BUILD/replay.sha256.now"
 
 case $mode in
 record)
-    cp "$BUILD/replay.sha256.now" "$MAN" || exit 1
+    [ "$(wc -l < "$BUILD/replay.sha256.now")" -eq $((NRUNS * 3)) ] || { echo "replay proof: incomplete outputs, manifest not written"; exit 1; }
+    cp "$BUILD/replay.sha256.now" "$MAN.new" && mv "$MAN.new" "$MAN" || exit 1
     echo "replay proof: $NRUNS runs recorded in test/golden/replay.sha256"
     ;;
 check)
@@ -112,7 +120,7 @@ diff)
     rd=$BUILD/replay-ref/$ref
     rm -rf "$rd"; mkdir -p "$rd" || exit 1
     git archive "$ref" | tar -x -C "$rd" || { echo "replay proof: no such ref $ref"; exit 1; }
-    make -s -C "$rd" build/v90m-replay >&2 || { echo "replay proof: building $ref failed"; exit 1; }
+    env -u BUILD make -s -C "$rd" BUILD=build build/v90m-replay >&2 || { echo "replay proof: building $ref failed"; exit 1; }
     ROUT=$rd/out
     run_all "$rd/build/v90m-replay" "$ROUT" 0
     hashes "$ROUT" > "$rd/hashes"
