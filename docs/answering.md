@@ -80,8 +80,9 @@ first: below, "K56flex".) The menu decides:
 - `V90M_EV_ENDED` once, with `v90m_state.end`: `V90M_END_FAILED` (no
   connection was made), `V90M_END_LOST`, `V90M_END_CLEARDOWN_FAR`,
   `V90M_END_CLEARDOWN_OURS`, `V90M_END_X2_FAILED` (x2, below),
-  `V90M_END_K56_FAILED` (K56flex, below). The other end codes are the
-  calling role's.
+  `V90M_END_K56_FAILED` (K56flex, below), `V90M_END_RETRAIN_FAILED` (x2:
+  the client's retrain, below). The other end codes are the calling
+  role's.
 
 `v90m_get_stats` adds the receiver's signal to error (`snr_db10`, 0.1 dB),
 the round-trip delay measured in the handshake (`rtd`, samples: V.34, V.90,
@@ -109,8 +110,9 @@ a mu-law line: never with `alaw` set. Robbed-bit lines are not handled.
   then `V90M_EV_RATES` and `V90M_EV_DATA_MOVING`, about 0.75 s later.
 - **No way back to V.34.** Once the marker has come, a start-up or rate
   change that does not complete, or a request we cannot serve, ends the
-  call with `V90M_END_X2_FAILED`. `v90m_retrain` gives `V90M_ESTATE`;
-  `v90m_cleardown` ends the call at once (`V90M_END_CLEARDOWN_OURS`).
+  call with `V90M_END_X2_FAILED`; the client's Tone A (a retrain it asks
+  for) ends it with `V90M_END_RETRAIN_FAILED`. `v90m_retrain` gives
+  `V90M_ESTATE`; `v90m_cleardown` ends the call at once (`V90M_END_CLEARDOWN_OURS`).
 - **What has been shown.** At 32000, decoded by the emulated U.S.
   Robotics Courier, V.42 data acknowledged. Above 32000, octet-identical
   to the U.S. Robotics I-modem and D-Modem's server; the published

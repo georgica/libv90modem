@@ -230,6 +230,8 @@ static void on_event(void *u, v90m_event ev)
     case V90M_EV_DATA_STOPPED:
         printf("[%7.2f] ours: data stopped\n", line_s());
         moving = 0;
+        if (ec_on)
+            v90m_ec_line_stopped(ec);      /* the falling edge, within its sample */
         break;
     case V90M_EV_DATA_MOVING:
         printf("[%7.2f] ours: data moving\n", line_s());

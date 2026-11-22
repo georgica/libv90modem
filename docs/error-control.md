@@ -130,7 +130,7 @@ and `*len10ms` when a break came, in its place among the octets read, else
 0.
 
 **Memory.** At most `V90M_EC_MEM_SIZE` (50 KiB; `v90m_ec_mem_size()` gives
-the exact size, 49760 octets on x86-64).
+the exact size, 49792 octets on x86-64).
 
 More on the V.42 code, the compression and the readings taken where the
 Recommendations leave a choice: `v42/README.md`.

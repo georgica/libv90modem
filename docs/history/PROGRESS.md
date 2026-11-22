@@ -3801,3 +3801,51 @@ then orig_v34, orig_retrain, orig_v32, v92a and orig_v90 take 500 to 630 s
 each. So 0.4.0's 2 h 57 min on CI was not K56flex's doing. The raised limit
 is what gives the headroom; shortening p34 and the orig_* tests on ARM
 would be the next step.
+
+### k56 13, fix round 1: x2-upstream merged; the live x2 call (2026-11-21)
+
+**The owner's first live x2 call:** a U.S. Robotics 56K FAX EXT (flash
+5.1.4) called the box. It ran x2 at 56000 / 28800, with PPP, for 2 min 50 s,
+before the fixes below. The modem's own counters: 24 of 255 blocks resent.
+Its Tone A retrain, some 153 s into data mode, went unanswered, and the call
+ended ("Unable to Retrain"). The investigation is on branch `x2-upstream`;
+the facts are in `docs/history/x2-facts.md`:
+
+- 10 of the resends came from two frames lost at the client's two rate
+  changes. Each was sent after fill ones with its opening flag missing.
+- The other 14 were checkpoint resends after its idle polls.
+- The upstream had no FCS errors.
+
+A call that confirms the fixes has not been made yet.
+
+Merged here (x2-upstream, af86c3f):
+
+- the V.42 receiver takes a frame whose opening flag was lost after a run
+  of ones when its FCS holds;
+- `v90m_ec_line_stopped` (new, public), for the falling edge of `moving`,
+  with `v90m_ec_line_restored` aborting only the frame the stop cut and
+  opening with two whole flags;
+- x2d ends the call on the client's Tone A in data mode
+  (`V90M_END_RETRAIN_FAILED`);
+- `v90m-replay` decodes x2 data from the recorded transmit and prints each
+  state change.
+
+CHANGELOG 0.5.0, README (`v90m_ec_mem_size()` 49792 on x86-64, 32 more),
+error-control.md, getting-started.md, answering.md and limits.md (an x2
+retrain now ends as `V90M_END_RETRAIN_FAILED`, not by the watchdog) follow
+the merge. `tools/x2-peer/bridge.c` and `tools/k56-peer/bridge.c` now call
+`v90m_ec_line_stopped` on `V90M_EV_DATA_STOPPED`. Review fixes: the version in
+api.md and getting-started.md; the CHANGELOG preamble and wrap; the CI
+comment; DESIGN's PROGRESS range; testing.md's TEST_SHORT list; README's
+CPU row.
+
+Replay proof after the merge: 704b370 rebuilt in a temporary worktree
+(removed again), the 106 recordings, flags `""`, `-9`, `-x`, `-x -9`.
+Every `.bits` is identical. Every `.txt` differs only by the replay tool's
+new lines `modem connected C moving M retraining R`; with those removed,
+424 of 424 are identical. `-k`, `-k -9`: 106 of 106 complete.
+
+Checks after the merge: `make check` ALL HOST CHECKS PASS (api 542,
+answer_x2 386, answer_k56 1418, test_hdlc 4312, test_v42 5634); `make
+check-ubsan` ALL UBSAN CHECKS PASS; `PAR=8 make check-arm` (armv5 uClibc)
+ALL ARM CHECKS PASS; `make test-k56-sm56 MODS=k56` PASS, 52000 / 31200.

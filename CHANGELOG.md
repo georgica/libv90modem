@@ -12,9 +12,10 @@ this library's own answering modem, never against a real modem or server.
 
 K56flex, Rockwell's and Lucent's 56k scheme of 1997, on the answering
 side, as its server: experimental, and off unless asked for. With it off,
-the library behaves as 0.4.0 did: the replay of the 106 recorded calls is
-byte-identical with every option set tried (V.92 and x2 on and off), and
-0.4.0's tests pass unchanged.
+the answering modem sends what 0.4.0 sent: the replay of the 106 recorded
+calls is byte-identical with every option set tried (V.92 and x2 on and
+off), and 0.4.0's tests pass. Also: fixes to V.42 and x2 from
+the first live x2 call (below), and `v90m_ec_line_stopped`.
 
 What has been shown: K56flex (answering, experimental, off by default)
 connects to Motorola's SM56 soft modem run under emulation, V.42 data both
@@ -75,6 +76,31 @@ API changes:
   simulator).
 - `V90M_MEM_SIZE` and `v90m_mem_size()` are unchanged (118824 on x86-64,
   118512 on 32-bit ARM).
+
+Added (error control):
+- `v90m_ec_line_stopped`, for `V90M_EV_DATA_STOPPED` (the falling edge of
+  `v90m_state.moving`), called within the sample it happens, as
+  `v90m_ec_line_restored` now is on the rising edge. After it,
+  `v90m_ec_line_restored` aborts the frame the stop cut if it is still
+  going and opens the next frame with two whole flags; without it,
+  `v90m_ec_line_restored` only polls, as before. Optional.
+  `v90m_ec_mem_size()` is 32 octets more (49792 on x86-64);
+  `V90M_EC_MEM_SIZE` is unchanged.
+
+Fixed (found on a live x2 call: a U.S. Robotics 56K FAX EXT, flash 5.1.4,
+x2 at 56000 / 28800 with PPP):
+- V.42 receiver: a frame whose opening flag was lost after a run of ones
+  (seven or more) is taken when its FCS holds. A U.S. Robotics x2 client
+  resumes that way after its rate change; the frame was dropped, and five
+  frames were resent each time after the client's poll, some 2.6 s later.
+- x2: the client's Tone A in data mode or its rate change (a retrain it
+  asks for, which x2 cannot serve) ends the call within some 70 ms with
+  `V90M_END_RETRAIN_FAILED`, instead of the watchdog's `V90M_END_LOST`
+  many seconds later.
+- `v90m-replay` decodes x2 data mode both ways, its echo canceller fed the
+  recorded transmit (built with the trace hooks only; the library is
+  unchanged by it), and prints each change of the modem's `connected`,
+  `moving` and `retraining`.
 
 Limits (`docs/limits.md`, "K56flex (answering)"): offered only behind
 `V90M_MOD_K56`; no A-law K56flex; we never renegotiate or retrain

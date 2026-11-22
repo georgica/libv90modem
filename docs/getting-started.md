@@ -127,8 +127,10 @@ It uses the `on_event` callback; the events are reported from inside
 
 - `odp_bypass` (V.92 9.3.1): two V.92 modems that both named LAPM in V.8
   skip V.42's detection phase, so the endpoint starts with `detect = 0`.
-- `V90M_EV_DATA_MOVING` after a retrain or rate renegotiation is passed to
-  V.42 with `v90m_ec_line_restored`.
+- `V90M_EV_DATA_STOPPED` and `V90M_EV_DATA_MOVING` around a retrain or
+  rate renegotiation are passed to V.42 with `v90m_ec_line_stopped` and
+  `v90m_ec_line_restored`, from the callback, so within the sample they
+  happen ([error-control.md](error-control.md)).
 - `v90m_ec_tick` gets the milliseconds that went by (10 per block here).
 
 ```c
@@ -165,6 +167,9 @@ static void on_event(void *u, v90m_event ev)
         fprintf(stderr, "CONNECT %d/%d\n", st.tx_bps, st.rx_bps);
         break;
     }
+    case V90M_EV_DATA_STOPPED:
+        if (ec_on) v90m_ec_line_stopped(ec);
+        break;
     case V90M_EV_DATA_MOVING:
         if (ec_on) v90m_ec_line_restored(ec);
         break;

@@ -81,9 +81,10 @@ Each item names where it is recorded.
   or rate change that does not complete, or a request we cannot serve
   (rate index 0, a pad other than none / 3 / 6 dB, MD other than 5),
   ends the call with `V90M_END_X2_FAILED`. A full retrain asked for by the
-  client during x2 is not handled either: the design clears down. The
-  quiet or MSE watchdog ends that call, so the end reason is
-  `V90M_END_LOST`, not `V90M_END_X2_FAILED`.
+  client during x2 (its Tone A, in data mode or in its rate change) is not
+  served either: the call ends at once, with `V90M_END_RETRAIN_FAILED`.
+  A live U.S. Robotics client did this some 150 s into a call and
+  reported "Unable to Retrain" (`docs/history/x2-facts.md`).
 - **The free sign differs from the I-modem's.** In data mode the sign of
   the one position left free is chosen from a running sum, as D-Modem's
   server does; the I-modem's choice differs in about 25 % of frames (219
