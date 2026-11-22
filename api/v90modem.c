@@ -474,6 +474,7 @@ void   v90m_ec_destroy(v90m_ec_t *e) { if (e && e->owned) free(e); }
 int    v90m_ec_tx_bit(v90m_ec_t *e) { return v42ec_tx_bit(&e->e); }
 void   v90m_ec_rx_bit(v90m_ec_t *e, int bit) { v42ec_rx_bit(&e->e, bit); }
 void   v90m_ec_tick(v90m_ec_t *e, unsigned ms) { v42ec_tick(&e->e, ms); }
+void   v90m_ec_line_stopped(v90m_ec_t *e) { v42ec_line_stopped(&e->e); }
 void   v90m_ec_line_restored(v90m_ec_t *e) { v42ec_line_restored(&e->e); }
 size_t v90m_ec_write(v90m_ec_t *e, const uint8_t *d, size_t n) { return v42ec_write(&e->e, d, n); }
 size_t v90m_ec_write_space(const v90m_ec_t *e) { return v42ec_write_space(&e->e); }

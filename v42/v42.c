@@ -340,7 +340,7 @@ static int hdlc_bit(v42ec_t *e)
         e->orig_wait = 0;
         v42lapm_start(&e->lapm);
     }
-    if (v42hdlc_tx_need_frame(&e->htx)) {
+    if (!e->stopped && v42hdlc_tx_need_frame(&e->htx)) {
         uint8_t f[V42HDLC_MAX_PAYLOAD];
         int n, fcs32 = 0;
         if (e->state == V42EC_CONNECTED) feed_lapm(e);
@@ -444,8 +444,15 @@ void v42ec_rx_bit(v42ec_t *e, int bit)
             ring_reset(&e->rxr);
             if (e->cfg.establish_ms > 0) e->t_est = e->cfg.establish_ms;
         }
-        /* flags or a frame start the protocol phase, with or without ODP */
-        r = v42hdlc_rx_bit(&e->hrx, bit);
+        /* flags or a frame start the protocol phase, with or without ODP;
+         * a frame with no opening flag (after a run of ones, v42_hdlc.h)
+         * only with an address LAPM takes (0x01, 0x03): a caller without
+         * error control sends characters after idle mark */
+        {
+            unsigned long rs = e->hrx.resynced;
+            r = v42hdlc_rx_bit(&e->hrx, bit);
+            if (r > 0 && e->hrx.resynced != rs && e->hrx.buf[0] != 0x01 && e->hrx.buf[0] != 0x03) r = 0;
+        }
         if (r > 0 || e->hrx.flag_run >= FLAGS_SEEN) {
             e->want_hdlc = 1;
             start_protocol(e);
@@ -473,14 +480,24 @@ void v42ec_rx_octets(v42ec_t *e, const uint8_t *buf, size_t n)
 }
 
 /* ------------------------------------------------------------------- time */
+void v42ec_line_stopped(v42ec_t *e)
+{
+    e->stopped = 1;
+    e->stop_cut = e->hdlc_tx_on && e->htx.in_frame;
+    e->stop_frames = e->htx.frames;
+}
+
 void v42ec_line_restored(v42ec_t *e)
 {
-    /* What went out before the line stopped may not have reached the far
-     * end whole (an x2 rate change resumes after fill ones): a frame the
-     * stop cut is aborted, and the next one opens with whole flags */
-    if (e->hdlc_tx_on) {
-        v42hdlc_tx_abort(&e->htx);
-        v42hdlc_tx_flags(&e->htx, 2);
+    if (e->stopped) {
+        e->stopped = 0;
+        if (e->hdlc_tx_on) {
+            /* the frame the stop cut, if it is still going: abort it (an
+             * I frame comes again through LAPM's poll); whole flags first */
+            if (e->stop_cut && e->htx.in_frame && e->htx.frames == e->stop_frames)
+                v42hdlc_tx_abort(&e->htx);
+            v42hdlc_tx_flags(&e->htx, 2);
+        }
     }
     v42lapm_line_restored(&e->lapm);
 }

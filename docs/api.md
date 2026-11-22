@@ -251,7 +251,8 @@ control) when the far end has no V.42 and fallback is on. How to use it:
 | `int v90m_ec_tx_bit(v90m_ec_t *e)` | from the modem's getbit |
 | `void v90m_ec_rx_bit(v90m_ec_t *e, int bit)` | from the modem's putbit |
 | `void v90m_ec_tick(v90m_ec_t *e, unsigned ms)` | timers |
-| `void v90m_ec_line_restored(v90m_ec_t *e)` | on `V90M_EV_DATA_MOVING` |
+| `void v90m_ec_line_stopped(v90m_ec_t *e)` | on `V90M_EV_DATA_STOPPED`: the falling edge of `v90m_state.moving` (1 to 0), within the sample it happens (from the event callback, or a `v90m_get_state` after each sample). Notes the frame in flight and begins no new frame until the line is back. Optional |
+| `void v90m_ec_line_restored(v90m_ec_t *e)` | on `V90M_EV_DATA_MOVING`: the rising edge of `moving` (0 to 1), within the sample it happens. After `v90m_ec_line_stopped`: aborts the frame the stop cut if it is still going, and opens the next frame with two whole flags; in any case LAPM polls when frames are unacknowledged |
 | `size_t v90m_ec_write(v90m_ec_t *e, const uint8_t *data, size_t len)` | |
 | `size_t v90m_ec_write_space(const v90m_ec_t *e)` | |
 | `size_t v90m_ec_read(v90m_ec_t *e, uint8_t *data, size_t max)` | |
