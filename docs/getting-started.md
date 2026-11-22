@@ -11,7 +11,7 @@ make check              # the test suite on the host (see testing.md)
 ```
 
 `make` builds, in `build/`, the static library `libv90modem.a`, the shared
-library `libv90modem.so.0.4.0` (with its `.so.0` and `.so` links), the
+library `libv90modem.so.0.5.0` (with its `.so.0` and `.so` links), the
 pkg-config file `libv90modem.pc`, and the two examples
 `build/answer_file` and `build/call_loop`. `CC`, `CFLAGS` and `BUILD`
 can be set on the command line; the default flags are

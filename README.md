@@ -249,7 +249,7 @@ which makes it about 123 M counted instructions a second.
 | calling, V.92 (0 / 100 ppm) | 69.4 / 73.9 | 98 k |
 | calling, Bell 103 / Bell 212A | 9.84 / 4.43 | 2.3 k / 2.8 k |
 | answering, x2 (32000 / 56000) | 81.9 / 83.7 | not measured |
-| answering, K56flex (56000) | 39.0 | not measured |
+| answering, K56flex (56000) | 39.0 (V.90 38.9 the same way, `cost-k56`) | not measured |
 
 x2 costs about twice V.90 (`make cost-x2`, which measures V.90 answering
 at 38.9 M the same way): the V.34 upstream the client dictates (64-state

@@ -3,7 +3,7 @@
 What each version of libv90modem changes for a program that uses it. The
 API is not stable before 1.0: a 0.x version may change it, and every
 change is listed here. Rebuild against the new header with every version;
-`V90M_MEM_SIZE` and the configuration struct have changed in each.
+`V90M_MEM_SIZE` and the configuration struct have changed in most.
 
 "Simulation and own answerer only" means: tried against simulated lines and
 this library's own answering modem, never against a real modem or server.
@@ -80,9 +80,9 @@ Limits (`docs/limits.md`, "K56flex (answering)"): offered only behind
 `V90M_MOD_K56`; no A-law K56flex; we never renegotiate or retrain
 ourselves, so a degrading upstream ends the call at the watchdog
 (`V90M_END_LOST`); the tables of Lucent clients are assumed to be the
-same and are unverified. K56flex data mode costs about what V.90's does (39.0 M ARM instructions a
-second at 56000 against V.90 answering's 38.9 M, `make cost-k56`): it asks
-the client for V.90's upstream options.
+same and are unverified. K56flex data mode costs about what V.90's does
+(39.0 M ARM instructions a second at 56000 against V.90 answering's 38.9 M,
+`make cost-k56`): it asks the client for V.90's upstream options.
 
 ## 0.4.0 (2026-11-20)
 

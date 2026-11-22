@@ -55,8 +55,8 @@ On 32-bit ARM some long tests run a shorter version (`TEST_SHORT`, set in
 `test/test.h` unless `TEST_FULL` is defined), so their counts differ from
 the host's. K56flex's are among them: `test_answer_k56` (fewer rates,
 pads and robbed-bit patterns, one retrain), `test_k56enc` (four robbed-bit
-masks against the oracle) and the API test's K56flex calls (one
-renegotiation, one retrain).
+masks against the oracle) and the API test's K56flex calls (the
+renegotiation to 10 and the one with rate 0; the single retrain).
 
 ## `make check-ubsan`
 

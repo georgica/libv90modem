@@ -48,8 +48,8 @@ jobs:
   arm:
     name: ARMv5 under qemu (short tests)
     runs-on: ubuntu-24.04
-    # 0.4.0 took 2 h 57 min here; K56flex adds its own tests. GitHub's
-    # limit for a job is 360 minutes.
+    # 0.4.0 took 2 h 57 min here, mostly test_p34 and the orig_* tests
+    # (K56flex adds about 40 s). GitHub's limit for a job is 360 minutes.
     timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4
