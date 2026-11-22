@@ -1,0 +1,20 @@
+a call, 2 km, +30 ppm, echo -10 dB, noise -75 dBm0 (downstream) / -70 dBm0 (upstream)
+  state 3, error 0; data at 7246 ms: down 52000, up 28800 bit/s, SNR 55.2 dB
+  INFO1a 2015 ms, Sd-bar 3831, Jd 4717, Jd' 4763, DIL ended 5843, Ri 5914, Ri-bar 6069, MP 6974, Ed 7209
+  canceller after MD: 73.4 dB; DIL: 8 per interval and Ucode, robbed 000000, deviation 0.0 %
+  CPt: K 16 (29333 bit/s), z 62.1; CP: K 33, z 12.0; TRN2d frames 1200 (0 wrong); B1d wrong bits 0
+  4 s of data: down 207987 bits, 0 check failures; up 115200 bits, 0 failures
+a rate renegotiation begun by the digital modem
+  the stream's break: 24 check failures (the 23-bit check across the gap)
+  state 3, renegotiations 1, digital 11; then 2 s: 104013 bits down, 0 new failures
+cleardown by us
+  ours 5 (error 12) after 723 ms; digital 17 (error 10)
+cleardown by the digital modem
+  ours 5 (error 11) after 99 ms
+time-outs: the digital modem silent from
+  the start of Phase 3 (no Sd): 1500 ms from Ja    ended 5, error 2, 1500 ms after Ja
+  TRN1d learnt (no Jd): 4500 ms from Ja's end      ended 5, error 4, 4500 ms after the end of Ja
+  Jd' (no DIL)                                     ended 5, error 6, 1087 ms after the silence
+  Ri-bar (no MP): 15 s from INFO1a                 ended 5, error 8, 15028 ms after INFO1a
+  data mode: carrier lost                          ended 5, error 13, 595 ms after the silence
+v90a: 50 checks, 0 failures

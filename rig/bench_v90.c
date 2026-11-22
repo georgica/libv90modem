@@ -5,6 +5,8 @@
  * the answering modem receives. This program replays them through the same
  * modem code (integer only, so the result must be identical: the transmit
  * hash is compared with the host's) and times it per phase of the call.
+ * It ends with "tx hash" (what it sent) and "rx hash" (the data bits it
+ * received, FNV-1a over one bit at a time) for tools/bench-hashes.sh.
  *
  *   bench_v90 [-x | -k] RECORDING [HOST-HASH-HEX]
  *
@@ -20,10 +22,10 @@
 #include <time.h>
 #include "../modem/answer.h"
 
-typedef struct { uint32_t s; long n, bad; } prbs;
+typedef struct { uint32_t s; long n, bad; uint32_t h; } prbs;
 static int nx(prbs *p) { p->s = p->s * 1103515245u + 12345u; return (int)((p->s >> 16) & 1); }
 static int get(void *u) { prbs *p = ((prbs **)u)[0]; p->n++; return nx(p); }
-static void put(void *u, int b) { prbs *p = ((prbs **)u)[1]; p->n++; if (nx(p) != (b & 1)) p->bad++; }
+static void put(void *u, int b) { prbs *p = ((prbs **)u)[1]; p->n++; p->h = (p->h ^ (uint32_t)(b & 1)) * 16777619u; if (nx(p) != (b & 1)) p->bad++; }
 
 static double now(void)
 {
@@ -51,7 +53,7 @@ int main(int argc, char **argv)
     if (argc > 1 && !strcmp(argv[1], "-x")) { x2 = 1; argv++; argc--; }
     else if (argc > 1 && !strcmp(argv[1], "-k")) { k56 = 1; argv++; argc--; }
     if (argc < 2 || !(f = fopen(argv[1], "rb"))) { fprintf(stderr, "usage: bench_v90 [-x | -k] RECORDING [HASH]\n"); return 2; }
-    src.s = 5; sink.s = 9; io[0] = &src; io[1] = &sink;
+    src.s = 5; sink.s = 9; sink.h = 2166136261u; io[0] = &src; io[1] = &sink;
     memset(&ac, 0, sizeof ac);
     ac.level = 3000; ac.modes = V8_MOD_V22 | V8_MOD_V21 | ANS_MODE_V90; ac.getbit = get; ac.putbit = put; ac.user = io;
     if (x2) ac.modes |= V8_MOD_V34 | ANS_MODE_X2;
@@ -76,6 +78,7 @@ int main(int argc, char **argv)
            total / 8000.0, (unsigned)hash,
            argc > 2 ? (strtoul(argv[2], NULL, 16) == hash ? " = host" : " DIFFERS FROM HOST") : "",
            a.connected, a.bitrate, a.rx_bitrate, sink.n, sink.bad);
+    printf("tx hash %08x\nrx hash %08x\n", (unsigned)hash, (unsigned)sink.h);
     {
         int p;
         for (p = 0; p < NPH; p++) {

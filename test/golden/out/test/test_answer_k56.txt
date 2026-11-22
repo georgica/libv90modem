@@ -1,0 +1,94 @@
+  K56flex client, K56flex not offered: V.34 28800 / 28800 bit/s, 0 bad; agreed 0, JM 1, x2 0 (flipped 0), CL 0 (ok 0), MS 0, ACK 0, NAK 0
+  K56flex client, K56flex and x2 offered: NO DATA 56000 / 31200 bit/s, -1 bad; agreed 1, JM 1, x2 0 (flipped 0), CL 1 (ok 1), MS 1, ACK 1, NAK 0
+     our ANSam 3.613 s after answering (0.200 s without K56flex); INFO1a offset 1 at 3200 baud, ANS_K56 at 7.884 s, the client took the flag at 7.873 s; K56flex 56000 / 31200 bit/s
+  agreed K56flex client, INFO1c 0x200: V.34 28800 / 28800 bit/s, 0 bad; agreed 1, JM 1, x2 0 (flipped 0), CL 1 (ok 1), MS 1, ACK 1, NAK 0
+     INFO1a offset 0 at 3200 baud (without K56flex: 28800 / 28800 bit/s, offset 0 at 3200 baud)
+  agreed K56flex client, 3000 baud up at most: V.34 28800 / 26400 bit/s, 0 bad; agreed 1, JM 1, x2 0 (flipped 0), CL 1 (ok 1), MS 1, ACK 1, NAK 0
+     INFO1a offset 0 at 3000 baud (without K56flex: 28800 / 26400 bit/s, offset 0 at 3000 baud)
+  V.8bis caller without K56flex: V.34 28800 / 28800 bit/s, 0 bad; agreed 0, JM 1, x2 0 (flipped 0), CL 1 (ok 1), MS 0, ACK 0, NAK 0
+     our ANSam 1700.0 ms after our CL ended; 3.807 s later than without K56flex
+  caller without V.8bis: V.34 28800 / 28800 bit/s, 0 bad; agreed 0, JM 1, x2 0 (flipped 0), CL 0 (ok 0), MS 0, ACK 0, NAK 0
+     our ANSam 1.790 s later than without K56flex
+  K56flex client, its MS with a bad FCS: V.34 28800 / 28800 bit/s, 0 bad; agreed 0, JM 1, x2 0 (flipped 0), CL 1 (ok 1), MS 1, ACK 0, NAK 1
+  K56flex client with PCM in its CM: agreed 1, JM 100, V.90 Phase 2 6.114 s after answering
+  K56flex client, r = 1: K56flex 32000 / 31200 bit/s (client 32000 / 31200), data 102057 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3192 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+     ANS_K56 at 7.884 s, data mode at 16.216 s (8.332 s after); silence 2 12288, TRN2A 16336, TRN2B 2052 symbols; bad octets by segment: 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  K56flex client, mask 0FFF, echo delay measured: K56flex 32000 / 28800 bit/s (client 32000 / 28800), data 110601 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3459 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+     echo delay measured: 0 samples
+     (the same client without K56flex, sim/v34peer: 28800 bit/s up)
+  K56flex client asking r = 13, max_down 32000: K56flex 32000 / 31200 bit/s (client 32000 / 31200), data 102057 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3192 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+  our cleardown in K56flex data mode: 0, then octet FF, phase 3, cleared 2
+  K56flex client silent before its S: the call ended 3.00 s later, error 2, k56_failed 1, lost 0
+  K56flex client silent before its J24: the call ended 1.87 s later, error 3, k56_failed 1, lost 0
+  K56flex client silent before its MP: the call ended 6.04 s later, error 5, k56_failed 1, lost 0
+  K56flex client silent before its E: the call ended 1.99 s later, error 7, k56_failed 1, lost 0
+  K56flex client silent in data mode: the call ended 0.53 s later, error 9, k56_failed 0, lost 1
+  K56flex client, J24 octet C0 (pad code 3): the call ended 5.69 s after ANS_K56, error 4, k56_failed 1
+  K56flex client, MP rate_ac 0: the call ended 6.29 s after ANS_K56, error 6, k56_failed 1
+  K56flex client, MP mask 0: the call ended 6.29 s after ANS_K56, error 6, k56_failed 1
+  K56flex client, MP mask 2000 (33600 only): the call ended 6.29 s after ANS_K56, error 6, k56_failed 1
+  K56flex client, B1 wrong: ended 8.32 s after ANS_K56, error 8, k56_failed 1
+  K56flex client, E early: E at 15.513 s, data mode at 16.216 s, ended -0.000 s, error 0, connected 1, k56_failed 0
+  r = 1, pad 0, robbed 24 (J octet 09): K56flex 32000 / 31200 bit/s (client 32000 / 31200), data 102057 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3192 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+  r = 1, pad 2, robbed 24 (J octet 89): K56flex 32000 / 31200 bit/s (client 32000 / 31200), data 102057 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3192 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+  r = 1, pad 0, robbed 00 (J octet 00): K56flex 32000 / 31200 bit/s (client 32000 / 31200), data 102057 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3192 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+  r = 2, pad 0, robbed 00 (J octet 00): K56flex 34000 / 31200 bit/s (client 34000 / 31200), data 108441 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3192 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+  r = 7, pad 0, robbed 00 (J octet 00): K56flex 44000 / 31200 bit/s (client 44000 / 31200), data 140361 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3192 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+  r = 12, pad 0, robbed 00 (J octet 00): K56flex 54000 / 31200 bit/s (client 54000 / 31200), data 172281 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3192 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+  r = 13, pad 0, robbed 00 (J octet 00): K56flex 56000 / 31200 bit/s (client 56000 / 31200), data 178665 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3192 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+  r = 13, pad 1, robbed 00 (J octet 40): K56flex 56000 / 31200 bit/s (client 56000 / 31200), data 178665 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3192 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+  r = 7, pad 1, robbed 00 (J octet 40): K56flex 44000 / 31200 bit/s (client 44000 / 31200), data 140361 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3192 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+  r = 13, pad 2, robbed 00 (J octet 80): K56flex 56000 / 31200 bit/s (client 56000 / 31200), data 178665 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3192 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+  r = 7, pad 2, robbed 00 (J octet 80): K56flex 44000 / 31200 bit/s (client 44000 / 31200), data 140361 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3192 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+  r = 13, pad 0, robbed 24 (J octet 09): K56flex 56000 / 31200 bit/s (client 56000 / 31200), data 165897 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3192 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+  r = 3, pad 0, robbed 24 (J octet 09): K56flex 36000 / 31200 bit/s (client 36000 / 31200), data 102057 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3192 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+  r = 13, pad 2, robbed 24 (J octet 89): K56flex 56000 / 31200 bit/s (client 56000 / 31200), data 165897 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3192 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+  r = 3, pad 2, robbed 24 (J octet 89): K56flex 36000 / 31200 bit/s (client 36000 / 31200), data 102057 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3192 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+  r = 13, pad 0, robbed 12 (J octet 24): K56flex 56000 / 31200 bit/s (client 56000 / 31200), data 165897 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3192 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+  r = 3, pad 0, robbed 12 (J octet 24): K56flex 36000 / 31200 bit/s (client 36000 / 31200), data 102057 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3192 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+  r = 13, pad 2, robbed 12 (J octet A4): K56flex 56000 / 31200 bit/s (client 56000 / 31200), data 165897 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3192 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+  r = 3, pad 2, robbed 12 (J octet A4): K56flex 36000 / 31200 bit/s (client 36000 / 31200), data 102057 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3192 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+  r = 13, pad 0, robbed 3F (J octet 3F): K56flex 56000 / 31200 bit/s (client 56000 / 31200), data 153129 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3192 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+  r = 3, pad 0, robbed 3F (J octet 3F): K56flex 36000 / 31200 bit/s (client 36000 / 31200), data 100013 bits 0 bad down, 111999 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3575 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+  r = 13, pad 2, robbed 3F (J octet BF): K56flex 56000 / 31200 bit/s (client 56000 / 31200), data 153129 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3192 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+  r = 3, pad 2, robbed 3F (J octet BF): K56flex 36000 / 31200 bit/s (client 36000 / 31200), data 100013 bits 0 bad down, 111999 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3575 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+  r = 13, pad 0, robbed 1F (J octet 37): K56flex 56000 / 31200 bit/s (client 56000 / 31200), data 153129 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3192 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+  r = 3, pad 0, robbed 1F (J octet 37): K56flex 36000 / 31200 bit/s (client 36000 / 31200), data 100013 bits 0 bad down, 111999 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3575 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+  r = 13, pad 2, robbed 1F (J octet B7): K56flex 56000 / 31200 bit/s (client 56000 / 31200), data 153129 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3192 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+  r = 3, pad 2, robbed 1F (J octet B7): K56flex 36000 / 31200 bit/s (client 36000 / 31200), data 100013 bits 0 bad down, 111999 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3575 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+  renegotiations 13 -> 10 -> 12, robbed 00: K56flex 54000 / 31200 bit/s (client 54000 / 31200), data 173114 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 32 MP' 32 (0 wrong), E 1, B1 bad 0, frames 13095 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+     tx_bps 56000, 50000, 54000; the last TRN2A 2048, TRN2B 2048 symbols; bad octets by segment: 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+     segment 0: down 274985 bits 0 bad, up 153362 bits 0 bad
+     segment 1: down 246186 bits 0 bad, up 153729 bits 0 bad
+     segment 2: down 173114 bits 0 bad, up 100065 bits 0 bad
+  renegotiations 13 -> 10 -> 12, robbed 24: K56flex 54000 / 31200 bit/s (client 54000 / 31200), data 160286 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 32 MP' 32 (0 wrong), E 1, B1 bad 0, frames 13095 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+     tx_bps 56000, 50000, 54000; the last TRN2A 2048, TRN2B 2048 symbols; bad octets by segment: 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+     segment 0: down 255337 bits 0 bad, up 153362 bits 0 bad
+     segment 1: down 226486 bits 0 bad, up 153730 bits 0 bad
+     segment 2: down 160286 bits 0 bad, up 100065 bits 0 bad
+  K56flex client, a renegotiation MP with rate 0: ended 0.26 s after its S, error 11, cleared 1, k56_failed 0, lost 0
+  K56flex client silent after its renegotiation's S: ended 5.98 s later, error 10, k56_failed 1, lost 0
+  K56flex client, no renegotiation: K56flex 56000 / 31200 bit/s (client 56000 / 31200), data 3359633 bits 0 bad down, 1872303 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 59995 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+     60 s of data mode, R in our data 0 times
+  K56flex client, a retrain 5000 ms into data mode, robbed 00: K56flex 56000 / 31200 bit/s (client 56000 / 31200), data 179227 bits 0 bad down, 100010 bits 0 bad up; client: 0 bad training octets, Js 1, MP 32 MP' 32 (0 wrong), E 1, B1 bad 0, frames 8114 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+     ANS_K56RT 0.143 s after its retrain began, 2.03 s in it, data again 10.50 s after it (the first training: 8.33 s from ANS_K56); answer_retrain -1
+     segment 0: down 274985 bits 0 bad, up 153284 bits 0 bad
+     segment 1: down 179227 bits 0 bad, up 100010 bits 0 bad
+  K56flex client, a retrain 5000 ms into data mode, robbed 24: K56flex 56000 / 31200 bit/s (client 56000 / 31200), data 166417 bits 0 bad down, 100010 bits 0 bad up; client: 0 bad training octets, Js 1, MP 32 MP' 32 (0 wrong), E 1, B1 bad 0, frames 8114 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+     ANS_K56RT 0.143 s after its retrain began, 2.03 s in it, data again 10.50 s after it (the first training: 8.33 s from ANS_K56); answer_retrain -1
+     segment 0: down 255337 bits 0 bad, up 153284 bits 0 bad
+     segment 1: down 166417 bits 0 bad, up 100010 bits 0 bad
+  K56flex client, three retrains 300 ms into data mode each: 3 begun (ours 3), data again 3 times, ended 0.143 s after the third, k56_failed 1
+  K56flex client, three retrains with data between: K56flex 56000 / 31200 bit/s (client 56000 / 31200), data 179225 bits 0 bad down, 100010 bits 0 bad up; client: 0 bad training octets, Js 1, MP 64 MP' 64 (0 wrong), E 1, B1 bad 0, frames 17938 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+     segment 0: down 274985 bits 0 bad, up 153284 bits 0 bad
+     segment 1: down 274987 bits 0 bad, up 153284 bits 0 bad
+     segment 2: down 274985 bits 0 bad, up 153284 bits 0 bad
+     segment 3: down 179225 bits 0 bad, up 100010 bits 0 bad
+  K56flex client, a retrain with INFO1c 0x200: INFO1a offset 0, ended 2.17 s after it began, k56_failed 1
+  K56flex client silent after its retrain's tone B: ended 9.07 s after its tone B began, error 0, k56_failed 1, lost 0
+  V.34 caller without V.8bis, K56flex offered: 28800 / 28800 bit/s at 3200 baud, 0 bad (without: 28800 / 28800 at 3200, 0 bad); ANSam 1.790 s later
+  A-law V.34 caller, K56flex offered: 63216 samples sent, all as without K56flex
+  our calling modem in V.90, K56flex offered: mod 4, 52000 / 28800 bit/s, 180570 / 100008 bits, 0 / 0 fail (without: mod 4, 52000 / 28800)
+  our calling modem in V.92, K56flex offered: mod 7, 52000 / 34666 bit/s, 150072 / 100048 bits, 0 / 0 fail (without: mod 7, 52000 / 34666)
+  x2 client, x2 and K56flex offered: x2 32000 / 24000 bit/s, down 118512 bits 0 bad, up 100020 bits 0 bad (without K56flex: 32000 / 24000)
+answer_k56: 1418 checks, 0 failures

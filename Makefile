@@ -8,6 +8,10 @@
 #   make test-times      tools/test-times.txt (the pool's order, longest first) from
 #                        the run times of the last runs ($(BUILD)/test-times.txt)
 #   make check-ubsan     the host suite with undefined behaviour trapped (clang)
+#   make golden          make check, then every program's output against its golden copy
+#                        (test/golden/out, tools/golden.sh); golden-record writes them
+#   make bench-hashes    the benches' transmit and receive hashes on the host against
+#                        test/golden/bench.txt (tools/bench-hashes.sh)
 #   make install         into $(DESTDIR)$(PREFIX); make uninstall takes it out
 #   make examples        examples/answer_file (answering a recording), examples/call_loop
 #                        (calling the library's own answerer; make check runs it)
@@ -221,8 +225,11 @@ test-arm: $(addprefix $(BUILD)/arm_,$(TESTS))
 	@echo "== running ARM tests under $(QEMU) =="
 	@if tools/par-run.sh $(abspath $(BUILD))/arm_log "$(QEMU)" "[arm]" $(addprefix $(abspath $(BUILD))/arm_,$(TESTS)); \
 	 then echo "ALL ARM TESTS PASS"; else echo "ARM TESTS FAILED"; exit 1; fi
+# (its output also in $(BUILD)/log/api/, for tools/golden.sh)
 test-api: $(addprefix $(BUILD)/api_,$(API_TESTS))
-	@fail=0; for t in $(API_TESTS); do $(abspath $(BUILD))/api_$$t || fail=1; done; [ $$fail -eq 0 ]
+	@mkdir -p $(BUILD)/log/api; fail=0; for t in $(API_TESTS); do \
+	   $(abspath $(BUILD))/api_$$t > $(BUILD)/log/api/$$t.log 2>&1 || fail=1; cat $(BUILD)/log/api/$$t.log; \
+	 done; [ $$fail -eq 0 ]
 test-api-arm: $(addprefix $(BUILD)/arm/api_,$(API_TESTS))
 	@fail=0; for t in $(API_TESTS); do $(QEMU) $(abspath $(BUILD))/arm/api_$$t || fail=1; done; [ $$fail -eq 0 ]
 
@@ -257,6 +264,24 @@ test-times:
 
 check: test-all test-api test-examples test-fixtures check-symbols
 	@echo "ALL HOST CHECKS PASS"
+# Golden outputs (tools/golden.sh): every program of make check, its output
+# (less host timing) against test/golden/out/<dir>/<prog>.txt. golden runs
+# make check (PAR defaults to every CPU here) and compares; golden-record
+# writes them from that run instead (only when a change explains it).
+# print-golden: each program's log key under $(BUILD)/log and its path.
+NPROC := $(shell nproc 2>/dev/null || echo 4)
+.PHONY: golden golden-record print-golden bench-hashes
+golden golden-record:
+	@$(MAKE) -s check PAR=$(or $(PAR),$(NPROC)) BUILD=$(BUILD)
+	@tools/golden.sh $(if $(filter golden,$@),check,record) $(BUILD)
+print-golden:
+	@for t in $(TESTS); do echo $$t $(abspath $(BUILD))/$$t; done
+	@for d in $(SUBS); do $(MAKE) -s --no-print-directory -C $$d BUILD=$(SUB_BUILD) print-tests | sed "s|^.*/\([^/]*\)$$|$$d/\1 &|" || exit 1; done
+	@for t in $(API_TESTS); do echo api/$$t $(abspath $(BUILD))/api_$$t; done
+	@echo examples/call_loop $(abspath $(BUILD))/call_loop
+# the benches' tx and rx hashes against test/golden/bench.txt (host only)
+bench-hashes:
+	@BUILD=$(BUILD) tools/bench-hashes.sh check
 # recordings of real calls (test/fixtures/fixtures.txt) through the replay tool
 test-fixtures: $(BUILD)/v90m-replay
 	@echo "== real-modem recordings =="; test/fixtures/check.sh $(abspath $(BUILD))/v90m-replay
@@ -291,7 +316,9 @@ examples: $(addprefix $(BUILD)/,$(EXAMPLES))
 $(addprefix $(BUILD)/,$(EXAMPLES)): $(BUILD)/%: examples/%.c $(STATIC) include/v90modem.h
 	$(CC) $(CFLAGS) -Iinclude -o $@ $< $(STATIC) $(LDLIBS)
 test-examples: $(BUILD)/call_loop
-	@echo "== examples/call_loop =="; $(abspath $(BUILD))/call_loop
+	@echo "== examples/call_loop =="; mkdir -p $(BUILD)/log/examples; \
+	 $(abspath $(BUILD))/call_loop > $(BUILD)/log/examples/call_loop.log 2>&1; rc=$$?; \
+	 cat $(BUILD)/log/examples/call_loop.log; exit $$rc
 
 # ---- the replay tool (ships with the library): modem and V.42 only, built
 # from the sources with the trace hooks in ----

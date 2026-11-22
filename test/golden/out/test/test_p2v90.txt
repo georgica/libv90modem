@@ -1,0 +1,12 @@
+V.90 Phase 2: the analogue modem (p2call) against the digital modem (p2d)
+  10 ms each way, echo, noise                  analogue 13 (err 0) at 2053 ms, digital 12 at 2057 ms; rtd 160 / 160 (line 160); up 3200, INFO1a: v90 1, UINFO 90, MD 15, up_sr 4
+    our probing lasted 680 ms
+  69 ms round trip, 14 / 16 dB loss, strong echo analogue 13 (err 0) at 2292 ms, digital 12 at 2323 ms; rtd 551 / 550 (line 550); up 3200, INFO1a: v90 1, UINFO 90, MD 15, up_sr 4
+  our own sample path 12 ms (io_delay)         analogue 13 (err 0) at 2111 ms, digital 12 at 2121 ms; rtd 161 / 160 (line 160); up 3200, INFO1a: v90 1, UINFO 90, MD 15, up_sr 4
+  the digital modem offers 3000 only           analogue 13 (err 0) at 2053 ms, digital 12 at 2057 ms; rtd 160 / 160 (line 160); up 3000, INFO1a: v90 1, UINFO 90, MD 15, up_sr 3
+recovery
+  our first INFO0a lost (9.2.2.2.1)            analogue 13 (err 0) at 2710 ms, digital 12 at 2715 ms; rtd 160 / 160 (line 160); up 3200, INFO1a: v90 1, UINFO 90, MD 15, up_sr 4
+time-outs
+  no digital modem: analogue 14, error 1 at 8000 ms
+  digital modem gone after INFO0: analogue 14, error 2 at 9038 ms
+p2v90: 69 checks, 0 failures

@@ -1,0 +1,4 @@
+335 streams (D = 6..72, CPd of 2 to 1170 words), 15 with a whole frame of fill after the CRC
+a bit wrong in the first of two CPd: 1 taken, 1 bad
+ones, zeros, random: events 0x0
+v92aseq: 3021 checks, 0 failures

@@ -1,0 +1,24 @@
+a call, 2 km, +30 ppm, echo -10 dB, noise -75 dBm0 (downstream) / -70 dBm0 (upstream)
+  state 3, error 0, PCM upstream 1; data at 8171 ms: down 46666, up 36000 bit/s, SNR 54.6 dB; digital 9 (error 0)
+  INFO1a 2049 ms, Sd-bar 3172, Jd 4075, Su 4075, Jp 4138, Jp' 4176, DIL ended 5256, CPt 5265, Ri 5427, Ri-bar 5551, SUVd 7942, CPd 8091, Ed 8134
+  canceller after TRN1u: 73.2 dB; DIL: 8 per interval and Ucode; Jp: 51712/65536 of a symbol
+  our clock against the network's: 30.02 ppm from Phase 2 (L2), 30.02 ppm from Sd and after (line: +30)
+  CPd: K 54, trellis 0, LZ1 0 LP1 64 LZ2 128 LP2 0, 4G 198; B1d wrong bits 0; digital B1u wrong 0
+  4 s of data: down 186655 bits, 0 check failures; up 144018 bits, 0 failures
+a rate renegotiation begun by the digital modem
+  the stream's break: 24 check failures (the 23-bit check across the gap)
+  state 3, renegotiations 1, digital 9, up 36000; then 2 s: 93345 bits down, 71982 up, 0 new failures
+cleardown by us
+  ours 5 (error 12) after 299 ms; digital 12 (error 9)
+cleardown by the digital modem
+  ours 5 (error 11) after 3960 ms
+the digital modem without V.92: V.90
+  state 3, PCM upstream 0, down 46666, up 28800 bit/s; digital p34d 11
+time-outs: the digital modem silent from
+  the start of Phase 3 (no Sd): 1500 ms from Ja    ended 5, error 2, 1500 ms after Ja
+  TRN1d learnt (no Jd): 4500 ms from Ja's end      ended 5, error 4, 4500 ms after the end of Ja
+  our Su (no Jp)                                   ended 5, error 14, 3000 ms after the silence
+  Jp' (no DIL)                                     ended 5, error 6, 1087 ms after the silence
+  Ri-bar (no CPd): 20 s from INFO1a                ended 5, error 8, 20138 ms after INFO1a
+  data mode: carrier lost                          ended 5, error 13, 593 ms after the silence
+v92a: 66 checks, 0 failures

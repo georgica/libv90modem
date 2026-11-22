@@ -1,0 +1,17 @@
+v90 tx 8e3136e9
+v90 rx 4bebb9be
+x2 tx 37c3e5f5
+x2 rx af8dfaea
+k56 tx 52c83abc
+k56 rx 58993208
+v34 tx bfb47ae9
+v34 rx 8d9206c2
+v90a dec cdf21a51
+v90c tx fa7486c7
+v90c rx 64820c91
+v92c tx 22bf87ff
+v92c rx 64820c91
+bell103 tx 48f22641
+bell103 rx 811c9dc5
+bell212 tx fc125ef2
+bell212 rx c835d68d

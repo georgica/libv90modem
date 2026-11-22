@@ -1,0 +1,38 @@
+  data after 3.42 s (Phase 3 + 4), SNR at MP: answer 48.1 dB, call 48.1 dB; echo down 57 / 57 dB
+  clean, answer on the low carrier   3200 sym/s  A->C 31200 bit/s  124800 bits 0 errors   C->A 31200 bit/s  124800 bits 0 errors
+  data after 3.42 s (Phase 3 + 4), SNR at MP: answer 48.1 dB, call 48.1 dB; echo down 57 / 57 dB
+  clean, answer on the high carrier  3200 sym/s  A->C 31200 bit/s  124800 bits 0 errors   C->A 31200 bit/s  124800 bits 0 errors
+  data after 3.48 s (Phase 3 + 4), SNR at MP: answer 48.1 dB, call 48.1 dB; echo down 57 / 57 dB
+  clean, answer on the low carrier   3000 sym/s  A->C 28800 bit/s  115200 bits 0 errors   C->A 28800 bit/s  115200 bits 0 errors
+  data after 3.48 s (Phase 3 + 4), SNR at MP: answer 48.1 dB, call 48.1 dB; echo down 57 / 57 dB
+  clean, answer on the high carrier  3000 sym/s  A->C 28800 bit/s  115200 bits 0 errors   C->A 28800 bit/s  115200 bits 0 errors
+  data after 3.70 s (Phase 3 + 4), SNR at MP: answer 37.3 dB, call 43.3 dB; echo down 30 / 45 dB
+  clean, answer on the low carrier   2400 sym/s  A->C 21600 bit/s   86400 bits 0 errors   C->A 21600 bit/s   86400 bits 0 errors
+  data after 3.70 s (Phase 3 + 4), SNR at MP: answer 39.7 dB, call 45.1 dB; echo down 30 / 45 dB
+  clean, answer on the high carrier  2400 sym/s  A->C 21600 bit/s   86400 bits 0 errors   C->A 21600 bit/s   86400 bits 0 errors
+  noise 38 dB below the signal:                                     3200 sym/s  A->C 28800 bit/s  230400 bits 0 errors   C->A 28800 bit/s  230400 bits 0 errors
+  noise 32 dB below the signal:                                     3200 sym/s  A->C 24000 bit/s  192000 bits 0 errors   C->A 24000 bit/s  192000 bits 0 errors
+  noise 26 dB below the signal:                                     3200 sym/s  A->C 16800 bit/s  134400 bits 0 errors   C->A 16800 bit/s  134400 bits 0 errors
+  noise 20 dB below the signal:                                     3200 sym/s  A->C  9600 bit/s   76800 bits 0 errors   C->A  9600 bit/s   76800 bits 0 errors
+  noise 14 dB below the signal:                                     3200 sym/s  A->C  4800 bit/s   38400 bits 0 errors   C->A  4800 bit/s   38400 bits 0 errors
+  16-point TRN / MP / E              3200 sym/s  A->C 31200 bit/s  124800 bits 0 errors   C->A 31200 bit/s  124800 bits 0 errors
+  32-state trellis                   3200 sym/s  A->C 31200 bit/s  124800 bits 0 errors   C->A 31200 bit/s  124800 bits 0 errors
+  64-state trellis                   3200 sym/s  A->C 31200 bit/s  124800 bits 0 errors   C->A 31200 bit/s  124800 bits 0 errors
+  non-linear encoder                 3200 sym/s  A->C 31200 bit/s  124800 bits 0 errors   C->A 31200 bit/s  124800 bits 0 errors
+  expanded shaping                   3200 sym/s  A->C 31200 bit/s  124800 bits 0 errors   C->A 31200 bit/s  124800 bits 0 errors
+  precoder (MP Type 1)               3200 sym/s  A->C 31200 bit/s  124800 bits 0 errors   C->A 31200 bit/s  124800 bits 0 errors
+  pre-emphasis 7, 3 dB less power    3200 sym/s  A->C 31200 bit/s  124800 bits 0 errors   C->A 31200 bit/s  124800 bits 0 errors
+  pre-emphasis 3, all of the above   3200 sym/s  A->C 31200 bit/s  124800 bits 0 errors   C->A 31200 bit/s  124800 bits 0 errors
+  all asked of the caller too        3200 sym/s  A->C 31200 bit/s  124800 bits 0 errors   C->A 31200 bit/s  124800 bits 0 errors
+  echo delay found: 154 samples (true 160);                                     3200 sym/s  A->C 31200 bit/s  124800 bits 0 errors   C->A 31200 bit/s  124800 bits 0 errors
+  far echo 80 ms late, 16 dB down: echo down 59 dB;                                     3200 sym/s  A->C 31200 bit/s  124800 bits 0 errors   C->A 31200 bit/s  124800 bits 0 errors
+  asymmetric: ceilings 19200 / 26400 3200 sym/s  A->C 19200 bit/s   38400 bits 0 errors   C->A 26400 bit/s   52800 bits 0 errors
+  renegotiation took 371 ms;  begun by the answer modem          3200 sym/s  A->C 31200 bit/s   93600 bits 0 errors   C->A 31200 bit/s   93600 bits 0 errors
+  renegotiation took 313 ms;  begun by both at once              3200 sym/s  A->C 31200 bit/s   93600 bits 0 errors   C->A 31200 bit/s   93600 bits 0 errors
+  renegotiation took 371 ms;  answer modem, new ceiling 14400    3200 sym/s  A->C 31200 bit/s   93600 bits 0 errors   C->A 14400 bit/s   43200 bits 0 errors
+  renegotiation with a Type 0 MP: precoder kept 3200 sym/s  A->C 31200 bit/s   93600 bits 0 errors   C->A 31200 bit/s   93600 bits 0 errors
+  noise rises to -27 dB in data mode: 1 renegotiation(s) of our own;                                     3200 sym/s  A->C 31200 bit/s  124800 bits 0 errors   C->A 16800 bit/s   67200 bits 0 errors
+  Tone B in data mode: retrain after 61 ms
+  caller's signal lost in data mode: carrier lost after 522 ms
+  as call modem after V.90 Phase 2   3200 sym/s  A->C 31200 bit/s   93600 bits 0 errors   C->A 28800 bit/s   86400 bits 0 errors
+v34dx: 690 checks, 0 failures

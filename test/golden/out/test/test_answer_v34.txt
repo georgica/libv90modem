@@ -1,0 +1,2 @@
+  V.34 caller: 28800 bit/s to it, 28800 bit/s from it; 86400 / 86400 bits, 0 / 0 bad
+answer_v34: 32 checks, 0 failures

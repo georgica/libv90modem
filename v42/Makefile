@@ -17,7 +17,7 @@ QEMU    ?= qemu-arm-static
 
 SRC     := v42_hdlc.c v42_detect.c v42_comp.c v44_comp.c v42_lapm.c v42.c
 HDR     := v42_hdlc.h v42_detect.h v42_comp.h v44_comp.h v42_lapm.h v42.h
-TESTS   := test_hdlc test_detect test_comp test_v44 test_lapm test_v42
+TESTS   := test_hdlc test_detect test_comp test_v44 test_lapm test_v42 test_v42_golden
 
 .PHONY: all test test-arm test-interop clean build-tests build-tests-arm print-tests print-tests-arm
 all: test

@@ -1,0 +1,29 @@
+  V.22bis through the API: 2 events; the answerers in blocks of 80 and of 1 sent the same samples
+  API caller to API answerer: caller 1 V.22bis 2400 bit/s (V.8 1), answerer 1 V.22bis; caller got "from the answerer", answerer got "from the caller"
+  V.32bis: caller 1 V.32bis 14400/14400 bit/s (V.8 1), answerer 1 V.32bis; SNR 52.2 dB, round trip 3 samples; caller got "from the answerer", answerer got "from the caller"
+  V.32bis retrain asked for by the caller: stopped 1, moving again 1, retrains 1; answerer got "again"
+  V.34: caller 1 V.34 28800/28800 bit/s (V.8 1), answerer 1 V.34 28800/28800; SNR 38.6 dB, round trip 3 samples; caller got "from the answerer", answerer got "from the caller"
+  V.34 retrain asked for by the caller: stopped 1, moving again 1, retrains 1; answerer got "again"
+  V.34 cleardown by the caller: caller end 4, answerer end 3; caller events 6 (last 5)
+  V.90: caller 1 V.90 28800/49333 bit/s (V.8 1), answerer 1 V.90 49333/28800; SNR 60.0 dB, round trip 2 samples; caller got "from the answerer", answerer got "from the caller"
+  V.90 retrain asked for by the caller: moving again after 7273 ms, retrains 1 (answerer: 0), 28800/49333 bit/s
+  V.90 cleardown by the caller: caller end 4, answerer end 3
+  V.90 retrain never answered: caller end 8 after 8070 ms, last event 5
+  V.92: caller 1 V.92 40000/50666 bit/s (V.8 1), answerer 1 V.92 50666/40000; SNR 60.0 dB, round trip 2 samples; caller got "from the answerer", answerer got "from the caller"
+  V.92 retrain asked for by the caller: moving again after 9232 ms, retrains 1 (answerer: 0), 40000/50666 bit/s
+  V.92 cleardown by the caller: caller end 4, answerer end 3
+  Bell 103 through the API: connected at 5.58 s, "caller says hello, 0123456789" / "answerer replies: ~{}[] OK"
+  Bell 103 without V.22: connected at 5.44 s
+  Bell 212A through the API: connected at 10.66 s, "caller says hello, 0123456789" / "answerer replies: ~{}[] OK"
+  API Bell 103 caller: 1 mod 8 300/300 bit/s (V.8 0), answerer mod 8; caller got "from the answerer", answerer got "from the caller"
+  API Bell 212A caller: 1 mod 9 1200/1200 bit/s (V.8 0), answerer mod 9; caller got "from the answerer", answerer got "from the caller"
+  API caller with V.22 and Bell: mod 3 2400 bit/s (V.8 1)
+  API x2 call: mod 10, 32000 / 24000 bit/s, SNR 38.1 dB, rtd 31, echo delay 0
+  API K56flex call: mod 11, 32000 / 31200 bit/s, SNR 38.1 dB, rtd 31, echo delay 0; retrain -4; end 4
+  API K56flex call, the client silent in data mode: end 2
+  API K56flex call, the client's renegotiations to 10 and 12: 10 events (1 4 3 2 4 3 2 4 3 5), tx_bps at RATES 50000, 54000; end 4
+  API K56flex call, a renegotiation MP with rate 0: end 3
+  API K56flex call, the client silent after its renegotiation's S: end 10
+  API K56flex call, the client's retrain: 6 events (1 4 3 4 3 5), retrains 1, renegotiations 0, v90m_retrain in it -4; end 4
+  API K56flex call, three retrains in a row: retrains 3, end 10
+api: 542 checks, 0 failures

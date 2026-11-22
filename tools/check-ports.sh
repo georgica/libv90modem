@@ -6,7 +6,7 @@
 # program. The signal path is fixed point, so every target must print the
 # same thing; only lines that time the host (wall clock, CPU) are left out
 # of the comparison, and those that print the size of structures in memory
-# (TIMING below). One allowance: a C library whose printf
+# (TIMING, tools/out-filter.sh). One allowance: a C library whose printf
 # rounds numbers up where the correct rounding is down (uClibc-ng; found by
 # tools/printf-probe.c on the target itself) may print such a number one
 # unit larger in its last digit (tools/ports-cmp.awk); those lines are
@@ -38,10 +38,8 @@ PAR=${PAR:-4}
 JOBS=${JOBS:-2}
 QUICK=${QUICK:-}
 SUBS=$(sed -n 's/^SUBS *:= *//p' "$ROOT/Makefile")
-# lines that measure the host, not the modem: CPU and wall time, and the
-# size of structures in memory (pointer width, alignment: v90tx_t, v34_rx_t,
-# V.44's encoder and decoder)
-TIMING='of CPU here|% of real time| ns +[0-9]+ ns +[0-9]+ ns$|^  speed on |^  sizeof\(|^  decoder state: sizeof\(|^  sizes: encoder [0-9]+ octets, decoder [0-9]+ octets$'
+# lines that measure the host, not the modem (TIMING, out_filter)
+. "$ROOT/tools/out-filter.sh"
 
 tc() { set -- "$TC"/$1/bin/$2; [ -x "$1" ] && echo "$1" || echo "$TC/missing/$2"; }
 
@@ -130,7 +128,7 @@ if [ -z "${COMPARE_ONLY:-}" ]; then
 fi
 
 # one program's output as compared: no carriage returns (wine), no timing
-norm() { tr -d '\r' < "$1" | grep -vE "$TIMING"; }
+norm() { out_filter "$1"; }
 
 fail=0
 rst=$(cat "$OUT/$REF.status" 2>/dev/null || echo missing)
