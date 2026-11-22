@@ -270,7 +270,7 @@ check: test-all test-api test-examples test-fixtures check-symbols
 # writes them from that run instead (only when a change explains it).
 # print-golden: each program's log key under $(BUILD)/log and its path.
 NPROC := $(shell nproc 2>/dev/null || echo 4)
-.PHONY: golden golden-record print-golden bench-hashes
+.PHONY: golden golden-record print-golden bench-hashes replay-proof
 golden golden-record:
 	@unset V92_VERBOSE V32_DEBUG; $(MAKE) -s check PAR=$(or $(PAR),$(NPROC)) BUILD=$(BUILD)
 	@tools/golden.sh $(if $(filter golden,$@),check,record) $(BUILD)
@@ -319,6 +319,12 @@ test-examples: $(BUILD)/call_loop
 	@echo "== examples/call_loop =="; mkdir -p $(BUILD)/log/examples; \
 	 $(abspath $(BUILD))/call_loop > $(BUILD)/log/examples/call_loop.log 2>&1; rc=$$?; \
 	 cat $(BUILD)/log/examples/call_loop.log; exit $$rc
+
+# the 106 private recordings through v90m-replay in six flag sets against
+# test/golden/replay.sha256 (V90M_NO_RECS=1 skips; tools/replay-proof.sh
+# record | diff REF)
+replay-proof:
+	@BUILD=$(BUILD) tools/replay-proof.sh check
 
 # ---- the replay tool (ships with the library): modem and V.42 only, built
 # from the sources with the trace hooks in ----

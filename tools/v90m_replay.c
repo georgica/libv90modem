@@ -2,7 +2,7 @@
  * it made of it, phase by phase. The tool to run on a recording that comes
  * with a bug report (README: "Reporting a bug").
  *
- *   v90m-replay [-a] [-9] [-x] [-k] [-u BPS] [-d BPS] [-l DBM0] [-e SAMPLES] [-P CODE] RECORDING
+ *   v90m-replay [-a] [-9] [-x] [-k] [-u BPS] [-d BPS] [-l DBM0] [-e SAMPLES] [-P CODE] [-b FILE] RECORDING
  *
  *   -a          A-law line (mu-law otherwise)
  *   -9          V.92 offered (PCM upstream up to 48000 bit/s unless -u)
@@ -138,6 +138,7 @@ int main(int argc, char **argv)
     rec_t r; v90m_cfg c; v90m_ec_cfg ecc; v90m_t *m; answer_t *a;
     long len, ans, k0, i, diff = 0, first = -1;
     int arg, err, lv = -1, lr = -1;
+    const char *bits_path = "bits.txt";
     FILE *f;
 
     for (arg = 1; arg < argc && argv[arg][0] == '-' && argv[arg][1]; arg++) {
@@ -146,6 +147,7 @@ int main(int argc, char **argv)
         else if (!strcmp(o, "-9")) opt_v92 = 1;
         else if (!strcmp(o, "-x")) opt_x2 = 1;
         else if (!strcmp(o, "-k")) opt_k56 = 1;
+        else if (arg + 1 < argc && !strcmp(o, "-b")) bits_path = argv[++arg];
         else if (arg + 1 < argc && !strcmp(o, "-u")) opt_up = atoi(argv[++arg]);
         else if (arg + 1 < argc && !strcmp(o, "-d")) opt_down = atoi(argv[++arg]);
         else if (arg + 1 < argc && !strcmp(o, "-l")) opt_dbm0 = atoi(argv[++arg]);
@@ -164,7 +166,7 @@ int main(int argc, char **argv)
     if (len >= 8 && !memcmp(file, "V90DLIN1", 8)) { r.lin = 1; r.bs = 240; r.txo = 160; r.d = file + 8; len -= 8; }
     r.n = len / r.bs * 80;
     printf("recording: %s receive, %ld samples\n", r.lin ? "16-bit linear" : "companded", r.n);
-    trace_bits_path = "bits.txt";
+    trace_bits_path = bits_path;
     if (getenv("RXBITS")) rxbits = fopen(getenv("RXBITS"), "w");
     if (getenv("TXBITS")) txbits = fopen(getenv("TXBITS"), "w");
     txown = getenv("TXOWN") != NULL;            /* TXBITS from our own transmit (checks the decoder) */
