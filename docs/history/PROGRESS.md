@@ -3816,7 +3816,24 @@ the facts are in `docs/history/x2-facts.md`:
 - The other 14 were checkpoint resends after its idle polls.
 - The upstream had no FCS errors.
 
-A call that confirms the fixes has not been made yet.
+**The confirming call** (2026-11-21): the same USR, flash 5.1.4, called
+the box running a v90d 0.7.0 bench build with libv90modem af86c3f and the
+`v90m_ec_line_stopped` glue. It connected x2 at 56000 / 28800 with PPP and
+held 3 min 50 s, until we hung up. It made 2 rate changes up and no
+retrain; the USR gave SNR 59.7 dB. Its counters, against the call before
+the fixes:
+
+| | before | after |
+| --- | --- | --- |
+| blocks sent | 255 | 293 |
+| resent | 24 | 4 |
+| link NAKs | 12 | 2 |
+| BLER | 1 | 0 |
+| pings across PPP answered | 76 of 90 | 90 of 90 |
+| worst ping | 2.9 s | 590 ms (average 148 ms) |
+
+The USR asked for no retrain on this call, so the cleardown on its Tone A
+is tested only by the replay of the earlier recording.
 
 Merged here (x2-upstream, af86c3f):
 

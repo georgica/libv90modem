@@ -88,15 +88,19 @@ Added (error control):
   `V90M_EC_MEM_SIZE` is unchanged.
 
 Fixed (found on a live x2 call: a U.S. Robotics 56K FAX EXT, flash 5.1.4,
-x2 at 56000 / 28800 with PPP):
+x2 at 56000 / 28800 with PPP, 24 of 255 blocks resent; confirmed on a
+second live call with the fixes: 3 min 50 s, two rate changes up, 4 of
+293 resent, link NAKs 12 -> 2, pings 90 of 90, worst 590 ms against
+2.9 s):
 - V.42 receiver: a frame whose opening flag was lost after a run of ones
   (seven or more) is taken when its FCS holds. A U.S. Robotics x2 client
   resumes that way after its rate change; the frame was dropped, and five
   frames were resent each time after the client's poll, some 2.6 s later.
 - x2: the client's Tone A in data mode or its rate change (a retrain it
-  asks for, which x2 cannot serve) ends the call within some 70 ms with
-  `V90M_END_RETRAIN_FAILED`, instead of the watchdog's `V90M_END_LOST`
-  many seconds later.
+  asks for, which x2 cannot serve) ends the call with
+  `V90M_END_RETRAIN_FAILED`, within some 70 ms in the replay of the first
+  call, instead of the watchdog's `V90M_END_LOST` many seconds later. The
+  confirming call had no retrain, so this is tested by replay only.
 - `v90m-replay` decodes x2 data mode both ways, its echo canceller fed the
   recorded transmit (built with the trace hooks only; the library is
   unchanged by it), and prints each change of the modem's `connected`,

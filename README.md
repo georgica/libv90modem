@@ -130,14 +130,17 @@ built and why; `docs/history/` keeps the development logs.
   only on a test build with the 2225 Hz tone from the start, by a modem
   that would also have taken V.22; no modem that calls as 212A and nothing
   else has been on the line.
-- **x2 (answering), against the emulated U.S. Robotics Courier, not yet
-  a real modem:** at 32000 bit/s (rate index 1, the start-up rate) x2 is
-  decoded by the emulated U.S. Robotics Courier, V.42 data acknowledged.
-  Above 32000 it is octet-identical to the U.S. Robotics I-modem and
-  D-Modem's server; the published courier-emu decodes no server above
-  index 1; not yet confirmed on a real modem. A Courier asks for a higher
-  rate about 12 s into data, so a real U.S. Robotics call decides those
-  rates ([docs/limits.md](docs/limits.md)).
+- **x2 (answering), one real modem:** the owner's U.S. Robotics 56K FAX EXT
+  (flash 5.1.4) called the box (v90d with this library, 2026-11-21): x2 at
+  56000 / 28800 with PPP, held 3 min 50 s until we hung up, two rate changes
+  up, no retrain, the modem's SNR 59.7 dB; its counters 293 blocks sent, 4
+  resent, 2 link NAKs, block error rate 0; pings across PPP 90 of 90
+  (average 148 ms, worst 590 ms). Not shown on a live call: a client's
+  retrain (it still ends the call, now as `V90M_END_RETRAIN_FAILED`; tested
+  by replaying an earlier recording only), a pad or robbed bits, any other
+  x2 modem. Before that call: at 32000 bit/s decoded by the emulated U.S.
+  Robotics Courier, and above it octet-identical to the U.S. Robotics
+  I-modem and D-Modem's server ([docs/limits.md](docs/limits.md)).
 - **K56flex (answering), against Motorola's SM56 under emulation, not yet
   a real modem:** K56flex (answering, experimental, off by default)
   connects to Motorola's SM56 soft modem run under emulation, V.42 data
@@ -301,6 +304,7 @@ calling; the figures are downstream / upstream bit/s.
 | Conexant CX93001 (USB, V.92) | | 2026-11-15 | every modulation; V.90 49333 to 53333 / 28800; V.92 50666 / 25333 (`AT+PIG=0`); V.34 31200 / 28800 |
 | U.S. Robotics 5686 (56K FAX EXT, V.92) | 5.4.62 | 2026-11-16, 17 | V.90 54666 / 26400; V.92 54666 / 40000; V.22 1200; V.21 and Bell 103 300; Bell 212A 1200 (test build, above) |
 | U.S. Robotics 56K FAX EXT of 1998 (x2, V.90 upgrade) | flash 5.1.4 | 2026-11-16 | V.90 54666 to 56000 / 28800; V.34 28800 when its V.90 start-up failed |
+| the same | flash 5.1.4 | 2026-11-21 | x2 56000 / 28800 with PPP, 3 min 50 s, two rate changes up, 4 of 293 blocks resent (0.5.0's V.42 and x2 fixes) |
 
 Not tried: any other modem, and the calling side against any real modem or
 server. Seven of these calls are kept as fixtures (`test/fixtures/`), which

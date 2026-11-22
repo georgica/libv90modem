@@ -278,7 +278,10 @@ Tested against a simulated client (`sim/x2call`) and an emulated U.S.
 Robotics Courier (courier-emu, outside the repository; `tools/x2-peer/`).
 At 32000 the Courier decodes our data; above it our octets equal D-Modem's
 mapper (as an oracle, `test/test_x2map.c`) and the I-modem's line octets,
-but the published emulator decodes no server there: a real modem decides.
+but the published emulator decodes no server there. A real U.S. Robotics
+56K FAX EXT then held x2 at 56000 / 28800 with PPP for 3 min 50 s through
+two rate changes (0.5.0, `docs/history/PROGRESS.md` "k56 13, fix round 1");
+a client's retrain is still not served (the call ends).
 
 **K56flex (Rockwell / Lucent), done on the answering side (0.5.0,
 experimental, off by default).** It is agreed in V.8bis, before V.8, and

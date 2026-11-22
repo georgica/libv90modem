@@ -113,11 +113,13 @@ a mu-law line: never with `alaw` set. Robbed-bit lines are not handled.
   call with `V90M_END_X2_FAILED`; the client's Tone A (a retrain it asks
   for) ends it with `V90M_END_RETRAIN_FAILED`. `v90m_retrain` gives
   `V90M_ESTATE`; `v90m_cleardown` ends the call at once (`V90M_END_CLEARDOWN_OURS`).
-- **What has been shown.** At 32000, decoded by the emulated U.S.
-  Robotics Courier, V.42 data acknowledged. Above 32000, octet-identical
-  to the U.S. Robotics I-modem and D-Modem's server; the published
-  courier-emu decodes no server above index 1; not yet confirmed on a
-  real modem ([limits.md](limits.md)).
+- **What has been shown.** The owner's U.S. Robotics 56K FAX EXT (flash
+  5.1.4) called the box (v90d with this library, 2026-11-21): x2 at 56000 /
+  28800 with PPP, held 3 min 50 s until we hung up, two rate changes up, no
+  retrain, the modem's SNR 59.7 dB; its counters 293 blocks sent, 4 resent,
+  2 link NAKs, block error rate 0; pings across PPP 90 of 90 (average 148
+  ms, worst 590 ms). Not shown on a live call: a client's retrain (it ends
+  the call), pads, robbed bits, another x2 modem ([limits.md](limits.md)).
 - **CPU.** x2 data mode costs about twice V.90's (the upstream the client
   dictates): one x2 call per ARM926 box ([limits.md](limits.md)).
 
@@ -231,5 +233,5 @@ answering, on a mu-law line: never with `alaw` set.
   from the start, by a modem that would also have taken V.22.
 - The V.92 upstream design's noise model is about 2 dB short at the top
   upstream rates, on the simulator's lines ([limits.md](limits.md)).
-- Only the three modems above have called it; none of them in x2 or
-  K56flex.
+- Only the three modems above have called it; the U.S. Robotics of 1998
+  also in x2 (one call, above); none in K56flex.

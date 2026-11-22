@@ -23,14 +23,19 @@ Each item names where it is recorded.
   and a U.S. Robotics 56K of 1998 have called it (README, "Tried on real
   modems"). Bell 212A answering was tried only on a test build with the
   2225 Hz tone from the start, by a modem that would also have taken V.22.
-- **x2 (answering): no real modem yet.** At 32000 (rate index 1, the
-  start-up rate) x2 is decoded by the emulated U.S. Robotics Courier, V.42
-  data acknowledged. Above 32000 it is octet-identical to the U.S.
-  Robotics I-modem and D-Modem's server; the published courier-emu decodes
-  no server above index 1; not yet confirmed on a real modem. A Courier
-  asks for a higher rate about 12 s into data, so a real U.S. Robotics
-  call decides the rates above 32000. (`docs/history/x2-facts.md`,
-  "Harness" and "Oracle: D-Modem's mapper"; `tools/x2-peer/README.md`.)
+- **x2 (answering): one real modem, one line.** The owner's U.S. Robotics
+  56K FAX EXT (flash 5.1.4) called the box (v90d with this library,
+  2026-11-21): x2 at 56000 / 28800 with PPP, held 3 min 50 s until we hung
+  up, two rate changes up, no retrain, the modem's SNR 59.7 dB; its counters
+  293 blocks sent, 4 resent, 2 link NAKs, block error rate 0; pings across
+  PPP 90 of 90 (average 148 ms, worst 590 ms). Not shown on a live call: a
+  client's retrain (it ends the call, as `V90M_END_RETRAIN_FAILED` within
+  some 70 ms of its Tone A in the replay of an earlier live call; no live
+  call since has asked for one), a pad or robbed bits, the rates between the
+  start-up and 56000 held for long, any other x2 modem.
+  (`docs/history/PROGRESS.md`, "k56 13, fix round 1";
+  `docs/history/x2-facts.md`; the emulated Courier and the oracle before it:
+  `tools/x2-peer/README.md`.)
 - **K56flex (answering): no real modem yet.** K56flex (answering,
   experimental, off by default) connects to Motorola's SM56 soft modem run
   under emulation, V.42 data both ways at 32000 to 52000 bit/s down and
