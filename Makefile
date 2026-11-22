@@ -1,9 +1,12 @@
 # libv90modem: build, test, install.
 #
 #   make                 static and shared library, pkg-config file, examples (in $(BUILD))
-#   make check           the simulator suite on the host
+#   make check           the simulator suite on the host; with PAR=N, every program of
+#                        every directory in one pool, N at a time (tools/par-run.sh)
 #   make check-arm       the same, cross-built (ARM_CC) and run under qemu-arm,
-#                        PAR (8) programs at a time (tools/par-run.sh)
+#                        PAR (8) programs at a time, all directories in one pool
+#   make test-times      tools/test-times.txt (the pool's order, longest first) from
+#                        the run times of the last runs ($(BUILD)/test-times.txt)
 #   make check-ubsan     the host suite with undefined behaviour trapped (clang)
 #   make install         into $(DESTDIR)$(PREFIX); make uninstall takes it out
 #   make examples        examples/answer_file (answering a recording), examples/call_loop
@@ -95,7 +98,9 @@ MODEM_SRC := modem/v21.c modem/ansam.c modem/v8msg.c modem/async.c modem/v8rx.c 
              $(wildcard v90/*.c) $(wildcard v34/*.c) $(wildcard v32/*.c) $(wildcard v92/*.c)
 T_SRC    := $(SIM_SRC) $(MODEM_SRC)
 HDRS     := $(wildcard modem/*.h sim/*.h test/*.h v90/*.h v34/*.h v92/*.h v90/test/v90_dec.h)
-T_CFLAGS := $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(EXTRA_CPPFLAGS) -Iv90 -Imodem -Isim -Iv92 -Iv34
+# where the tests read their data files (test/test.h), unless EXTRA_CPPFLAGS names it
+TEST_DATA := $(if $(findstring TEST_DATA_DIR,$(EXTRA_CPPFLAGS)),,-DTEST_DATA_DIR="\"$(CURDIR)/test/data\"")
+T_CFLAGS := $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(EXTRA_CPPFLAGS) $(TEST_DATA) -Iv90 -Imodem -Isim -Iv92 -Iv34
 TESTS    := test_g711 test_noise test_filt test_resamp test_channel test_v21 test_ansam test_v8msg test_v8rx test_v8ans \
             test_v22tx test_v22rx test_v22bis test_v14 test_answer test_info test_dpsk test_probe test_p2 test_qamrx test_ec test_ecdly test_v34train test_sres test_answer_v90 test_p34 test_pcmenc \
             test_v34mp test_p2ans test_v34mod test_v34dx test_v34call test_answer_v34 test_answer_v32 test_answer_v90_v34 \
@@ -105,7 +110,7 @@ TESTS    := test_g711 test_noise test_filt test_resamp test_channel test_v21 tes
 API_TESTS := test_api
 SUBS     := v34 v90 v92 v42 v32
 
-.PHONY: test-x2-courier test-k56-sm56 test-fixtures test-examples all lib dev install uninstall clean check check-arm check-ubsan test test-arm test-api test-interop examples bench-v90 bench-v34 bench-v90a bench-v90c bench-v92c replay
+.PHONY: test-x2-courier test-k56-sm56 test-fixtures test-examples all lib dev install uninstall clean check check-arm check-ubsan test test-arm test-all test-times test-api test-interop examples bench-v90 bench-v34 bench-v90a bench-v90c bench-v92c replay
 all: lib examples
 lib: $(STATIC) $(SHARED) $(PCFILE)
 dev: $(DEV)
@@ -163,13 +168,27 @@ uninstall:
 	      $(DESTDIR)$(LIBDIR)/$(NAME).so.$(SOVER) $(DESTDIR)$(LIBDIR)/$(NAME).so.$(VERSION) \
 	      $(DESTDIR)$(PCDIR)/$(NAME).pc $(DESTDIR)$(BINDIR)/v90m-replay
 
-# ---- tests: each test_X links test/test_X.c with the sources, as always ----
-$(BUILD)/test_%: test/test_%.c $(T_SRC) $(HDRS)
-	@mkdir -p $(BUILD)
-	$(CC) $(T_CFLAGS) -o $@ $< $(T_SRC) $(LDLIBS)
-$(BUILD)/arm_test_%: test/test_%.c $(T_SRC) $(HDRS)
-	@mkdir -p $(BUILD)
-	$(ARM_CC) $(T_CFLAGS) -static -o $@ $< $(T_SRC) $(LDLIBS)
+# ---- tests: T_SRC compiled once (T_CFLAGS) into $(BUILD)/libtest.a, and
+# for ARM_CC into $(BUILD)/arm/libtest.a; each test_X links test/test_X.c
+# against it ----
+T_OBJ     := $(patsubst %.c,$(BUILD)/tobj/%.o,$(T_SRC))
+ARM_T_OBJ := $(patsubst %.c,$(BUILD)/arm/tobj/%.o,$(T_SRC))
+# ar next to ARM_CC (arm-linux-gcc -> arm-linux-ar) when there is one
+ARM_AR     = $(firstword $(foreach a,$(patsubst %gcc,%ar,$(filter %gcc,$(ARM_CC))),$(shell command -v $(a))) ar)
+$(BUILD)/tobj/%.o: %.c $(HDRS) $(LIB_HDR)
+	@mkdir -p $(dir $@)
+	$(CC) $(T_CFLAGS) -c -o $@ $<
+$(BUILD)/arm/tobj/%.o: %.c $(HDRS) $(LIB_HDR)
+	@mkdir -p $(dir $@)
+	$(ARM_CC) $(T_CFLAGS) -c -o $@ $<
+$(BUILD)/libtest.a: $(T_OBJ)
+	rm -f $@ && $(AR) rcs $@ $(T_OBJ)
+$(BUILD)/arm/libtest.a: $(ARM_T_OBJ)
+	rm -f $@ && $(ARM_AR) rcs $@ $(ARM_T_OBJ)
+$(BUILD)/test_%: test/test_%.c $(BUILD)/libtest.a $(HDRS)
+	$(CC) $(T_CFLAGS) -o $@ $< $(BUILD)/libtest.a $(LDLIBS)
+$(BUILD)/arm_test_%: test/test_%.c $(BUILD)/arm/libtest.a $(HDRS)
+	$(ARM_CC) $(T_CFLAGS) -static -o $@ $< $(BUILD)/arm/libtest.a $(LDLIBS)
 # x2's pad octets: a host tool (tools/x2_pad.c), not in the library; its
 # test links the tool and the G.711 codec alone
 X2PAD_SRC := tools/x2_pad.c sim/g711.c
@@ -180,12 +199,10 @@ $(BUILD)/arm_test_x2_pad: test/test_x2_pad.c $(X2PAD_SRC) tools/x2_pad.h sim/g71
 	@mkdir -p $(BUILD)
 	$(ARM_CC) $(T_CFLAGS) -static -o $@ $< $(X2PAD_SRC) $(LDLIBS)
 # the mapper's test checks modem/x2tab's pad octets against the tool's rule
-$(BUILD)/test_x2map: test/test_x2map.c $(T_SRC) tools/x2_pad.c tools/x2_pad.h $(HDRS)
-	@mkdir -p $(BUILD)
-	$(CC) $(T_CFLAGS) -o $@ $< $(T_SRC) tools/x2_pad.c $(LDLIBS)
-$(BUILD)/arm_test_x2map: test/test_x2map.c $(T_SRC) tools/x2_pad.c tools/x2_pad.h $(HDRS)
-	@mkdir -p $(BUILD)
-	$(ARM_CC) $(T_CFLAGS) -static -o $@ $< $(T_SRC) tools/x2_pad.c $(LDLIBS)
+$(BUILD)/test_x2map: test/test_x2map.c $(BUILD)/libtest.a tools/x2_pad.c tools/x2_pad.h $(HDRS)
+	$(CC) $(T_CFLAGS) -o $@ $< tools/x2_pad.c $(BUILD)/libtest.a $(LDLIBS)
+$(BUILD)/arm_test_x2map: test/test_x2map.c $(BUILD)/arm/libtest.a tools/x2_pad.c tools/x2_pad.h $(HDRS)
+	$(ARM_CC) $(T_CFLAGS) -static -o $@ $< tools/x2_pad.c $(BUILD)/arm/libtest.a $(LDLIBS)
 # The API test: the answering modem from the static library as installed
 # (only v90m_* visible), the simulated caller from the dev archive. Both
 # carry the modem's code; the static library's copy is local to it.
@@ -209,23 +226,54 @@ test-api: $(addprefix $(BUILD)/api_,$(API_TESTS))
 test-api-arm: $(addprefix $(BUILD)/arm/api_,$(API_TESTS))
 	@fail=0; for t in $(API_TESTS); do $(QEMU) $(abspath $(BUILD))/arm/api_$$t || fail=1; done; [ $$fail -eq 0 ]
 
-check: test test-api test-examples test-fixtures check-symbols
-	@for d in $(SUBS); do echo "== $$d =="; $(MAKE) -s -C $$d BUILD=build test || exit 1; done; echo "ALL HOST CHECKS PASS"
+# the subdirectories build in their own build/ unless BUILD names another place
+SUB_BUILD = $(if $(filter build,$(BUILD)),build,$(abspath $(BUILD))/$$d)
+sub_build = $(if $(filter build,$(BUILD)),build,$(abspath $(BUILD))/$(1))
+# a subdirectory's test programs, built (host, ARM); its list of them
+SUB_PROGS     := $(addprefix sub-progs-,$(SUBS))
+SUB_PROGS_ARM := $(addprefix sub-progs-arm-,$(SUBS))
+.PHONY: $(SUB_PROGS) $(SUB_PROGS_ARM)
+$(SUB_PROGS): sub-progs-%:
+	@$(MAKE) -s -C $* BUILD=$(call sub_build,$*) build-tests
+$(SUB_PROGS_ARM): sub-progs-arm-%:
+	@$(MAKE) -s -C $* BUILD=$(call sub_build,$*) build-tests-arm ARM_CC=$(ARM_CC)
+SUB_LIST = $$(for d in $(SUBS); do $(MAKE) -s --no-print-directory -C $$d BUILD=$(SUB_BUILD) $(1) || exit 1; done)
+
+# every host program of every directory: with PAR, in one pool of PAR at a
+# time (tools/par-run.sh; logs in $(BUILD)/log); else each directory in turn
+ifneq ($(PAR),)
+test-all: $(addprefix $(BUILD)/,$(TESTS)) $(SUB_PROGS)
+	@echo "== running host tests, all directories, $(PAR) at a time =="
+	@subs=$(call SUB_LIST,print-tests) || exit 1; \
+	 if PAR=$(PAR) tools/par-run.sh $(abspath $(BUILD))/log "" "" $(addprefix $(abspath $(BUILD))/,$(TESTS)) $$subs; \
+	 then echo "ALL TESTS PASS"; else echo "TESTS FAILED"; exit 1; fi
+else
+test-all: test
+	@for d in $(SUBS); do echo "== $$d =="; $(MAKE) -s -C $$d BUILD=$(SUB_BUILD) test || exit 1; done
+endif
+# tools/test-times.txt from the times par-run measured in $(BUILD)
+test-times:
+	@tools/par-run.sh --merge $(BUILD)/test-times.txt tools/test-times.txt && echo "tools/test-times.txt: from $(BUILD)/test-times.txt"
+
+check: test-all test-api test-examples test-fixtures check-symbols
+	@echo "ALL HOST CHECKS PASS"
 # recordings of real calls (test/fixtures/fixtures.txt) through the replay tool
 test-fixtures: $(BUILD)/v90m-replay
 	@echo "== real-modem recordings =="; test/fixtures/check.sh $(abspath $(BUILD))/v90m-replay
-# the subdirectories build in their own build/ unless BUILD names another place
-SUB_BUILD = $(if $(filter build,$(BUILD)),build,$(abspath $(BUILD))/$$d)
-check-arm: test-arm test-api-arm
-	@for d in $(SUBS); do echo "== $$d (arm) =="; $(MAKE) -s -C $$d BUILD=$(SUB_BUILD) test-arm ARM_CC=$(ARM_CC) QEMU="$(QEMU)" || exit 1; done; echo "ALL ARM CHECKS PASS"
+# every ARM program of every directory in one pool (logs in $(BUILD)/arm_log)
+check-arm: $(addprefix $(BUILD)/arm_,$(TESTS)) $(SUB_PROGS_ARM) test-api-arm
+	@echo "== running ARM tests under $(QEMU), all directories =="
+	@subs=$(call SUB_LIST,print-tests-arm) || exit 1; \
+	 if PAR=$(PAR) tools/par-run.sh $(abspath $(BUILD))/arm_log "$(QEMU)" "[arm]" $(addprefix $(abspath $(BUILD))/arm_,$(TESTS)) $$subs; \
+	 then echo "ALL ARM CHECKS PASS"; else echo "ARM CHECKS FAILED"; exit 1; fi
 # The host suite with undefined behaviour trapped (clang's -fsanitize=undefined):
 # a signed overflow or a shift of a negative number is what lets the same C
 # compute differently on another target or compiler; any of them fails.
 UBSAN_CC    ?= clang
 UBSAN_FLAGS := -std=c99 -O1 -g -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=undefined
 check-ubsan:
-	@$(MAKE) -s BUILD=$(BUILD)/ubsan CC=$(UBSAN_CC) CFLAGS="$(UBSAN_FLAGS)" test test-api
-	@for d in $(SUBS); do echo "== $$d (ubsan) =="; $(MAKE) -s -C $$d BUILD=$(abspath $(BUILD))/ubsan/$$d CC=$(UBSAN_CC) CFLAGS="$(UBSAN_FLAGS)" test || exit 1; done; echo "ALL UBSAN CHECKS PASS"
+	@$(MAKE) -s BUILD=$(BUILD)/ubsan CC=$(UBSAN_CC) CFLAGS="$(UBSAN_FLAGS)" test-all test-api
+	@echo "ALL UBSAN CHECKS PASS"
 
 INTEROP := interop_v8_spandsp interop_v22bis_spandsp interop_v8orig_spandsp interop_orig_v22bis_spandsp
 $(BUILD)/interop_%: test/interop_%.c test/peer_spandsp.c $(T_SRC)

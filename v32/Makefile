@@ -20,14 +20,41 @@ V8_SRC  := ../modem/v21.c ../modem/ansam.c ../modem/v8msg.c ../modem/async.c ../
            ../modem/v8ans.c ../sim/v8call.c
 TESTS   := test_code test_viterbi test_tx test_ec test_rx test_startup test_call test_v8 test_acdet test_caller
 
-.PHONY: all test test-arm cost-arm tables clean
+.PHONY: all test test-arm cost-arm tables clean build-tests build-tests-arm print-tests print-tests-arm
 all: test
 
 $(BUILD):
 	@mkdir -p $(BUILD)
 
-$(BUILD)/test_%: test/test_%.c $(LIB_SRC) $(LIB_HDR) $(SIM_SRC) $(SIM_HDR) | $(BUILD)
-	$(CC) $(CFLAGS) $(INC) -o $@ $< $(LIB_SRC) $(SIM_SRC) $(V8_SRC) -lm
+# the sources compiled once, into an archive each test links: $(BUILD)/libtest.a,
+# and for ARM_CC $(BUILD)/arm/libtest.a (../x.c compiles to up/x.o)
+EXTRA_CPPFLAGS ?=
+T_SRC     := $(LIB_SRC) $(SIM_SRC) $(V8_SRC)
+T_HDR     := $(LIB_HDR) $(SIM_HDR)
+T_FLAGS    = $(CFLAGS) $(EXTRA_CPPFLAGS) $(INC)
+T_OBJ     := $(patsubst %.c,$(BUILD)/tobj/%.o,$(subst ../,up/,$(T_SRC)))
+ARM_T_OBJ := $(patsubst %.c,$(BUILD)/arm/tobj/%.o,$(subst ../,up/,$(T_SRC)))
+# ar next to the compiler (arm-linux-gcc -> arm-linux-ar) when there is one
+ar_for     = $(firstword $(foreach a,$(patsubst %gcc,%ar,$(filter %gcc,$(1))),$(shell command -v $(a))) ar)
+$(BUILD)/tobj/%.o: %.c $(T_HDR)
+	@mkdir -p $(dir $@)
+	$(CC) $(T_FLAGS) -c -o $@ $<
+$(BUILD)/tobj/up/%.o: ../%.c $(T_HDR)
+	@mkdir -p $(dir $@)
+	$(CC) $(T_FLAGS) -c -o $@ $<
+$(BUILD)/arm/tobj/%.o: %.c $(T_HDR)
+	@mkdir -p $(dir $@)
+	$(ARM_CC) $(T_FLAGS) -c -o $@ $<
+$(BUILD)/arm/tobj/up/%.o: ../%.c $(T_HDR)
+	@mkdir -p $(dir $@)
+	$(ARM_CC) $(T_FLAGS) -c -o $@ $<
+$(BUILD)/libtest.a: $(T_OBJ)
+	rm -f $@ && $(call ar_for,$(CC)) rcs $@ $(T_OBJ)
+$(BUILD)/arm/libtest.a: $(ARM_T_OBJ)
+	rm -f $@ && $(call ar_for,$(ARM_CC)) rcs $@ $(ARM_T_OBJ)
+
+$(BUILD)/test_%: test/test_%.c $(BUILD)/libtest.a $(T_HDR) | $(BUILD)
+	$(CC) $(T_FLAGS) -o $@ $< $(BUILD)/libtest.a -lm
 
 test: $(addprefix $(BUILD)/,$(TESTS))
 	@echo "== running host tests =="
@@ -36,8 +63,8 @@ test: $(addprefix $(BUILD)/,$(TESTS))
 
 # cross-build the same tests for the ARM926 target and run under qemu
 # (the end-to-end tests shorten their runs when built for ARM)
-$(BUILD)/arm_test_%: test/test_%.c $(LIB_SRC) $(LIB_HDR) $(SIM_SRC) $(SIM_HDR) | $(BUILD)
-	$(ARM_CC) $(CFLAGS) $(INC) -static -o $@ $< $(LIB_SRC) $(SIM_SRC) $(V8_SRC) -lm
+$(BUILD)/arm_test_%: test/test_%.c $(BUILD)/arm/libtest.a $(T_HDR) | $(BUILD)
+	$(ARM_CC) $(T_FLAGS) -static -o $@ $< $(BUILD)/arm/libtest.a -lm
 
 test-arm: $(addprefix $(BUILD)/arm_,$(TESTS))
 	@echo "== running ARM tests under $(QEMU) =="
@@ -86,6 +113,14 @@ cost-arm: $(BUILD)/test_bench $(BUILD)/arm_test_bench
 
 tables:
 	python3 tools/gen_tabs.py
+
+# the test programs built, not run; their paths (the top level's one pool)
+build-tests: $(addprefix $(BUILD)/,$(TESTS))
+build-tests-arm: $(addprefix $(BUILD)/arm_,$(TESTS))
+print-tests:
+	@for t in $(TESTS); do echo $(abspath $(BUILD))/$$t; done
+print-tests-arm:
+	@for t in $(TESTS); do echo $(abspath $(BUILD))/arm_$$t; done
 
 clean:
 	rm -rf $(BUILD)

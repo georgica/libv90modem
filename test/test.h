@@ -9,9 +9,16 @@
 /* TEST_SHORT: some long tests run a shorter version on 32-bit ARM, the box's
  * architecture, where `make check-arm` runs them under qemu. The port matrix
  * (tools/check-ports.sh) builds every target with -DTEST_FULL, so that all
- * of them run the same, whole tests and must print the same. */
-#if defined(__arm__) && !defined(TEST_FULL)
+ * of them run the same, whole tests and must print the same.
+ * -DTEST_FORCE_SHORT gives the same short set on any target (a host build
+ * to compare the ARM outputs with). */
+#if !defined(TEST_SHORT) && ((defined(__arm__) && !defined(TEST_FULL)) || defined(TEST_FORCE_SHORT))
 #define TEST_SHORT 1
+#endif
+/* TEST_DATA_DIR: where the tests' data files are (test/data); the Makefile
+ * gives the absolute path, so that a test finds them from any directory */
+#ifndef TEST_DATA_DIR
+#define TEST_DATA_DIR "test/data"
 #endif
 /* TEST_EMULATED=1: the program runs under an emulator (tools/check-ports.sh
  * says so for its qemu targets), where wall-clock time measures the
