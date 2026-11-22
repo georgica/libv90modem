@@ -25,13 +25,15 @@ V.92 and Bell:
 | `V90M_MOD_BELL103` | Bell 103, for a caller without V.8 | off |
 | `V90M_MOD_BELL212A` | Bell 212A, with `V90M_MOD_V22`, for a caller without V.8 | off |
 | `V90M_MOD_X2` | x2, U.S. Robotics' 56k of 1997, as its server; only with `V90M_MOD_V34` (without: `V90M_ENOTSUP`) | off |
+| `V90M_MOD_K56` | K56flex, Rockwell's and Lucent's 56k of 1997, as its server, experimental; only with `V90M_MOD_V34` (without: `V90M_ENOTSUP`) | off |
 
 At least one is required (0 gives `V90M_EINVAL`).
 
 ## The start of a call
 
 200 ms of silence, then ANSam with phase reversals and V.8: the caller's
-CM, our JM, its CJ. The menu decides:
+CM, our JM, its CJ. (With `V90M_MOD_K56` on a mu-law line, V.8bis comes
+first: below, "K56flex".) The menu decides:
 
 - **V.90**, when the caller offers PCM (an analogue V.90 modem): Phase 2,
   then Phases 3 and 4, then data. Downstream PCM at 8000 symbols a second;
@@ -60,6 +62,10 @@ CM, our JM, its CJ. The menu decides:
   sees an x2 server's JM (carrier inverted after each JM) and INFO0a, not
   the ones it would get without x2. Not yet tried on a live non-x2 V.34
   call.
+- **K56flex** (`V90M_MOD_K56` with `V90M_MOD_V34`, mu-law only): a caller
+  that agreed K56flex in V.8bis, gets V.34 selected in V.8 and asks for
+  K56flex in its INFO1c goes K56flex (below); every other caller goes as
+  without K56flex, only later.
 
 `v90m_state.used_v8` says whether the caller spoke V.8.
 
@@ -73,8 +79,9 @@ CM, our JM, its CJ. The menu decides:
 - `V90M_EV_RATES` when the rates or the modulation changed.
 - `V90M_EV_ENDED` once, with `v90m_state.end`: `V90M_END_FAILED` (no
   connection was made), `V90M_END_LOST`, `V90M_END_CLEARDOWN_FAR`,
-  `V90M_END_CLEARDOWN_OURS`, `V90M_END_X2_FAILED` (x2, below). The other
-  end codes are the calling role's.
+  `V90M_END_CLEARDOWN_OURS`, `V90M_END_X2_FAILED` (x2, below),
+  `V90M_END_K56_FAILED` (K56flex, below). The other end codes are the
+  calling role's.
 
 `v90m_get_stats` adds the receiver's signal to error (`snr_db10`, 0.1 dB),
 the round-trip delay measured in the handshake (`rtd`, samples: V.34, V.90,
@@ -111,6 +118,65 @@ a mu-law line: never with `alaw` set. Robbed-bit lines are not handled.
   real modem ([limits.md](limits.md)).
 - **CPU.** x2 data mode costs about twice V.90's (the upstream the client
   dictates): one x2 call per ARM926 box ([limits.md](limits.md)).
+
+## K56flex
+
+K56flex has no published specification; it is built from the facts in
+`docs/history/k56-facts.md`, and it is experimental. K56flex (answering,
+experimental, off by default) connects to Motorola's SM56 soft modem run
+under emulation, V.42 data both ways at 32000 to 52000 bit/s down and
+31200 up, with no pad and with robbed bits; its decoder takes our data at
+every rate, pad and robbed-bit pattern; not yet tried on a Rockwell or
+Lucent modem. It is offered only with `V90M_MOD_K56` and `V90M_MOD_V34`,
+answering, on a mu-law line: never with `alaw` set.
+
+- **V.8bis, before V.8.** After answering, at least 400 ms of silence, then
+  CRe (1375 + 2002 Hz, then 400 Hz). A caller that answers with CRd within
+  1 s gets our CL, whose NS field carries the K56flex block; a caller
+  whose MS carries the block gets ACK(1), and K56flex is agreed (x2, if
+  offered too, is then not offered in that call). V.8 follows in every
+  case, from its 200 ms of silence, and decides as without K56flex: a
+  caller whose CM offers PCM while V.90 is offered gets V.90, and one that
+  gets V.34 goes on to Phase 2.
+- **Every caller's answer tone comes later.** ANSam comes 1.790 s later
+  than without K56flex for a caller without V.8bis, 3.807 s later for a
+  V.8bis caller without K56flex (CRd, no MS), and 3.413 s later for a
+  K56flex client (measured in the simulator). A caller that gives up in
+  that time is not known; the live calls before v90d offers K56flex check
+  it.
+- **The point of no return.** In the V.34 Phase 2 of an agreed call, a
+  client whose INFO1c asks for K56flex (frequency offset `0x001`), with
+  3200 symbols a second chosen for the upstream, gets our INFO1a flagged
+  for K56flex. After that there is no way back to V.34: the K56flex
+  training follows, then data. Any other agreed call is V.34.
+- **Start-up.** Our training down, the client's on the V.34 upstream with
+  its J, which reports the pad (none, 3 dB, 6 dB) and the robbed-bit
+  symbols; its MP names the rate it wants, ours answers with the rate:
+  r = the lowest of the client's, `max_down_bps`'s and 13, 30000 + 2000 r
+  bit/s. `V90M_EV_CONNECTED` with `V90M_CONN_K56FLEX`, about 8.3 s after
+  our flagged INFO1a in the simulator; `tx_bps` is the downstream payload
+  (32000 to 56000, as a Rockwell modem prints it), `rx_bps` the client's
+  V.34 upstream (the highest rate its MP allows, capped by `max_up_bps`).
+- **Renegotiation.** The client's (its S in data mode) is followed: our
+  data stops at a frame's end, our short training, its MP, our MP, then
+  data at the new rate: `V90M_EV_DATA_STOPPED`, `V90M_EV_RATES`,
+  `V90M_EV_DATA_MOVING`. An MP with rate 0 ends the call as
+  `V90M_END_CLEARDOWN_FAR`. We never start one.
+- **Retrain.** The client's (its tone B in data mode) is followed: V.34's
+  retrain Phase 2 with INFO1a flagged again, then the whole training:
+  `V90M_EV_DATA_STOPPED` with `retraining` set, then
+  `V90M_EV_DATA_MOVING` at the rates it agrees (some 10.5 s later in the
+  simulator), and `v90m_stats.retrains` counts it. The third retrain in a
+  row ends the call (`V90M_END_K56_FAILED`); retrains are forgotten after
+  2 s of data mode. We never start one: `v90m_retrain` gives
+  `V90M_ESTATE`.
+- **Cleardown and failures.** `v90m_cleardown` ends the call at once
+  (`V90M_END_CLEARDOWN_OURS`), with nothing sent: no K56flex cleardown is
+  known. A start-up, renegotiation or retrain that does not complete in
+  its time ends the call with `V90M_END_K56_FAILED`; an upstream lost in
+  data mode, with `V90M_END_LOST`.
+- **CPU.** K56flex data mode costs about the same as V.90's (it asks the
+  client for V.90's upstream options) ([limits.md](limits.md)).
 
 ## Retrains, rate renegotiation, cleardown
 
@@ -154,12 +220,14 @@ a mu-law line: never with `alaw` set. Robbed-bit lines are not handled.
 ## Limits
 
 - No V.92 quick connect, short Phase 2 or modem-on-hold.
-- K56flex is not spoken; a K56flex-only modem connects at V.34
-  (`DESIGN.md`, 4.2b). x2: above, and its limits in [limits.md](limits.md)
-  (A-law, robbed bits, no way back to V.34, the free sign).
+- x2 and K56flex: above, and their limits in [limits.md](limits.md) (x2:
+  A-law, robbed bits, no way back to V.34, the free sign; K56flex: A-law,
+  no renegotiation or retrain of ours, the tables of Lucent clients, the
+  later answer tone).
 - No fax (V.17, V.29, V.27ter), no V.23, no half-duplex V.34.
 - Bell 212A answering was tried only on a test build with the 2225 Hz tone
   from the start, by a modem that would also have taken V.22.
 - The V.92 upstream design's noise model is about 2 dB short at the top
   upstream rates, on the simulator's lines ([limits.md](limits.md)).
-- Only the three modems above have called it; none of them in x2.
+- Only the three modems above have called it; none of them in x2 or
+  K56flex.

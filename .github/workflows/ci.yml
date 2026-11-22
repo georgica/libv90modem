@@ -48,7 +48,9 @@ jobs:
   arm:
     name: ARMv5 under qemu (short tests)
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    # 0.4.0 took 2 h 57 min here; K56flex adds its own tests. GitHub's
+    # limit for a job is 360 minutes.
+    timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4
       - name: Install the cross compiler and qemu

@@ -26,8 +26,8 @@ static void test_cfg(void)
     static uint8_t buf[1 << 20] __attribute__((aligned(16)));
 
     /* the version: the library's string, the header's numbers, and the two agree */
-    CHECK(strcmp(v90m_version(), "0.4.0") == 0);
-    CHECK_EQ_I(V90M_VERSION_MAJOR * 10000 + V90M_VERSION_MINOR * 100 + V90M_VERSION_PATCH, 400);
+    CHECK(strcmp(v90m_version(), "0.5.0") == 0);
+    CHECK_EQ_I(V90M_VERSION_MAJOR * 10000 + V90M_VERSION_MINOR * 100 + V90M_VERSION_PATCH, 500);
     {
         char hv[32];
         snprintf(hv, sizeof hv, "%d.%d.%d", V90M_VERSION_MAJOR, V90M_VERSION_MINOR, V90M_VERSION_PATCH);
@@ -1247,7 +1247,14 @@ static void test_k56(void)
  * from r = 13 to 10, 1 s into that data to 12: each gives DATA_STOPPED,
  * RATES (tx_bps 50000, then 54000), DATA_MOVING; then our cleardown. Its
  * renegotiation MP with rate 0 ends the call as the far end's cleardown;
- * the client silent after its renegotiation's S, as K56flex's failure. */
+ * the client silent after its renegotiation's S, as K56flex's failure.
+ * TEST_SHORT (32-bit ARM under qemu, test/test.h): the one to 10 only, and
+ * not the silent client (test_answer_k56 has it). */
+#ifdef TEST_SHORT
+#define K56_RENEGS 1
+#else
+#define K56_RENEGS 2
+#endif
 static void k56_reneg_call(int mode, v90m_state *st, int *bps, int *nbps)
 {
     static k56call_t k;
@@ -1267,7 +1274,7 @@ static void k56_reneg_call(int mode, v90m_state *st, int *bps, int *nbps)
     k56call_default(&kc, 3000);
     kc.rate = mode ? 1 : 13;
     kc.reneg_ms = 1000; kc.reneg_rate = mode ? 1 : 10;
-    if (!mode) { kc.reneg_ms2 = 1000; kc.reneg_rate2 = 12; }
+    if (!mode && K56_RENEGS == 2) { kc.reneg_ms2 = 1000; kc.reneg_rate2 = 12; }
     kc.reneg_rate0 = mode == 1;
     if (mode == 2) kc.silent = K56C_SIL_RENEG;
     kc.getbit = ones_get; kc.putbit = bits_put;
@@ -1282,7 +1289,7 @@ static void k56_reneg_call(int mode, v90m_state *st, int *bps, int *nbps)
         v90m_get_state(m, st);
         for (; last < x2_nev && last < NEV; last++) {
             if (x2_ev[last] == V90M_EV_RATES && *nbps < 4) bps[(*nbps)++] = st->tx_bps;
-            if (x2_ev[last] == V90M_EV_DATA_MOVING && ++nmove == 3) cd_at = n + 8000;
+            if (x2_ev[last] == V90M_EV_DATA_MOVING && ++nmove == K56_RENEGS + 1) cd_at = n + 8000;
         }
         if (n == cd_at) CHECK_EQ_I(v90m_cleardown(m), V90M_OK);
         if (st->end != V90M_END_NONE) break;
@@ -1293,21 +1300,31 @@ static void k56_reneg_call(int mode, v90m_state *st, int *bps, int *nbps)
 
 static void test_k56_reneg(void)
 {
-    static const int want[10] = { V90M_EV_CONNECTED, V90M_EV_DATA_MOVING,
-        V90M_EV_DATA_STOPPED, V90M_EV_RATES, V90M_EV_DATA_MOVING,
-        V90M_EV_DATA_STOPPED, V90M_EV_RATES, V90M_EV_DATA_MOVING,
-        V90M_EV_DATA_STOPPED, V90M_EV_ENDED };
+    /* CONNECTED, DATA_MOVING; DATA_STOPPED, RATES, DATA_MOVING for each
+     * renegotiation; DATA_STOPPED, ENDED at our cleardown */
+    enum { NWANT = 2 + 3 * K56_RENEGS + 2 };
+    static const int bps_want[2] = { 50000, 54000 };
+    int want[NWANT], nw = 0;
     v90m_state st;
     int bps[4], nbps, k;
 
+    want[nw++] = V90M_EV_CONNECTED; want[nw++] = V90M_EV_DATA_MOVING;
+    for (k = 0; k < K56_RENEGS; k++) {
+        want[nw++] = V90M_EV_DATA_STOPPED; want[nw++] = V90M_EV_RATES; want[nw++] = V90M_EV_DATA_MOVING;
+    }
+    want[nw++] = V90M_EV_DATA_STOPPED; want[nw++] = V90M_EV_ENDED;
+
     k56_reneg_call(0, &st, bps, &nbps);
-    printf("  API K56flex call, the client's renegotiations to 10 and 12: %d events (", x2_nev);
+    printf("  API K56flex call, the client's renegotiations to %s: %d events (",
+           K56_RENEGS == 2 ? "10 and 12" : "10", x2_nev);
     for (k = 0; k < x2_nev && k < NEV; k++) printf("%s%d", k ? " " : "", x2_ev[k]);
-    printf("), tx_bps at RATES %d, %d; end %d\n", nbps > 0 ? bps[0] : -1, nbps > 1 ? bps[1] : -1, (int)st.end);
-    CHECK_EQ_I(x2_nev, 10);
-    for (k = 0; k < 10 && k < x2_nev; k++) CHECK_EQ_I(x2_ev[k], want[k]);
-    CHECK_EQ_I(nbps, 2);
-    if (nbps == 2) { CHECK_EQ_I(bps[0], 50000); CHECK_EQ_I(bps[1], 54000); }
+    printf("), tx_bps at RATES");
+    for (k = 0; k < nbps; k++) printf("%s %d", k ? "," : "", bps[k]);
+    printf("; end %d\n", (int)st.end);
+    CHECK_EQ_I(x2_nev, NWANT);
+    for (k = 0; k < NWANT && k < x2_nev; k++) CHECK_EQ_I(x2_ev[k], want[k]);
+    CHECK_EQ_I(nbps, K56_RENEGS);
+    for (k = 0; k < K56_RENEGS && k < nbps; k++) CHECK_EQ_I(bps[k], bps_want[k]);
     CHECK_EQ_I(st.end, V90M_END_CLEARDOWN_OURS);
 
     k56_reneg_call(1, &st, bps, &nbps);
@@ -1315,17 +1332,20 @@ static void test_k56_reneg(void)
     CHECK_EQ_I(st.end, V90M_END_CLEARDOWN_FAR);
     CHECK(x2_nev >= 4 && x2_ev[2] == V90M_EV_DATA_STOPPED);
 
+#ifndef TEST_SHORT
     k56_reneg_call(2, &st, bps, &nbps);
     printf("  API K56flex call, the client silent after its renegotiation's S: end %d\n", (int)st.end);
     CHECK_EQ_I(st.end, V90M_END_K56_FAILED);
     CHECK(x2_nev >= 4 && x2_ev[2] == V90M_EV_DATA_STOPPED);
+#endif
 }
 
 /* K56flex: the client's retrain (sim/k56call) 1 s into data mode: DATA_STOPPED
  * (retraining 1, not a renegotiation), DATA_MOVING again at the same rates,
  * retrains 1; v90m_retrain in it V90M_ESTATE (we never retrain); then our
  * cleardown. Three in a row, 300 ms into data mode each: the third ends the
- * call as K56flex's. */
+ * call as K56flex's (not under TEST_SHORT: test_answer_k56 has it on the
+ * host). */
 static void k56_retrain_call(int three, v90m_state *st, v90m_stats *sx, int *rt_ret, int *rt_seen)
 {
     static k56call_t k;
@@ -1384,10 +1404,12 @@ static void test_k56_retrain(void)
     CHECK_EQ_I(sx.retrains, 1); CHECK_EQ_I(sx.renegotiations, 0);
     CHECK_EQ_I(st.end, V90M_END_CLEARDOWN_OURS);
 
+#ifndef TEST_SHORT
     k56_retrain_call(1, &st, &sx, &rt_ret, &rt_seen);
     printf("  API K56flex call, three retrains in a row: retrains %u, end %d\n", sx.retrains, (int)st.end);
     CHECK_EQ_I(sx.retrains, 3);
     CHECK_EQ_I(st.end, V90M_END_K56_FAILED);
+#endif
 }
 
 int main(void)

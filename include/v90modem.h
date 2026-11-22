@@ -34,9 +34,9 @@ extern "C" {
 #endif
 
 #define V90M_VERSION_MAJOR 0
-#define V90M_VERSION_MINOR 4
+#define V90M_VERSION_MINOR 5
 #define V90M_VERSION_PATCH 0
-/* "0.4.0": the version of the library linked in (may differ from the header) */
+/* "0.5.0": the version of the library linked in (may differ from the header) */
 const char *v90m_version(void);
 
 /* error codes (negative returns) */
@@ -141,7 +141,15 @@ typedef enum {
  * is offered gets V.90. Every caller hears our answer tone later than
  * without K56flex: 1.79 s for a caller without V.8bis, about 3.8 s for a
  * V.8bis caller without K56flex (CRd, no MS), about 3.4 s for a K56flex
- * client (measured in the simulator). */
+ * client (measured in the simulator). An agreed client whose INFO1c asks
+ * for K56flex, with 3200 baud chosen for its upstream, gets our INFO1a
+ * flagged: there is no way back to V.34 after it. If the K56flex start-up,
+ * or a rate renegotiation or retrain of the client's, does not complete,
+ * or the client retrains a third time in a row, the call ends with
+ * V90M_END_K56_FAILED; we start neither a renegotiation nor a retrain. In
+ * data mode (V90M_CONN_K56FLEX) tx_bps is the downstream payload rate
+ * (32000 to 56000 in steps of 2000, the figure a Rockwell modem prints)
+ * and rx_bps the client's V.34 upstream. */
 #define V90M_MOD_K56      0x0200u
 
 /* the modulation of a connection (v90m_state.modulation) */
@@ -245,7 +253,7 @@ int      v90m_process_lin_rx(v90m_t *m, const int16_t *rx, uint8_t *tx, size_t n
 int      v90m_process_linear(v90m_t *m, const int16_t *rx, int16_t *tx, size_t n);
 
 /* Ask for a retrain. Answering: in data mode of V.92, V.90, V.34, V.32bis
- * (x2: V90M_ESTATE). Calling: once connected in V.22bis at 2400 bit/s, V.32bis, V.34, V.90,
+ * (x2, K56flex: V90M_ESTATE). Calling: once connected in V.22bis at 2400 bit/s, V.32bis, V.34, V.90,
  * V.92. V90M_OK, or V90M_ESTATE (none of those, or one under way).
  * Calling V.90 / V.92: 70 ms of silence and Tone A, Phase 2 to data mode
  * again (some 7 to 11 s); also during a rate renegotiation; V90M_ESTATE when
@@ -258,8 +266,9 @@ int      v90m_retrain(v90m_t *m);
  * 9.7, V.92 9.11, V.34 11.7, either role): V90M_OK when that has begun
  * (V90M_EV_ENDED follows within a fraction of a second); V90M_ESTATE when
  * there is nothing to send (V.21, V.22, V.22bis, V.32bis, Bell, or not in
- * data mode): just stop calling v90m_process_*. x2 (answering, in data mode
- * or a rate change): V90M_OK, and the call ends at once with nothing sent. */
+ * data mode): just stop calling v90m_process_*. x2 and K56flex (answering,
+ * in data mode or a rate change): V90M_OK, and the call ends at once with
+ * nothing sent. */
 int      v90m_cleardown(v90m_t *m);
 
 typedef enum {
@@ -279,8 +288,9 @@ typedef enum {
                                    the client's, did not complete */
     V90M_END_K56_FAILED         /* (appended) answering: K56flex was agreed and its start-up
                                    went past the point of no return (our INFO1a), and
-                                   the start-up, or a rate change of the client's, did
-                                   not complete */
+                                   the start-up, or a rate change or retrain of the
+                                   client's, did not complete, or the client retrained
+                                   a third time in a row */
 } v90m_end;
 
 /* Cheap; fine to read after every sample. Also after the end: end says why. */

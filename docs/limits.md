@@ -1,6 +1,6 @@
 # Known limits
 
-What is not done, not tried, or measured in simulation only, as of 0.4.0.
+What is not done, not tried, or measured in simulation only, as of 0.5.0.
 Each item names where it is recorded.
 
 ## Not tried
@@ -31,6 +31,14 @@ Each item names where it is recorded.
   asks for a higher rate about 12 s into data, so a real U.S. Robotics
   call decides the rates above 32000. (`docs/history/x2-facts.md`,
   "Harness" and "Oracle: D-Modem's mapper"; `tools/x2-peer/README.md`.)
+- **K56flex (answering): no real modem yet.** K56flex (answering,
+  experimental, off by default) connects to Motorola's SM56 soft modem run
+  under emulation, V.42 data both ways at 32000 to 52000 bit/s down and
+  31200 up, with no pad and with robbed bits; its decoder takes our data
+  at every rate, pad and robbed-bit pattern; not yet tried on a Rockwell
+  or Lucent modem. (Below, "K56flex (answering)"; `docs/history/k56-facts.md`,
+  "Harness"; `tools/k56-peer/README.md`; what the owner's line tests are to
+  record: `docs/history/k56-handover.md`.)
 
 ## Measured in simulation only
 
@@ -87,6 +95,72 @@ Each item names where it is recorded.
 - **Behind 3 dB** we send the Quad's octets `dc` for the level `e2` and
   `ed` for `f1`, as the Quad and the I-modem do; under the pad model they
   arrive one code off (below).
+
+## K56flex (answering)
+
+K56flex (answering, experimental, off by default) connects to Motorola's
+SM56 soft modem run under emulation, V.42 data both ways at 32000 to 52000
+bit/s down and 31200 up, with no pad and with robbed bits; its decoder
+takes our data at every rate, pad and robbed-bit pattern; not yet tried on
+a Rockwell or Lucent modem.
+
+- **Offered only** with `V90M_MOD_K56` and `V90M_MOD_V34`, answering, on a
+  mu-law line. Not in the defaults; v90d does not offer it until the
+  owner's line tests (`docs/history/k56-handover.md`).
+- **A-law: not offered.** With `alaw` set no CRe is sent and the call
+  starts as without K56flex. A real K56flex call recorded on an A-law line
+  exists (`docs/history/k56-facts.md`, "Recording"), but no A-law levels
+  or tables were checked.
+- **The included tables** (below, "Included tables (K56flex)") are SM56's
+  as D-Modem published them. **Lucent clients are assumed to use the same
+  tables;** that is unverified.
+- **No renegotiation or retrain of ours.** `v90m_retrain` gives
+  `V90M_ESTATE`, and the modem never starts a renegotiation: after a
+  server's renegotiation SM56's data error rises tenfold and it retrains,
+  and SM56 does not take a server's tone A as a retrain. So an upstream
+  that degrades cannot be stepped down from our side: the watchdog ends
+  the call (`V90M_END_LOST`).
+- **The client's renegotiation: MP, MP' and E on 4 points** (V.34 11.6),
+  as in V.34's and x2's rate changes: an assumption, confirmed by no real
+  client. SM56 did not renegotiate in two calls of 120 s, so only the
+  simulated client has renegotiated with it.
+- **The client's retrains:** the third in a row ends the call
+  (`V90M_END_K56_FAILED`); they are forgotten once data mode has held 2 s
+  (our own value: no source gives one). A retrain's Phase 2 must end
+  within 9 s of the retrain's start (our own value), or the call ends.
+  SM56 fails about half of its own retrains, so only the simulated client
+  has retrained with it.
+- **Every caller hears our answer tone later.** V.8bis comes first (at
+  least 400 ms of silence, CRe, the wait for CRd), so ANSam comes, against
+  a call without K56flex: 1.790 s later for a caller without V.8bis,
+  3.807 s later for a V.8bis caller without K56flex (CRd, no MS), 3.413 s
+  later for an agreed K56flex client (measured in the simulator). A caller
+  that gives up in that time is not known; the live calls with K56flex
+  offered, before v90d offers it, are to show it.
+- **A line that answers with no ringing may meet SM56's blind-dial wait.**
+  SM56 answers V.8bis only some 2 s after it dials; on the telephone
+  network the ringing covers that. Our CRe comes 400 ms after we answer,
+  so a client that is still waiting ignores it and connects V.34 or V.90
+  instead. The SM56 harness answers 3 s after dialling.
+- **A client in automode gets V.90.** SM56 with `AT+MS=K56FLEX,1` offers
+  V.90 in its CM too, and V.8 gives it V.90 (V.90 wins there), as for any
+  caller offering PCM while V.90 is offered.
+- **The 31200 upstream has little margin behind a strong echo.** In the
+  simulator, with the line's echo 6 dB too loud (the echo of our octets
+  before a 6 dB pad), the 31200 bit/s upstream took bursts of errors at
+  about 35 dB SNR: the V.34 receiver's margin with a strong hybrid echo,
+  not a K56flex fault. V.42 recovers such bursts; a real line's echo
+  decides.
+- **SM56's acceptance of our TRN2A depends on the harness's line model.**
+  With some models of the analogue loop toward it, SM56 sends no MP after
+  our TRN2A, and D-Modem's own server fails the same way under the same
+  conditions (`tools/k56-peer/README.md`, "Known"). Whether a real client
+  is as sensitive is not known.
+- **The training is SM56's.** The real server of the recorded call sent
+  other segment lengths (`docs/history/k56-facts.md`, "Recording"); whether
+  a hardware client takes SM56's training, a 3-bit TRN1B and the
+  16-level Js is not known.
+- **No calling (client) side.**
 
 ## Included tables (x2)
 
@@ -162,14 +236,23 @@ which makes it about 123 M counted instructions a second.
   client dictates: V.34 with the 64-state trellis, non-linear encoding and
   expanded shaping, which x2 gives the server no way to refuse.
   (`docs/history/PROGRESS.md`, x2 6 and x2 8.)
+- **K56flex data mode costs about what V.90's does: about a third of the
+  box.** 39.0 M instructions a second at 56000, against V.90 answering's
+  38.9 M measured the same way (`make cost-k56`, ARMv5, second 20 to 21
+  of the call, after V.8bis). It asks the client in its MP for the
+  upstream V.90 has (16 states, linear encoding, minimum shaping), and
+  SM56 honours that. A client that ignored the request and sent with 64
+  states, non-linear encoding and expanded shaping, as an x2 client
+  dictates, could not be decoded today; once the receiver followed its MP
+  instead (configuration: x2's receiver decodes that upstream), it would
+  cost what x2 does, about twice V.90's (some 82 M a second, one call per
+  box). (`docs/history/PROGRESS.md`, k56 10.)
 
 ## Not implemented
 
 - V.92 quick connect, short Phase 2 and modem-on-hold, either role.
-- K56flex: not supported; a K56flex-only modem connects at V.34
-  (`DESIGN.md`, 4.2b).
-- x2's calling (client) side. The answering (server) side is there since
-  0.4.0 (above).
+- The calling (client) side of x2 and of K56flex. Their answering (server)
+  sides are there since 0.4.0 and 0.5.0 (above).
 - Fax (V.17, V.29, V.27ter), V.23, half-duplex V.34.
 - A public call for a rate renegotiation of the calling side's own: the
   analogue V.90 / V.92 modem does one by itself when its receiver needs it.

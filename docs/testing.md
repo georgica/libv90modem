@@ -31,19 +31,32 @@ code to ship (`DESIGN.md`, 5).
 
 ## `make check-arm`
 
-The same tests cross-built for ARM (`ARM_CC`, default an `arm-linux-gcc`
-under `../toolchain`) and run under qemu-user (`QEMU`, default
-`qemu-arm-static`), `PAR` (default 8) programs at a time
+The same tests cross-built for ARM (`ARM_CC`) and run under qemu-user
+(`QEMU`, default `qemu-arm-static`), `PAR` (default 8) programs at a time
 (`tools/par-run.sh`), then the API test and the subdirectories' tests.
 It ends with `ALL ARM CHECKS PASS`.
+
+`ARM_CC` must name a 32-bit ARM cross compiler that links static
+programs. Its default is an `arm-linux-gcc` under `../toolchain/*/bin`
+(next to the source tree), else `arm-linux-gcc` on the `PATH`; without
+either, give it:
 
 ```
 make check-arm ARM_CC=/path/to/arm-linux-gcc QEMU=qemu-arm-static PAR=8
 ```
 
+Locally Bootlin's toolchains serve (for example
+`~/toolchains/armv7-eabihf--musl--stable-2023.08-1/bin/arm-linux-gcc`, or
+the armv5-eabi uClibc one for the box's ARMv5); the CI's ARMv5 job uses
+Debian's `arm-linux-gnueabi-gcc` (armel: ARMv5T, soft float) with
+`qemu-arm-static`.
+
 On 32-bit ARM some long tests run a shorter version (`TEST_SHORT`, set in
 `test/test.h` unless `TEST_FULL` is defined), so their counts differ from
-the host's.
+the host's. K56flex's are among them: `test_answer_k56` (fewer rates,
+pads and robbed-bit patterns, one retrain), `test_k56enc` (four robbed-bit
+masks against the oracle) and the API test's K56flex calls (one
+renegotiation, one retrain).
 
 ## `make check-ubsan`
 
@@ -125,6 +138,54 @@ There is no m68k hardware here to settle it
   acknowledges our V.42 data at 32000; `STRICT_RENEG=1` also requires it
   after the Courier's rate change, which no server passes on the published
   emulator.
+
+## K56flex's checks
+
+K56flex has no specification to test against, so its tests check it from
+several sides, each saying what it supports (the design,
+`docs/superpowers/specs/2026-11-21-k56flex-answering-design.md`,
+"Verification"):
+
+- **In `make check`:** the V.8bis messages and signals
+  (`test_v8bismsg`, `test_v8bis`), the tables (`test_k56tab`), the encoder
+  (`test_k56enc`), the training transmitter (`test_k56tx`), and whole
+  calls against a simulated client built from the facts (`sim/k56call`,
+  `test_answer_k56`, the API test): every rate, pad and robbed-bit pattern
+  tried, the client's renegotiations and retrains, the time limits, the
+  fallbacks to V.34 and V.90.
+- **The oracles:** D-Modem's encoder and training (built outside the
+  repository, `docs/history/k56-facts.md`, "Oracle") were run once; what
+  they sent is kept as data in `test/data/k56enc_oracle.h` (every rate x
+  pad x robbed-bit mask: a hash of 600 frames, and three frames in full)
+  and `test/data/k56tx_oracle.h` (the training of 13 cases, segment by
+  segment). `test_k56enc` and `test_k56tx` compare ours with them. An echo
+  chamber, not an independent truth: D-Modem's server is what SM56 was
+  shown to take.
+- **`make crd-scan RECS=<dir>`:** the CRd detector of our V.8bis over
+  every `.raw` recording in a directory (the callers' audio). Over the 106
+  recordings of non-K56flex callers it must find nothing (`0 CRd
+  detections`): a false CRd would delay the answer tone further.
+- **`make test-k56-sm56 DMODEM=<dir> [MODS=k56|none] [RBS=<hex>]
+  [DOWN=<bps>] [STRICT_RENEG=1]`:** Motorola's SM56 soft modem, run by
+  D-Modem's harness (kept outside the repository, built unmodified), dials
+  the answering modem through a bridge (`tools/k56-peer/`); it passes when
+  both ends are in data mode and 4 KiB went each way over V.42, byte for
+  byte. `RBS` robs bits toward SM56, `DOWN` caps our downstream. Host
+  only, 32-bit (`glibc-devel.i686`); without `DMODEM` or the 32-bit
+  toolchain it says so and exits 0. `tools/k56-peer/README.md`.
+- **SM56's decoder:** `make k56-dump` writes our octets and data bits at
+  every rate x pad x robbed-bit mask (2496) into `build/k56dump`; a small
+  32-bit program outside the repository runs SM56's own decoder on them
+  (`docs/history/k56-facts.md`, "Oracle"). All 2496 decode to the data
+  sent.
+- **`make bench-k56`, `make cost-k56`:** a simulated K56flex call at 56000
+  (`tools/rec_k56.c`) replayed on the host and under qemu (the transmit
+  hashes must be equal), and the ARM instructions a second of its data
+  mode against V.90's.
+- **`v90m-replay -k`:** a recording replayed with K56flex offered. V.8bis
+  moves our answer tone later than the recorded caller expected, so this
+  shows only that every recording completes; the proof that nothing else
+  moved is the replay without `-k`, byte-identical to 0.4.0's.
 
 ## Recorded calls and the replay tool
 

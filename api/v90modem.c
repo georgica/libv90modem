@@ -35,7 +35,7 @@ typedef char v90m_check_ec[(SAME(V90M_EC_DETECT, V42EC_DETECT) && SAME(V90M_EC_E
 static int aligned(const void *p) { return ((uintptr_t)p % V90M_ALIGN) == 0; }
 static void seterr(int *err, int e) { if (err) *err = e; }
 
-const char *v90m_version(void) { return "0.4.0"; }
+const char *v90m_version(void) { return "0.5.0"; }
 
 uint8_t v90m_g711_encode(int alaw, int16_t linear) { return pcm_encode(alaw != 0, linear); }
 int16_t v90m_g711_decode(int alaw, uint8_t codeword) { return (int16_t)v90_octet_linear(alaw != 0, codeword); }

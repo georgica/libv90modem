@@ -2,7 +2,7 @@
 
 A voice-band data modem in software: V.92, V.90, V.34, V.32bis, V.22bis,
 V.22, V.21, Bell 212A and Bell 103, started by V.8, and U.S. Robotics' x2
-on the answering side, with V.42 error control
+and (experimental) K56flex on the answering side, with V.42 error control
 (LAPM) and V.42bis / V.44 compression. It answers (for V.90 and V.92 as the
 digital, server side) and calls (for V.90 and V.92 as the analogue, client
 side). Portable C99, fixed-point in the signal path, no allocation after
@@ -14,7 +14,7 @@ analogue telephone adapter, from the ITU-T recommendations. The answering
 side has answered real modems there (see "Tried on real modems"); the
 calling side has not yet called one.
 
-**The API is not stable before version 1.0.** This is 0.4.0; what changed
+**The API is not stable before version 1.0.** This is 0.5.0; what changed
 from one version to the next is in `CHANGELOG.md`.
 
 ## How to use
@@ -82,6 +82,12 @@ ones go out and what arrives is dropped).
   (`v90m_process_linear` or `v90m_process_lin_rx`). The calling side has
   been tried in simulation and against this library's own answerer only,
   never against a real modem or server.
+- **x2 and K56flex** (answering only) are off by default. To offer them,
+  set `cfg.modulations |= V90M_MOD_X2` or `cfg.modulations |=
+  V90M_MOD_K56` (each needs `V90M_MOD_V34`, which the default has).
+  K56flex is experimental: tried against an emulated client only, and with
+  it on every caller hears the answer tone up to 3.8 s later
+  ([docs/answering.md](docs/answering.md), "K56flex").
 - **Error control** is a separate object on the bit pump: a V.42 endpoint
   (`v90m_ec_*`: LAPM with V.42bis or V.44, start-stop fallback) fed from
   `getbit` / `putbit` and ticked every millisecond, or a start-stop framer
@@ -111,6 +117,7 @@ built and why; `docs/history/` keeps the development logs.
 | V.92 | digital side | analogue side | PCM upstream (24000 to 48000 bit/s) after V.90's start-up, retrains and rate renegotiation as V.90; falls back to V.90 when the other end does not take PCM upstream |
 | Bell 103 | `V90M_MOD_BELL103`, not in the defaults | the same | 300 bit/s FSK; answering a caller without V.8 that sends 1270 Hz; calling on the 2225 Hz Bell answer tone or a carrier in the Bell answer channel |
 | x2 | `V90M_MOD_X2` with V.34, not in the defaults: the server side | no | U.S. Robotics' 56k of 1997: PCM downstream 32000 to 56000 bit/s, V.34 upstream; the client's rate changes followed; mu-law only; no way back to V.34 once the client takes it up (below, and [docs/answering.md](docs/answering.md)) |
+| K56flex | `V90M_MOD_K56` with V.34, not in the defaults: the server side; experimental | no | Rockwell's and Lucent's 56k of 1997, agreed in V.8bis before V.8: PCM downstream 32000 to 56000 bit/s behind no pad, 3 dB or 6 dB, with robbed bits; V.34 upstream; the client's renegotiations and retrains followed; mu-law only; no way back to V.34 once the client takes it up ([docs/answering.md](docs/answering.md)) |
 | Bell 212A | `V90M_MOD_BELL212A` with V.22, not in the defaults | the same | 1200 bit/s; answering with 2225 Hz after 4 s of an unanswered V.22bis answer sequence; calling on hearing 2225 Hz (Bell 103 when no 1200 bit/s answer comes) |
 | V.14 | yes | yes | start-stop characters on the synchronous bit pump |
 | V.42 | yes | yes | LAPM, detection phase, start-stop fallback, breaks |
@@ -131,6 +138,15 @@ built and why; `docs/history/` keeps the development logs.
   index 1; not yet confirmed on a real modem. A Courier asks for a higher
   rate about 12 s into data, so a real U.S. Robotics call decides those
   rates ([docs/limits.md](docs/limits.md)).
+- **K56flex (answering), against Motorola's SM56 under emulation, not yet
+  a real modem:** K56flex (answering, experimental, off by default)
+  connects to Motorola's SM56 soft modem run under emulation, V.42 data
+  both ways at 32000 to 52000 bit/s down and 31200 up, with no pad and
+  with robbed bits; its decoder takes our data at every rate, pad and
+  robbed-bit pattern; not yet tried on a Rockwell or Lucent modem. Its
+  octets also equal D-Modem's server's at every rate, pad and robbed-bit
+  pattern, and its training's segment by segment
+  ([docs/limits.md](docs/limits.md)).
 - **Calling, in simulation only:** every modulation of the calling side has
   run against simulated lines and this library's own answerer, never
   against a real modem or a real server. What it sends has been compared,
@@ -152,10 +168,10 @@ built and why; `docs/history/` keeps the development logs.
 - A rate renegotiation of the calling side's own is not in the public API
   (the analogue V.90 / V.92 modem does one by itself when its receiver
   needs it).
-- K56flex, the other 56k scheme from before V.90: not spoken; a K56flex-only
-  modem connects at V.34 (`DESIGN.md`, 4.2b). x2: answering only, off
-  unless `V90M_MOD_X2` is set; no A-law, no robbed-bit lines, no calling
-  side ([docs/limits.md](docs/limits.md)).
+- x2: answering only, off unless `V90M_MOD_X2` is set; no A-law, no
+  robbed-bit lines, no calling side. K56flex: answering only, experimental,
+  off unless `V90M_MOD_K56` is set; no A-law, no calling side, and we never
+  renegotiate or retrain ourselves ([docs/limits.md](docs/limits.md)).
 - Fax (V.17, V.29, V.27ter), V.23, half-duplex V.34.
 
 ## Building
@@ -233,11 +249,14 @@ which makes it about 123 M counted instructions a second.
 | calling, V.92 (0 / 100 ppm) | 69.4 / 73.9 | 98 k |
 | calling, Bell 103 / Bell 212A | 9.84 / 4.43 | 2.3 k / 2.8 k |
 | answering, x2 (32000 / 56000) | 81.9 / 83.7 | not measured |
+| answering, K56flex (56000) | 39.0 | not measured |
 
 x2 costs about twice V.90 (`make cost-x2`, which measures V.90 answering
 at 38.9 M the same way): the V.34 upstream the client dictates (64-state
 trellis, non-linear encoding, expanded shaping). One x2 call fits the box;
-two do not.
+two do not. K56flex costs the same as V.90 (`make cost-k56`, measured the
+same way: 39.0 M against 38.9 M), because it asks the client in its MP for
+the upstream V.90 has (16 states, linear, minimum shaping).
 
 The calling side's retrains and rate renegotiations stay under 98 k a tick
 (a 10 ms block of the box is about 1.23 M). The measurements and how they
@@ -261,7 +280,7 @@ clears down; `-m` picks what the caller offers:
 
 ```
 $ build/call_loop
-libv90modem 0.4.0
+libv90modem 0.5.0
 caller   CONNECT 40000/50666 V.92
 answerer CONNECT 50666/40000 V.92
 caller   got "hello from the answerer"

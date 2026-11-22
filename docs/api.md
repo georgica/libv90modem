@@ -18,7 +18,7 @@ inside `v90m_process_*()` on the calling thread.
 | | |
 |---|---|
 | `V90M_VERSION_MAJOR`, `V90M_VERSION_MINOR`, `V90M_VERSION_PATCH` | the header's version: 0, 4, 0 |
-| `const char *v90m_version(void)` | "0.4.0": the version of the library linked in (may differ from the header) |
+| `const char *v90m_version(void)` | "0.5.0": the version of the library linked in (may differ from the header) |
 
 ## Error codes
 
@@ -58,7 +58,7 @@ version; the init functions check the length given):
 | field | |
 |---|---|
 | `role` | `V90M_ROLE_ANSWER` (0, the called modem) or `V90M_ROLE_ORIGINATE` (1, the calling modem) |
-| `modulations` | `V90M_MOD_*`; default all but V.92, Bell and x2. Either role: at least one (0 gives `V90M_EINVAL`), and V.92 only with V.90 (else `V90M_ENOTSUP`); x2 answering only and with V.34 (else `V90M_ENOTSUP`) |
+| `modulations` | `V90M_MOD_*`; default all but V.92, Bell, x2 and K56flex. Either role: at least one (0 gives `V90M_EINVAL`), and V.92 only with V.90 (else `V90M_ENOTSUP`); x2 and K56flex answering only and with V.34 (else `V90M_ENOTSUP`) |
 | `alaw` | the codec's law: 0 mu-law, 1 A-law |
 | `codec_linear_rx` | answering: 1 = the codec receives in 16-bit linear, with no G.711 quantiser on the receive path (V.92 then designs the upstream constellation without its share of the noise); 0 = the received samples went through G.711, also when handed over as linear values. Calling: unused |
 | `tx_level` | transmit RMS outside PCM modes, 16-bit units, >= 0; default 3000 |
@@ -84,6 +84,7 @@ version; the init functions check the length given):
 | `V90M_MOD_BELL103` | 0x0040 | not in the defaults, either role |
 | `V90M_MOD_BELL212A` | 0x0080 | not in the defaults, either role; answering only with `V90M_MOD_V22` |
 | `V90M_MOD_X2` | 0x0100 | answering only (calling: `V90M_ENOTSUP`), with `V90M_MOD_V34` (without: `V90M_ENOTSUP`), not in the defaults: x2 as its server, offered on a mu-law line to a caller whose CM offers V.34 and no PCM; see [answering.md](answering.md), "x2" |
+| `V90M_MOD_K56` | 0x0200 | answering only (calling: `V90M_ENOTSUP`), with `V90M_MOD_V34` (without: `V90M_ENOTSUP`), not in the defaults; experimental: K56flex as its server, offered on a mu-law line in V.8bis before V.8 (every caller then hears our answer tone later: 1.790 s without V.8bis, 3.807 s for a V.8bis caller without K56flex, 3.413 s for a K56flex client); see [answering.md](answering.md), "K56flex" |
 
 What each does in each role: [answering.md](answering.md),
 [calling.md](calling.md), and the header's comments above `v90m_role` and
@@ -151,8 +152,10 @@ after every sample, and after the end (`end` says why).
 `V90M_CONN_V32BIS` 6, `V90M_CONN_V92` 7, `V90M_CONN_BELL103` 8,
 `V90M_CONN_BELL212A` 9 (V.22 at 1200 bit/s begun on the 2225 Hz Bell answer
 tone), `V90M_CONN_X2` 10 (x2: PCM downstream, `tx_bps` 32000 to 56000;
-V.34 upstream). The last three were appended; the values above them stay
-as they were.
+V.34 upstream), `V90M_CONN_K56FLEX` 11 (K56flex: PCM downstream, `tx_bps`
+32000 to 56000 in steps of 2000, the figure a Rockwell modem prints; V.34
+upstream in `rx_bps`). The last four were appended; the values above them
+stay as they were.
 
 ### `v90m_end`
 
@@ -168,6 +171,7 @@ as they were.
 | `V90M_END_NO_COMMON` | calling only: the answerer has no modulation in common with us |
 | `V90M_END_RETRAIN_FAILED` | calling V.90 / V.92 (appended): a retrain failed, or one more was due past the limit (see `v90m_retrain`) |
 | `V90M_END_X2_FAILED` | answering (appended): the client took up x2 (its marker came) and the x2 start-up, or a rate change of the client's, did not complete |
+| `V90M_END_K56_FAILED` | answering (appended): K56flex was agreed and went past the point of no return (our INFO1a flagged), and the start-up, a rate renegotiation or a retrain of the client's did not complete, or the client retrained a third time in a row |
 
 ## Stats
 
@@ -177,8 +181,8 @@ as they were.
 |---|---|
 | `modulation`, `tx_bps`, `rx_bps` | as in the state |
 | `snr_db10` | receiver signal to error, 0.1 dB, 0..600; -1 = none (not connected, or a modulation without the figure) |
-| `rtd` | round-trip delay measured in the handshake, samples; -1 = none (answering: V.34, V.90, V.92; calling: V.32bis, V.34, V.90, V.92) |
-| `echo_delay` | answering V.90 / V.92: in use (configured or measured), samples; -1 = none, and always -1 calling |
+| `rtd` | round-trip delay measured in the handshake, samples; -1 = none (answering: V.34, V.90, V.92, K56flex; calling: V.32bis, V.34, V.90, V.92) |
+| `echo_delay` | answering V.90 / V.92 / K56flex: in use (configured or measured), samples; -1 = none, and always -1 calling |
 | `retrains` | begun, this call |
 | `renegotiations` | rate renegotiations that stopped the data, this call (answering: V.90, V.92; calling: V.32bis, V.34, V.90, V.92) |
 
@@ -186,8 +190,8 @@ as they were.
 
 | | |
 |---|---|
-| `int v90m_retrain(v90m_t *m)` | ask for a retrain. Answering: in data mode of V.92, V.90, V.34, V.32bis (x2: `V90M_ESTATE`). Calling: once connected in V.22bis at 2400 bit/s, V.32bis, V.34, V.90, V.92. `V90M_OK`, or `V90M_ESTATE` (none of those, or one under way). Calling V.90 / V.92: 70 ms of silence and Tone A, Phase 2 to data mode again (some 7 to 11 s); also during a rate renegotiation; `V90M_ESTATE` when one is under way or three have run without a minute of data mode between them. A retrain that fails, or one more due past that limit (the far end's, or one the receiver needs), ends the call with `V90M_END_RETRAIN_FAILED` (the receiver's after a cleardown, V.90 9.7 / V.92 9.11) |
-| `int v90m_cleardown(v90m_t *m)` | hang up, telling the far modem where the modulation has a way to (V.90 9.7, V.92 9.11, V.34 11.7, either role): `V90M_OK` when that has begun (`V90M_EV_ENDED` follows within a fraction of a second); `V90M_ESTATE` when there is nothing to send (V.21, V.22, V.22bis, V.32bis, Bell, or not in data mode): just stop calling `v90m_process_*`. x2 (answering, in data mode or a rate change): `V90M_OK`, and the call ends at once with nothing sent |
+| `int v90m_retrain(v90m_t *m)` | ask for a retrain. Answering: in data mode of V.92, V.90, V.34, V.32bis (x2, K56flex: `V90M_ESTATE`; a K56flex client's own retrain is followed, see [answering.md](answering.md)). Calling: once connected in V.22bis at 2400 bit/s, V.32bis, V.34, V.90, V.92. `V90M_OK`, or `V90M_ESTATE` (none of those, or one under way). Calling V.90 / V.92: 70 ms of silence and Tone A, Phase 2 to data mode again (some 7 to 11 s); also during a rate renegotiation; `V90M_ESTATE` when one is under way or three have run without a minute of data mode between them. A retrain that fails, or one more due past that limit (the far end's, or one the receiver needs), ends the call with `V90M_END_RETRAIN_FAILED` (the receiver's after a cleardown, V.90 9.7 / V.92 9.11) |
+| `int v90m_cleardown(v90m_t *m)` | hang up, telling the far modem where the modulation has a way to (V.90 9.7, V.92 9.11, V.34 11.7, either role): `V90M_OK` when that has begun (`V90M_EV_ENDED` follows within a fraction of a second); `V90M_ESTATE` when there is nothing to send (V.21, V.22, V.22bis, V.32bis, Bell, or not in data mode): just stop calling `v90m_process_*`. x2 and K56flex (answering, in data mode or a rate change): `V90M_OK`, and the call ends at once with nothing sent |
 
 ## Start-stop characters (V.14 basic)
 

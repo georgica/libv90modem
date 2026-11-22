@@ -34,7 +34,7 @@
 # test peer and may use double; it is never installed.
 
 NAME     := libv90modem
-VERSION  := 0.4.0
+VERSION  := 0.5.0
 SOVER    := 0
 
 CC       ?= cc

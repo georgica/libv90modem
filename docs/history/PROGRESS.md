@@ -3737,3 +3737,67 @@ whole training afresh (`k56_starts`), checked octet by octet as the first.
     make check: ALL HOST CHECKS PASS (answer_k56 1407 checks, api 542)
     make check-arm (armv7 musl, TEST_SHORT: the single retrain only):
       ALL ARM CHECKS PASS (answer_k56 636 checks)
+
+## k56 13: release 0.5.0, experimental, off by default (2026-11-21)
+
+main (5db64c4: the CI workflow) merged into k56flex first, so that the
+ARMv5 job's fix edits the real `ci.yml`.
+
+- **Label L1** (spec "Release labels"): the SM56 decoder harness and the
+  SM56 full call pass (below). In CHANGELOG, README, `docs/limits.md`,
+  `docs/answering.md`: "connects to Motorola's SM56 soft modem run under
+  emulation, V.42 data both ways at 32000 to 52000 bit/s down and 31200
+  up, with no pad and with robbed bits; its decoder takes our data at
+  every rate, pad and robbed-bit pattern; not yet tried on a Rockwell or
+  Lucent modem." The rates: SM56 full calls at 32000 (k56 9b, `DOWN=32000`),
+  34000 to 50000 capped (k56 10), 52000 uncapped (k56 9b, k56 10, and
+  this step's runs); 31200 up in every one.
+- **Version 0.5.0**: Makefile, header, `v90m_version()`, test_api's version
+  checks. `v90m_mem_size()` unchanged (118824 x86-64, 118512 32-bit ARM).
+- **Docs**: CHANGELOG 0.5.0; README (K56flex in the list and the standards
+  table, how to switch x2 and K56flex on, what was tried, the CPU table);
+  DESIGN 4.2b (K56flex done, the stated exception as x2's); answering.md (a
+  K56flex section), api.md (`V90M_MOD_K56`, `V90M_CONN_K56FLEX`,
+  `V90M_END_K56_FAILED`, retrain and cleardown in K56flex), limits.md (a
+  K56flex section: CRe, not MRe, and the delays measured in k56 5; the
+  31200 upstream's margin behind a strong echo; the client's
+  renegotiation on 4 points, unconfirmed; retrains forgotten after 2 s of
+  data, our value; the retrain's Phase 2 limited to 9 s; SM56 in
+  automode gets V.90), testing.md (K56flex's checks, `ARM_CC` for
+  check-arm), the header's comments on `V90M_MOD_K56`, retrain, cleardown
+  and `V90M_END_K56_FAILED`; `docs/history/k56-handover.md` (the owner's
+  line tests, the v90d change, what is not settled).
+- **CI, ARMv5**: on main the job took 2 h 57 min of its 180. Its limit is
+  now 300 minutes (GitHub's per job: 360), and the API test's long
+  K56flex calls have `TEST_SHORT` versions (one renegotiation, not the
+  client silent after its S; the single retrain, not three in a row).
+- **Found by the checks**: `make check-ubsan` did not build. clang 21's
+  `-Wunused-but-set-variable` flagged `ones` in `sim/k56call.c` (k56 9), and
+  it is a `-Werror` build. The dead variable is removed (test code only).
+
+Checks on the release tree:
+
+| check | result |
+| --- | --- |
+| `make check` | ALL HOST CHECKS PASS (api 542, p2ans 402, answer_k56 1418) |
+| 0.4.0's counts (`make check` on 704b370 against this tree) | every suite of 0.4.0 the same, but api 458 -> 542 and p2ans 259 -> 402 (the K56flex tests of k56 5, 6, 9, 11, 12); new: answer_k56, k56enc, k56tx, test_k56tab, test_v8bis, test_v8bismsg |
+| `make check-ubsan` | ALL UBSAN CHECKS PASS (after the fix above) |
+| `PAR=4 make check-arm ARM_CC=...armv5-eabi uClibc...` | ALL ARM CHECKS PASS; api 532 (TEST_SHORT), answer_k56 636 |
+| replay proof, 106 live-050 recordings, 704b370 (0.4.0 + the x2 gate) against this tree | `""`, `-9`, `-x`, `-x -9`: identical (106 .txt; 21 / 40 / 21 / 40 .bits); `-k`, `-k -9`: 106 of 106 complete |
+| `make crd-scan RECS=~/sync-build/live-050` | 106 recordings, 0 CRd detections |
+| `make cost-k56` (ARMv5 uClibc) | K56flex 38985309, V.90 38935592 instructions a second of line: 100 % (armv7 musl in k56 10: 89 %) |
+| `make test-k56-sm56 MODS=k56`, RBS none / `24` | PASS, 52000 / 31200, 4 KiB each way identical (SM56: RBS 00 / 06) |
+| `make test-k56-sm56 MODS=k56 DOWN=32000` | PASS, 32000 / 31200 |
+| SM56's decoder (`make k56-dump`, `sm56dec/check.sh`) | 2496 of 2496 decode to the data sent |
+| `PAR=1 tools/check-ports.sh build/ports-k56 host-gcc host-clang i686-musl aarch64be-musl mips-musl win32-mingw` | host-clang, i686-musl, aarch64be-musl (PAR=1, in `build/ports-k56`) and mips-musl, win32-mingw (PAR=3, in `build/ports-k56b`, run beside it to save hours, each against its own host-gcc run): 121 of 121 programs identical to host-gcc each; ALL PORTS PASS |
+
+check-arm time, ARMv5 under qemu, PAR=4 as on CI's four cores, the
+programs already built: 4180 s before the API test's shortening, 3218 s
+after. Most of that difference is the host's other load during the first
+run, not the change. The API test itself went from 8.5 s to 7.2 s. K56flex's
+programs are about 40 s of some 10800 to 13500 program-seconds (answer_k56
+29 to 32 s). The long ones are older: test_p34 alone takes 1250 to 1575 s,
+then orig_v34, orig_retrain, orig_v32, v92a and orig_v90 take 500 to 630 s
+each. So 0.4.0's 2 h 57 min on CI was not K56flex's doing. The raised limit
+is what gives the headroom; shortening p34 and the orig_* tests on ARM
+would be the next step.

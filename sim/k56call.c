@@ -308,9 +308,9 @@ static uint8_t data_sent(const k56call_t *c, uint8_t r)
 static void data_frame(k56call_t *c)
 {
     uint8_t bits[64];
-    int n = k56enc_unframe(&c->dec, c->dfr, bits), i, ones = 0;
+    int n = k56enc_unframe(&c->dec, c->dfr, bits), i;
     if (n < 0) { if (c->dframes < B1_FRAMES) c->b1_bad++; else c->data_lost++; c->dframes++; return; }
-    for (i = 0; i < n; i++) { bits[i] = (uint8_t)v90_descramble_gpa(&c->ddscr, bits[i]); ones += bits[i]; }
+    for (i = 0; i < n; i++) bits[i] = (uint8_t)v90_descramble_gpa(&c->ddscr, bits[i]);
     if (c->dframes < B1_FRAMES) {
         /* B1: ones once the descrambler has its 23 bits; dropped */
         int from = c->dframes == 0 ? 23 : 0;
