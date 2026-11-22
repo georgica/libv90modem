@@ -170,8 +170,11 @@ answering, on a mu-law line: never with `alaw` set.
   retrain Phase 2 with INFO1a flagged again, then the whole training:
   `V90M_EV_DATA_STOPPED` with `retraining` set, then
   `V90M_EV_DATA_MOVING` at the rates it agrees (some 10.5 s later in the
-  simulator), and `v90m_stats.retrains` counts it. The third retrain in a
-  row ends the call (`V90M_END_K56_FAILED`); retrains are forgotten after
+  simulator), and `v90m_stats.retrains` counts it. Only a tone B in data
+  mode is a retrain: a client that gives up during a training (the first,
+  or a retrain's) and retrains again is not followed, and the call ends at
+  that training's time limit (`V90M_END_K56_FAILED`). The third retrain
+  in a row from data mode ends the call too; retrains are forgotten after
   2 s of data mode. We never start one: `v90m_retrain` gives
   `V90M_ESTATE`.
 - **Cleardown and failures.** `v90m_cleardown` ends the call at once

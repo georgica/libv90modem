@@ -130,12 +130,15 @@ a Rockwell or Lucent modem.
   as in V.34's and x2's rate changes: an assumption, confirmed by no real
   client. SM56 did not renegotiate in two calls of 120 s, so only the
   simulated client has renegotiated with it.
-- **The client's retrains:** the third in a row ends the call
-  (`V90M_END_K56_FAILED`); they are forgotten once data mode has held 2 s
-  (our own value: no source gives one). A retrain's Phase 2 must end
-  within 9 s of the retrain's start (our own value), or the call ends.
-  SM56 fails about half of its own retrains, so only the simulated client
-  has retrained with it.
+- **The client's retrains:** only its tone B in data mode is taken as a
+  retrain. A client that gives up during a training (the first, or a
+  retrain's) and retrains again is not followed: the call ends at that
+  training's time limit (`V90M_END_K56_FAILED`). SM56 does that after
+  about half of its own retrains. So "the third in a row ends the call"
+  counts retrains each begun from data mode; they are forgotten once data
+  mode has held 2 s (our own value: no source gives one). A retrain's
+  Phase 2 must end within 9 s of the retrain's start (our own value), or
+  the call ends. Only the simulated client has retrained with it.
 - **Every caller hears our answer tone later.** V.8bis comes first (at
   least 400 ms of silence, CRe, the wait for CRd), so ANSam comes, against
   a call without K56flex: 1.790 s later for a caller without V.8bis,
@@ -166,6 +169,10 @@ a Rockwell or Lucent modem.
   other segment lengths (`docs/history/k56-facts.md`, "Recording"); whether
   a hardware client takes SM56's training, a 3-bit TRN1B and the
   16-level Js is not known.
+- **Untested: K56flex begun in a V.34 retrain.** An agreed call that went
+  V.34 (an unflagged INFO1c, or 3000 baud up) whose client flags its
+  INFO1c in a later V.34 retrain gets our INFO1a flagged there and goes
+  K56flex mid-call (`V90M_EV_RATES`). Designed, not driven by any test.
 - **No calling (client) side.**
 
 ## Included tables (x2)
@@ -207,6 +214,10 @@ per rate (32000 to 56000 bit/s) and the pad the client reports (none,
   Motorola's SM56 driver's tables as published by D-Modem
   (github.com/D-Modem/D-Modem `dsp/k56flex_tables.cpp` at `c06a380d`),
   generated from those published values by `tools/gen_k56_tables.py`.
+  The project's basis for including them: they are the numbers SM56's
+  driver uses, as D-Modem read them out, taken as data (facts); none of
+  D-Modem's code or text is used, only the values, in our own layout.
+  This is the project's position, not legal advice.
 - K, u and r of each rate and the number of rings per pad are the facts'
   and are checked by the generator and `test/test_k56tab.c` (the frame
   identity K + 8 (u - 1) + 8 - 8 / r = R / 1000, M^8 >= 2^K, each ring list

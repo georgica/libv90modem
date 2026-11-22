@@ -127,6 +127,8 @@ def main():
     out.append(" * 2 6 dB). The ring lists and the constellations are as published by")
     out.append(" * D-Modem, github.com/D-Modem/D-Modem dsp/k56flex_tables.cpp at c06a380d,")
     out.append(" * read from Motorola's SM56 driver: the values only, in our own layout.")
+    out.append(" * They are the numbers SM56's driver uses, taken as data (facts); none of")
+    out.append(" * D-Modem's code or text is used.")
     out.append(" * K, u, r and M are the facts' and checked against them. See")
     out.append(" * docs/history/k56-facts.md \"Tables\" and docs/limits.md \"Included tables")
     out.append(" * (K56flex)\". */")

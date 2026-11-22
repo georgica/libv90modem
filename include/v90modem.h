@@ -146,7 +146,10 @@ typedef enum {
  * flagged: there is no way back to V.34 after it. If the K56flex start-up,
  * or a rate renegotiation or retrain of the client's, does not complete,
  * or the client retrains a third time in a row, the call ends with
- * V90M_END_K56_FAILED; we start neither a renegotiation nor a retrain. In
+ * V90M_END_K56_FAILED; we start neither a renegotiation nor a retrain.
+ * Only the client's tone B in data mode is followed as a retrain: one sent
+ * during a training (after a failed training) is not, and that training
+ * ends at its time limit with V90M_END_K56_FAILED. In
  * data mode (V90M_CONN_K56FLEX) tx_bps is the downstream payload rate
  * (32000 to 56000 in steps of 2000, the figure a Rockwell modem prints)
  * and rx_bps the client's V.34 upstream. */

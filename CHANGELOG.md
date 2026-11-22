@@ -12,10 +12,13 @@ this library's own answering modem, never against a real modem or server.
 
 K56flex, Rockwell's and Lucent's 56k scheme of 1997, on the answering
 side, as its server: experimental, and off unless asked for. With it off,
-the answering modem sends what 0.4.0 sent: the replay of the 106 recorded
-calls is byte-identical with every option set tried (V.92 and x2 on and
-off), and 0.4.0's tests pass. Also: fixes to V.42 and x2 from
-the first live x2 call (below), and `v90m_ec_line_stopped`.
+the answering modem's octets are 0.4.0's on all 106 recorded calls (the
+replay byte-identical with V.92 and x2 each on and off), and 0.4.0's tests
+pass. The x2 and V.42 fixes below change behaviour where they apply: an
+x2 client's Tone A now ends the call; V.42's receiver takes a frame whose
+opening flag was lost after a run of ones, on every call with error
+control; V.42's transmitted bits change only for a program that calls the
+new `v90m_ec_line_stopped`.
 
 What has been shown: K56flex (answering, experimental, off by default)
 connects to Motorola's SM56 soft modem run under emulation, V.42 data both
@@ -69,7 +72,9 @@ API changes:
   `V90M_EV_DATA_MOVING`; one asking for rate 0 ends the call as
   `V90M_END_CLEARDOWN_FAR`. The client's retrain gives
   `V90M_EV_DATA_STOPPED` with `retraining` set, then `V90M_EV_DATA_MOVING`;
-  `v90m_stats.retrains` counts it.
+  `v90m_stats.retrains` counts it. Only its tone B in data mode is
+  followed: a client that retrains again during a training ends the call
+  at that training's time limit (`V90M_END_K56_FAILED`).
 - With `V90M_MOD_K56` set every caller hears our answer tone later than
   without it: 1.790 s for a caller without V.8bis, 3.807 s for a V.8bis
   caller without K56flex, 3.413 s for a K56flex client (measured in the
