@@ -14,8 +14,12 @@
 # check prints "golden: N programs identical", or for each program that
 # differs its name and the first 10 lines of the difference. A program
 # whose log is missing, or older than the program, is an error too (run
-# make check PAR=N first). A golden file is re-recorded only when a change
-# explains it, and the commit lists each file re-recorded and why.
+# make check PAR=N first). It reads no exit status: make check, which
+# fails on any failing program, comes first (make golden runs both). The
+# environment variables that make tests talk more (V92_VERBOSE, V32_DEBUG)
+# must not be set (make golden unsets them). A golden file is re-recorded
+# only when a change explains it, and the commit lists each file
+# re-recorded and why.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/tools/out-filter.sh"
@@ -28,6 +32,9 @@ case $mode in check|record) ;; *) echo "usage: tools/golden.sh check|record BUIL
 case $B in "$ROOT"/*) MB=${B#"$ROOT"/} ;; *) MB=$B ;; esac
 case $B in /*) ;; *) B=$ROOT/$B ;; esac
 if [ "$mode" = check ] && [ ! -d "$GOLD" ]; then echo "golden: no test/golden/out"; exit 1; fi
+
+# the stale-log test below needs test's -nt
+[ "$ROOT/tools/golden.sh" -nt "$ROOT/tools/no-such-file" ] || { echo "golden: this shell's test has no -nt"; exit 2; }
 
 list=$(make -s --no-print-directory -C "$ROOT" BUILD="$MB" print-golden) || { echo "golden: make print-golden failed"; exit 1; }
 OUT=$B/golden

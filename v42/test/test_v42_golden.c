@@ -3,9 +3,15 @@
  * golden copy of this program's output (tools/golden.sh). A refactoring or
  * an optimisation of V.42 bis, V.44 or LAPM must leave every line as it is.
  *
- *   - V.42 bis encoder output, flushed at the end, for three inputs of 8192
- *     octets (an LCG, seed 1; an English sentence repeated; zeros) with
- *     P1 512 and 2048 and P2 6, 32 and 250;
+ *   - V.42 bis encoder output, flushed at the end, for four inputs of 8192
+ *     octets (an LCG, seed 1; an English sentence repeated; zeros; the LCG
+ *     cut to 16 letters, "sym16") with P1 512 and 2048 and P2 6, 32 and
+ *     250. The LCG's octets do not compress: the encoder goes to
+ *     transparent mode (7.8, V.44 7.11.5), and its lines, the same for
+ *     every P1 and P2, pin only that mode. sym16 stays compressed (to
+ *     about two thirds) with a dictionary that fills and is recycled: the
+ *     mixed-data case (its strings are short, so P2 does not change it;
+ *     the text and the zeros cover P2);
  *   - V.44 encoder output for the same inputs, with the defaults (1024
  *     codewords, strings of 255, a history of 3072) and with 2048, 255 and
  *     4096;
@@ -30,8 +36,9 @@ static uint32_t fnv(uint32_t h, const uint8_t *p, size_t n)
 }
 #define FNV0 2166136261u
 
-static uint8_t in[3][N];
-static const char *const in_name[3] = { "lcg", "text", "zeros" };
+#define NIN 4
+static uint8_t in[NIN][N];
+static const char *const in_name[NIN] = { "lcg", "text", "zeros", "sym16" };
 static uint8_t out[3 * N + 256], back[N + 256];
 
 static void inputs(void)
@@ -43,6 +50,10 @@ static void inputs(void)
         in[0][i] = (uint8_t)(s >> 16);
         in[1][i] = (uint8_t)sentence[i % k];
         in[2][i] = 0;
+    }
+    for (i = 0, s = 1; i < N; i++) {
+        s = s * 1103515245u + 12345u;
+        in[3][i] = (uint8_t)('a' + (s >> 28));
     }
 }
 
@@ -158,10 +169,10 @@ int main(void)
     static const int p1[2] = { 512, 2048 }, p2[3] = { 6, 32, 250 };
     int x, i, j;
     inputs();
-    for (x = 0; x < 3; x++)
+    for (x = 0; x < NIN; x++)
         for (i = 0; i < 2; i++)
             for (j = 0; j < 3; j++) bis_case(x, p1[i], p2[j]);
-    for (x = 0; x < 3; x++) {
+    for (x = 0; x < NIN; x++) {
         v44_case(x, 1024, 255, 3072);
         v44_case(x, 2048, 255, 4096);
     }

@@ -16,7 +16,11 @@
 
 static orig_t o;
 static uint32_t gen = 0x1234567u;
-static int get(void *u) { (void)u; gen = gen * 1103515245u + 12345u; return (int)((gen >> 16) & 1); }
+/* the caller's data, as tools/rec_bell sends it: the first 300 data bits
+ * are marks (an idle start-stop line: a Bell 103 answerer connects on
+ * 200 ms of the caller's mark), then pseudo-random */
+static int nget;
+static int get(void *u) { (void)u; if (nget < 300) { nget++; return 1; } gen = gen * 1103515245u + 12345u; return (int)((gen >> 16) & 1); }
 typedef struct { int64_t got; uint32_t h; } sink_t;
 static void put(void *u, int bit) { sink_t *s = (sink_t *)u; s->got++; s->h = (s->h ^ (uint32_t)(bit & 1)) * 16777619u; }
 /* not inlined (called through a volatile pointer): its address marks the trace */

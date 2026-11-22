@@ -3,7 +3,11 @@
 # the Makefile's bench targets record (tools/rec_*) replayed on the host by
 # its bench (rig/bench_*), which ends with "tx hash" (everything the modem
 # sent) and "rx hash" (the data bits it received); bench_v90a, a receiver
-# alone, prints the hash of its decisions ("dec" below).
+# alone, prints the hash of its decisions ("dec" below). A hash of nothing
+# (811c9dc5: no bit received) is an error. Where the far end sends the
+# bench's own pseudo-random sequence (all but bell*, which receive text),
+# an rx hash pins how many bits arrived and that each was right, not which
+# ones they were.
 #
 #   tools/bench-hashes.sh check    compare; exit 1 on any difference
 #   tools/bench-hashes.sh record   write test/golden/bench.txt
@@ -50,6 +54,8 @@ if [ "${1:-}" = --one ]; then
     sed -n "s/^\([tr]x\) hash \([0-9a-f]\{8\}\)$/$name \1 \2/p; s/^bench_v90a: .*, hash \([0-9a-f]\{8\}\), .*/$name dec \1/p" \
         "$D/$name.log" > "$D/$name.hash"
     [ -s "$D/$name.hash" ] || { echo "bench-hashes: $name printed no hash ($D/$name.log)"; exit 1; }
+    # 811c9dc5 is the hash of nothing: a bench that received no bit at all
+    if grep -q ' 811c9dc5$' "$D/$name.hash"; then echo "bench-hashes: $name received nothing (hash 811c9dc5; $D/$name.log)"; exit 1; fi
     exit 0
 fi
 
