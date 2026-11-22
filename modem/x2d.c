@@ -17,6 +17,9 @@
 #include "v34mp.h"
 #include "p2ans.h"
 #include "../v90/v90_pcm.h"
+#ifdef P34D_TRACE
+int16_t x2d_trace_tx(const x2d_t *d, int16_t y);    /* tools/trace.c: what the box really sent */
+#endif
 
 #define MS(ms) ((int32_t)(ms) * 8)
 
@@ -73,6 +76,7 @@ int x2d_init(x2d_t *d, const x2d_cfg *cfg)
     d->sdet.div = 16;               /* nothing but S can be on the line */
     qamrx_init(&d->rx, d->sym_rate, d->car_num, d->car_den);
     v34_tdem_init(&d->tdem, V34_GPA, 4);
+    tonedet_init(&d->tone_a, TONEDET_2400);
     return 0;
 }
 
@@ -159,6 +163,7 @@ static void rx_begin_data(x2d_t *d)
     d->quiet = 0; d->q_dead = 0;
     d->t_mark = d->now;
     sdet_init(&d->sdet, d->sym_rate, d->car_num, d->car_den);     /* watches for S from here on */
+    tonedet_init(&d->tone_a, TONEDET_2400);
 }
 
 /* ---- descrambled bits ---- */
@@ -382,7 +387,11 @@ uint8_t x2d_tick(x2d_t *d, int16_t rxs)
     if (d->state == X2D_ENDED) return 0x7f;
     octet = x2tx_tick(&d->tx);
     /* the echo of this octet begins ecd.delay samples from now */
+#ifdef P34D_TRACE
+    ecdly_put(&d->ecd, x2d_trace_tx(d, (int16_t)v90_octet_linear(0, octet)));
+#else
     ecdly_put(&d->ecd, (int16_t)v90_octet_linear(0, octet));
+#endif
     x = ec_tick(&d->ec, ecdly_ref(&d->ecd, 0), rxs, d->ec_mu);
     ecdly_next(&d->ecd);
 
@@ -404,6 +413,11 @@ uint8_t x2d_tick(x2d_t *d, int16_t rxs)
             /* the client's S in data mode: its rate change (facts "Rate change") */
             (void)sdet_tick(&d->sdet, x);
             if (d->sdet.present >= SDET_PRESENT) reneg_begin(d);
+        }
+        /* its Tone A from data mode on: a retrain, which x2 does not have */
+        if ((d->state == X2D_DATA || d->state == X2D_RENEG) && tonedet_tick(&d->tone_a, x)) {
+            end(d, X2D_ERR_RETRAIN);
+            return 0x7f;
         }
     }
 
@@ -427,7 +441,9 @@ uint8_t x2d_tick(x2d_t *d, int16_t rxs)
         else if (!d->got_e && d->now - d->t_mark > MS(T_E_MS)) end(d, X2D_ERR_NO_E);
         break;
     case X2D_START:
-        if (d->tx.seg == X2TX_DATA) d->tx_ready = 1;
+        /* data moves from our start's last frame: the owner hears of it
+         * (V90M_EV_DATA_MOVING) before the first bit of data is taken */
+        if (x2tx_data_next(&d->tx)) d->tx_ready = 1;
         if (d->tx_ready && d->rx_ready) {
             d->down_rate = x2tx_rate(&d->tx);
             enter(d, X2D_DATA);
@@ -437,7 +453,7 @@ uint8_t x2d_tick(x2d_t *d, int16_t rxs)
         break;
     case X2D_RENEG:
         /* our answer is out once x2tx is back in data with no change pending */
-        if (d->got_mp && d->tx.seg == X2TX_DATA && !d->tx.go) d->tx_ready = 1;
+        if (d->got_mp && x2tx_data_next(&d->tx)) d->tx_ready = 1;
         if (d->tx_ready && d->rx_ready) {
             d->down_rate = x2tx_rate(&d->tx);
             enter(d, X2D_DATA);

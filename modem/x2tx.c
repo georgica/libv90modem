@@ -75,6 +75,12 @@ int x2tx_rate(const x2tx_t *t)
     return x2map_bits(&m) * 8000 / X2MAP_N;
 }
 
+int x2tx_data_next(const x2tx_t *t)
+{
+    if (t->seg == X2TX_DATA) return !t->go;
+    return t->seg == X2TX_START && t->n > (int32_t)(X2TX_START_FRAMES + t->again - 1) * X2MAP_N;
+}
+
 /* the next frame of the mapped segments; returns 1, or 0 when the segment
  * is over before it */
 static int next_frame(x2tx_t *t)

@@ -704,6 +704,171 @@ static void test_line_cut(void)
     CHECK(!v42ec_tx_idle(&A));                          /* data was lost, not delivered */
 }
 
+/* ------------------------------------- a frame resumed without its flag */
+/* A rate change as a U.S. Robotics x2 client makes one (live call,
+ * 2026-11-21): its bits stop, and start again with some fifty ones and then
+ * the frame it had begun, whose opening flag never comes. The answerer
+ * takes the frame as it stands: nothing is rejected or sent twice, and the
+ * data arrive well inside T401. */
+#define RFIFO 4096
+static void test_resume_without_flag(void)
+{
+    static uint8_t q[RFIFO];
+    int head = 0, tail = 0, frames = 0, done = 0, wait = 0, t0, i, j;
+    int was_in = 0; uint32_t hist = 0;
+
+    setup();
+    connect_pair();
+    flow_fill(&ab, 600, F_TEXT);
+    ab.chunk = 40;
+    t0 = now_ms;
+    while (now_ms - t0 < 4000 && !(ab.pos == ab.len && ab.ngot == ab.len && v42ec_tx_idle(&A))) {
+        for (i = 0; i < BITS_PER_MS; i++) {
+            int a = v42ec_tx_bit(&A), b = v42ec_tx_bit(&B), in = A.htx.in_frame;
+            hist = (hist << 1) | (uint32_t)a;
+            if (in && !was_in && (A.htx.buf[1] & 1) == 0 && ++frames == 3 && ((hist >> 1) & 0xFFFF) == 0x7E7E) {
+                /* its third I frame, after idle flags: the flag that opened
+                 * it (the last eight bits queued) is lost, fill comes instead */
+                for (j = 1; j <= 8; j++) q[(tail - j + RFIFO) % RFIFO] = 1;
+                for (j = 0; j < 41; j++) { q[tail] = 1; tail = (tail + 1) % RFIFO; }
+                done = 1;
+            }
+            was_in = in;
+            q[tail] = (uint8_t)a; tail = (tail + 1) % RFIFO;
+            tap_bit(&ta, a); tap_bit(&tb, b);
+            if ((tail - head + RFIFO) % RFIFO > 8) { v42ec_rx_bit(&B, q[head]); head = (head + 1) % RFIFO; }
+            v42ec_rx_bit(&A, pipe_bit(&pba, b));
+        }
+        /* one chunk at a time, each after the line has been idle */
+        if (ab.pos < ab.len && v42ec_tx_idle(&A) && ++wait >= 40) {
+            wait = 0;
+            ab.pos += v42ec_write(&A, ab.src + ab.pos, ab.chunk);
+        }
+        {
+            uint8_t tmp[512]; size_t n;
+            while ((n = v42ec_read(&B, tmp, sizeof tmp)) > 0) {
+                if (ab.ngot + n <= DMAX) memcpy(ab.got + ab.ngot, tmp, n);
+                ab.ngot += n;
+            }
+        }
+        v42ec_tick(&A, 1); v42ec_tick(&B, 1);
+        now_ms++;
+    }
+    CHECK_EQ_I(done, 1);
+    check_flow(&ab);
+    CHECK_EQ_I(B.lapm.tx_rej, 0);
+    CHECK_EQ_I(B.lapm.rx_i_dropped, 0);
+    CHECK_EQ_I(A.lapm.tx_i_retx, 0);
+    CHECK_EQ_I(A.lapm.t401_expiries, 0);
+    CHECK(both(V42EC_CONNECTED));
+}
+
+/* The line stops (v42ec_line_stopped, on V90M_EV_DATA_STOPPED) and is back
+ * (v42ec_line_restored, on V90M_EV_DATA_MOVING). Seen on a live x2 call
+ * (2026-11-21): our REJ after each of the client's rate changes went out
+ * after the start segment's ones with no whole flag of its own, and the
+ * client never took it. Now:
+ *  - no frame is begun while the line is stopped, even if the modem takes
+ *    our bits again before data moves both ways (it may, a round trip
+ *    early); the first one after opens with whole flags;
+ *  - the frame the stop cut is aborted if it is still going at the
+ *    restore, and its data come again through LAPM; a frame begun after
+ *    the restore is never aborted;
+ *  - without v42ec_line_stopped nothing but LAPM's poll happens. */
+static void pull_a(int n) { while (n-- > 0) { int a = v42ec_tx_bit(&A); tap_bit(&ta, a); v42ec_rx_bit(&B, pipe_bit(&pab, a)); } }
+static void pull_b(int n) { while (n-- > 0) { int b = v42ec_tx_bit(&B); tap_bit(&tb, b); v42ec_rx_bit(&A, pipe_bit(&pba, b)); } }
+
+static void test_restore_flags(void)
+{
+    v42hdlc_rx_t h; uint8_t buf[60];
+    int i, r, got;
+    memset(buf, 'x', sizeof buf);
+
+    /* stopped between frames, a frame queued, our bits taken again a while
+     * before data moves: flags only; then the frame, with flags of its own */
+    setup(); connect_pair();
+    while (!(!A.htx.in_frame && A.htx.raw && A.htx.nbits == 4)) (void)v42ec_tx_bit(&A);
+    v42ec_line_stopped(&A);
+    v42ec_write(&A, buf, sizeof buf);
+    v42hdlc_rx_init(&h); v42hdlc_rx_set_fcs(&h, V42HDLC_FCS_EITHER);
+    for (i = 0; i < 49; i++) (void)v42hdlc_rx_bit(&h, 1);      /* the fill in between */
+    for (i = 0; i < 400; i++) CHECK(v42hdlc_rx_bit(&h, v42ec_tx_bit(&A)) <= 0);
+    CHECK_EQ_I(A.htx.in_frame, 0);
+    v42ec_line_restored(&A);
+    got = 0;
+    for (i = 0; i < 4000; i++) { r = v42hdlc_rx_bit(&h, v42ec_tx_bit(&A)); if (r > 3) got++; }
+    CHECK_EQ_I(got, 1); CHECK_EQ_I(h.resynced, 0); CHECK_EQ_I(A.htx.aborts, 0);
+
+    /* stopped mid-frame, both ends running: the cut frame is aborted at the
+     * restore, its data arrive all the same (one retransmission), and the
+     * frames after it are left alone */
+    setup(); connect_pair();
+    flow_fill(&ab, 600, F_TEXT); ab.chunk = 600;
+    ab.pos += v42ec_write(&A, ab.src, ab.len);
+    while (!(A.htx.in_frame && A.htx.pos > 10)) pull_a(1), pull_b(1);
+    v42ec_line_stopped(&A); v42ec_line_stopped(&B);
+    for (i = 0; i < 800; i++) { v42ec_rx_bit(&B, 1); pull_b(1); }  /* our bits stop; fill to the far end */
+    pull_a(300); pull_b(300);                                         /* ours taken again, data not yet moving */
+    v42ec_line_restored(&A); v42ec_line_restored(&B);
+    pull_a(16); pull_b(16);                     /* the abort goes at the next octet */
+    CHECK_EQ_I(A.htx.aborts, 1);
+    CHECK(run_until_done(3000) >= 0);
+    check_flow(&ab);
+    CHECK_EQ_I(A.lapm.tx_i_retx, 1);
+    CHECK_EQ_I(A.htx.aborts, 1);                /* the frames after it: none aborted */
+    CHECK_EQ_I(A.lapm.t401_expiries, 0);
+
+    /* a frame begun after the restore is not the one the stop cut */
+    setup(); connect_pair();
+    while (!(!A.htx.in_frame && A.htx.raw && A.htx.nbits == 2)) (void)v42ec_tx_bit(&A);
+    v42ec_line_stopped(&A);
+    v42ec_line_restored(&A);
+    v42ec_write(&A, buf, sizeof buf);
+    while (!(A.htx.in_frame && A.htx.pos > 10)) (void)v42ec_tx_bit(&A);
+    v42ec_line_stopped(&B); v42ec_line_restored(&B);                /* the other end's, unrelated */
+    for (i = 0; i < 2000; i++) (void)v42ec_tx_bit(&A);
+    CHECK_EQ_I(A.htx.aborts, 0);
+
+    /* without v42ec_line_stopped: nothing but LAPM's poll, as ever */
+    setup(); connect_pair();
+    v42ec_write(&A, buf, sizeof buf);
+    while (!(A.htx.in_frame && A.htx.pos > 10)) (void)v42ec_tx_bit(&A);
+    v42ec_line_restored(&A);
+    for (i = 0; i < 2000; i++) (void)v42ec_tx_bit(&A);
+    CHECK_EQ_I(A.htx.aborts, 0); CHECK_EQ_I(A.htx.min_flags, 0);
+}
+
+/* In the detection phase any frame starts the protocol. One with no opening
+ * flag after a run of ones counts only when LAPM could take it (address
+ * 0x01 or 0x03): a caller without error control sends characters after
+ * idle mark, and the start and stop bits of some make a flag. */
+static int detect_case(uint8_t addr)
+{
+    v42hdlc_tx_t t; uint8_t f[12];
+    int i;
+    for (i = 0; i < 12; i++) f[i] = (uint8_t)(0x41 + i);
+    f[0] = addr; f[1] = 0x3F;
+    v42ec_cfg_default(&cb, 0);
+    v42ec_init(&B, &cb);
+    for (i = 0; i < 200; i++) v42ec_rx_bit(&B, 1);
+    v42hdlc_tx_init(&t);
+    for (i = 0; i < 8; i++) (void)v42hdlc_tx_bit(&t);
+    v42hdlc_tx_frame(&t, f, 12, 0); v42hdlc_tx_flags(&t, 1);
+    for (i = 0; i < 8; i++) (void)v42hdlc_tx_bit(&t);             /* its flag: lost */
+    while (v42hdlc_tx_busy(&t)) v42ec_rx_bit(&B, v42hdlc_tx_bit(&t));
+    for (i = 0; i < 16; i++) v42ec_rx_bit(&B, v42hdlc_tx_bit(&t));  /* its last bits, the closing flag */
+    for (i = 0; i < 40; i++) v42ec_rx_bit(&B, 1);                  /* mark again */
+    return B.want_hdlc;
+}
+
+static void test_detect_flagless(void)
+{
+    CHECK_EQ_I(detect_case(0x07), 0);
+    CHECK_EQ_I(detect_case(0x0F), 0);
+    CHECK_EQ_I(detect_case(0x03), 1);
+    CHECK_EQ_I(detect_case(0x01), 1);
+}
+
 /* ----------------------------------------------------- orderly release */
 static void test_release(int from_a)
 {
@@ -1114,6 +1279,9 @@ int main(void)
     test_fallback_originator();
     test_no_answer();
     test_line_cut();
+    test_resume_without_flag();
+    test_restore_flags();
+    test_detect_flagless();
     test_release(1);
     test_release(0);
     test_release_unanswered();

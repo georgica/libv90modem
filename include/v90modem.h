@@ -282,7 +282,10 @@ typedef enum {
     V90M_END_NO_JM,             /* ANSam came, but no JM in answer to CM (V.8) */
     V90M_END_NO_COMMON,         /* the answerer has no modulation in common with us */
     V90M_END_RETRAIN_FAILED,    /* (appended) calling V.90 / V.92: a retrain failed, or one
-                                   more was due past the limit (see v90m_retrain) */
+                                   more was due past the limit (see v90m_retrain);
+                                   answering x2: the client asked for a retrain in data
+                                   mode or in its rate change (its Tone A), which x2
+                                   cannot serve */
     V90M_END_X2_FAILED,         /* (appended) answering: the client took up x2 (its marker
                                    came) and the x2 start-up, or a rate change of
                                    the client's, did not complete */
@@ -412,7 +415,8 @@ void        v90m_ec_destroy(v90m_ec_t *e);           /* NULL is fine */
 int         v90m_ec_tx_bit(v90m_ec_t *e);               /* from the modem's getbit */
 void        v90m_ec_rx_bit(v90m_ec_t *e, int bit);      /* from the modem's putbit */
 void        v90m_ec_tick(v90m_ec_t *e, unsigned ms);    /* timers */
-void        v90m_ec_line_restored(v90m_ec_t *e);        /* on V90M_EV_DATA_MOVING */
+void        v90m_ec_line_stopped(v90m_ec_t *e);         /* on V90M_EV_DATA_STOPPED (moving 1 -> 0) */
+void        v90m_ec_line_restored(v90m_ec_t *e);        /* on V90M_EV_DATA_MOVING (moving 0 -> 1) */
 
 size_t      v90m_ec_write(v90m_ec_t *e, const uint8_t *data, size_t len);
 size_t      v90m_ec_write_space(const v90m_ec_t *e);

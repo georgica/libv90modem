@@ -174,7 +174,9 @@ typedef struct {
     int        x2_offered;   /* ANS_MODE_X2 with V.34, on a mu-law line */
     int        x2_failed;    /* the client sent the x2 marker and the x2 start-up did not
                                 reach data mode, or a rate change of its own did not get
-                                back to it: there is no way back to V.34, the call ended */
+                                back to it: there is no way back to V.34, the call ended;
+                                2: in data mode the client asked for a retrain (its Tone
+                                A), which x2 cannot serve */
     /* K56flex */
     int        k56_offered;  /* ANS_MODE_K56 with V.34, on a mu-law line: ANS_V8BIS first */
     int        k56_agreed;   /* the client's MS carried the K56flex block (we sent ACK(1));

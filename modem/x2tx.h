@@ -97,5 +97,8 @@ uint8_t  x2tx_tick(x2tx_t *t);
 /* frames of 6 octets per second times the bits of each: the data rate in
  * bit/s of the data levels (0 for a bank that does not exist) */
 int      x2tx_rate(const x2tx_t *t);
+/* 1 once the next mapped frame is data: in data mode, and from the start
+ * segment's last frame on (the first bit of data is taken when it ends) */
+int      x2tx_data_next(const x2tx_t *t);
 
 #endif

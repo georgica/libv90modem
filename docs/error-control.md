@@ -92,10 +92,27 @@ acknowledged; `v90m_ec_tx_busy` when a frame is still leaving the
 transmitter.
 
 **Retrains and renegotiations.** The modem stops the data
-(`V90M_EV_DATA_STOPPED`) and reports when it moves again both ways
-(`V90M_EV_DATA_MOVING`): pass that on with `v90m_ec_line_restored`, which
-has LAPM poll the far end when frames are still unacknowledged. v90d also
-holds V.42's timers while the data are stopped (`DESIGN.md`, 4.2).
+(`V90M_EV_DATA_STOPPED`, `v90m_state.moving` falling to 0) and reports when
+it moves again both ways (`V90M_EV_DATA_MOVING`, `moving` back to 1). Pass
+both on, within the sample they happen (from the event callback, or by
+checking `v90m_get_state` after each sample): `v90m_ec_line_stopped` on the
+falling edge, `v90m_ec_line_restored` on the rising one.
+
+- `v90m_ec_line_stopped` notes the frame in flight and begins no new frame
+  until the line is back: the modem may take our bits again a round trip
+  before data moves both ways, and they are flags then.
+- `v90m_ec_line_restored` aborts the frame the stop cut, if it is still
+  going (its head went before the stop; an I frame comes again through
+  LAPM's poll), opens the next frame with two whole flags (an x2 rate change
+  resumes after fill ones, our last flag cut short), and has LAPM poll the
+  far end when frames are still unacknowledged. Frames begun after the
+  restore are never touched. Without a `v90m_ec_line_stopped` before it,
+  only the poll happens.
+
+The receiver for its part takes a frame whose opening flag was lost after a
+run of ones when its FCS holds (`v42/v42_hdlc.h`), which is how a U.S.
+Robotics x2 client resumes after its rate change. v90d also holds V.42's
+timers while the data are stopped (`DESIGN.md`, 4.2).
 
 **The end.** `v90m_ec_release` is orderly (DISC, then wait for UA);
 `v90m_ec_abort` stops without a word when the line is gone. After

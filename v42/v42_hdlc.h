@@ -87,7 +87,10 @@ typedef struct {
     int      fcs_mode;
     int      last_fcs32;     /* FCS type of the frame last returned */
     int      flag_run;       /* consecutive flags with nothing between */
+    int      tent;           /* collecting what follows a run of ones, no flag
+                                before it: a frame only if its FCS holds */
     unsigned long good, bad_fcs, runts, aborts, too_long, misaligned;
+    unsigned long resynced;  /* of good: frames taken with no opening flag */
 } v42hdlc_rx_t;
 
 void v42hdlc_rx_init(v42hdlc_rx_t *r);
@@ -96,7 +99,15 @@ void v42hdlc_rx_set_fcs(v42hdlc_rx_t *r, int fcs_mode);
 void v42hdlc_rx_set_max(v42hdlc_rx_t *r, int max_len);
 /* Feed one line bit. Returns the length (FCS stripped) of a valid frame now
  * held in r->buf, 0 when nothing completed, or a negative V42HDLC_RX_* code
- * when a frame was discarded. r->buf is only valid until the next call. */
+ * when a frame was discarded. r->buf is only valid until the next call.
+ *
+ * A frame need not have an opening flag after a run of seven or more ones
+ * (an abort, or the line at mark): it is taken when its FCS holds with up to
+ * five of those ones as its first bits. A modem's line that stops and starts
+ * again (a rate change) can leave the frame that was under way with its
+ * flag lost and fill ones before it: a U.S. Robotics x2 client's does. What
+ * follows the ones and is not such a frame is dropped and not counted, as it
+ * would be while hunting for a flag. */
 int  v42hdlc_rx_bit(v42hdlc_rx_t *r, int bit);
 
 #endif

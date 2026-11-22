@@ -137,6 +137,7 @@ void p34d_trace_bit(const p34d_t *p, int bit)
 int16_t rec_tx; int rec_tx_on;
 int16_t v34dx_trace_tx(int16_t y) { return rec_tx_on ? rec_tx : y; }
 int rec_tx92;
+int16_t x2d_trace_tx(const x2d_t *d, int16_t y) { (void)d; return rec_tx_on ? rec_tx : y; }
 int16_t v92d_trace_tx(const v92d_t *p, int16_t y) { if (p->state == V92D_DATA) rec_tx92 = 1; return rec_tx92 && tr_on ? rec_tx : y; }
 static const char *p2n[] = { "INFO0", "WAIT_REV1", "REPLY1", "WAIT_REV2", "RECOVER", "PROBE_RX", "WAIT_REV3", "REPLY3", "L1", "L2", "INFO1D", "WAIT_INFO1A", "DONE", "FAILED" };
 

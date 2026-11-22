@@ -158,6 +158,11 @@ typedef struct v42ec {
     int brk_have, brk_opt, brk_len;
     size_t brk_after;        /* received octets to read before the break */
     unsigned long async_overruns, async_framing;
+    /* the line stopped (v42ec_line_stopped) and is not yet back: no new
+     * frame is begun; stop_cut: a frame was in flight at the stop, number
+     * stop_frames of the transmitter's (htx.frames) */
+    int stopped, stop_cut;
+    unsigned long stop_frames;
 } v42ec_t;
 
 /* Fill cfg with defaults for the given role: detection on, fallback on,
@@ -179,8 +184,18 @@ void   v42ec_rx_octets(v42ec_t *e, const uint8_t *buf, size_t n);
 
 /* Time. */
 void   v42ec_tick(v42ec_t *e, unsigned ms);
-/* the modem carries data again after a retrain or a rate renegotiation:
- * see v42lapm_line_restored() */
+/* The modem has stopped carrying data (a retrain, a rate renegotiation;
+ * V90M_EV_DATA_STOPPED): the frame in flight, if any, is noted, and no new
+ * frame is begun until the line is back. Optional: without it
+ * v42ec_line_restored() only polls. */
+void   v42ec_line_stopped(v42ec_t *e);
+/* The modem carries data again (V90M_EV_DATA_MOVING). After
+ * v42ec_line_stopped(): the frame that was in flight at the stop is
+ * aborted if it is still not out (its head went before the stop, its tail
+ * would come after: the far end cannot take it), and the next frame is
+ * opened by two whole flags (an x2 rate change resumes after fill ones,
+ * with our last flag cut); frames begun later are not touched. In any case
+ * LAPM polls if frames are unacknowledged (v42lapm_line_restored()). */
 void   v42ec_line_restored(v42ec_t *e);
 
 /* User side. v42ec_write() returns how many octets were taken (0..len);

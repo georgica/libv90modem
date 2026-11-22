@@ -148,18 +148,61 @@ static void rx_restart(v42hdlc_rx_t *r)
     r->len = 0; r->nbits = 0; r->cur = 0; r->overflow = 0;
 }
 
+/* What followed a run of ones, collected from the zero that ended it, up to
+ * the flag that has just completed: len octets and nbits more in cur, the
+ * last six bits the flag's. A frame if, with its first k bits ones lost in
+ * the run (k = 0..5; at k = 5 the zero that ended the run was an inserted
+ * one), it is octets and its FCS holds. Rebuilt in buf, its FCS stripped;
+ * 0 when it is not a frame. */
+static int bit_at(const v42hdlc_rx_t *r, int len, uint8_t cur, int i)
+{
+    return i < 8 * len ? (r->buf[i >> 3] >> (i & 7)) & 1 : (cur >> (i - 8 * len)) & 1;
+}
+
+static int rx_resync(v42hdlc_rx_t *r, int len, int nbits, uint8_t cur)
+{
+    int have = 8 * len + nbits - 6, k;
+    for (k = 0; k <= 5; k++) {
+        int skip = k == 5, n = k + have - skip, i, j, d = k - skip;
+        uint16_t c16 = V42_FCS16_INIT; uint32_t c32 = V42_FCS32_INIT;
+        int ok16, ok32;
+        if (have < 1 || n % 8 || n / 8 > r->max_len || n / 8 < 4) continue;
+        for (i = 0; i < n; i++) {
+            unsigned b = i < k ? 1u : (unsigned)bit_at(r, len, cur, i - d);
+            c16 = (uint16_t)(((c16 ^ b) & 1) ? (c16 >> 1) ^ 0x8408u : c16 >> 1);
+            c32 = ((c32 ^ b) & 1) ? (c32 >> 1) ^ 0xEDB88320u : c32 >> 1;
+        }
+        ok32 = r->fcs_mode != V42HDLC_FCS16 && n / 8 >= 6 && c32 == V42_FCS32_GOOD;
+        ok16 = !ok32 && r->fcs_mode != V42HDLC_FCS32 && c16 == V42_FCS16_GOOD;
+        if (!ok16 && !ok32) continue;
+        /* move the bits up by d and put the k ones in front, from the top
+         * down so that nothing is overwritten before it is read */
+        for (j = n - 1; j >= 0; j--) {
+            int b = j < k ? 1 : bit_at(r, len, cur, j - d);
+            if (b) r->buf[j >> 3] = (uint8_t)(r->buf[j >> 3] | (1u << (j & 7)));
+            else r->buf[j >> 3] = (uint8_t)(r->buf[j >> 3] & ~(1u << (j & 7)));
+        }
+        r->last_fcs32 = ok32;
+        r->good++; r->resynced++;
+        return n / 8 - (ok32 ? 4 : 2);
+    }
+    return 0;
+}
+
 /* A flag has just completed. The accumulator holds the frame octets plus
  * the flag's leading zero and five of its ones (six stray bits). */
 static int rx_flag(v42hdlc_rx_t *r)
 {
     int len = r->len, nbits = r->nbits, overflow = r->overflow;
-    int was_synced = r->synced;
+    int was_synced = r->synced, tent = r->tent;
+    uint8_t cur = r->cur;
 
     rx_restart(r);
-    r->synced = 1;
+    r->synced = 1; r->tent = 0;
     if (!was_synced) { r->flag_run = 1; return 0; }
     if (len == 0 && nbits == 6) { r->flag_run++; return 0; }
     r->flag_run = 1;
+    if (tent) return overflow ? 0 : rx_resync(r, len, nbits, cur);
     if (overflow) { r->too_long++; return V42HDLC_RX_LONG; }
     if (nbits != 6) {
         if (len == 0) return 0;           /* debris between flags */
@@ -188,9 +231,9 @@ int v42hdlc_rx_bit(v42hdlc_rx_t *r, int bit)
         if (r->ones < 7) r->ones++;
         if (r->ones == 7) {
             /* seven contiguous ones: abort (8.1.4); wait for a flag */
-            int had = r->synced && r->len > 0;
+            int had = r->synced && r->len > 0 && !r->tent;
             r->ones = 8;                  /* saturate; report once */
-            r->synced = 0; r->flag_run = 0;
+            r->synced = 0; r->flag_run = 0; r->tent = 0;
             rx_restart(r);
             if (had) { r->aborts++; return V42HDLC_RX_ABORT; }
             return 0;
@@ -201,7 +244,12 @@ int v42hdlc_rx_bit(v42hdlc_rx_t *r, int bit)
         r->ones = 0;
         if (ones == 5) return 0;          /* inserted zero: delete (8.1.1.2) */
         if (ones == 6) return rx_flag(r);
-        if (ones >= 7) return 0;          /* still hunting for a flag */
+        if (ones >= 7) {
+            /* the end of a run of ones: a frame may follow with no flag
+             * (v42_hdlc.h); this zero is its first bit, or one inserted */
+            rx_restart(r);
+            r->synced = 1; r->tent = 1;
+        }
     }
     if (!r->synced) return 0;
     r->cur = (uint8_t)(r->cur | ((bit & 1) << r->nbits));

@@ -592,9 +592,11 @@ int16_t answer_tick(answer_t *a, int16_t rx)
             /* there is no way back to V.34 once the marker came (design
              * "Calls made in the design"): a start-up that did not reach
              * data mode, or a rate change of the client's that did not
-             * complete, is said as x2's; in data mode only the line's loss
-             * and our cleardown end the call */
-            if (!a->connected || (d->error != X2D_ERR_CARRIER && d->error != X2D_ERR_HANGUP)) a->x2_failed = 1;
+             * complete, is said as x2's; in data mode the line's loss,
+             * our cleardown and the client's retrain (its Tone A, said as
+             * a retrain that failed) end the call */
+            if (d->error == X2D_ERR_RETRAIN) a->x2_failed = 2;     /* the client's retrain: said as a retrain that failed */
+            else if (!a->connected || (d->error != X2D_ERR_CARRIER && d->error != X2D_ERR_HANGUP)) a->x2_failed = 1;
             if (d->error == X2D_ERR_HANGUP) a->cleared = 2;
             fail(a); tx = 0;
         } else if (d->state == X2D_DATA) {
