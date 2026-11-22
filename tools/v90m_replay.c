@@ -77,7 +77,7 @@ static void rp_drop(void *u, int bit) { (void)u; (void)bit; }
 /* TXBITS=FILE in the environment, with -x: the box's own downstream data
  * bits, decoded from the codewords it really sent (the replay's x2tx keeps
  * the frame grid; its map, before each frame, the levels) */
-static FILE *txbits;
+static FILE *txbits; static int txown;
 static x2map_t tx_dec; static int tx_have, tx_k, tx_lev, tx_seg = -1; static uint8_t tx_oct[X2MAP_N]; static v90_scr_t tx_dscr;
 static long tx_frames, tx_bad, tx_nbits;
 static void x2_down(const x2tx_t *t, uint8_t sent)
@@ -167,6 +167,7 @@ int main(int argc, char **argv)
     trace_bits_path = "bits.txt";
     if (getenv("RXBITS")) rxbits = fopen(getenv("RXBITS"), "w");
     if (getenv("TXBITS")) txbits = fopen(getenv("TXBITS"), "w");
+    txown = getenv("TXOWN") != NULL;            /* TXBITS from our own transmit (checks the decoder) */
     v90_scr_init(&tx_dscr);
 
     configure(&c, r.lin);
@@ -197,12 +198,13 @@ int main(int argc, char **argv)
          * once data moves (V.34, V.92): this modem's data are not the
          * recording's */
         rec_tx = (int16_t)v90_octet_linear(opt_alaw, want);
-        rec_tx_on = (a->phase == ANS_V34 && a->connected) || (a->phase == ANS_X2 && a->u.x2.state >= X2D_START);
+        rec_tx_on = (a->phase == ANS_V34 && a->connected)
+                    || (a->phase == ANS_X2 && (a->u.x2.state == X2D_START || a->u.x2.state == X2D_DATA || a->u.x2.state == X2D_RENEG));
         if (rec_tx92 && (a->phase == ANS_V92 || a->phase == ANS_P3X)) { a->u.v92.cfg.getbit = rp_ones; a->u.v92.cfg.putbit = rp_drop; }
         if (r.lin) { int16_t x = rec_heard_lin(&r, i); v90m_process_lin_rx(m, &x, &tx, 1); }
         else { uint8_t x = rec_heard(&r, i); v90m_process_g711(m, &x, &tx, 1); }
         if (tx != want) { if (first < 0) first = i; diff++; dsec[(i / 8000) % 120]++; }
-        if (txbits && a->phase == ANS_X2) x2_down(&a->u.x2.tx, getenv("TXOWN") ? tx : want);
+        if (txbits && a->phase == ANS_X2) x2_down(&a->u.x2.tx, txown ? tx : want);
 
         trace_a(a, i);
         v90m_get_state(m, &st);
@@ -248,6 +250,8 @@ int main(int argc, char **argv)
     for (i = 0; i < 120; i++) if (dsec[i]) printf("  second %ld: %ld samples differ\n", i, dsec[i]);
     printf("%ld samples; after the answer our transmit differs from the recording in %ld (first at %.3f s)\n", r.n, diff, first / 8000.0);
     if (txbits) printf("downstream frames decoded %ld, not levels %ld\n", tx_frames, tx_bad);
+    if (rxbits) fclose(rxbits);
+    if (txbits) fclose(txbits);
     v90m_ec_destroy(ec);
     v90m_destroy(m);
     return 0;

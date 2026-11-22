@@ -332,6 +332,50 @@ static void test_resync(void)
     for (i = 0; i < 16; i++) CHECK(v42hdlc_rx_bit(&r, "01111110"[i % 8] - '0') <= 0);
     CHECK_EQ_I(r.good + r.bad_fcs + r.runts + r.aborts + r.too_long + r.misaligned, 0);
 
+    /* the tail of a frame whose head was lost (a retrain): dropped */
+    {
+        v42hdlc_tx_t t; int nb2 = 0;
+        static uint8_t line[2000];
+        for (i = 0; i < 40; i++) f[i] = (uint8_t)(i * 29 + 5);
+        f[0] = 0x03;
+        v42hdlc_tx_init(&t); v42hdlc_rx_init(&r);
+        v42hdlc_tx_frame(&t, f, 40, 0);
+        while (v42hdlc_tx_busy(&t)) line[nb2++] = (uint8_t)v42hdlc_tx_bit(&t);
+        for (i = 0; i < 16; i++) line[nb2++] = (uint8_t)v42hdlc_tx_bit(&t);
+        for (i = 0; i < 49; i++) CHECK(v42hdlc_rx_bit(&r, 1) == 0);
+        for (k = 24; k < 140; k += 13) {             /* the head cut at several points (two octets or more) */
+            int e;
+            v42hdlc_rx_init(&r);
+            for (i = 0; i < 49; i++) (void)v42hdlc_rx_bit(&r, 1);
+            for (i = k; i < nb2; i++) { e = v42hdlc_rx_bit(&r, line[i]); CHECK(e <= 0); }
+            CHECK_EQ_I(r.good + r.bad_fcs + r.aborts, 0);
+        }
+    }
+
+    /* random bits after a run of ones, then a flag: taken as a frame about
+     * 0.75 x 2^-16 of the time (FCS-16, at most two alignments); bound loosely */
+    {
+        long trials, taken = 0, lapm = 0;
+        for (trials = 0; trials < 200000; trials++) {
+            int len = 40 + (int)(rnd() % 400), ones = 0;
+            v42hdlc_rx_init(&r);
+            for (i = 0; i < 16; i++) (void)v42hdlc_rx_bit(&r, "01111110"[i % 8] - '0');
+            for (i = 0; i < 20; i++) (void)v42hdlc_rx_bit(&r, 1);
+            (void)v42hdlc_rx_bit(&r, 0);
+            for (i = 0; i < len; i++) {
+                int b = (int)(rnd() >> 4) & 1;
+                if (ones == 5) b = 0;                   /* no flag or abort inside */
+                ones = b ? ones + 1 : 0;
+                (void)v42hdlc_rx_bit(&r, b);
+            }
+            for (i = 0; i < 8; i++) ev = v42hdlc_rx_bit(&r, "01111110"[i] - '0');
+            if (ev > 0) { taken++; if (r.buf[0] == 0x01 || r.buf[0] == 0x03) lapm++; }
+        }
+        printf("  random bits after ones: %ld of %ld taken (%ld with a LAPM address)\n", taken, trials, lapm);
+        CHECK(taken * 65536 <= 4 * trials);
+        CHECK(lapm * 65536 <= trials);
+    }
+
     /* the caller's own bits: N(S) 68, 69 and 70, in order */
     v42hdlc_rx_init(&r);
     for (i = 0; i < USR_RENEG_BITS; i++) {
