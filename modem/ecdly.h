@@ -33,6 +33,9 @@
 #define ECDLY_STEP   4      /* lags tried per sample */
 /* ecdly_measure() is to be called for k = 1 .. ECDLY_SAMPLES */
 #define ECDLY_SAMPLES (ECDLY_MAXLAG + ECDLY_WIN + ECDLY_MAXLAG / ECDLY_STEP + 2)
+/* the furthest the search can start (ecdly_near): the history must still
+ * hold base + everything above when the search gets to its last lag */
+#define ECDLY_MAXBASE (ECDLY_HIST - ECDLY_SAMPLES - 8)
 
 typedef struct {
     int16_t hist[ECDLY_HIST]; int pos;  /* what we sent; where the next sample goes */
@@ -42,10 +45,18 @@ typedef struct {
     int     n;                          /* samples collected */
     int     s_pos, s_lag;               /* pos at the snapshot; next lag to try */
     int64_t best; int best_lag;
+    int     base;                       /* the search covers base .. base + ECDLY_MAXLAG */
 } ecdly_t;
 
 /* delay: what the owner knows (0 when it will be measured) */
 void ecdly_init(ecdly_t *d, int delay);
+
+/* Before the measurement: the echo is the far hybrid's, about a round trip
+ * of rtd samples away (a digital modem whose codec sits behind a packet
+ * network: an ATA's jitter buffers put it some 300 ms out, beyond
+ * ECDLY_MAXLAG). Moves the search to end ECDLY_MAXLAG / 5 past rtd; a
+ * shorter rtd leaves it at 0 .. ECDLY_MAXLAG. */
+void ecdly_near(ecdly_t *d, int rtd);
 
 /* One sample period, in this order: ecdly_put() with what is being sent
  * now; ecdly_ref() for the canceller (what was sent `delay` + back samples

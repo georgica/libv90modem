@@ -99,6 +99,7 @@ int p34d_init(p34d_t *p, const p34d_cfg *cfg)
     }
     if (cfg->echo_delay > P34_MAX_ECHO_DELAY) p->cfg.echo_delay = P34_MAX_ECHO_DELAY;
     ecdly_init(&p->ecd, p->cfg.echo_delay);
+    ecdly_near(&p->ecd, p->cfg.rtd);
     if (r != 0) { fail(p, P34_ERR_UINFO); return -1; }
     if (!p->mp.rates || (cfg->sym_rate != 3000 && cfg->sym_rate != 3200)) { fail(p, P34_ERR_RATE); return -1; }
     return 0;
