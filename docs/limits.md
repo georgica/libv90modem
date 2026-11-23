@@ -111,6 +111,12 @@ Each item names where it is recorded.
   noise test (RMS 92) an x2 call stays up for 60 s with about 46% of the
   upstream bits wrong and no end code. There is no watchdog, by ruling.
 
+- **The calling V.34 modem behind a long round trip** gets less
+  downstream: in `test/test_v34dx.c`'s far-echo case (the answer side with
+  a far echo 20 dB down, the call side with its own near echo), 31200 bit/s
+  at a 100 ms round trip, 28800 at 300 ms, 12000 at 400 ms. The answer side
+  is clean at every one. Not investigated (0.6.0 audit, ISP-1 follow-up).
+
 ## Not checked against a specification
 
 - **The Bell 212A calling handshake** follows V.22 and what this library's
@@ -413,6 +419,13 @@ which makes it about 123 M counted instructions a second.
   ends the call (`V90M_END_NO_COMMON`).
 - The calling V.90 / V.92 modem does not measure the echo delay: it uses
   `v90m_cfg.echo_delay` as a fixed value, -1 taken as 0 (`modem/orig.c`).
+- The answering V.90, V.92, x2 and K56flex modems' echo search (echo delay
+  -1) reaches about 3510 samples (439 ms) after the sample is sent; a far
+  echo later than that is not cancelled. With a round trip over 128 ms it
+  covers only the round trip less 128 ms to the round trip plus 32 ms, so
+  a near echo earlier than that is not cancelled
+  ([line-interface.md](line-interface.md), "Echo delay"). V.34 answering
+  has a second canceller for the far echo and reaches about 500 ms.
 - The answering side (V.34, V.90, V.92) still reads the caller's L2 for
   460 ms of the 500 V.34 11.2.1.2.8 / V.90 9.2.1.1.5 allow; the calling
   side reads 280 ms since 0.6.0. Shortening it moves the answerer's Tone A

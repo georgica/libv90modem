@@ -930,3 +930,19 @@ qemu hash, unchanged from before.
 
 Memory: p34d_t 8 octets smaller (padding; 25416 x86-64, 25344 ARMv5),
 v34dx_t unchanged (23040 / 22976), `v90m_mem_size()` unchanged.
+
+## ISP-1: the echo search near the round trip (V.92, x2, K56flex); replay -r
+
+PR #1's `ecdly_near` (p34d) extended to v92d, x2d and k56d (a93fa17);
+v34dx unchanged (its far canceller is placed on the round trip). Below a
+round trip of 1024 samples nothing changes: golden only gains the new
+tests' lines, replay 636 identical. `v90m-replay -r RMS` (74a06aa). Reach
+and trade-off: docs/line-interface.md "Echo delay", docs/limits.md.
+
+**Follow-up (calling side, not investigated).** test_v34dx's far-echo case
+shows our calling V.34 modem's downstream falling with the round trip:
+A->C 31200 bit/s at 100 ms, 28800 at 300 ms, 12000 at 400 ms (the call
+side has its own near echo, 0.3, and a far canceller on with nothing at
+the round trip). The answer side is clean throughout. The 12000 is frozen
+in test/golden/out/test/test_v34dx.txt; a fix that raises it changes that
+golden line on purpose.
