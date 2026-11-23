@@ -834,3 +834,74 @@ second of line):
 | V.90 data mode | 39 347 034 | 39 410 948 | +0.06 M |
 
 That is one compare and one multiply per sample (the brief allows +0.3 M).
+
+## Phase 1 gate
+
+At 5c5e541 (Phase 1 complete, both tracks merged), 2026-11-23. `make
+verify-phase` is deferred to the release proof (Task 39) by the owner's
+ruling; `make verify` passed at this commit (merge B2).
+
+### Replay proof against v0.5.0: 102 of 636 runs differ, all explained
+
+`tools/replay-proof.sh diff v0.5.0` (recordings
+`/home/georgica/sync-build/live-050`): `636 runs, 102 differ from v0.5.0`;
+102 traces (.txt) and 3 bit files (.bits, pd_36000 in the V.92 sets), no
+exit code. Every one of them was re-recorded, with its reason, by one of
+the commits below (the union of their manifest changes, the merge left
+out, against the 102: nothing differs that no commit explains).
+
+| task | commit | runs | recordings (flag sets) | what changes |
+|---|---|---|---|---|
+| Task 7 | dbf91d4 | 21 | x2r2, v34a, v34b (all six); usr7 (v92, x2-v92, k56-v92) | end codes and the retraining / renegotiation figures only: x2r2 LOST (2), usr7 RETRAIN_FAILED (8), v34a/v34b stops counted as renegotiations |
+| Task 10b | 2de5d4b | (x2r2, above) | x2r2 (all six) | +288 upstream bits at the caller's S (the mapping frames held at S delivered) |
+| Task 10c | 3e4128e | (v34a, v34b, above) | v34a, v34b (all six) | +288 bits at each V.34 S; our tx S after the mapping frame (+1 ms) |
+| Task 20 | 807d828 | 42 | ab_cc_v34, ab_cl_v34, v34c, x2b, x2r1, x2r3, x2r4 (all six) | the blanking fires on the hang-up click in the recordings' last 54-72 ms; identical up to it; no .bits change |
+| T21.2 | 5aca43d | 39 | cxb, cxd, cxf, cxg, f4, pd_36000, pd_37333, usr1, usr2, usr4, usr5, usr_c33333, usr_c36000 (v92, x2-v92, k56-v92) | SUVd between repeated CPds, 22-26 s in, after our transmit already left the recording; pd_36000 now reaches data mode (its .bits) |
+| T21.3, T21.8 | 596817b, 42e1c67 | 0 net | cxe, h1-h4 (the three V.92 sets) | T21.3 changed 15 traces after the recordings' end (our echo residual read as Ru); T21.8 put them back: they are identical to v0.5.0 |
+
+21 + 42 + 39 = 102; the three groups do not overlap.
+
+### Costs after Phase 1
+
+The verify-phase cost stage on its own (`make cost-x2 cost-k56 cost-v34
+cost-v90a cost-v90c cost-v92c cost-bell ARM_CC=$A5 COST_TICKS=0`, armv5
+uClibc, gcc -O2, ARM instructions counted under qemu), M instructions per
+second of line in data mode, against the baseline (v0.5.0 code) above:
+
+| | baseline | after Phase 1 | change |
+|---|---|---|---|
+| x2 answering (second 15 to 16) | 82.57 | 82.85 | +0.28 |
+| V.90 answering (`cost-x2`'s, second 15 to 16) | 39.20 | 39.40 | +0.20 |
+| K56flex answering (second 20 to 21) | 39.27 | 39.64 | +0.37 |
+| V.34 answering (second 10 to 11) | 40.53 | 40.71 | +0.18 |
+| V.90 downstream receiver, 0 / 100 ppm | 44.62 / 48.97 | 44.57 / 48.92 | -0.05 / -0.05 |
+| V.90 calling, 0 / 100 ppm | 55.11 / 59.31 | 55.06 / 58.89 | -0.05 / -0.42 |
+| V.92 calling, 0 / 100 ppm | 69.95 / 74.32 | 70.16 / 74.39 | +0.21 / +0.07 |
+| Bell 103 / Bell 212A calling (first second) | 9.86 / 4.43 | 9.87 / 4.69 | +0.01 / +0.26 |
+| K56flex, the heavy client (Task 19, second 20 to 21; separate) | 84.43 | 84.54 | +0.11 |
+
+Every row is within 0.5 M of its baseline. The largest relative change is
+Bell 212A (+5.9 %): Task 13's v22rx products in 64 bits (49ff9a4), measured
+on its own: 4.46 M before it, 4.69 M after (+0.23 M); the rest (+0.03 M)
+came earlier. K56flex +0.37 M is the closest to the bound.
+
+For Phase 3 to watch (each costs little or nothing in these steady-state
+windows, so the table does not show it):
+- T21.3: the Ru / Su / Sd detector's products in 64 bits (`v92_p6_tick`),
+  every sample in V.92 data mode on ARMv5 (part of V.92 / K56 / x2 rows'
+  rise; also Task 13's 64-bit products in v22rx, above).
+- T21.7: the B1u gain search, some 175 k instructions in one tick on most
+  real calls (not in any row: the simulated calls sit at scale 1, 14 k).
+- K56flex catch-up after a heavy client's B1 retry: 10.2 ms of CPU per
+  10 ms of line, lateness peaking at 11.7 ms inside the 20 ms prefill
+  (Task 19, above); not re-measured here.
+- Task 20's blanking: one compare and one multiply a sample in x2 /
+  K56flex / V.34 / V.90 upstream data mode (+0.09 M x2, +0.06 M V.90 when
+  measured).
+
+### Memory
+
+`v90m_mem_size()` as it stands: 118824 octets on x86-64, 118512 on ARMv5
+(armv5 uClibc, under qemu) — unchanged from v0.5.0 (README). V.42:
+`v90m_ec_mem_size()` 49792 (x86-64), 49568 (ARMv5); `v90m_async_mem_size()`
+1064 on both.
