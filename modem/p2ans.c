@@ -166,6 +166,7 @@ static void self_retrain(p2ans_t *p, int why)
     p->x2_hunt = 0;                 /* the marker comes in the first Phase 2 only */
     if (p->retrains >= P2N_MAX_RETRAINS) { fail(p, why); return; }
     p->retrains++;
+    p->t_x = 0;                     /* a new exchange */
     dpsktx_off(&p->tx);
     p->probing = 0;
     go(p, P2N_RT_SILENCE);
@@ -175,6 +176,7 @@ static void self_retrain(p2ans_t *p, int why)
 static void restart_tones(p2ans_t *p)
 {
     p->restarts++;
+    p->t_x = 0;                     /* counted: the exchange begins again */
     p->probing = 0;
     dpsktx_on(&p->tx);
     /* (L2 unanswered comes 760 ms after our L1 began, before the marker's
@@ -322,6 +324,11 @@ int16_t p2ans_tick(p2ans_t *p, int16_t x)
 {
     int ev = dpskrx_tick(&p->rx, x);
     int32_t out;
+    int live = p->state != P2N_DONE && p->state != P2N_FAILED && p->state != P2N_X2 && p->state != P2N_K56;
+
+    /* the exchange as a whole (spec D5): a repeated INFO0c takes
+     * WAIT_BREV1 back to INFO0, whose own limit starts again */
+    if (live && p->t_x >= MS(P2N_EXCHANGE_MS)) fail(p, P2N_ERR_TIME);
 
     /* x2: from our L1 until the caller's L1 / L2 are analysed (or Tone A
      * again after an unanswered L2). The frames the receiver finds meanwhile
@@ -491,5 +498,6 @@ int16_t p2ans_tick(p2ans_t *p, int16_t x)
     if (out > 32767) out = 32767;
     if (out < -32768) out = -32768;
     p->now++; p->t++;
+    if (live) p->t_x++;
     return (int16_t)out;
 }

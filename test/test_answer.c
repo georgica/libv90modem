@@ -346,5 +346,58 @@ int main(void)
         CHECK(t_fail > 0); CHECK_EQ_I(a.phase, ANS_FAILED); CHECK(!a.connected);
     }
 
+    /* The backstop of the start-up phases (spec D5): no phase before data
+     * mode lasts longer than its budget, whatever its engine does. Each
+     * engine is put in place by hand and its clock moved on. */
+    {
+        static answer_t a; static v14_t dte; answer_cfg ac; v34ans_cfg vc; int k, conn;
+        memset(&ac, 0, sizeof ac);
+        ac.level = 3000; ac.modes = ANS_MODE_V90 | V8_MOD_V34 | V8_MOD_V22 | V8_MOD_V21;
+        ac.getbit = v14_getbit; ac.putbit = v14_putbit; ac.user = &dte;
+        v14_init(&dte);
+        /* V.90 Phases 3 and 4: 60 s */
+        answer_init(&a, &ac);
+        p2d_init(&a.p2, &a.p2cfg);
+        a.p2.state = P2D_DONE; a.p2.mode = P2D_MODE_V90; a.p2.info1a.v90 = 1; a.p2.info1a.up_sr = 4;
+        a.phase = ANS_P2; a.t = 0;
+        (void)answer_tick(&a, 0);
+        CHECK_EQ_I(a.phase, ANS_P3); CHECK_EQ_I(a.t_phase, 0);
+        a.t_phase = 60000 * 8 - 1;
+        (void)answer_tick(&a, 0);
+        CHECK_EQ_I(a.phase, ANS_P3);
+        (void)answer_tick(&a, 0);
+        CHECK_EQ_I(a.phase, ANS_FAILED); CHECK_EQ_I(answer_end(&a), ANS_END_FAILED);
+        /* V.34's Phase 2, a sub-state of ANS_V34: 30 s; in a connected call
+         * (a retrain's Phase 2) the retrain failed */
+        for (conn = 0; conn < 2; conn++) {
+            answer_init(&a, &ac);
+            memset(&vc, 0, sizeof vc);
+            vc.level = 3000; vc.law = 1; vc.getbit = v14_getbit; vc.putbit = v14_putbit; vc.user = &dte;
+            v34ans_init(&a.v34, &vc);
+            a.phase = ANS_V34; a.t = 0; a.connected = conn;
+            (void)answer_tick(&a, 0);
+            CHECK_EQ_I(a.phase, ANS_V34); CHECK_EQ_I(a.v34.state, V34A_PHASE2);
+            a.t_phase = 30000 * 8 - 1;
+            (void)answer_tick(&a, 0);
+            CHECK_EQ_I(a.phase, ANS_V34);
+            (void)answer_tick(&a, 0);
+            CHECK_EQ_I(a.phase, ANS_FAILED);
+            CHECK_EQ_I(answer_end(&a), conn ? ANS_END_RETRAIN_FAILED : ANS_END_FAILED);
+        }
+        /* outside its Phase 2 ANS_V34 has no budget (the 70 ms before a
+         * retrain's Phase 2 here), and the clock starts again where that
+         * Phase 2 begins */
+        answer_init(&a, &ac);
+        v34ans_init(&a.v34, &vc);
+        a.v34.state = V34A_RETRAIN; a.v34.t = 0; a.v34.have0c = 1;
+        a.phase = ANS_V34; a.t = 0; a.connected = 1;
+        a.t_phase = 100000 * 8;
+        for (k = 0; k < 8 * 70 && a.v34.state == V34A_RETRAIN; k++) (void)answer_tick(&a, 0);
+        CHECK_EQ_I(a.phase, ANS_V34); CHECK_EQ_I(a.v34.state, V34A_PHASE2);
+        CHECK(a.t_phase < 8);
+        for (k = 0; k < 8 * 100; k++) (void)answer_tick(&a, 0);
+        CHECK_EQ_I(a.phase, ANS_V34); CHECK_EQ_I(a.v34.state, V34A_PHASE2);
+    }
+
     T_REPORT("answer");
 }

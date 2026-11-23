@@ -45,6 +45,7 @@ void p2d_init(p2d_t *p, const p2d_cfg *cfg)
     if (p->cfg.tx_dbm0 < -21) p->cfg.tx_dbm0 = -21;
     p->level = p2_level(p->cfg.tx_dbm0);
     p->state = P2D_INFO0; p->error = P2D_OK; p->now = 0; p->t = 0;
+    p->t_x = 0; p->n_recover = 0;
     dpsktx_init(&p->tx, DPSK_FC_B, p->level, 0);
     dpskrx_init(&p->rx, DPSK_FC_A);
     dpskrx_expect(&p->rx, INFO_PAYLOAD(INFO0A_BITS));
@@ -156,6 +157,10 @@ int16_t p2d_tick(p2d_t *p, int16_t x)
     int ev = dpskrx_tick(&p->rx, x);
     int32_t out;
 
+    /* the exchange as a whole (spec D5): the states' own limits start again
+     * on every return to INFO0 or WAIT_REV1 */
+    if (p->state != P2D_DONE && p->state != P2D_FAILED && p->t_x >= MS(P2D_EXCHANGE_MS)) fail(p, P2D_ERR_TIME);
+
     switch (p->state) {
     case P2D_INFO0:
         if (ev & DPSK_EV_FRAME) {
@@ -210,7 +215,8 @@ int16_t p2d_tick(p2d_t *p, int16_t x)
             proberx_init(&p->prx);
             go(p, P2D_PROBE_RX);
         } else if (p->t > MS(2000)) {
-            go(p, P2D_RECOVER);             /* 9.2.1.2.3 */
+            if (p->n_recover >= P2D_MAX_RECOVER) fail(p, P2D_ERR_REV);
+            else { p->n_recover++; go(p, P2D_RECOVER); }    /* 9.2.1.2.3 */
         }
         break;
 
@@ -304,5 +310,6 @@ int16_t p2d_tick(p2d_t *p, int16_t x)
     if (out > 32767) out = 32767;
     if (out < -32768) out = -32768;
     p->now++; p->t++;
+    if (p->state != P2D_DONE && p->state != P2D_FAILED) p->t_x++;
     return (int16_t)out;
 }

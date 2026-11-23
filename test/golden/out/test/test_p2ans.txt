@@ -23,4 +23,5 @@
   p2ans K56flex, INFO1c 0x200, line offset +0.18 Hz: measured 9, INFO1a 8 (samples differ)
   p2ans K56flex, INFO1c 0x001, the client cannot send 3200: 3000 symbols/s, state 12, INFO1a offset 0 (measured 1)
   p2ans K56flex, INFO1c 0x001, 3200 not allowed by us: 3000 symbols/s, state 12, INFO1a offset 0 (measured 1)
-p2ans: 402 checks, 0 failures
+  p2ans INFO0c for ever: state 13 error 5 at 20.00 s, INFO0c 67
+p2ans: 410 checks, 0 failures

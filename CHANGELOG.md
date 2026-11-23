@@ -40,6 +40,16 @@ dropped call should look at `V90M_END_LOST`):
 - `v90m_stats.echo_delay` is that of the engine running now: after a V.92
   retrain that withdrew PCM upstream, V.90's (it gave V.92's figure until
   V.90 data mode); during a retrain and after the end, the call's.
+- Phase 2 is bounded whatever the caller does: one that repeats its INFO0
+  (V.90, V.92, V.34, x2, K56flex) or, in V.90 and V.92, reverses Tone A
+  once but never twice kept the answering modem in Phase 2 for as long as
+  it went on. Now the exchange ends after 20 s (from its start, or from a
+  restart V.34 counts), and V.90's recovery (9.2.1.2.3) is tried at most
+  4 times. Above those, a backstop ends the call when V.90's or V.92's
+  Phase 2 (a retrain's included) or V.34's lasts 30 s, or V.90's or
+  V.92's Phases 3 and 4 last 60 s: `V90M_END_FAILED`, or
+  `V90M_END_RETRAIN_FAILED` in a retrain. A normal Phase 2 takes 3 to 5 s;
+  no recorded call comes near the limits.
 - `v90m-replay` traces: the end code and the "retraining" lines change
   accordingly (renegotiations of V.34, x2 and K56flex no longer print
   retraining 1).

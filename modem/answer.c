@@ -11,6 +11,11 @@
                                 once data mode holds K56_RT_DATA_MS) */
 #define K56_RT_DATA_MS  2000 /* K56flex data mode this long: its retrains are not "in a row" */
 #define K56_RT_MS       9000 /* K56flex: the client's retrain to our Phase 2's end */
+/* The backstop of the phases before data mode (spec D5), above the limits
+ * of their engines: a phase that runs longer ends the call. Far above a
+ * normal Phase 2 (3 to 5 s), and the inner limits fire first. */
+#define P2_BACKSTOP_MS 30000 /* ANS_P2, ANS_RETRAIN, V.34's Phase 2 within ANS_V34 */
+#define P3_BACKSTOP_MS 60000 /* ANS_P3, ANS_P3X */
 
 #define V22_TOTAL_MS     30000   /* give up on V.22bis start-up */
 #define V22_LEGACY_MS     8000   /* pre-V.8 caller silent this long: try V.21 */
@@ -99,6 +104,23 @@ static int lost_or(const answer_t *a, int why) { return a->connected ? ANS_END_L
  * mode failed, as on the calling side; any other loss as lost_or */
 static int retrain_or(const answer_t *a, int why) { return a->connected && a->retraining ? ANS_END_RETRAIN_FAILED : lost_or(a, why); }
 
+/* V.34's Phase 2 (its retrains' included) is a state of the V.34 engine
+ * within ANS_V34: the backstop's clock starts where it begins */
+static int v34_phase2(const answer_t *a) { return a->phase == ANS_V34 && a->v34.state == V34A_PHASE2; }
+
+/* the backstop of the phase (spec D5), samples; 0 = none: data mode, and
+ * the phases their engines alone bound (V.8, x2 and K56flex start-ups,
+ * ANS_K56RT's K56_RT_MS) */
+static int32_t phase_budget(const answer_t *a)
+{
+    switch (a->phase) {
+    case ANS_P2: case ANS_RETRAIN: return MS(P2_BACKSTOP_MS);
+    case ANS_P3: case ANS_P3X:     return MS(P3_BACKSTOP_MS);
+    case ANS_V34:                  return v34_phase2(a) ? MS(P2_BACKSTOP_MS) : 0;
+    default:                       return 0;
+    }
+}
+
 /* x2 is offered with V.34 on a mu-law line only (design "Calls made in the
  * design"; an A-law line gets V.34) */
 static void x2_offer(answer_t *a)
@@ -147,7 +169,7 @@ void answer_init(answer_t *a, const answer_cfg *cfg)
     local.has_prot = 1; local.prot = V8_PROT_LAPM;
     local.has_access = local.has_pcm; local.access = local.has_pcm ? V8_ACC_DIGITAL : 0;
     v8ans_init(&a->v8, 8000, (int16_t)(cfg->level * 181 / 128), &local);
-    a->phase = ANS_V8; a->t = 0; a->used_v8 = 0;
+    a->phase = ANS_V8; a->t = 0; a->t_phase = 0; a->used_v8 = 0;
     a->connected = 0; a->modulation = ANS_MOD_NONE; a->bitrate = 0; a->rx_bitrate = 0; a->pcm = 0xFF; a->end = ANS_END_NONE; a->retrains = 0; a->retraining = 0; a->rt_recent = 0; a->rt_clock = 0;
     a->fbit = 1; a->cd_run = 0; a->cd_thresh = 0;
     a->info0a.c1664 = 0; a->v34.from_v90 = 0;
@@ -369,6 +391,9 @@ static int16_t tick_v21(answer_t *a, int16_t rx)
 int16_t answer_tick(answer_t *a, int16_t rx)
 {
     int16_t tx = 0;
+    ans_phase was = a->phase;
+    int was_p2 = v34_phase2(a);
+    int32_t budget;
     a->t++;
     switch (a->phase) {
     case ANS_V8BIS:
@@ -679,6 +704,16 @@ int16_t answer_tick(answer_t *a, int16_t rx)
 
     case ANS_FAILED:
         break;
+    }
+
+    /* the backstop: its clock starts again with every phase (and with V.34's
+     * Phase 2), not with the engines' own states */
+    if (a->phase != was || (v34_phase2(a) && !was_p2)) a->t_phase = 0;
+    else if (a->t_phase < INT32_MAX) a->t_phase++;
+    budget = phase_budget(a);
+    if (budget && a->t_phase > budget) {
+        /* in a connected call, a retrain (its Phase 2 or Phases 3 and 4) that failed */
+        fail(a, retrain_or(a, ANS_END_FAILED)); tx = 0;
     }
     return tx;
 }

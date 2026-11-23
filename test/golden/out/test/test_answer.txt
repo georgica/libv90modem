@@ -8,4 +8,4 @@
   answer: silent line with echo: gave up after 33.3 s
   answer: V.22bis retrain by the caller: seen 1, completed 1, call dropped 0, text "before the retrainand after it"
   answer: our retrain never answered: call given up 13.0 s after it was asked for
-answer: 54 checks, 0 failures
+answer: 74 checks, 0 failures
