@@ -101,15 +101,16 @@ Fixed:
   Both are now written in a form that compiler gets right; the result on
   every other target is the same as before. The port matrix builds m68k
   with `-fno-omit-frame-pointer`, with which the suite passes under GCC 12.3.
-- Calls longer than 74.6 hours (2^31 samples), both roles, every
-  modulation: the sample clocks no longer overflow (undefined behaviour in
-  C). The V.90 calling receiver stopped deciding there, with the call left
-  in data mode and no data moving; the V.92 answerer's upstream decoder
-  did the same. The clocks now wrap or stop at their limit as defined C,
-  and the symbol numbers of the V.90 calling receiver and of the V.92
-  upstream receiver are brought back every 2^30 samples in data mode. A
-  host that keeps calling `v90m_process_*` after `V90M_EV_ENDED` no
-  longer overflows them either. Shorter calls are unchanged.
+- Long calls, both roles, every modulation: the modems' sample clocks and
+  counters no longer overflow (undefined behaviour in C) after 2^31 samples
+  or symbols. The V.34 receiver (the upstream of V.34, V.90 answering, x2
+  and K56flex) stopped after 58 to 62 hours of data mode, the V.90 calling
+  receiver and the V.92 answerer's upstream decoder after 74.6 hours, each
+  with the call left in data mode and no data moving. The clocks now wrap
+  or stop at their limit as defined C, and the receivers' sample and
+  symbol numbers are brought back every 2^30 in data mode. A host that
+  keeps calling `v90m_process_*` after `V90M_EV_ENDED` no longer overflows
+  them either. Shorter calls are unchanged.
 
 ## 0.5.0 (2026-11-21)
 

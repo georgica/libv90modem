@@ -31,6 +31,9 @@ static long long near_of(long long n, long step) { return n + (NEAR - n) / step 
 /* ---- the clocks moved on ---- */
 
 static void jump_answer(answer_t *a) { a->t = (int32_t)NEAR; }
+/* the V.34 receiver (qamrx): its T/3 output index by a multiple of 3 (it
+ * is read modulo 3), its symbol count */
+static void jump_qamrx(qamrx_t *r) { r->m = (int32_t)near_of(r->m, 3); r->nsym = (int32_t)NEAR; }
 static void jump_v90a(v90a_t *a)
 {
     v90arx_t *r = &a->rx;
@@ -42,6 +45,7 @@ static void jump_v90a(v90a_t *a)
     r->n0 = (uint32_t)(NEAR - near_of(k, 768));
     r->n = (uint32_t)NEAR;
     r->neq = (uint32_t)NEAR; r->nest = (int32_t)NEAR;
+    a->mod.nsym = (int32_t)NEAR; a->dly_pos = (int)(0x7FFFFF00 + (a->dly_pos & 1));
 }
 static void jump_orig(orig_t *o) { o->t = (int32_t)NEAR; jump_v90a(&o->v90); }
 static void jump_v92d(v92d_t *p)
@@ -72,7 +76,7 @@ static void pcm_call(int v92)
     e = l->k + MS(300); while (l->k < e) vl_tick(l);
     jump_answer(&l->ans); jump_orig(&l->org);
     if (v92) jump_v92d(&l->ans.u.v92);
-    else { l->ans.p34.now = (uint32_t)NEAR; l->ans.p34.t = (uint32_t)NEAR; }
+    else { l->ans.p34.now = (uint32_t)NEAR; l->ans.p34.t = (uint32_t)NEAR; jump_qamrx(&l->ans.p34.rx); }
     d0 = l->down.got; u0 = l->up.got; f0d = l->down.fails; f0u = l->up.fails;
     e = l->k + MS(RUN_S * 1000); while (l->k < e) vl_tick(l);
     printf("  %s: %d bit/s down, %d up; after the clocks' wrap %" PRId64 " / %" PRId64 " bits, %" PRId64 " / %" PRId64 " wrong\n",
@@ -83,10 +87,27 @@ static void pcm_call(int v92)
     CHECK_EQ_I(l->down.fails - f0d, 0); CHECK_EQ_I(l->up.fails - f0u, 0);
     /* the clocks went past 2^31; the symbol numbers were brought back */
     CHECK(l->org.v90.now > 0x80000000u); CHECK(l->org.v90.rx.n > 0x80000000u);
-    CHECK(clk_diff(l->org.v90.rx.n, l->org.v90.rx.n0) < V90ARX_REBASE_AT);
+    CHECK(clk_diff(l->org.v90.rx.n, l->org.v90.rx.n0) < CLK_REBASE_AT);
     CHECK_EQ_I(l->org.t, INT32_MAX); CHECK_EQ_I(l->ans.t, INT32_MAX);
     if (v92) { CHECK(l->ans.u.v92.now > 0x80000000u); CHECK(l->ans.u.v92.trn.k < 0x40000000); }
     else CHECK(l->ans.p34.now > 0x80000000u);
+    /* a rate renegotiation of ours on the symbol numbers brought back (V.90:
+     * Rd, TRN2d on m_b1d's frames; V.92 also the digital modem's Ru and its
+     * receiver's resume on trn.k): data again both ways, nothing wrong */
+    CHECK_EQ_I(orig_renegotiate(&l->org, 40000), 0);
+    e = l->k + MS(1000); while (l->k < e) vl_tick(l);
+    e = l->k + MS(20000);
+    while (l->k < e && !(orig_moving(&l->org) && answer_moving(&l->ans)) && l->org.phase != ORIG_FAILED) vl_tick(l);
+    e = l->k + MS(300); while (l->k < e) vl_tick(l);
+    d0 = l->down.got; u0 = l->up.got; f0d = l->down.fails; f0u = l->up.fails;
+    e = l->k + MS(2000); while (l->k < e) vl_tick(l);
+    printf("  %s renegotiated: %d bit/s down, %d up; %" PRId64 " / %" PRId64 " bits, %" PRId64 " / %" PRId64 " wrong; renegotiations %d, retrains %d\n",
+           what, l->org.rx_bitrate, l->org.bitrate, l->down.got - d0, l->up.got - u0, l->down.fails - f0d, l->up.fails - f0u,
+           (int)l->org.v90.renegs, orig_retrains(&l->org));
+    CHECK(orig_moving(&l->org)); CHECK(answer_moving(&l->ans));
+    CHECK(l->org.rx_bitrate <= 40000); CHECK_EQ_I(l->org.v90.renegs, 1); CHECK_EQ_I(orig_retrains(&l->org), 0);
+    CHECK(l->down.got - d0 > (int64_t)l->org.rx_bitrate); CHECK(l->up.got - u0 > (int64_t)l->org.bitrate);
+    CHECK_EQ_I(l->down.fails - f0d, 0); CHECK_EQ_I(l->up.fails - f0u, 0);
 }
 
 /* the caller's Sd counters (v90arx in V90ARX_WAIT): at the limit while Sd
@@ -176,8 +197,13 @@ static void dig_call(int kind)
         if (data_at >= 0 && jump_at < 0 && n == data_at + 8000L) {
             jump_at = n;
             jump_answer(&A);
-            if (kind) { A.u.k56.now = (uint32_t)NEAR; A.u.k56.t = (uint32_t)NEAR; }
-            else { A.u.x2.now = (uint32_t)NEAR; A.u.x2.t = (uint32_t)NEAR; }
+            if (kind) {
+                A.u.k56.now = (uint32_t)NEAR; A.u.k56.t = (uint32_t)NEAR; jump_qamrx(&A.u.k56.rx);
+                A.u.k56.tx.n = (int32_t)NEAR; A.u.k56.tx.alt = (int32_t)NEAR;
+            } else {
+                A.u.x2.now = (uint32_t)NEAR; A.u.x2.t = (uint32_t)NEAR; jump_qamrx(&A.u.x2.rx);
+                A.u.x2.tx.n = (int32_t)NEAR;
+            }
             dn0 = DN.n; up0 = UP.n; dbad0 = DN.bad; ubad0 = UP.bad;
         }
         if (jump_at >= 0 && n == jump_at + 8000L * RUN_S) break;
@@ -216,6 +242,7 @@ static void v34_call(void)
     CHECK(answer_moving(&A)); CHECK_EQ_I(A.modulation, ANS_MOD_V34);
     for (n = 0; n < 8000L; n++) (void)line34_step(&L, v34_a, &A, v34_c, &C);
     jump_answer(&A); A.v34.dx.now = (uint32_t)NEAR; A.v34.dx.t = (uint32_t)NEAR;
+    jump_qamrx(&A.v34.dx.rx); A.v34.dx.mod.nsym = (int32_t)NEAR;
     dn0 = DN.n; up0 = UP.n; dbad0 = DN.bad; ubad0 = UP.bad;
     for (n = 0; n < 8000L * RUN_S; n++) (void)line34_step(&L, v34_a, &A, v34_c, &C);
     printf("  V.34: %d bit/s down, %d up; after the clocks' wrap %ld / %ld bits, %ld / %ld wrong\n",

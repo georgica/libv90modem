@@ -213,20 +213,11 @@ void v90arx_set_cons(v90arx_t *r, const v90arx_cons_t *c, int32_t m);
 
 /* Symbol numbers (m, and the sample number k = n - n0 it is counted on) are
  * int32_t: a call of 2^31 symbols (74.6 hours) would take them past
- * INT32_MAX. Once k reaches V90ARX_REBASE_AT in data mode, the owner calls
- * v90arx_rebase(): every symbol number from then on is V90ARX_REBASE less,
- * a multiple of the data frame (6) and of the rings (256), so that m % 6
- * and m & 255 are what they were. The owner moves its own symbol numbers
- * back with v90arx_m_back(). */
-#define V90ARX_REBASE_AT 0x40000000
-#define V90ARX_REBASE    0x30000000
+ * INT32_MAX. Once k reaches CLK_REBASE_AT (modem/clock.h) in data mode, the
+ * owner calls v90arx_rebase(): every symbol number from then on is
+ * CLK_REBASE less, and m % 6 and m & 255 are what they were. The owner
+ * moves its own symbol numbers back with clk_back(). */
 void v90arx_rebase(v90arx_t *r);
-/* a symbol number moved back: -1 (none) stays; one from before
- * V90ARX_REBASE, long past, becomes one long past with the same m % 768 */
-static inline int32_t v90arx_m_back(int32_t m)
-{
-    return m < 0 ? m : m >= V90ARX_REBASE ? m - V90ARX_REBASE : m % 768;
-}
 
 /* Before Sd: the clock offset as known from elsewhere (1/256 ppm, as
  * v90arx_ppm_q8). A V.92 analogue modem's transmitter runs on this clock

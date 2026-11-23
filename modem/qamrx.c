@@ -1,5 +1,6 @@
 /* QAM receiver core. See qamrx.h. */
 #include "qamrx.h"
+#include "clock.h"
 #include "sintab.h"
 #include "v34_tabs.h"
 
@@ -126,7 +127,7 @@ static int produce(qamrx_t *r)
                 c = sintab[((r->theta >> 22) + SIN_N / 4) & SIN_MASK];
                 r->zr = (int32_t)(((int64_t)r->yr * c + (int64_t)r->yi * s) >> 15);
                 r->zi = (int32_t)(((int64_t)r->yi * c - (int64_t)r->yr * s) >> 15);
-                r->nsym++;
+                r->nsym = clk_sat_inc(r->nsym);
                 got = 1;
             } else if (r->timing_on) {
                 /* a third late: timing gradient Re{e conj(z+ - z-)} / |d|^2, with
@@ -163,6 +164,7 @@ static int produce(qamrx_t *r)
             }
         }
         r->m++;
+        if (r->m >= CLK_REBASE_AT) r->m -= CLK_REBASE;     /* (read modulo 3 only, and past QRX_CENTER) */
         r->tnext += r->step;
     }
     return got;

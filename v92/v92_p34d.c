@@ -36,12 +36,6 @@
 #define CD_BLOCK       80       /* carrier watch: 10 ms */
 #define CD_BLOCKS      50       /* about half a second without signal in data mode */
 #define CD_SHIFT       6        /* "without": 18 dB under the power of B1u */
-/* 2^30 samples of the training receiver's clock (trn.k) in data mode: it,
- * data_k and the symbol numbers counted on it back by REBASE, a multiple of
- * its ring (256) and of two data frames (12), before a call of 2^31 samples
- * (74.6 hours) takes them past INT32_MAX */
-#define REBASE_AT      0x40000000
-#define REBASE         0x30000000
 
 static void fail(v92d_t *p, int err)
 {
@@ -117,15 +111,15 @@ static void put_data(void *user, int bit)
     }
 }
 
-/* a symbol number moved back by REBASE: -1 (none) stays; one from before
- * REBASE, long past, becomes one long past with the same m % 768 */
-static int32_t m_back(int32_t m) { return m < 0 ? m : m >= REBASE ? m - REBASE : m % 768; }
-
+/* CLK_REBASE_AT samples of the training receiver's clock (trn.k) in data
+ * mode: it, data_k and the symbol numbers counted on it back by CLK_REBASE
+ * (modem/clock.h), before a call of 2^31 samples (74.6 hours) takes them
+ * past INT32_MAX */
 static void rebase(v92d_t *p)
 {
-    p->trn.k -= REBASE; p->data_k -= REBASE;
-    p->trn.dec_m = m_back(p->trn.dec_m);
-    p->m_b1u = m_back(p->m_b1u); p->m_trn2u = m_back(p->m_trn2u);
+    p->trn.k -= CLK_REBASE; p->data_k -= CLK_REBASE;
+    p->trn.dec_m = clk_back(p->trn.dec_m);
+    p->m_b1u = clk_back(p->m_b1u); p->m_trn2u = clk_back(p->m_trn2u);
     /* (trn.mref: v92_trn_resume sets it before the receiver decides again) */
 }
 
@@ -588,7 +582,7 @@ uint8_t v92d_tick(v92d_t *p, int16_t rxs)
                 if (p->b1_sym >= 0) b1u_lead(p, (int16_t)(y > 32767 ? 32767 : y < -32767 ? -32767 : y));
             }
         }
-        if (p->rx_on && p->trn_on == 2 && p->trn.k >= REBASE_AT) rebase(p);
+        if (p->rx_on && p->trn_on == 2 && p->trn.k >= CLK_REBASE_AT) rebase(p);
         if (p->state >= V92D_RETRAIN) return octet;
     }
 

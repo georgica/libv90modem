@@ -102,8 +102,8 @@ void v90arx_set_cons(v90arx_t *r, const v90arx_cons_t *c, int32_t m)
 
 void v90arx_rebase(v90arx_t *r)
 {
-    r->n0 += V90ARX_REBASE;
-    if (r->have_next) r->next_m = v90arx_m_back(r->next_m);
+    r->n0 += CLK_REBASE;
+    if (r->have_next) r->next_m = clk_back(r->next_m);
 }
 
 int32_t v90arx_ppm_q8(const v90arx_t *r)
@@ -677,6 +677,7 @@ static void equalise(v90arx_t *r, int32_t k, int16_t q)
         r->mse_slot[slot] = (uint64_t)(mss + ((e2 - mss) >> 6));
     }
     r->neq++;
+    if (r->neq == 0) r->neq = 0x80000000u;      /* (past FASTN again; the same modulo rc and 64) */
     if ((r->neq & 63) == 0) renorm(r);
 
     /* the channel estimate, one symbol behind (every symbol of its span is

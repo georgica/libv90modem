@@ -133,7 +133,9 @@ typedef struct {
     int32_t    rev_at;              /* sample of the last reversal, 0 = none */
     int        revs;
     v92_trn_t  trn;
-    uint32_t   trn_at;              /* sample at which the training receiver starts, 0 = not armed */
+    uint32_t   trn_at;              /* sample at which the training receiver starts, 0 = not armed
+                                       (one that falls on 0 at the clock's wrap, every 2^32 samples,
+                                       is not armed: that start-up fails on its limit) */
     int        trn_on;              /* 1: v92_trn_tick, 2: data mode (v92_trn_store) */
     int32_t    peak1;               /* v92_trn_peak() of the first TRN1u */
     v92_sgn_t  sgn;                 /* two-level sequences */

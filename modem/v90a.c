@@ -708,7 +708,7 @@ static void frame(v90a_t *a, int32_t m0)
         if (a->dly_cnt >= 2) deliver(a, a->dly[k], a->dly_n[k]);
         memcpy(a->dly[k], bits, (size_t)D);
         a->dly_n[k] = (uint8_t)D;
-        a->dly_pos++;
+        a->dly_pos ^= 1;
         if (a->dly_cnt < 2) a->dly_cnt++;
         break;
     }
@@ -830,11 +830,11 @@ static void rd_dec(v90a_t *a, const v90arx_dec_t *d)
 static void rebase(v90a_t *a)
 {
     v90arx_rebase(&a->rx);
-    a->jdp_m = v90arx_m_back(a->jdp_m);
-    a->dil_m0 = v90arx_m_back(a->dil_m0); a->dil_end = v90arx_m_back(a->dil_end); a->dil_mnext = v90arx_m_back(a->dil_mnext);
-    a->seg_m = v90arx_m_back(a->seg_m); a->cb_seg = v90arx_m_back(a->cb_seg);
-    a->ri_m0 = v90arx_m_back(a->ri_m0); a->ribar_m0 = v90arx_m_back(a->ribar_m0);
-    a->m_trn2d = v90arx_m_back(a->m_trn2d); a->m_b1d = v90arx_m_back(a->m_b1d); a->hold_until = v90arx_m_back(a->hold_until);
+    a->jdp_m = clk_back(a->jdp_m);
+    a->dil_m0 = clk_back(a->dil_m0); a->dil_end = clk_back(a->dil_end); a->dil_mnext = clk_back(a->dil_mnext);
+    a->seg_m = clk_back(a->seg_m); a->cb_seg = clk_back(a->cb_seg);
+    a->ri_m0 = clk_back(a->ri_m0); a->ribar_m0 = clk_back(a->ribar_m0);
+    a->m_trn2d = clk_back(a->m_trn2d); a->m_b1d = clk_back(a->m_b1d); a->hold_until = clk_back(a->hold_until);
 }
 
 static void on_dec(v90a_t *a, const v90arx_dec_t *d)
@@ -1308,7 +1308,7 @@ static int16_t tick(v90a_t *a, int16_t rx)
         a->erle_res += (int64_t)a->rx.eout * a->rx.eout;
     }
     for (i = 0; i < nd && a->state != V90A_ENDED; i++) on_dec(a, &a->rx.out[i]);
-    if (a->state == V90A_DATA && a->ds == D_DATA && clk_diff(a->rx.n, a->rx.n0) >= V90ARX_REBASE_AT) rebase(a);
+    if (a->state == V90A_DATA && a->ds == D_DATA && clk_diff(a->rx.n, a->rx.n0) >= CLK_REBASE_AT) rebase(a);
     if (a->state != V90A_ENDED) watch(a);
     if (a->job != JOB_NONE && a->state != V90A_ENDED && !a->rx.dsn_ran) {
         if (a->job_new) a->job_new = 0;         /* (begun this tick: the first step in the next) */

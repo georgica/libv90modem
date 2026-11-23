@@ -8,6 +8,7 @@
  * scrambler V.34's GPA (v90/v90_scr). */
 #include <string.h>
 #include "k56tx.h"
+#include "clock.h"
 #include "k56tab.h"
 #include "v90_pcm.h"
 
@@ -253,8 +254,8 @@ uint8_t k56tx_tick(k56tx_t *t)
         break;
     }
 
-    t->n++;
-    t->alt++;
+    t->n = clk_sat_inc(t->n);              /* (neither is read in data) */
+    t->alt = clk_sat_inc(t->alt);
     if (++t->sym >= 2 * SYM_WRAP)
         t->sym -= SYM_WRAP;
     if (t->seg == K56TX_DATA) {

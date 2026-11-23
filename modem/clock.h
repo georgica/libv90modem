@@ -31,4 +31,19 @@ static inline int32_t clk_diff(uint32_t a, uint32_t b)
     return d <= (uint32_t)INT32_MAX ? (int32_t)d : -(int32_t)(UINT32_MAX - d) - 1;
 }
 
+/* Symbol and sample numbers that are int32_t and run on through data mode
+ * (a receiver's k and m): once one reaches CLK_REBASE_AT, its owner takes
+ * CLK_REBASE off it and off every number counted on it. 3 * 2^28: a
+ * multiple of 3, of the data frames (6, 12) and of the rings (64, 256), so
+ * that every number keeps its place modulo these. clk_back() moves one: -1
+ * (none) stays; one from before CLK_REBASE, long past, becomes one long
+ * past (under 768, while the current one is at least 2^28) with the same
+ * value modulo 768. */
+#define CLK_REBASE_AT 0x40000000
+#define CLK_REBASE    0x30000000
+static inline int32_t clk_back(int32_t m)
+{
+    return m < 0 ? m : m >= CLK_REBASE ? m - CLK_REBASE : m % 768;
+}
+
 #endif
