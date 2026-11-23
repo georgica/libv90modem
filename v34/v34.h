@@ -40,11 +40,32 @@ enum { V34_GPC = 0,      /* call modem:   1 + x^-18 + x^-23 (7-1) */
        V34_GPA = 1 };    /* answer modem: 1 + x^-5  + x^-23 (7-2); the V.90
                             analogue modem uses this one (V.90 6.5) */
 
+/* sr bit k-1 holds the sequence value k bits ago (scrambler: its own
+ * output, descrambler: its input); tap is the polynomial's middle term
+ * (5 or 18). The one copy of this scrambler: modem/v34train.h (v34scr_*),
+ * v90/v90_scr.c and v32/v32_code.c wrap these. */
 typedef struct { uint32_t sr; uint8_t tap; } v34_scr_t;
 
-void v34_scr_init(v34_scr_t *s, int poly);       /* state all zero */
-int  v34_scramble(v34_scr_t *s, int bit);
-int  v34_descramble(v34_scr_t *s, int bit);
+static inline void v34_scr_init(v34_scr_t *s, int poly)    /* state all zero */
+{
+    s->sr = 0;
+    s->tap = (poly == V34_GPA) ? 5 : 18;
+}
+
+static inline int v34_scramble(v34_scr_t *s, int bit)
+{
+    unsigned o = ((unsigned)bit ^ (s->sr >> (s->tap - 1)) ^ (s->sr >> 22)) & 1;
+    s->sr = ((s->sr << 1) | o) & 0x7FFFFF;
+    return (int)o;
+}
+
+static inline int v34_descramble(v34_scr_t *s, int bit)
+{
+    unsigned i = (unsigned)bit & 1;
+    unsigned o = (i ^ (s->sr >> (s->tap - 1)) ^ (s->sr >> 22)) & 1;
+    s->sr = ((s->sr << 1) | i) & 0x7FFFFF;
+    return (int)o;
+}
 
 /* ---- training signals, 10.1.3 -------------------------------------- */
 
@@ -59,6 +80,9 @@ v34_pt_t v34_sbar_point(unsigned i);
  * Q14 (1.0 = 16384). */
 #define V34_PP_LEN 288
 void v34_pp_point(unsigned i, int16_t *re_q14, int16_t *im_q14);
+/* PP(i)'s angle in units of 30 degrees (0..11): the one generator of the
+ * sequence, which modem/v34train.c's v34_pp() scales its own way */
+unsigned v34_pp_phase(unsigned i);
 
 /* TRN (10.1.3.8) and the J-type modulation (10.1.3.3 for 4 points,
  * 10.1.3.9 for 16 points), which V.90 uses for Ja, CP, E and SCR.

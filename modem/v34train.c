@@ -3,14 +3,13 @@
 #include "qamrx.h"
 #include "sintab.h"
 
-/* QRX_REF * sqrt(2) * cos(n * 30 deg) */
+/* QRX_REF * sqrt(2) * cos(n * 30 deg), rounded: not v34_pp_point()'s Q14
+ * cosines scaled (8192 * 5793 / 16384 is 2896.5 at 60 deg, here 2896) */
 static const int16_t c12[12] = { 5793, 5017, 2896, 0, -2896, -5017, -5793, -5017, -2896, 0, 2896, 5017 };
 
 void v34_pp(int i, int32_t *re, int32_t *im)
 {
-    int k = (i / 4) % 12, I = i % 4;        /* the pattern repeats every 12 values of k */
-    int a = k * I + ((k % 3) == 1 ? 4 : 0);
-    a %= 12;
+    unsigned a = v34_pp_phase((unsigned)i);
     *re = c12[a];
     *im = c12[(a + 9) % 12];                /* sin(x) = cos(x - 90 deg) */
 }
@@ -21,31 +20,23 @@ void v34_rot4(int q, int32_t *re, int32_t *im)
     *re = xr[q & 3] * QRX_REF; *im = xi[q & 3] * QRX_REF;
 }
 
+/* v34.h's S and S-bar, from its Q7 units (point 0 = (V34_ONE, V34_ONE)) to
+ * QRX_REF ones: exact */
+typedef char v34train_qrx_scale[(QRX_REF % V34_ONE == 0) ? 1 : -1];
+static void from_q7(v34_pt_t p, int32_t *re, int32_t *im)
+{
+    *re = (int32_t)p.re * (QRX_REF / V34_ONE);
+    *im = (int32_t)p.im * (QRX_REF / V34_ONE);
+}
+
 void v34_s(int n, int len, int32_t *re, int32_t *im)
 {
-    /* the last symbol is point 0 turned +90 deg (= 270 deg clockwise) */
-    v34_rot4(((len - 1 - n) & 1) ? 0 : 3, re, im);
+    from_q7(v34_s_point((unsigned)n, (unsigned)len), re, im);
 }
 
 void v34_sbar(int n, int32_t *re, int32_t *im)
 {
-    v34_rot4((n & 1) ? 1 : 2, re, im);      /* 180 deg, then 270 deg anticlockwise */
-}
-
-void v34scr_init(v34scr_t *s, int poly) { s->sr = 0; s->tap = poly; }
-
-int v34scr_put(v34scr_t *s, int bit)
-{
-    int o = (bit ^ (int)(s->sr >> (s->tap - 1)) ^ (int)(s->sr >> 22)) & 1;
-    s->sr = ((s->sr << 1) | (uint32_t)o) & 0x7fffff;
-    return o;
-}
-
-int v34scr_get(v34scr_t *s, int bit)
-{
-    int o = (bit ^ (int)(s->sr >> (s->tap - 1)) ^ (int)(s->sr >> 22)) & 1;
-    s->sr = ((s->sr << 1) | (uint32_t)(bit & 1)) & 0x7fffff;
-    return o;
+    from_q7(v34_sbar_point((unsigned)n), re, im);
 }
 
 void v34trn_init(v34trn_t *t, int poly) { v34scr_init(&t->scr, poly); }

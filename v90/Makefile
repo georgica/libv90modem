@@ -9,9 +9,10 @@ BUILD   := build
 ARM_CC  ?= $(wildcard $(CURDIR)/../toolchain/*/bin/arm-linux-gcc)
 QEMU    ?= qemu-arm-static
 
-INC     := -I. -Itest -I../test
+INC     := -I. -Itest -I../test -I../v34
 LIB_SRC := v90_pcm.c v90_scr.c v90_seq.c v90_enc.c v90_tx.c
-LIB_HDR := v90_pcm.h v90_scr.h v90_seq.h v90_enc.h v90_tx.h
+# v90_scr wraps the V.34 scrambler of ../v34/v34.h (header only)
+LIB_HDR := v90_pcm.h v90_scr.h v90_seq.h v90_enc.h v90_tx.h ../v34/v34.h
 # test-only support: the reference decoder (never linked into the modem)
 SUP_SRC := test/v90_dec.c
 SUP_HDR := test/v90_dec.h test/table1.inc ../test/test.h

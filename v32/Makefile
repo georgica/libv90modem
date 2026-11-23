@@ -8,9 +8,10 @@ BUILD   := build
 ARM_CC  ?= $(wildcard $(CURDIR)/../toolchain/*/bin/arm-linux-gcc)
 QEMU    ?= qemu-arm-static
 
-INC     := -I. -I../test -I../sim -I../modem
-LIB_SRC := v32_tabs.c v32_code.c v32_viterbi.c v32_tx.c v32_ec.c v32_rx.c v32.c v32_call.c
-LIB_HDR := v32.h v32_priv.h
+INC     := -I. -I../test -I../sim -I../modem -I../v34
+# with the sine table (v32_rx) and the V.34 scrambler (v32_code) of the tree
+LIB_SRC := v32_tabs.c v32_code.c v32_viterbi.c v32_tx.c v32_ec.c v32_rx.c v32.c v32_call.c ../modem/sintab.c
+LIB_HDR := v32.h v32_priv.h ../modem/sintab.h ../v34/v34.h
 # test side (double allowed): the calling peer, the line, and what they need
 SIM_SRC := ../sim/v32call.c ../sim/v32line.c ../sim/g711.c ../sim/noise.c ../sim/filt.c \
            ../sim/resamp.c ../sim/channel.c
