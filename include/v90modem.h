@@ -277,18 +277,18 @@ int      v90m_cleardown(v90m_t *m);
 typedef enum {
     V90M_END_NONE = 0,
     V90M_END_FAILED,            /* no connection was made (start-up failed) */
-    V90M_END_LOST,              /* the connection was lost */
+    V90M_END_LOST,              /* the connection was lost (any loss once connected but
+                                   those below) */
     V90M_END_CLEARDOWN_FAR,     /* the far modem cleared down */
     V90M_END_CLEARDOWN_OURS,    /* after v90m_cleardown() */
-    /* calling only */
-    V90M_END_NO_ANSWER_TONE,    /* no answer tone came */
-    V90M_END_NO_JM,             /* ANSam came, but no JM in answer to CM (V.8) */
-    V90M_END_NO_COMMON,         /* the answerer has no modulation in common with us */
-    V90M_END_RETRAIN_FAILED,    /* (appended) calling V.90 / V.92: a retrain failed, or one
-                                   more was due past the limit (see v90m_retrain);
-                                   answering x2: the client asked for a retrain in data
-                                   mode or in its rate change (its Tone A), which x2
-                                   cannot serve */
+    V90M_END_NO_ANSWER_TONE,    /* calling only: no answer tone came */
+    V90M_END_NO_JM,             /* calling only: ANSam came, but no JM in answer to CM (V.8) */
+    V90M_END_NO_COMMON,         /* V.8 found no modulation in common with the far modem */
+    V90M_END_RETRAIN_FAILED,    /* (appended) V.90 / V.92 (either role), V.34 (answering):
+                                   a retrain failed, or one more was due past the limit
+                                   (see v90m_retrain); answering x2: the client asked for
+                                   a retrain in data mode or in its rate change (its
+                                   Tone A), which x2 cannot serve */
     V90M_END_X2_FAILED,         /* (appended) answering: the client took up x2 (its marker
                                    came) and the x2 start-up, or a rate change of
                                    the client's, did not complete */
@@ -303,7 +303,7 @@ typedef enum {
 typedef struct {
     int        connected;       /* data mode reached, and kept through retrains */
     int        moving;          /* user data moves both ways now */
-    int        retraining;
+    int        retraining;      /* a retrain is under way; 0 in a rate renegotiation */
     v90m_conn  modulation;      /* in force (during a retrain: the one before) */
     int        tx_bps, rx_bps;  /* our transmit / receive rate (rx = tx where symmetric) */
     int        used_v8;         /* the far modem spoke V.8 */
@@ -320,11 +320,14 @@ typedef struct {
                                    connected, or a modulation without the figure) */
     int        rtd;             /* round-trip delay measured in the handshake, samples; -1 = none
                                    (answering: V.34, V.90, V.92; calling: V.32bis, V.34, V.90, V.92) */
-    int        echo_delay;      /* answering V.90 / V.92: in use (configured or measured),
-                                   samples; -1 = none, and always -1 calling */
+    int        echo_delay;      /* answering V.90 / V.92 / x2 / K56flex: in use (configured
+                                   or measured) by the engine running now, during a retrain
+                                   or after the end the call's; samples; -1 = none, and
+                                   always -1 calling */
     unsigned   retrains;        /* begun, this call */
     unsigned   renegotiations;  /* rate renegotiations that stopped the data, this call
-                                   (answering: V.90, V.92; calling: V.32bis, V.34, V.90, V.92) */
+                                   (answering: V.34, V.90, V.92, x2, K56flex; calling:
+                                   V.32bis, V.34, V.90, V.92) */
 } v90m_stats;
 void     v90m_get_stats(const v90m_t *m, v90m_stats *st);
 

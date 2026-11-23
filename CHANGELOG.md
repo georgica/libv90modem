@@ -21,6 +21,29 @@ Added (tools):
   `1e3` as 1) are now rejected. Without `-s` the run is unchanged.
   `test/fixtures/replay-opts.sh` tests both (part of `make test-fixtures`).
 
+Changed (answering role; a host that matched on `V90M_END_FAILED` for a
+dropped call should look at `V90M_END_LOST`):
+- A connection lost in data mode (V.21, Bell 103, V.22, V.22bis, Bell 212A,
+  V.32bis, V.34, V.90, V.92, x2) or in a rate renegotiation now ends with
+  `V90M_END_LOST`; it gave `V90M_END_FAILED`, which now means only that no
+  connection was made.
+- V.90, V.92 and V.34: a retrain past the limit in a row (the fourth), or
+  one that does not get back to data mode, ends with
+  `V90M_END_RETRAIN_FAILED`, as on the calling side (it gave
+  `V90M_END_FAILED`).
+- V.8 with no modulation in common with the caller ends with
+  `V90M_END_NO_COMMON`, as on the calling side (it gave `V90M_END_FAILED`).
+- `v90m_state.retraining` is 0 during a rate renegotiation of V.34, x2 and
+  K56flex, as it was for V.90 and V.92 (it was 1); `v90m_stats.renegotiations`
+  now counts those renegotiations too. `retraining` is still 1 during a
+  retrain, K56flex's included.
+- `v90m_stats.echo_delay` is that of the engine running now: after a V.92
+  retrain that withdrew PCM upstream, V.90's (it gave V.92's figure until
+  V.90 data mode); during a retrain and after the end, the call's.
+- `v90m-replay` traces: the end code and the "retraining" lines change
+  accordingly (renegotiations of V.34, x2 and K56flex no longer print
+  retraining 1).
+
 Fixed:
 - m68k: built with GCC 12.3 for m68k (and maybe other versions) at -O1 and
   up, the V.34 receiver's carrier (`qamrx_init`) and the answering V.90

@@ -35,6 +35,18 @@
 #include "test.h"
 #include "../modem/answer.h"
 #include "../sim/v34peer.h"
+/* the old cleared flag, from the end reason: 1 the caller's cleardown, 2 ours */
+static int cleared_of(const answer_t *a)
+{
+    int e = answer_end(a);
+    return e == ANS_END_CLEARDOWN_FAR ? 1 : e == ANS_END_CLEARDOWN_OURS ? 2 : 0;
+}
+/* the old x2_failed flag: 1 x2's start-up or rate change, 2 the client's retrain */
+static int x2_failed_of(const answer_t *a)
+{
+    int e = answer_end(a);
+    return e == ANS_END_X2_FAILED ? 1 : e == ANS_END_RETRAIN_FAILED ? 2 : 0;
+}
 #include "../sim/v8call.h"
 #include "../sim/p2a.h"
 #include "../sim/channel.h"
@@ -356,7 +368,7 @@ static void x2_call(int pad, int index, uint16_t up_mask, int silent, int echo_d
     memset(&RN, 0, sizeof RN); TA.ms = 0; TA.amp = TA.df = 0;
     o->ok = A.connected && A.phase == ANS_X2 && x2call_state(&X) == X2C_DATA;
     o->down = A.bitrate; o->up = A.rx_bitrate; o->mod = A.modulation;
-    o->error = A.u.x2.error; o->x2_failed = A.x2_failed;
+    o->error = A.u.x2.error; o->x2_failed = x2_failed_of(&A);
 }
 
 static void x2_report(const char *what, const x2_outcome *o)
@@ -447,6 +459,7 @@ static void x2_tests(void)
             CHECK_EQ_I(o.error, q[j].err);
             /* the end reason: x2's before data mode, the connection lost in it */
             CHECK_EQ_I(o.x2_failed, q[j].sil != X2C_SIL_DATA);
+            if (q[j].sil == X2C_SIL_DATA) CHECK_EQ_I(answer_end(&A), ANS_END_LOST);
             CHECK_EQ_I(o.connected_once, q[j].sil == X2C_SIL_DATA);
         }
     }
@@ -510,14 +523,14 @@ static void x2_tests(void)
             x2_call(0, 1, 0x03FE, X2C_SIL_NONE, 0, 40, 0, &o);
             printf("  x2 rate change %s: ended %.2f s after the client's S, error %d, x2_failed %d, cleared %d,"
                    " marker frames %ld + %ld\n", rq[j].what, o.rn_at < 0 || o.end_at < 0 ? -1.0 : (o.end_at - o.rn_at) / 8000.0,
-                   o.error, o.x2_failed, A.cleared, X.seen.mark_early, X.seen.mark_frames);
+                   o.error, o.x2_failed, cleared_of(&A), X.seen.mark_early, X.seen.mark_frames);
             CHECK_EQ_I(X.renegs, 1); CHECK(o.rn_at > 0); CHECK(o.rn_seen > o.rn_at);
             CHECK_EQ_I(A.phase, ANS_FAILED); CHECK_EQ_I(o.connected_once, 1);
             CHECK_EQ_I(o.error, rq[j].err);
             CHECK(o.end_at > o.rn_at && o.end_at - o.rn_at <= 8000L * 2);
             CHECK_EQ_I(X.seen.mark_early, 0); CHECK_EQ_I(X.seen.mark_frames, 0);
             if (rq[j].hangup) {
-                CHECK_EQ_I(o.cd_ret, 0); CHECK_EQ_I(A.cleared, 2); CHECK_EQ_I(o.x2_failed, 0);
+                CHECK_EQ_I(o.cd_ret, 0); CHECK_EQ_I(answer_end(&A), ANS_END_CLEARDOWN_OURS); CHECK_EQ_I(o.x2_failed, 0);
                 CHECK(o.end_at - o.rn_seen <= 1);
             } else {
                 CHECK_EQ_I(o.x2_failed, 1);
@@ -611,10 +624,10 @@ int main(void)
             if (A.phase == ANS_X2 && x2_at < 0) x2_at = L.n;
         }
         printf("  x2 marker: ANS_X2 %.0f ms after our L1 began; the call ended (x2_failed %d)\n",
-               (x2_at - l1_at) / 8.0, A.x2_failed);
+               (x2_at - l1_at) / 8.0, x2_failed_of(&A));
         CHECK(l1_at > 0); CHECK(x2_at > l1_at);
         CHECK_EQ_I(A.v34.p2.x2_marker, 0x4d);
-        CHECK_EQ_I(A.phase, ANS_FAILED); CHECK_EQ_I(A.x2_failed, 1); CHECK_EQ_I(A.connected, 0);
+        CHECK_EQ_I(A.phase, ANS_FAILED); CHECK_EQ_I(answer_end(&A), ANS_END_X2_FAILED); CHECK_EQ_I(A.connected, 0);
         mk_at = 0;
     }
 

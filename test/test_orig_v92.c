@@ -17,6 +17,12 @@
 #include <inttypes.h>
 #include "test.h"
 #include "v90link.h"
+/* the old cleared flag, from the end reason: 1 the caller's cleardown, 2 ours */
+static int cleared_of(const answer_t *a)
+{
+    int e = answer_end(a);
+    return e == ANS_END_CLEARDOWN_FAR ? 1 : e == ANS_END_CLEARDOWN_OURS ? 2 : 0;
+}
 
 #define MS(x) ((int64_t)(x) * 8)
 
@@ -159,9 +165,9 @@ int main(int argc, char **argv)
             while (l->k < t0 + MS(4000) && l->org.phase != ORIG_FAILED) vl_tick(l);
             { int64_t e = l->k + MS(500); while (l->k < e) vl_tick(l); }
             printf("  ours: caller ended %d after %d ms (end %d), answerer phase %d, cleared %d\n", l->org.phase,
-                   (int)((l->k - t0) / 8), l->org.end, l->ans.phase, l->ans.cleared);
+                   (int)((l->k - t0) / 8), l->org.end, l->ans.phase, cleared_of(&l->ans));
             CHECK_EQ_I(l->org.end, ORIG_END_HANGUP);
-            CHECK_EQ_I(l->ans.cleared, 1);
+            CHECK_EQ_I(answer_end(&l->ans), ANS_END_CLEARDOWN_FAR);
         }
 
         if (T_CASE(only, NR + 5)) {

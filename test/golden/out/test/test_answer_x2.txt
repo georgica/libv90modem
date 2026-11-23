@@ -37,4 +37,4 @@
   x2 client's Tone A in data mode (x0.25, +0 Hz): ended 0.070 s after the tone began, error 13, x2_failed 2
   x2 client's Tone A in data mode (x1.00, -8 Hz): ended 0.070 s after the tone began, error 13, x2_failed 2
   x2 client's Tone A in data mode (x0.25, +8 Hz): ended 0.070 s after the tone began, error 13, x2_failed 2
-answer_x2: 386 checks, 0 failures
+answer_x2: 387 checks, 0 failures

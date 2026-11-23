@@ -91,7 +91,13 @@ static int16_t v21_bandpass(answer_t *a, int16_t x)
     return (int16_t)(acc > 32767 ? 32767 : acc < -32768 ? -32768 : acc);
 }
 
-static void fail(answer_t *a) { a->phase = ANS_FAILED; a->connected = 0; a->t = 0; }
+/* the call ends here, for the reason why (ANS_END_*) */
+static void fail(answer_t *a, int why) { a->end = why; a->phase = ANS_FAILED; a->connected = 0; a->t = 0; }
+/* a loss: once connected (a retrain or renegotiation included) the connection was lost */
+static int lost_or(const answer_t *a, int why) { return a->connected ? ANS_END_LOST : why; }
+/* V.90, V.92, V.34: a retrain of a connection that does not get back to data
+ * mode failed, as on the calling side; any other loss as lost_or */
+static int retrain_or(const answer_t *a, int why) { return a->connected && a->retraining ? ANS_END_RETRAIN_FAILED : lost_or(a, why); }
 
 /* x2 is offered with V.34 on a mu-law line only (design "Calls made in the
  * design"; an A-law line gets V.34) */
@@ -142,7 +148,7 @@ void answer_init(answer_t *a, const answer_cfg *cfg)
     local.has_access = local.has_pcm; local.access = local.has_pcm ? V8_ACC_DIGITAL : 0;
     v8ans_init(&a->v8, 8000, (int16_t)(cfg->level * 181 / 128), &local);
     a->phase = ANS_V8; a->t = 0; a->used_v8 = 0;
-    a->connected = 0; a->modulation = ANS_MOD_NONE; a->bitrate = 0; a->rx_bitrate = 0; a->pcm = 0xFF; a->cleared = 0; a->retrains = 0; a->retraining = 0; a->rt_recent = 0; a->rt_clock = 0;
+    a->connected = 0; a->modulation = ANS_MOD_NONE; a->bitrate = 0; a->rx_bitrate = 0; a->pcm = 0xFF; a->end = ANS_END_NONE; a->retrains = 0; a->retraining = 0; a->rt_recent = 0; a->rt_clock = 0;
     a->fbit = 1; a->cd_run = 0; a->cd_thresh = 0;
     a->info0a.c1664 = 0; a->v34.from_v90 = 0;
     /* V.92 9.1: Phase 1 is that of V.90, and V.8 cannot say V.92 (the NOTE
@@ -150,9 +156,8 @@ void answer_init(answer_t *a, const answer_cfg *cfg)
      * nothing above depends on ANS_MODE_V92. Phase 2 says it. */
     a->v92_both = 0; a->v92_data = 0;
     a->pcm_up = local.has_pcm && (cfg->modes & ANS_MODE_V92) != 0;
-    a->x2_failed = 0;
     x2_offer(a);
-    a->k56_agreed = a->k56_failed = a->k56_lost = 0;
+    a->k56_agreed = 0;
     k56_offer(a);
 }
 
@@ -184,7 +189,7 @@ static void start_p34(answer_t *a)
     if (sr == 3) { c.sym_rate = 3000; c.car_num = hi ? 2 : 3; c.car_den = hi ? 3 : 5; }
     else { c.sym_rate = 3200; c.car_num = hi ? 3 : 4; c.car_den = hi ? 5 : 7; }
     /* a symbol rate we did not offer cannot be served */
-    if ((sr != 3 && sr != 4) || p34d_init(&a->p34, &c) != 0) { fail(a); return; }
+    if ((sr != 3 && sr != 4) || p34d_init(&a->p34, &c) != 0) { fail(a, retrain_or(a, ANS_END_FAILED)); return; }
     a->phase = ANS_P3; a->t = 0;
 }
 
@@ -217,7 +222,7 @@ static void start_v92(answer_t *a)
     c.rx_linear = a->cfg.rx_linear;
     c.getbit = a->cfg.getbit; c.putbit = a->cfg.putbit; c.user = a->cfg.user;
     a->v92_data = 0;
-    if (v92d_init(&a->u.v92, &c) != 0) { fail(a); return; }
+    if (v92d_init(&a->u.v92, &c) != 0) { fail(a, retrain_or(a, ANS_END_FAILED)); return; }
     a->phase = ANS_P3X; a->t = 0;
 }
 
@@ -225,7 +230,7 @@ static void start_v92(answer_t *a)
  * V.92 9.7.1). A line that needs MAX_RETRAINS in a row is no line. */
 static int begin_retrain(answer_t *a)
 {
-    if (a->rt_recent >= MAX_RETRAINS) { fail(a); return -1; }
+    if (a->rt_recent >= MAX_RETRAINS) { fail(a, ANS_END_RETRAIN_FAILED); return -1; }
     a->retrains++; a->rt_recent++; a->retraining = 1;
     a->phase = ANS_RETRAIN; a->t = 0;
     return 0;
@@ -259,7 +264,7 @@ static void start_v34_call(answer_t *a)
     v34_cfg(a, &c);
     if (!(a->cfg.modes & V8_MOD_V34) || sr > 5 || !((a->p2cfg.up_sr_mask >> sr) & 1)
         || v34ans_init_call(&a->v34, &c, &a->p2.info1a, (a->p2cfg.up_hi_carrier >> sr) & 1,
-                            a->info0a.c1664, a->p2.rtd) != 0) { fail(a); return; }
+                            a->info0a.c1664, a->p2.rtd) != 0) { fail(a, retrain_or(a, ANS_END_FAILED)); return; }
     a->phase = ANS_V34; a->t = 0;
 }
 
@@ -276,7 +281,7 @@ static void start_x2(answer_t *a)
     c.max_up_rate = a->max_up;
     c.getbit = a->cfg.getbit; c.putbit = a->cfg.putbit; c.user = a->cfg.user;
     a->phase = ANS_X2; a->t = 0; a->pcm = 0x7f;
-    if (x2d_init(&a->u.x2, &c) != 0) { a->x2_failed = 1; fail(a); }
+    if (x2d_init(&a->u.x2, &c) != 0) fail(a, ANS_END_X2_FAILED);
 }
 
 /* Our flagged INFO1a ended Phase 2 (p2ans P2N_K56): no way back to V.34.
@@ -293,7 +298,7 @@ static void start_k56(answer_t *a)
     c.max_up_rate = a->max_up; c.max_down_rate = a->max_down;
     c.getbit = a->cfg.getbit; c.putbit = a->cfg.putbit; c.user = a->cfg.user;
     a->phase = ANS_K56; a->t = 0; a->pcm = 0xff;
-    if (a->v34.p2.sym_rate != 3200 || k56d_init(&a->u.k56, &c) != 0) { a->k56_failed = 1; fail(a); }
+    if (a->v34.p2.sym_rate != 3200 || k56d_init(&a->u.k56, &c) != 0) fail(a, ANS_END_K56_FAILED);
 }
 
 /* V.8 selected V.34 as the data mode: INFO0a starts right after the 75 ms
@@ -343,7 +348,7 @@ static int16_t tick_v21(answer_t *a, int16_t rx)
     if (a->fdem.energy < a->cd_thresh) {
         level = 1;
         if (a->cd_run > 0) a->cd_run = 0;
-        if (a->connected && --a->cd_run < -MS(CD_LOSS_MS)) { fail(a); return 0; }
+        if (a->connected && --a->cd_run < -MS(CD_LOSS_MS)) { fail(a, ANS_END_LOST); return 0; }
     } else {
         if (a->cd_run < 0) a->cd_run = 0;
         if (a->cd_run < MS(V21_CD_ON_MS)) a->cd_run++;
@@ -357,7 +362,7 @@ static int16_t tick_v21(answer_t *a, int16_t rx)
     }
     out = v21mod_tick(&a->fmod, a->fbit, &done);
     if (done) a->fbit = a->connected ? (a->cfg.getbit(a->cfg.user) & 1) : 1;
-    if (!a->connected && a->t > MS(V21_WAIT_MS)) fail(a);
+    if (!a->connected && a->t > MS(V21_WAIT_MS)) fail(a, ANS_END_FAILED);
     return out;
 }
 
@@ -388,7 +393,7 @@ int16_t answer_tick(answer_t *a, int16_t rx)
         if (a->v8.result == V8A_RES_NO_CM) {           /* pre-V.8 caller */
             if (a->cfg.modes & V8_MOD_V22) start_v22(a);
             else if (a->cfg.modes & V8_MOD_V21) start_v21(a);
-            else fail(a);
+            else fail(a, ANS_END_FAILED);
             break;
         }
         a->used_v8 = 1;
@@ -402,7 +407,7 @@ int16_t answer_tick(answer_t *a, int16_t rx)
         else if (a->v8.selected == 3 && (a->cfg.modes & V8_MOD_V32)) start_v32(a);
         else if (a->v8.selected == 4) start_v22(a);
         else if (a->v8.selected == 12) start_v21(a);
-        else fail(a);                                  /* nothing in common */
+        else fail(a, ANS_END_NO_COMMON);               /* nothing in common */
         break;
 
     case ANS_V22:
@@ -440,12 +445,12 @@ int16_t answer_tick(answer_t *a, int16_t rx)
                        && !a->v22.rx.carrier && a->t > MS(V22_LEGACY_MS)) {
                 start_v21(a);
             } else if (a->t > MS(V22_TOTAL_MS) || a->v22.state == V22S_FAILED) {
-                fail(a);
+                fail(a, ANS_END_FAILED);
             }
         } else {
-            if (a->v22.state == V22S_FAILED) fail(a);      /* a retrain (V.22bis 6.4) that never completed */
+            if (a->v22.state == V22S_FAILED) fail(a, ANS_END_LOST);   /* a retrain (V.22bis 6.4) that never completed */
             else if (a->v22.rx.carrier) a->cd_run = 0;
-            else if (++a->cd_run > MS(CD_LOSS_MS)) fail(a);
+            else if (++a->cd_run > MS(CD_LOSS_MS)) fail(a, ANS_END_LOST);
         }
         break;
 
@@ -462,7 +467,7 @@ int16_t answer_tick(answer_t *a, int16_t rx)
             else if (a->p2.info1a.v90) start_p34(a);
             else start_v34_call(a);
         }
-        else if (a->p2.state == P2D_FAILED) fail(a);
+        else if (a->p2.state == P2D_FAILED) fail(a, retrain_or(a, ANS_END_FAILED));
         break;
 
     case ANS_P3X:
@@ -472,9 +477,10 @@ int16_t answer_tick(answer_t *a, int16_t rx)
         tx = (int16_t)v90_octet_linear(a->p2cfg.alaw, a->pcm);
         if (m->state == V92D_FAILED && (m->error == V92D_ERR_CLEARDOWN || m->error == V92D_ERR_HANGUP
                                         || m->error == V92D_ERR_CARRIER)) {
-            if (m->error == V92D_ERR_CLEARDOWN) a->cleared = 1;     /* 9.11 */
-            if (m->error == V92D_ERR_HANGUP) a->cleared = 2;
-            fail(a); tx = 0;                                        /* or the caller is gone */
+            fail(a, m->error == V92D_ERR_CLEARDOWN ? ANS_END_CLEARDOWN_FAR      /* 9.11 */
+                    : m->error == V92D_ERR_HANGUP ? ANS_END_CLEARDOWN_OURS
+                    : retrain_or(a, ANS_END_FAILED));               /* or the caller is gone */
+            tx = 0;
         } else if (m->state == V92D_FAILED || m->state == V92D_RETRAIN) {
             /* 9.5.1.2 and 9.6.1.2: what recovers a start-up that went wrong
              * is a retrain; so does the caller's Tone A (9.7.1.2) and our
@@ -505,14 +511,14 @@ int16_t answer_tick(answer_t *a, int16_t rx)
         a->pcm = p34d_tick(&a->p34, rx);
         tx = (int16_t)v90_octet_linear(a->p2cfg.alaw, a->pcm);
         if (a->p34.state == P34_RETRAIN && a->rt_recent >= MAX_RETRAINS) {
-            fail(a); tx = 0;                /* a line that needs this many is no line */
+            fail(a, ANS_END_RETRAIN_FAILED); tx = 0;   /* a line that needs this many is no line */
         } else if (a->p34.state == P34_RETRAIN) {
             a->retrains++; a->rt_recent++; a->retraining = 1;
             a->phase = ANS_RETRAIN; a->t = 0; tx = 0;
         } else if (a->p34.state == P34_FAILED) {
-            if (a->p34.error == P34_ERR_CLEARDOWN) a->cleared = 1;
-            if (a->p34.error == P34_ERR_HANGUP) a->cleared = 2;
-            fail(a); tx = 0;
+            fail(a, a->p34.error == P34_ERR_CLEARDOWN ? ANS_END_CLEARDOWN_FAR
+                    : a->p34.error == P34_ERR_HANGUP ? ANS_END_CLEARDOWN_OURS : retrain_or(a, ANS_END_FAILED));
+            tx = 0;
         } else if (a->p34.state == P34_DATA) {
             /* also after a rate renegotiation */
             a->connected = 1; a->modulation = ANS_MOD_V90;
@@ -540,7 +546,7 @@ int16_t answer_tick(answer_t *a, int16_t rx)
              * again, whoever began it (V.90 9.2.1.1.8), with the silence and
              * the limit of the V.90 retrain */
             if (a->v34.state == V34A_RETRAIN) {
-                if (a->rt_recent >= MAX_RETRAINS) { fail(a); tx = 0; break; }
+                if (a->rt_recent >= MAX_RETRAINS) { fail(a, ANS_END_RETRAIN_FAILED); tx = 0; break; }
                 a->retrains++; a->rt_recent++; a->retraining = 1;
                 a->phase = ANS_RETRAIN; a->t = 0; tx = 0;
                 break;
@@ -556,16 +562,18 @@ int16_t answer_tick(answer_t *a, int16_t rx)
             break;
         }
         if (a->v34.state == V34A_ENDED) {
-            if (a->v34.error == V34A_ERR_CLEARDOWN) a->cleared = 1;
-            if (a->v34.error == V34A_ERR_HANGUP) a->cleared = 2;
-            fail(a); tx = 0;
+            fail(a, a->v34.error == V34A_ERR_CLEARDOWN ? ANS_END_CLEARDOWN_FAR
+                    : a->v34.error == V34A_ERR_HANGUP ? ANS_END_CLEARDOWN_OURS
+                    : a->v34.error == V34A_ERR_RETRAINS ? ANS_END_RETRAIN_FAILED : retrain_or(a, ANS_END_FAILED));
+            tx = 0;
         } else if (a->v34.state == V34A_DATA) {
             /* also after a rate renegotiation or a retrain */
             a->connected = 1; a->modulation = ANS_MOD_V34;
             a->bitrate = v34ans_tx_rate(&a->v34); a->rx_bitrate = v34ans_rx_rate(&a->v34);
             a->retraining = 0;
         } else if (a->connected) {
-            a->retraining = 1;              /* renegotiation or retrain: no data moves */
+            /* no data moves: a retrain, or a rate renegotiation (not a retrain) */
+            a->retraining = a->v34.state != V34A_RENEG;
         }
         if (!a->v34.from_v90) a->retrains = a->v34.retrains;
         break;
@@ -576,7 +584,7 @@ int16_t answer_tick(answer_t *a, int16_t rx)
 
     case ANS_V32:
         tx = v32_tick(&a->u.v32, rx);
-        if (a->u.v32.state == V32S_FAILED) { fail(a); tx = 0; break; }   /* carrier loss included */
+        if (a->u.v32.state == V32S_FAILED) { fail(a, lost_or(a, ANS_END_FAILED)); tx = 0; break; }   /* carrier loss included */
         if (a->u.v32.connected) {
             a->connected = 1; a->modulation = ANS_MOD_V32BIS;
             a->bitrate = a->rx_bitrate = a->u.v32.bitrate;    /* may change at a retrain */
@@ -595,16 +603,16 @@ int16_t answer_tick(answer_t *a, int16_t rx)
              * complete, is said as x2's; in data mode the line's loss,
              * our cleardown and the client's retrain (its Tone A, said as
              * a retrain that failed) end the call */
-            if (d->error == X2D_ERR_RETRAIN) a->x2_failed = 2;     /* the client's retrain: said as a retrain that failed */
-            else if (!a->connected || (d->error != X2D_ERR_CARRIER && d->error != X2D_ERR_HANGUP)) a->x2_failed = 1;
-            if (d->error == X2D_ERR_HANGUP) a->cleared = 2;
-            fail(a); tx = 0;
+            if (d->error == X2D_ERR_RETRAIN) fail(a, ANS_END_RETRAIN_FAILED);    /* the client's retrain */
+            else if (!a->connected || (d->error != X2D_ERR_CARRIER && d->error != X2D_ERR_HANGUP)) fail(a, ANS_END_X2_FAILED);
+            else fail(a, d->error == X2D_ERR_HANGUP ? ANS_END_CLEARDOWN_OURS : ANS_END_LOST);
+            tx = 0;
         } else if (d->state == X2D_DATA) {
             a->connected = 1; a->modulation = ANS_MOD_X2;
             a->bitrate = x2d_down_rate(d); a->rx_bitrate = x2d_up_rate(d);
             a->retraining = 0;
         } else if (a->connected) {
-            a->retraining = 1;              /* the client's rate change: no data moves up */
+            a->retraining = 0;              /* the client's rate change (X2D_RENEG): no data moves up */
         }
         break;
     }
@@ -618,16 +626,15 @@ int16_t answer_tick(answer_t *a, int16_t rx)
              * start-up or a renegotiation that did not reach data mode is
              * said as K56flex's; in data mode the upstream's loss, our
              * cleardown and the client's (an MP with rate 0) end it */
-            if (d->error == K56D_ERR_HANGUP) a->cleared = 2;
-            else if (d->error == K56D_ERR_CLEARDOWN) a->cleared = 1;     /* its renegotiation MP, rate 0 */
-            else if (a->connected && d->error == K56D_ERR_CARRIER) a->k56_lost = 1;
-            else a->k56_failed = 1;
-            fail(a); tx = 0;
+            fail(a, d->error == K56D_ERR_HANGUP ? ANS_END_CLEARDOWN_OURS
+                    : d->error == K56D_ERR_CLEARDOWN ? ANS_END_CLEARDOWN_FAR     /* its renegotiation MP, rate 0 */
+                    : a->connected && d->error == K56D_ERR_CARRIER ? ANS_END_LOST : ANS_END_K56_FAILED);
+            tx = 0;
         } else if (d->state == K56D_RETRAIN) {
             /* its tone B in data mode (decision 14): retrains in a row, the
              * third ends the call as K56flex's */
             a->retrains++; a->retraining = 1; a->rt_clock = 0;
-            if (++a->rt_recent >= MAX_RETRAINS) { a->k56_failed = 1; fail(a); tx = 0; break; }
+            if (++a->rt_recent >= MAX_RETRAINS) { fail(a, ANS_END_K56_FAILED); tx = 0; break; }
             a->phase = ANS_K56RT; a->t = 0; tx = 0;
         } else if (d->state == K56D_DATA) {
             a->connected = 1; a->modulation = ANS_MOD_K56;
@@ -636,7 +643,8 @@ int16_t answer_tick(answer_t *a, int16_t rx)
             /* data again: once it holds, the retrains before it are not in a row */
             if (a->rt_recent && ++a->rt_clock >= MS(K56_RT_DATA_MS)) { a->rt_clock = 0; a->rt_recent = 0; }
         } else if (a->connected) {
-            a->retraining = 1;              /* the client's renegotiation or retrain */
+            /* no data moves: the client's renegotiation, or its retrain (from ANS_K56RT) */
+            a->retraining = d->state != K56D_RENEG;
         }
         break;
     }
@@ -665,7 +673,7 @@ int16_t answer_tick(answer_t *a, int16_t rx)
             start_k56(a); tx = 0;
         } else if (a->v34.p2.state == P2N_DONE || a->v34.p2.state == P2N_FAILED || a->v34.p2.state == P2N_X2
                    || a->t > MS(K56_RT_MS)) {
-            a->k56_failed = 1; fail(a); tx = 0;
+            fail(a, ANS_END_K56_FAILED); tx = 0;
         }
         break;
 
@@ -769,7 +777,31 @@ int answer_moving(const answer_t *a)
     if (a->phase == ANS_V92) return a->u.v92.tx_ready && a->u.v92.rx_ready;
     if (a->phase == ANS_X2) return a->u.x2.state == X2D_DATA;
     if (a->phase == ANS_K56) return a->u.k56.state == K56D_DATA;
+    if (a->phase == ANS_V34) return a->v34.state == V34A_DATA;
     return 1;
+}
+
+int answer_end(const answer_t *a) { return a->phase == ANS_FAILED ? a->end : ANS_END_NONE; }
+
+int answer_echo_delay(const answer_t *a)
+{
+    int mod = a->modulation;
+    switch (a->phase) {
+    case ANS_P3X: case ANS_V92: mod = ANS_MOD_V92; break;
+    case ANS_P3: case ANS_V90: mod = ANS_MOD_V90; break;
+    case ANS_X2: mod = ANS_MOD_X2; break;
+    case ANS_K56: mod = ANS_MOD_K56; break;
+    /* between engines: a retrain (its silence, its Phase 2), the end */
+    case ANS_RETRAIN: case ANS_P2: case ANS_K56RT: case ANS_FAILED: break;
+    default: return -1;
+    }
+    switch (mod) {
+    case ANS_MOD_V92: return a->u.v92.ecd.delay;
+    case ANS_MOD_V90: return a->p34.ecd.delay;
+    case ANS_MOD_X2: return a->u.x2.ecd.delay;
+    case ANS_MOD_K56: return a->u.k56.ecd.delay;
+    default: return -1;
+    }
 }
 
 int answer_odp_bypass(const answer_t *a)

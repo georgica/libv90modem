@@ -89,7 +89,7 @@ int main(void)
     /* our cleardown */
     CHECK_EQ_I(answer_cleardown(&A), 0);
     for (t = 0; t < 2000 && A.phase != ANS_FAILED; t += 10) run(80);
-    CHECK_EQ_I(A.phase, ANS_FAILED); CHECK_EQ_I(A.cleared, 2); CHECK_EQ_I(A.connected, 0);
+    CHECK_EQ_I(A.phase, ANS_FAILED); CHECK_EQ_I(answer_end(&A), ANS_END_CLEARDOWN_OURS); CHECK_EQ_I(A.connected, 0);
 
     /* ceilings: max_down is what we send, max_up what we take */
     start(ANS_MODE_V90 | V8_MOD_V34 | V8_MOD_V22 | V8_MOD_V21, 14400, 9600);

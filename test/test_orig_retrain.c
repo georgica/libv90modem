@@ -30,6 +30,12 @@
 #include <inttypes.h>
 #include "test.h"
 #include "v90link.h"
+/* the old cleared flag, from the end reason: 1 the caller's cleardown, 2 ours */
+static int cleared_of(const answer_t *a)
+{
+    int e = answer_end(a);
+    return e == ANS_END_CLEARDOWN_FAR ? 1 : e == ANS_END_CLEARDOWN_OURS ? 2 : 0;
+}
 
 #define MS(x) ((int64_t)(x) * 8)
 
@@ -279,9 +285,9 @@ static void limits(int v92)
     while (l->k < t0 + MS(10000) && l->org.phase != ORIG_FAILED) vl_tick(l);
     run_ms(l, 500);
     printf("  lost past the limit: end %d after %d ms, answerer cleared %d, retrains %d\n", l->org.end,
-           (int)((l->k - t0) / 8) - 500, l->ans.cleared, orig_retrains(&l->org));
+           (int)((l->k - t0) / 8) - 500, cleared_of(&l->ans), orig_retrains(&l->org));
     CHECK_EQ_I(l->org.end, ORIG_END_RETRAIN);
-    CHECK_EQ_I(l->ans.cleared, 1);
+    CHECK_EQ_I(answer_end(&l->ans), ANS_END_CLEARDOWN_FAR);
     CHECK_EQ_I(orig_retrains(&l->org), 3);
 
     CHECK(connect(l, v92, 95 + v92));

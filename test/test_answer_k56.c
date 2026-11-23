@@ -67,6 +67,12 @@
 #include <inttypes.h>
 #include "test.h"
 #include "../modem/answer.h"
+/* the old cleared flag, from the end reason: 1 the caller's cleardown, 2 ours */
+static int cleared_of(const answer_t *a)
+{
+    int e = answer_end(a);
+    return e == ANS_END_CLEARDOWN_FAR ? 1 : e == ANS_END_CLEARDOWN_OURS ? 2 : 0;
+}
 #include "../modem/k56d.h"
 #include "../sim/k56call.h"
 #include "../sim/x2call.h"
@@ -242,7 +248,7 @@ static void k56_client_tests(void)
     CHECK(o1.k56_at > 0); CHECK(o1.flag_at > 0); CHECK_EQ_I(o1.end_at, -1);
     CHECK(o1.k56_at - o1.flag_at <= MS(100) && o1.flag_at - o1.k56_at <= MS(100));
     CHECK_EQ_I(A.phase, ANS_K56); CHECK_EQ_I(A.connected, 1); CHECK_EQ_I(A.modulation, ANS_MOD_K56);
-    CHECK_EQ_I(A.k56_failed, 0); CHECK_EQ_I(A.x2_failed, 0); CHECK(!o1.ok);
+    CHECK_EQ_I(answer_end(&A), ANS_END_NONE); CHECK(!o1.ok);
 
     /* Review Focus 3: agreed, but its INFO1c is 0x200 (its codec check
      * failed), or it cannot transmit at 3200 baud: INFO1a unflagged, V.34
@@ -259,7 +265,7 @@ static void k56_client_tests(void)
                    o2.info1a_off, o2.sym, r3.down, r3.up, r3.info1a_off, r3.sym);
             CHECK(r3.ok); CHECK_EQ_I(r3.agreed, 0);
             CHECK_EQ_I(o2.agreed, 1); CHECK_EQ_I(K.got_ack, 1);
-            CHECK_EQ_I(A.v34.p2.k56, 0); CHECK_EQ_I(o2.k56_at, -1); CHECK_EQ_I(A.k56_failed, 0);
+            CHECK_EQ_I(A.v34.p2.k56, 0); CHECK_EQ_I(o2.k56_at, -1); CHECK(answer_end(&A) != ANS_END_K56_FAILED);
             CHECK(o2.info1a_off != 1);
             CHECK_EQ_I(o2.info1a_off, p2ans_k56_nudge(r3.info1a_off));
             CHECK_EQ_I(o2.sym, j ? 3000 : 3200); CHECK_EQ_I(o2.sym, r3.sym);
@@ -488,7 +494,8 @@ static void kd_call(const kd_opts *ko, long secs, kd_out *o)
         }
     }
     o->quiet_at = K.quiet_at; o->e_at = K.e_at;
-    o->k56_failed = A.k56_failed; o->k56_lost = A.k56_lost; o->cleared = A.cleared; o->phase = A.phase;
+    o->k56_failed = answer_end(&A) == ANS_END_K56_FAILED; o->k56_lost = answer_end(&A) == ANS_END_LOST;
+    o->cleared = cleared_of(&A); o->phase = A.phase;
     o->error = A.u.k56.error;
     o->client_down = k56call_down_rate(&K); o->client_up = K.up_rate;
     o->mp = K.our_mp;

@@ -26,4 +26,16 @@
   API K56flex call, the client silent after its renegotiation's S: end 10
   API K56flex call, the client's retrain: 6 events (1 4 3 4 3 5), retrains 1, renegotiations 0, v90m_retrain in it -4; end 4
   API K56flex call, three retrains in a row: retrains 3, end 10
-api: 542 checks, 0 failures
+  V.22bis, the line silent 2 s into data mode: answerer end 2
+  V.34, the line silent 2 s into data mode: answerer end 2
+  V.90, the line silent 2 s into data mode: answerer end 2
+  V.21, the line silent 2 s into data mode: answerer end 2
+  V.32bis, the line silent 2 s into data mode: answerer end 2
+  V.92, the line silent 2 s into data mode: answerer end 2
+  x2, the line silent 2 s into data mode: end 2
+  silence from the start: answerer end 1
+  V.90, a retrain each time the data moves: answerer end 8 after 3 retrains
+  V.90, our retrain into a silent line: answerer end 8 after 1 retrains
+  V.8, nothing in common: answerer end 7
+  x2, the client's rate change: retraining while stopped 0, renegotiations 1, end 0
+api: 584 checks, 0 failures

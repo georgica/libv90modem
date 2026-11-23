@@ -161,6 +161,20 @@ int main(void)
     CHECK(answer_snr_db10(&A) >= 250 && answer_snr_db10(&A) <= 600);
     CHECK(answer_rtd(&A) >= 0 && answer_rtd(&A) < 80);
     CHECK_EQ_I(A.u.v92.dec.bad_frames, 0);
+    /* the echo delay the stats give: the engine of the phase, not of the
+     * modulation (after a retrain that withdrew PCM upstream, V.90's Phase 3
+     * runs with the modulation still V.92) */
+    CHECK_EQ_I(answer_echo_delay(&A), A.u.v92.ecd.delay);
+    {
+        static answer_t E;
+        E = A;
+        E.phase = ANS_P3; E.p34.ecd.delay = 123; E.u.v92.ecd.delay = 77;
+        CHECK_EQ_I(answer_echo_delay(&E), 123);
+        E.phase = ANS_RETRAIN;
+        CHECK_EQ_I(answer_echo_delay(&E), 77);      /* between engines: the modulation's */
+        E.phase = ANS_FAILED;
+        CHECK_EQ_I(answer_echo_delay(&E), 77);
+    }
 
     /* the caller renegotiates the rate (9.8): connected throughout, data again */
     CHECK_EQ_I(v92call_renegotiate(&C, 0), 0);
@@ -195,7 +209,7 @@ int main(void)
     /* our cleardown (9.11) */
     CHECK_EQ_I(answer_cleardown(&A), 0);
     for (t = 0; t < 9000 && A.phase != ANS_FAILED; t += 10) run(80);     /* (the CPd design is paced) */
-    CHECK_EQ_I(A.phase, ANS_FAILED); CHECK_EQ_I(A.cleared, 2); CHECK_EQ_I(A.connected, 0);
+    CHECK_EQ_I(A.phase, ANS_FAILED); CHECK_EQ_I(answer_end(&A), ANS_END_CLEARDOWN_OURS); CHECK_EQ_I(A.connected, 0);
     CHECK(C.va.clear_seen);
     CHECK_EQ_I(answer_snr_db10(&A), -1); CHECK_EQ_I(answer_rtd(&A), -1);
 
@@ -211,7 +225,7 @@ int main(void)
     CHECK_EQ_I(A.u.v92.dec.bad_frames, 0);
     CHECK_EQ_I(v92call_renegotiate(&C, 1), 0);
     for (t = 0; t < 9000 && A.phase != ANS_FAILED; t += 10) run(80);     /* (the CPd design is paced) */
-    CHECK_EQ_I(A.phase, ANS_FAILED); CHECK_EQ_I(A.cleared, 1); CHECK_EQ_I(A.connected, 0);
+    CHECK_EQ_I(A.phase, ANS_FAILED); CHECK_EQ_I(answer_end(&A), ANS_END_CLEARDOWN_FAR); CHECK_EQ_I(A.connected, 0);
 
     /* ---- 3. rate ceilings hold: max_up applies to the PCM upstream ---- */
     scen(&s, V92, 0, 1, 1);
@@ -350,7 +364,7 @@ int main(void)
     v92call_hangup(&C);
     for (t = 0; t < 60000 && A.phase != ANS_FAILED; t += 10) run(80);
     printf("  V.92 caller gone in data mode: over after %ld ms, %d retrain(s)\n", t, A.retrains);
-    CHECK_EQ_I(A.phase, ANS_FAILED); CHECK_EQ_I(A.connected, 0); CHECK_EQ_I(A.cleared, 0);
+    CHECK_EQ_I(A.phase, ANS_FAILED); CHECK_EQ_I(A.connected, 0); CHECK(answer_end(&A) != ANS_END_CLEARDOWN_FAR && answer_end(&A) != ANS_END_CLEARDOWN_OURS);
     CHECK(t < 2000);
 
     T_REPORT("answer_v92");

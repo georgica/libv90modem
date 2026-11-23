@@ -138,7 +138,7 @@ after every sample, and after the end (`end` says why).
 |---|---|
 | `connected` | data mode reached, and kept through retrains |
 | `moving` | user data moves both ways now |
-| `retraining` | |
+| `retraining` | a retrain is under way (connected, no data moves); 0 in a rate renegotiation |
 | `modulation` | `v90m_conn` in force (during a retrain: the one before) |
 | `tx_bps`, `rx_bps` | our transmit / receive rate (rx = tx where symmetric) |
 | `used_v8` | the far modem spoke V.8 |
@@ -163,13 +163,13 @@ stay as they were.
 |---|---|
 | `V90M_END_NONE` (0) | |
 | `V90M_END_FAILED` | no connection was made (start-up failed) |
-| `V90M_END_LOST` | the connection was lost |
+| `V90M_END_LOST` | the connection was lost (any loss once connected but those below) |
 | `V90M_END_CLEARDOWN_FAR` | the far modem cleared down |
 | `V90M_END_CLEARDOWN_OURS` | after `v90m_cleardown()` |
 | `V90M_END_NO_ANSWER_TONE` | calling only: no answer tone came |
 | `V90M_END_NO_JM` | calling only: ANSam came, but no JM in answer to CM (V.8) |
-| `V90M_END_NO_COMMON` | calling only: the answerer has no modulation in common with us |
-| `V90M_END_RETRAIN_FAILED` | calling V.90 / V.92 (appended): a retrain failed, or one more was due past the limit (see `v90m_retrain`); answering x2: the client asked for a retrain in data mode or its rate change (its Tone A), which x2 cannot serve |
+| `V90M_END_NO_COMMON` | V.8 found no modulation in common with the far modem |
+| `V90M_END_RETRAIN_FAILED` | V.90 / V.92 (either role), V.34 (answering) (appended): a retrain failed, or one more was due past the limit (see `v90m_retrain`); answering x2: the client asked for a retrain in data mode or its rate change (its Tone A), which x2 cannot serve |
 | `V90M_END_X2_FAILED` | answering (appended): the client took up x2 (its marker came) and the x2 start-up, or a rate change of the client's, did not complete |
 | `V90M_END_K56_FAILED` | answering (appended): K56flex was agreed and went past the point of no return (our INFO1a flagged), and the start-up, a rate renegotiation or a retrain of the client's did not complete, or the client retrained a third time in a row |
 
@@ -182,9 +182,9 @@ stay as they were.
 | `modulation`, `tx_bps`, `rx_bps` | as in the state |
 | `snr_db10` | receiver signal to error, 0.1 dB, 0..600; -1 = none (not connected, or a modulation without the figure) |
 | `rtd` | round-trip delay measured in the handshake, samples; -1 = none (answering: V.34, V.90, V.92, K56flex; calling: V.32bis, V.34, V.90, V.92) |
-| `echo_delay` | answering V.90 / V.92 / K56flex: in use (configured or measured), samples; -1 = none, and always -1 calling |
+| `echo_delay` | answering V.90 / V.92 / x2 / K56flex: in use (configured or measured) by the engine running now, during a retrain or after the end the call's; samples; -1 = none, and always -1 calling |
 | `retrains` | begun, this call |
-| `renegotiations` | rate renegotiations that stopped the data, this call (answering: V.90, V.92; calling: V.32bis, V.34, V.90, V.92) |
+| `renegotiations` | rate renegotiations that stopped the data, this call (answering: V.34, V.90, V.92, x2, K56flex; calling: V.32bis, V.34, V.90, V.92) |
 
 ## Control calls
 

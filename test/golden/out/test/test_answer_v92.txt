@@ -15,4 +15,4 @@
   V.92 caller, V.92 not enabled here           V.90: 50666 bit/s down, 28800 bit/s up; 152000 / 86400 bits, 0 / 0 bad; SNR 36.4 dB, rtd 3
   V.34 caller, V.92 enabled here: data mode at 7.90 s, 28800 / 28800 bit/s
   V.92 caller gone in data mode: over after 510 ms, 0 retrain(s)
-answer_v92: 231 checks, 0 failures
+answer_v92: 235 checks, 0 failures

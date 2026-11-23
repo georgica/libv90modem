@@ -16,6 +16,12 @@
 #include "line34.h"
 #include "../modem/orig.h"
 #include "../modem/answer.h"
+/* the old cleared flag, from the end reason: 1 the caller's cleardown, 2 ours */
+static int cleared_of(const answer_t *a)
+{
+    int e = answer_end(a);
+    return e == ANS_END_CLEARDOWN_FAR ? 1 : e == ANS_END_CLEARDOWN_OURS ? 2 : 0;
+}
 
 static answer_t A; static orig_t O; static line34_t L; static bend_t UA, UO;
 static int a_mute;
@@ -191,9 +197,9 @@ int main(void)
         /* ---- cleardown (11.7) begun by the caller ---- */
         CHECK_EQ_I(orig_cleardown(&O), 0);
         for (t = 0; t < 2000 && (O.phase != ORIG_FAILED || A.phase != ANS_FAILED); t += 10) run(80);
-        printf("  our cleardown: over in %ld ms; answerer cleared %d\n", t, A.cleared);
+        printf("  our cleardown: over in %ld ms; answerer cleared %d\n", t, cleared_of(&A));
         CHECK_EQ_I(O.phase, ORIG_FAILED); CHECK_EQ_I(O.end, ORIG_END_HANGUP); CHECK_EQ_I(O.connected, 0);
-        CHECK_EQ_I(A.phase, ANS_FAILED); CHECK_EQ_I(A.cleared, 1);
+        CHECK_EQ_I(A.phase, ANS_FAILED); CHECK_EQ_I(answer_end(&A), ANS_END_CLEARDOWN_FAR);
         CHECK(t < 1000);
         CHECK_EQ_I(orig_tick(&O, 0), 0);
     }
@@ -203,7 +209,7 @@ int main(void)
         for (t = 0; t < 2000 && (O.phase != ORIG_FAILED || A.phase != ANS_FAILED); t += 10) run(80);
         printf("  the answerer's cleardown: over in %ld ms\n", t);
         CHECK_EQ_I(O.phase, ORIG_FAILED); CHECK_EQ_I(O.end, ORIG_END_CLEARDOWN);
-        CHECK_EQ_I(A.phase, ANS_FAILED); CHECK_EQ_I(A.cleared, 2);
+        CHECK_EQ_I(A.phase, ANS_FAILED); CHECK_EQ_I(answer_end(&A), ANS_END_CLEARDOWN_OURS);
     }
     /* ---- the answerer goes away in data mode ---- */
     if (call_up("good line, the answerer goes away", &good, 0, 0, 28800)) {

@@ -1255,7 +1255,7 @@ static void test_k56(void)
 #else
 #define K56_RENEGS 2
 #endif
-static void k56_reneg_call(int mode, v90m_state *st, int *bps, int *nbps)
+static void k56_reneg_call(int mode, v90m_state *st, int *bps, int *nbps, unsigned *renegs)
 {
     static k56call_t k;
     static uint8_t down[64];
@@ -1295,6 +1295,7 @@ static void k56_reneg_call(int mode, v90m_state *st, int *bps, int *nbps)
         if (st->end != V90M_END_NONE) break;
     }
     v90m_get_state(m, st);
+    { v90m_stats sx; v90m_get_stats(m, &sx); *renegs = sx.renegotiations; }
     v90m_destroy(m);
 }
 
@@ -1307,6 +1308,7 @@ static void test_k56_reneg(void)
     int want[NWANT], nw = 0;
     v90m_state st;
     int bps[4], nbps, k;
+    unsigned renegs;
 
     want[nw++] = V90M_EV_CONNECTED; want[nw++] = V90M_EV_DATA_MOVING;
     for (k = 0; k < K56_RENEGS; k++) {
@@ -1314,7 +1316,7 @@ static void test_k56_reneg(void)
     }
     want[nw++] = V90M_EV_DATA_STOPPED; want[nw++] = V90M_EV_ENDED;
 
-    k56_reneg_call(0, &st, bps, &nbps);
+    k56_reneg_call(0, &st, bps, &nbps, &renegs);
     printf("  API K56flex call, the client's renegotiations to %s: %d events (",
            K56_RENEGS == 2 ? "10 and 12" : "10", x2_nev);
     for (k = 0; k < x2_nev && k < NEV; k++) printf("%s%d", k ? " " : "", x2_ev[k]);
@@ -1324,16 +1326,17 @@ static void test_k56_reneg(void)
     CHECK_EQ_I(x2_nev, NWANT);
     for (k = 0; k < NWANT && k < x2_nev; k++) CHECK_EQ_I(x2_ev[k], want[k]);
     CHECK_EQ_I(nbps, K56_RENEGS);
+    CHECK_EQ_I(renegs, K56_RENEGS);             /* renegotiations, not retrains */
     for (k = 0; k < K56_RENEGS && k < nbps; k++) CHECK_EQ_I(bps[k], bps_want[k]);
     CHECK_EQ_I(st.end, V90M_END_CLEARDOWN_OURS);
 
-    k56_reneg_call(1, &st, bps, &nbps);
+    k56_reneg_call(1, &st, bps, &nbps, &renegs);
     printf("  API K56flex call, a renegotiation MP with rate 0: end %d\n", (int)st.end);
     CHECK_EQ_I(st.end, V90M_END_CLEARDOWN_FAR);
     CHECK(x2_nev >= 4 && x2_ev[2] == V90M_EV_DATA_STOPPED);
 
 #ifndef TEST_SHORT
-    k56_reneg_call(2, &st, bps, &nbps);
+    k56_reneg_call(2, &st, bps, &nbps, &renegs);
     printf("  API K56flex call, the client silent after its renegotiation's S: end %d\n", (int)st.end);
     CHECK_EQ_I(st.end, V90M_END_K56_FAILED);
     CHECK(x2_nev >= 4 && x2_ev[2] == V90M_EV_DATA_STOPPED);
@@ -1412,6 +1415,137 @@ static void test_k56_retrain(void)
 #endif
 }
 
+/* ---- how an answered call ends (docs/answering.md "How a call ends"):
+ * after a connection any loss is V90M_END_LOST; a start-up that never
+ * connected V90M_END_FAILED; retrains past the limit V90M_END_RETRAIN_FAILED;
+ * V.8 with nothing in common V90M_END_NO_COMMON, as on the calling side ---- */
+
+#define CUT_NEVER (-2)
+/* an API caller and an API answerer back to back, each offering mods; from
+ * cut_ms after the answerer's data first moves (-1: from the first sample,
+ * CUT_NEVER: never) the answerer hears silence; retrain: the answerer asks for a
+ * retrain each time its data moves again. The answerer's state and stats at
+ * its end (or after secs). */
+static void end_pair(unsigned c_mods, unsigned a_mods, int cut_ms, int retrain, int secs, v90m_state *sa,
+                     v90m_stats *sx)
+{
+    static end_t cl, an;
+    long k, cut = cut_ms == -1 ? 0 : -1;
+    int16_t c_rx = 0, a_rx = 0;
+    int was_moving = 0;
+    end_init(&cl, V90M_ROLE_ORIGINATE, c_mods);
+    end_init(&an, V90M_ROLE_ANSWER, a_mods);
+    memset(sa, 0, sizeof *sa); memset(sx, 0, sizeof *sx);
+    if (cl.m && an.m) {
+        for (k = 0; k < 8000L * secs; k++) {
+            int16_t c_tx, a_tx, in = cut >= 0 && k >= cut ? 0 : a_rx;
+            v90m_process_linear(cl.m, &c_rx, &c_tx, 1);
+            v90m_process_linear(an.m, &in, &a_tx, 1);
+            a_rx = c_tx; c_rx = a_tx;
+            v90m_get_state(an.m, sa);
+            if (cut < 0 && cut_ms >= 0 && sa->moving) cut = k + 8L * cut_ms;
+            if (retrain && sa->moving && !was_moving) CHECK_EQ_I(v90m_retrain(an.m), V90M_OK);
+            was_moving = sa->moving;
+            if (sa->end != V90M_END_NONE) break;
+        }
+        v90m_get_stats(an.m, sx);
+    }
+    v90m_destroy(cl.m); v90m_destroy(an.m); v90m_async_destroy(cl.a); v90m_async_destroy(an.a);
+}
+
+/* the x2 client (sim/x2call) and the library: from cut_ms into data mode the
+ * library hears silence (CUT_NEVER: never); reneg_ms as x2call_cfg. The
+ * answerer's state at the end, its stats, and whether retraining was ever
+ * set while its data stood still in data mode. */
+static void end_x2(int cut_ms, int reneg_ms, int secs, v90m_state *st, v90m_stats *sx, int *rt_stopped)
+{
+    static x2call_t x;
+    static uint8_t down[64];
+    x2call_cfg xc; v90m_cfg c;
+    v90m_t *m; int err;
+    long n, cut = -1;
+    uint8_t rx = 0xff, tx;
+
+    v90m_cfg_default(&c);
+    c.modulations |= V90M_MOD_X2;
+    c.getbit = ones_get; c.putbit = bits_put;
+    *rt_stopped = 0;
+    memset(st, 0, sizeof *st); memset(sx, 0, sizeof *sx);
+    m = v90m_create(&c, &err);
+    CHECK(m != NULL);
+    if (!m) return;
+    memset(&xc, 0, sizeof xc);
+    xc.level = 3000; xc.max_index = 1; xc.up_mask = 0x03FE;
+    xc.reneg_ms = reneg_ms; xc.reneg_index = 1; xc.reneg_mask = 0x03FE;
+    xc.getbit = ones_get; xc.putbit = bits_put;
+    x2call_init(&x, &xc);
+    memset(down, 0x7f, sizeof down);
+    for (n = 0; n < 8000L * secs; n++) {
+        int16_t s;
+        uint8_t in = cut >= 0 && n >= cut ? v90m_g711_encode(0, 0) : rx;
+        v90m_process_g711(m, &in, &tx, 1);
+        down[n & 63] = tx;
+        s = x2call_tick(&x, down[(n - 30) & 63]);
+        rx = v90m_g711_encode(0, (int16_t)(s / 2));
+        v90m_get_state(m, st);
+        if (cut < 0 && cut_ms >= 0 && st->moving) cut = n + 8L * cut_ms;
+        if (st->connected && !st->moving && st->retraining) *rt_stopped = 1;
+        if (st->end != V90M_END_NONE) break;
+    }
+    v90m_get_state(m, st);
+    v90m_get_stats(m, sx);
+    v90m_destroy(m);
+}
+
+static void test_end_codes(void)
+{
+    static const struct { unsigned mods; const char *what; } lost[] = {
+        { V90M_MOD_V22, "V.22bis" }, { V90M_MOD_V34, "V.34" }, { V90M_MOD_V90 | V90M_MOD_V34, "V.90" },
+        { V90M_MOD_V21, "V.21" }, { V90M_MOD_V32BIS, "V.32bis" },
+        { V90M_MOD_V92 | V90M_MOD_V90 | V90M_MOD_V34, "V.92" },
+    };
+    v90m_state st; v90m_stats sx;
+    int k, rt_stopped;
+
+    /* the line goes silent 2 s into data mode: the connection was lost */
+    for (k = 0; k < (int)(sizeof lost / sizeof lost[0]); k++) {
+        end_pair(lost[k].mods, lost[k].mods, 2000, 0, 90, &st, &sx);
+        printf("  %s, the line silent 2 s into data mode: answerer end %d\n", lost[k].what, (int)st.end);
+        CHECK_EQ_I(st.end, V90M_END_LOST);
+    }
+    end_x2(2000, 0, 30, &st, &sx, &rt_stopped);
+    printf("  x2, the line silent 2 s into data mode: end %d\n", (int)st.end);
+    CHECK_EQ_I(st.end, V90M_END_LOST);
+
+    /* nothing but silence from the first sample: no connection was made */
+    end_pair(V90M_MOD_V90 | V90M_MOD_V34 | V90M_MOD_V22, V90M_MOD_ALL_DEFAULT, -1, 0, 90, &st, &sx);
+    printf("  silence from the start: answerer end %d\n", (int)st.end);
+    CHECK_EQ_I(st.end, V90M_END_FAILED);
+
+    /* V.90: we retrain each time the data moves: the fourth in a row is past the limit */
+    end_pair(V90M_MOD_V90 | V90M_MOD_V34, V90M_MOD_V90 | V90M_MOD_V34, CUT_NEVER, 1, 120, &st, &sx);
+    printf("  V.90, a retrain each time the data moves: answerer end %d after %u retrains\n", (int)st.end, sx.retrains);
+    CHECK_EQ_I(st.end, V90M_END_RETRAIN_FAILED);
+    /* ... and one into a line gone silent as we ask: it never gets back to data mode */
+    end_pair(V90M_MOD_V90 | V90M_MOD_V34, V90M_MOD_V90 | V90M_MOD_V34, 0, 1, 90, &st, &sx);
+    printf("  V.90, our retrain into a silent line: answerer end %d after %u retrains\n", (int)st.end, sx.retrains);
+    CHECK_EQ_I(st.end, V90M_END_RETRAIN_FAILED);
+    CHECK_EQ_I(sx.retrains, 1);
+
+    /* V.8 with nothing in common (the calling side's own case, test_orig) */
+    end_pair(V90M_MOD_V21, V90M_MOD_V22, CUT_NEVER, 0, 30, &st, &sx);
+    printf("  V.8, nothing in common: answerer end %d\n", (int)st.end);
+    CHECK_EQ_I(st.end, V90M_END_NO_COMMON);
+
+    /* x2: the client's rate change 3 s into data mode is a renegotiation,
+     * not a retrain */
+    end_x2(CUT_NEVER, 3000, 20, &st, &sx, &rt_stopped);
+    printf("  x2, the client's rate change: retraining while stopped %d, renegotiations %u, end %d\n",
+           rt_stopped, sx.renegotiations, (int)st.end);
+    CHECK_EQ_I(rt_stopped, 0);
+    CHECK_EQ_I(sx.renegotiations, 1);
+}
+
 int main(void)
 {
     test_cfg();
@@ -1427,5 +1561,6 @@ int main(void)
     test_k56();
     test_k56_reneg();
     test_k56_retrain();
+    test_end_codes();
     T_REPORT("api");
 }

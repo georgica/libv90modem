@@ -75,19 +75,29 @@ first: below, "K56flex".) The menu decides:
   (`V90M_CONN_*`) and `tx_bps` / `rx_bps` (our transmit / receive rate;
   for V.90 and V.92 that is downstream / upstream).
 - `V90M_EV_DATA_STOPPED` and `V90M_EV_DATA_MOVING` around every retrain and
-  rate renegotiation; `v90m_state.retraining` during a retrain.
+  rate renegotiation; `v90m_state.retraining` during a retrain (not
+  during a rate renegotiation, in any modulation).
 - `V90M_EV_RATES` when the rates or the modulation changed.
 - `V90M_EV_ENDED` once, with `v90m_state.end`: `V90M_END_FAILED` (no
-  connection was made), `V90M_END_LOST`, `V90M_END_CLEARDOWN_FAR`,
-  `V90M_END_CLEARDOWN_OURS`, `V90M_END_X2_FAILED` (x2, below),
-  `V90M_END_K56_FAILED` (K56flex, below), `V90M_END_RETRAIN_FAILED` (x2:
-  the client's retrain, below). The other end codes are the calling
-  role's.
+  connection was made), `V90M_END_LOST` (the connection was lost: any
+  loss once connected, a renegotiation included),
+  `V90M_END_CLEARDOWN_FAR`, `V90M_END_CLEARDOWN_OURS`,
+  `V90M_END_NO_COMMON` (V.8 found no modulation in common with the
+  caller), `V90M_END_RETRAIN_FAILED` (V.90, V.92, V.34: a retrain failed,
+  or one more was due past the limit, below; x2: the client's retrain,
+  below),
+  `V90M_END_X2_FAILED` (x2, below), `V90M_END_K56_FAILED` (K56flex,
+  below). The code is the same as the calling role's for the same event.
+  `V90M_END_NO_ANSWER_TONE` and `V90M_END_NO_JM` are the calling role's
+  only. A caller whose V.8 sends CM but never CJ after our JM is served
+  anyway: the modulation JM selected starts.
 
 `v90m_get_stats` adds the receiver's signal to error (`snr_db10`, 0.1 dB),
 the round-trip delay measured in the handshake (`rtd`, samples: V.34, V.90,
-V.92), the echo delay in use (V.90 / V.92), and the counts of retrains and
-of rate renegotiations that stopped the data (V.90, V.92).
+V.92), the echo delay in use (V.90, V.92, x2, K56flex: that of the engine
+running now; during a retrain or after the end, that of the modulation of
+the call), and the counts of retrains and of rate renegotiations that
+stopped the data (V.34, V.90, V.92, x2, K56flex).
 
 ## x2
 
@@ -107,7 +117,8 @@ a mu-law line: never with `alaw` set. Robbed-bit lines are not handled.
 - **Rate changes.** The client asks for a new rate in data mode (a
   Courier about 12 s in, and again later); we answer at the rate and for
   the pad (none, 3 dB, 6 dB) its request names: `V90M_EV_DATA_STOPPED`,
-  then `V90M_EV_RATES` and `V90M_EV_DATA_MOVING`, about 0.75 s later.
+  then `V90M_EV_RATES` and `V90M_EV_DATA_MOVING`, about 0.75 s later;
+  `retraining` stays 0 and `v90m_stats.renegotiations` counts it.
 - **No way back to V.34.** Once the marker has come, a start-up or rate
   change that does not complete, or a request we cannot serve, ends the
   call with `V90M_END_X2_FAILED`; the client's Tone A (a retrain it asks
@@ -164,7 +175,8 @@ answering, on a mu-law line: never with `alaw` set.
 - **Renegotiation.** The client's (its S in data mode) is followed: our
   data stops at a frame's end, our short training, its MP, our MP, then
   data at the new rate: `V90M_EV_DATA_STOPPED`, `V90M_EV_RATES`,
-  `V90M_EV_DATA_MOVING`. An MP with rate 0 ends the call as
+  `V90M_EV_DATA_MOVING` (`retraining` 0; `v90m_stats.renegotiations`
+  counts it). An MP with rate 0 ends the call as
   `V90M_END_CLEARDOWN_FAR`. We never start one.
 - **Retrain.** The client's (its tone B in data mode) is followed: V.34's
   retrain Phase 2 with INFO1a flagged again, then the whole training:
@@ -192,10 +204,13 @@ answering, on a mu-law line: never with `alaw` set.
   otherwise, or while one is under way). In V.90 the far end's Tone A is
   listened for through Phase 4 and data mode; our own retrain is 70 ms of
   silence and Phase 2 again from Tone B. A call is let go at the fourth
-  retrain in a row (`DESIGN.md`, 4.2).
+  retrain in a row (`DESIGN.md`, 4.2), V.90, V.92 and V.34 with
+  `V90M_END_RETRAIN_FAILED`, as on the calling side; so does a retrain of
+  theirs that does not get back to data mode.
 - **Rate renegotiation** in V.32bis, V.34, V.90 and V.92 (the standards
   table of the top-level README); `v90m_stats.renegotiations` counts those
-  of V.90 and V.92. In V.90 and V.92 the caller's (its S) is followed;
+  of V.34, V.90 and V.92 (V.32bis's are not seen apart from its retrains),
+  and those of x2 and K56flex. In V.90 and V.92 the caller's (its S) is followed;
   the upstream rate is ours to set, and when the receiver's error stays
   above what the rate needs for a second the modem renegotiates with a
   lower ceiling; when nothing lower is left, or nothing is received, it
