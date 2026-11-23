@@ -1,9 +1,11 @@
 #include "v14.h"
 
 #define QMASK (V14_QSIZE - 1)
-static unsigned q_len(const v14q_t *q) { return (q->head - q->tail) & QMASK; }
-static int q_put(v14q_t *q, uint8_t c) { if (q_len(q) == QMASK) return 0; q->q[q->head] = c; q->head = (q->head + 1) & QMASK; return 1; }
-static int q_get(v14q_t *q, uint8_t *c) { if (q->head == q->tail) return 0; *c = q->q[q->tail]; q->tail = (q->tail + 1) & QMASK; return 1; }
+/* free-running indices, masked on use: all V14_QSIZE slots hold an octet
+ * (the public API promises 512-octet queues) */
+static unsigned q_len(const v14q_t *q) { return q->head - q->tail; }
+static int q_put(v14q_t *q, uint8_t c) { if (q_len(q) == V14_QSIZE) return 0; q->q[q->head & QMASK] = c; q->head++; return 1; }
+static int q_get(v14q_t *q, uint8_t *c) { if (q->head == q->tail) return 0; *c = q->q[q->tail & QMASK]; q->tail++; return 1; }
 
 void v14_init(v14_t *v)
 {
