@@ -101,6 +101,8 @@ typedef struct {
 
     int peer_busy, own_busy, rej_exc, timer_rec, busy_discard;
     int rc;                  /* retransmission count */
+    int no_progress;         /* timer recoveries since V(A) last moved, with
+                                I frames unacknowledged (v42_lapm.c) */
     int t401, t403;          /* ms left, negative = stopped */
     unsigned pend;           /* frames owed, see v42_lapm.c */
     int ua_f, dm_f, brkack_f;

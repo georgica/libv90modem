@@ -79,30 +79,47 @@ void v42ec_cfg_default(v42ec_cfg_t *cfg, int originator)
 }
 
 /* C-INIT of whichever procedure the XID exchange settled on (V.42 bis 5.2,
- * 5.3; V.44 7.5). LAPM never leaves both agreed. */
+ * 5.3; V.44 7.5). LAPM never leaves both agreed. A direction agreed but
+ * refused here (values past this build's arrays: v42ec_init keeps our
+ * proposals within them, so only a bug gets here) releases the link: the
+ * far end would compress, or expect compressed data, while we did not. */
 static void comp_init(v42ec_t *e)
 {
     const v42lapm_t *l = &e->lapm;
+    int bad = 0;
 
     e->comp_tx = e->comp_rx = 0;
     e->comp_alg = V42EC_COMP_NONE;
     e->enc_dirty = 0;
     if (l->v44_tx || l->v44_rx) {
         e->comp_alg = V42EC_COMP_V44;
-        if (l->v44_tx && v44comp_enc_init(&e->enc.v44, l->v44_n2_tx, l->v44_n7_tx, l->v44_n8_tx) == 0) {
-            v44comp_enc_policy(&e->enc.v44, e->cfg.comp_policy);
-            e->comp_tx = 1;
+        if (l->v44_tx) {
+            if (v44comp_enc_init(&e->enc.v44, l->v44_n2_tx, l->v44_n7_tx, l->v44_n8_tx) == 0) {
+                v44comp_enc_policy(&e->enc.v44, e->cfg.comp_policy);
+                e->comp_tx = 1;
+            } else bad = 1;
         }
-        if (l->v44_rx && v44comp_dec_init(&e->dec.v44, l->v44_n2_rx, l->v44_n7_rx, l->v44_n8_rx) == 0)
-            e->comp_rx = 1;
+        if (l->v44_rx) {
+            if (v44comp_dec_init(&e->dec.v44, l->v44_n2_rx, l->v44_n7_rx, l->v44_n8_rx) == 0) e->comp_rx = 1;
+            else bad = 1;
+        }
     } else if (l->comp_tx || l->comp_rx) {
         e->comp_alg = V42EC_COMP_V42BIS;
-        if (l->comp_tx && v42comp_enc_init(&e->enc.bis, l->comp_n2, l->comp_n7) == 0) {
-            v42comp_enc_policy(&e->enc.bis, e->cfg.comp_policy);
-            e->comp_tx = 1;
+        if (l->comp_tx) {
+            if (v42comp_enc_init(&e->enc.bis, l->comp_n2, l->comp_n7) == 0) {
+                v42comp_enc_policy(&e->enc.bis, e->cfg.comp_policy);
+                e->comp_tx = 1;
+            } else bad = 1;
         }
-        if (l->comp_rx && v42comp_dec_init(&e->dec.bis, l->comp_n2, l->comp_n7) == 0)
-            e->comp_rx = 1;
+        if (l->comp_rx) {
+            if (v42comp_dec_init(&e->dec.bis, l->comp_n2, l->comp_n7) == 0) e->comp_rx = 1;
+            else bad = 1;
+        }
+    }
+    if (bad) {
+        e->comp_tx = e->comp_rx = 0;
+        e->reason_override = V42EC_R_COMPRESSION;
+        v42lapm_release(&e->lapm);
     }
 }
 
@@ -169,7 +186,8 @@ void v42ec_init(v42ec_t *e, const v42ec_cfg_t *cfg)
     memset(e, 0, sizeof *e);
     e->cfg = *cfg;
     e->cfg.originator = cfg->originator ? 1 : 0;
-    /* never propose more than the arrays of v44_comp.h hold */
+    /* never propose more than the arrays of v42_comp.h and v44_comp.h hold */
+    if (e->cfg.lapm.comp_p1 > V42COMP_MAX_CODEWORDS) e->cfg.lapm.comp_p1 = V42COMP_MAX_CODEWORDS;
     if (e->cfg.lapm.v44_p1_tx > V44COMP_MAX_CODEWORDS) e->cfg.lapm.v44_p1_tx = V44COMP_MAX_CODEWORDS;
     if (e->cfg.lapm.v44_p1_rx > V44COMP_MAX_CODEWORDS) e->cfg.lapm.v44_p1_rx = V44COMP_MAX_CODEWORDS;
     if (e->cfg.lapm.v44_p3_tx > V44COMP_MAX_HISTORY) e->cfg.lapm.v44_p3_tx = V44COMP_MAX_HISTORY;

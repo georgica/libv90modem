@@ -1,10 +1,6 @@
 /* LAPM, the error control function of ITU-T V.42. Clause numbers in the
  * comments refer to V.42 (03/2002) unless they say V.42 bis. */
 #include <string.h>
-#ifdef V42_XID_TRACE
-#include <stdio.h>
-static long xtrace_ms;
-#endif
 #include "v42_lapm.h"
 
 #if V42_MAX_K < V42_DEFAULT_K || V42_MAX_K > 127
@@ -148,7 +144,7 @@ static void data_reset(v42lapm_t *l)
     l->hold_len = l->hold_pos = 0;
     l->peer_busy = 0; l->rej_exc = 0; l->timer_rec = 0; l->busy_discard = 0;
     l->data_seen = 0;
-    l->rc = 0;
+    l->rc = 0; l->no_progress = 0;
     l->own_busy &= OWN_BUSY_USER;
     l->pend &= ~(P_RESP_F1 | P_POLL | P_REJ | P_ACK | P_STATUS);
     if (l->own_busy) l->pend |= P_STATUS;
@@ -333,9 +329,12 @@ static int build_xid(uint8_t *p, int response, int fcs32, int n401_tx, int n401_
     p[n++] = FI_GENERAL;
     p[n++] = GI_PARAM; p[n++] = 0; p[n++] = (uint8_t)(opt3 ? 19 : 20);
     /* optional functions: bits 2, 4, 8, 9, 12, 16 always (Table 11a NOTE 1);
-     * bit 17 = 32-bit FCS, and then bit 16 is cleared in a response */
-    /* opt3: three octets, the form of the earlier editions, in answer to a
-     * command that came that way (a Conexant CX93001 does not take four) */
+     * bit 17 = 32-bit FCS, and then bit 16 is cleared in a response.
+     * opt3: in three octets. Our commands always have them so, as real
+     * modems send them (an Agere SV92PP drops what follows a mask of any
+     * other length, our compression offer with it); a response has the
+     * form of the command it answers (a Conexant CX93001 does not take
+     * four octets after three). */
     p[n++] = 3; p[n++] = (uint8_t)(opt3 ? 3 : 4);
     p[n++] = 0x8A;
     p[n++] = (uint8_t)((response && fcs32) ? 0x09 : 0x89);
@@ -355,6 +354,14 @@ static int build_xid(uint8_t *p, int response, int fcs32, int n401_tx, int n401_
     }
     return n;
 }
+/* the longest information fields build_xid and build_v44 write */
+#define XID_BASE_MAX  24        /* four octets of optional functions */
+#define XID_V42BIS    18
+#define XID_V44       34
+/* the largest XID response: the base with one compression set (V.44 7.3
+ * NOTE: one procedure only), 58 octets */
+typedef char v42lapm_xid_resp_fits[sizeof ((v42lapm_t *)0)->xid_resp >= XID_BASE_MAX + XID_V44
+                                   && XID_V44 >= XID_V42BIS ? 1 : -1];
 
 /* 9.2.3, 9.2.4: the responder's value lies between the initiator's value
  * and the default, inclusive; `mine` is what this end would like. */
@@ -430,9 +437,6 @@ static void rx_xid_cmd(v42lapm_t *l, const uint8_t *info, int len)
 
     if (l->state != V42LAPM_IDLE && l->state != V42LAPM_CONNECTED) return;
     if (parse_xid(info, len, &x) != 0) return;
-#ifdef V42_XID_TRACE
-    { int i; fprintf(stderr, "XID cmd:"); for (i = 0; i < len; i++) fprintf(stderr, " %02x", info[i]); fprintf(stderr, "\n"); }
-#endif
     if (l->state == V42LAPM_IDLE) {
         if (comp_values_bad(&x) || v44_values_bad(&x)) { terminate(l, V42LAPM_R_NEGOTIATION); return; }
         /* the initiator's transmit direction is our receive direction */
@@ -492,17 +496,19 @@ static void rx_xid_cmd(v42lapm_t *l, const uint8_t *info, int len)
 static void rx_xid_resp(v42lapm_t *l, const uint8_t *info, int len)
 {
     xid_t x;
-    int lo, hi, v, want_p0;
+    int hi, v, want_p0;
 
     if (l->state != V42LAPM_NEGOTIATING) return;
     if (parse_xid(info, len, &x) != 0) return;
-    /* the responder's receive direction is our transmit direction */
-    lo = mini(l->cfg.k_tx, V42_DEFAULT_K); hi = l->cfg.k_tx > V42_DEFAULT_K ? l->cfg.k_tx : V42_DEFAULT_K;
-    l->k_tx = clampi(x.k_rx > 0 ? x.k_rx : V42_DEFAULT_K, lo, hi);
+    /* the responder's receive direction is our transmit direction. Its
+     * value is taken when it is below ours (9.2.4 places it between our
+     * value and the default, but fewer or shorter frames than it can take
+     * are always safe), and capped at the larger of the two */
+    hi = l->cfg.k_tx > V42_DEFAULT_K ? l->cfg.k_tx : V42_DEFAULT_K;
+    l->k_tx = clampi(x.k_rx > 0 ? x.k_rx : V42_DEFAULT_K, 1, hi);
     l->k_rx = clampi(x.k_tx > 0 ? x.k_tx : V42_DEFAULT_K, 1, 127);
-    lo = mini(l->cfg.n401_tx, V42_DEFAULT_N401);
     hi = l->cfg.n401_tx > V42_DEFAULT_N401 ? l->cfg.n401_tx : V42_DEFAULT_N401;
-    l->n401_tx = clampi(x.n401_rx > 0 ? x.n401_rx : V42_DEFAULT_N401, lo, hi);
+    l->n401_tx = clampi(x.n401_rx > 0 ? x.n401_rx : V42_DEFAULT_N401, 1, hi);
     v = x.n401_tx > 0 ? x.n401_tx : V42_DEFAULT_N401;
     if (v > V42_MAX_N401 || comp_values_bad(&x)) { terminate(l, V42LAPM_R_NEGOTIATION); return; }
     l->n401_rx = v;
@@ -553,6 +559,7 @@ static int process_nr(v42lapm_t *l, uint8_t nr, int from_i)
         l->slot_head = (l->slot_head + d) % V42_MAX_K;
         l->va = nr;
         l->data_seen = 1;
+        l->no_progress = 0;
         /* NOTE 1: not while a poll is outstanding; NOTE 2: an I frame does
          * not stop the timer while the peer is busy */
         if (!l->timer_rec && !(from_i && l->peer_busy)) {
@@ -661,9 +668,6 @@ static void rx_s(v42lapm_t *l, const uint8_t *f, int len, int is_cmd)
      * information field makes the length incorrect (8.2.4.12 b) */
     if ((type != C_RR && type != C_RNR && type != C_REJ) || len != 3) { reject(l); return; }
     was_rec = l->timer_rec;
-#ifdef V42_XID_TRACE
-    if (type != C_RR || l->peer_busy || was_rec) fprintf(stderr, "LAPM %ld ms: rx %s nr %d pf %d cmd %d, va %d vs %d, busy %d, rec %d\n", xtrace_ms, type == C_RR ? "RR" : type == C_RNR ? "RNR" : "REJ", nr, pf, is_cmd, l->va, l->vs, l->peer_busy, was_rec);
-#endif
     switch (type) {
     case C_RR:
         if (process_nr(l, nr, 0) < 0) return;
@@ -899,7 +903,7 @@ int v42lapm_tx_frame(v42lapm_t *l, uint8_t *f, int *fcs32)
         n = 2 + build_xid(f + 2, 0, l->cfg.fcs32, l->cfg.n401_tx, l->cfg.n401_rx,
                           l->cfg.k_tx, l->cfg.k_rx, want,
                           (l->cfg.comp_tx ? 1 : 0) | (l->cfg.comp_rx ? 2 : 0),
-                          l->cfg.comp_p1, l->cfg.comp_p2, 0);
+                          l->cfg.comp_p1, l->cfg.comp_p2, 1);
         /* both procedures are offered and the responder picks one (V.44
          * 7.3 NOTE); the user data subfield comes last (V.42 12.2.1.3) */
         if (l->cfg.v44_tx || l->cfg.v44_rx)
@@ -1025,11 +1029,25 @@ int v42lapm_get_break(v42lapm_t *l, int *opt, int *len10ms)
 }
 
 /* ------------------------------------------------------------------- time */
+/* Timer recovery begins (8.4.8, 8.12.3.3). V.42 starts the retransmission
+ * count again at each recovery, so a peer that answers every poll and
+ * never acknowledges an I frame keeps the link up for ever. Ruled
+ * otherwise here (every wait bounded): N400 recoveries in a row, with I
+ * frames sent and unacknowledged and V(A) never moving, release the link
+ * (V42LAPM_R_N400). Not while the peer says it is busy (RNR): 8.4.7 lets
+ * that last. Returns 0 when it released. */
+static int enter_recovery(v42lapm_t *l)
+{
+    if (!l->peer_busy && MOD(l->vh - l->va) != 0 && ++l->no_progress >= l->cfg.n400) {
+        terminate(l, V42LAPM_R_N400);
+        return 0;
+    }
+    l->timer_rec = 1; l->rc = 0;
+    return 1;
+}
+
 static void t401_expired(v42lapm_t *l)
 {
-#ifdef V42_XID_TRACE
-    fprintf(stderr, "LAPM %ld ms: T401 out, state %d, va %d vs %d, busy %d, rec %d\n", xtrace_ms, (int)l->state, l->va, l->vs, l->peer_busy, l->timer_rec);
-#endif
     l->t401 = -1;
     l->t401_expiries++;
     switch (l->state) {
@@ -1046,7 +1064,7 @@ static void t401_expired(v42lapm_t *l)
         l->t401 = l->cfg.t401_ms;
         break;
     case V42LAPM_CONNECTED:                                 /* 8.4.8 */
-        if (!l->timer_rec) { l->timer_rec = 1; l->rc = 0; }
+        if (!l->timer_rec) { if (!enter_recovery(l)) return; }
         else l->rc++;
         if (l->rc < l->cfg.n400) {
             l->pend |= P_POLL;
@@ -1064,25 +1082,23 @@ void v42lapm_line_restored(v42lapm_t *l)
 {
     if (l->state != V42LAPM_CONNECTED) return;
     if (!l->timer_rec && l->va == l->vs) return;
-    if (!l->timer_rec) { l->timer_rec = 1; l->rc = 0; }
+    if (!l->timer_rec && !enter_recovery(l)) return;
     l->pend |= P_POLL;
     t401_start(l);
 }
 
 void v42lapm_tick(v42lapm_t *l, unsigned ms)
 {
-#ifdef V42_XID_TRACE
-    xtrace_ms += ms;
-#endif
     int d = ms > 1000000u ? 1000000 : (int)ms;
 
     if (l->t401 >= 0 && (l->t401 -= d) <= 0) t401_expired(l);
     if (l->state == V42LAPM_CONNECTED && l->t403 >= 0 && (l->t403 -= d) <= 0) {
         /* 8.12.3.3 */
         l->t403 = -1;
-        l->timer_rec = 1; l->rc = 0;
-        l->pend |= P_POLL;
-        t401_start(l);
+        if (enter_recovery(l)) {
+            l->pend |= P_POLL;
+            t401_start(l);
+        }
     }
     if (l->state == V42LAPM_CONNECTED && l->brk_tx == 2 && l->brk_timer >= 0 &&
         (l->brk_timer -= d) <= 0) {

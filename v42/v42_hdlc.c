@@ -200,7 +200,7 @@ static int rx_flag(v42hdlc_rx_t *r)
     rx_restart(r);
     r->synced = 1; r->tent = 0;
     if (!was_synced) { r->flag_run = 1; return 0; }
-    if (len == 0 && nbits == 6) { r->flag_run++; return 0; }
+    if (len == 0 && nbits == 6) { if (r->flag_run < V42HDLC_FLAG_RUN_MAX) r->flag_run++; return 0; }
     r->flag_run = 1;
     if (tent) return overflow ? 0 : rx_resync(r, len, nbits, cur);
     if (overflow) { r->too_long++; return V42HDLC_RX_LONG; }

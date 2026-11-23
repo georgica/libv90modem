@@ -1,1 +1,1 @@
-test_lapm: 10430 checks, 0 failures
+test_lapm: 13175 checks, 0 failures

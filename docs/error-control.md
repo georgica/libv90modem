@@ -81,7 +81,35 @@ V.44 is preferred where both ends have both. `comp_policy`
 error releases the connection (`V90M_EC_R_COMPRESSION`).
 `v90m_ec_get_status` reports what was agreed (`comp_alg`, `comp_tx`,
 `comp_rx`, the parameters per direction) and what is in use now (`enc_on`,
-`dec_on`, `alg_on`).
+`dec_on`, `alg_on`). V.42bis's P1 (`v42bis_p1`) has a ceiling of
+`V42COMP_MAX_CODEWORDS` (2048 in this build: the size of the dictionary
+arrays); the endpoint never proposes more. Should a direction be agreed
+that the encoder or decoder cannot run (only a bug could do it), the
+connection is released with `V90M_EC_R_COMPRESSION` rather than run
+uncompressed while the far end compresses.
+
+**The XID exchange.** Our XID command gives the HDLC optional functions in
+three octets (bit 16 set, bit 17 for the 32-bit FCS), the form real modems
+send: some take nothing after a mask of another length, our compression
+offer included. An answer has the form of the command it answers, three
+octets or four. The V.44 parameters go last, in the user data subfield,
+which has no group length (V.42 12.2.1.3). A responder that answers a
+smaller window `k` or a shorter `N401` than we proposed for our sending
+direction is taken at its word.
+
+**Bounded waits** (a ruling that departs from V.42). V.42, like HDLC,
+starts the retransmission count again at each timer recovery (8.4.8): a
+peer that answers every poll (RR with F=1) but never acknowledges an I
+frame keeps the link up for ever with nothing moving. Here every wait is
+bounded: `n400` timer recoveries in a row with I frames unacknowledged and
+V(A) not moving release the link with `V90M_EC_R_N400` (about `n400` x
+`t401_ms`: 10 s with the defaults). Acknowledged data starts the count
+again. A peer that says it is busy (RNR) is not counted: V.42 8.4.7 lets
+that last, and the program, which stops being able to write, decides.
+T403 is off by default (`t403_ms` 0): with nothing unacknowledged a peer
+that has gone silently is not noticed by V.42 itself; the modem's loss of
+carrier (`V90M_EV_ENDED`) is what tells. Set `t403_ms` to have an idle
+link polled.
 
 **Flow control.** `v90m_ec_write` takes what fits (`v90m_ec_write_space`
 says how much); `v90m_ec_read` gives what has arrived

@@ -1098,6 +1098,48 @@ static void test_comp_negotiation(void)
     CHECK(A.enc.bis.d.recovered > 100);
 }
 
+/* V.42 bis P1 above what this build holds: proposed at the ceiling, and
+ * the encoder and decoder run (they were agreed and then left off) */
+static void test_p1_ceiling(void)
+{
+    v42ec_status_t sa, sb;
+    setup();
+    ca.lapm.comp_p1 = cb.lapm.comp_p1 = 4096; ca.comp_policy = V42COMP_ALWAYS;
+    connect_pair();
+    v42ec_get_status(&A, &sa); v42ec_get_status(&B, &sb);
+    CHECK_EQ_I(sa.comp_alg, V42EC_COMP_V42BIS);
+    CHECK_EQ_I(sa.comp_n2, V42COMP_MAX_CODEWORDS); CHECK_EQ_I(sb.comp_n2, V42COMP_MAX_CODEWORDS);
+    CHECK_EQ_I(A.comp_tx, 1); CHECK_EQ_I(A.comp_rx, 1);
+    CHECK_EQ_I(B.comp_tx, 1); CHECK_EQ_I(B.comp_rx, 1);
+    flow_fill(&ab, 20000, F_TEXT); flow_fill(&ba, 5000, F_TEXT);
+    CHECK(run_until_done(10000) >= 0);
+    check_flow(&ab); check_flow(&ba);
+    CHECK_EQ_I(A.enc.bis.in_chars, 20000);
+    CHECK(A.enc.bis.out_octets < 10000);
+}
+
+/* a C-INIT that fails (values LAPM should never have agreed) releases the
+ * link instead of running uncompressed while the far end compresses */
+static void test_cinit_fail(void)
+{
+    v42ec_status_t s;
+    int i;
+    setup(); start();
+    for (i = 0; i < 3000 && A.lapm.state != V42LAPM_ESTABLISHING; i++) step_ms();
+    CHECK_EQ_I(A.lapm.state, V42LAPM_ESTABLISHING);
+    CHECK_EQ_I(A.lapm.comp_tx, 1);
+    A.lapm.comp_n2 = 4096;                              /* past V42COMP_MAX_CODEWORDS */
+    for (i = 0; i < 3000 && v42ec_state(&A) != V42EC_DISCONNECTED; i++) step_ms();
+    CHECK_EQ_I(v42ec_state(&A), V42EC_DISCONNECTED);
+    v42ec_get_status(&A, &s);
+    CHECK_EQ_I(s.reason, V42EC_R_COMPRESSION);
+    CHECK_EQ_I(tap_count(&ta, 0x03, 0x53), 1);          /* DISC */
+    run(200);
+    v42ec_get_status(&B, &s);
+    CHECK_EQ_I(s.state, V42EC_DISCONNECTED);
+    CHECK_EQ_I(s.reason, V42LAPM_R_PEER_DISC);
+}
+
 /* a corrupt compressed stream (cannot happen over LAPM unless one end is
  * broken) is a C-ERROR: the link is released, not left delivering rubbish */
 static void test_comp_error(void)
@@ -1420,6 +1462,8 @@ int main(void)
     test_abort_states();
     test_comp_negotiation();
     test_comp_error();
+    test_p1_ceiling();
+    test_cinit_fail();
     test_break();
     test_octet_pump();
     test_coarse_timing();

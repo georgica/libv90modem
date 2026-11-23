@@ -166,6 +166,29 @@ Fixed (error control):
   that sample still calls `getbit` and `putbit` with the host's `user`
   pointer; free the user object only after `v90m_process_*` returns.
 
+Changed (error control, V.42 / LAPM):
+- Our XID command gives the HDLC optional functions in three octets (bit 16
+  set; it gave four): the form real modems send, and some (an Agere
+  SV92PP) drop everything after a mask of another length, our V.42bis and
+  V.44 offer with it. Answers still have the form of the command.
+- A responder that answers a smaller `k` or `N401` than we proposed for our
+  sending direction is taken at its word (it was raised to our value or
+  the default, more frames than it said it could take).
+- Bounded waits (a ruling that departs from V.42, which starts the count
+  again at each recovery): `n400` timer recoveries in a row with I frames
+  unacknowledged and none acknowledged in between release the link with
+  `V90M_EC_R_N400`. A peer answering every poll but never acknowledging
+  kept the link up for ever. A busy peer (RNR) is not counted.
+- V.42bis P1 is proposed at most at `V42COMP_MAX_CODEWORDS` (2048), and a
+  compression direction agreed but not runnable releases the link with
+  `V90M_EC_R_COMPRESSION`. (Through the API, `v42bis_p1` above 2048 is
+  already `V90M_EINVAL`; the endpoint underneath agreed 4096 and then ran
+  uncompressed while the far end compressed.)
+- The HDLC receiver's count of consecutive flags saturates (at 65535): on
+  an idle link with T403 off it overflowed after about 85 hours (signed
+  overflow).
+- `v90m_ec_mem_size()` unchanged (49792 on x86-64).
+
 ## 0.5.0 (2026-11-21)
 
 K56flex, Rockwell's and Lucent's 56k scheme of 1997, on the answering
