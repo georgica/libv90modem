@@ -408,7 +408,7 @@ uint8_t x2d_tick(x2d_t *d, int16_t rxs)
             d->rxmode = RX_KNOWN;
         }
     } else {
-        if (qamrx_tick(&d->rx, x)) rx_symbol(d);
+        if (qamrx_tick(&d->rx, d->rxmode == RX_DATA ? qamrx_blank(&d->rx, x) : x)) rx_symbol(d);
         if (d->state == X2D_ENDED) return 0x7f;
         if (d->rxmode == RX_DATA && d->state == X2D_DATA) {
             /* the client's S in data mode: its rate change (facts "Rate change") */

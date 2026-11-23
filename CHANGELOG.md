@@ -83,6 +83,20 @@ Changed (V.34, both roles):
   with `V90M_END_CLEARDOWN_OURS` (it began a retrain, which ran on to
   whatever end the retrain found).
 
+Changed (the upstream QAM receiver in data mode: V.34 both roles, V.90
+answering, x2 and K56flex):
+- A click on the line in data mode no longer leaves the upstream deaf for
+  the rest of the call. A sample more than 18 dB above the level the
+  receiver's AGC set now enters the equaliser as silence. A full-scale
+  click of 0.75 ms used to move every equaliser tap as it passed, and at
+  the band edges the tracking never took that back: x2 decoded garbage for
+  the rest of the call with no end code; V.90 and V.34 went into a rate
+  renegotiation or a retrain. Now the bits around the click are lost and
+  the upstream is clean again at once. Training is not affected (some of
+  its peaks are that loud). In the recorded calls, the output changes only
+  where the line's hang-up click arrives in data mode, in the last 72 ms of
+  the recording.
+
 Changed (V.22bis, both roles):
 - The wait for the end of a far-end S1 is bounded at 1 s (S1 is 100 ms): a
   steady tone at the receive carrier (1200 or 1205 Hz for the answerer,

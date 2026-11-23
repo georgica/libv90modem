@@ -37,4 +37,7 @@
   x2 client's Tone A in data mode (x0.25, +0 Hz): ended 0.070 s after the tone began, error 13, x2_failed 2
   x2 client's Tone A in data mode (x1.00, -8 Hz): ended 0.070 s after the tone began, error 13, x2_failed 2
   x2 client's Tone A in data mode (x0.25, +8 Hz): ended 0.070 s after the tone began, error 13, x2_failed 2
-answer_x2: 387 checks, 0 failures
+  x2 click at 15.000 s: up 713400 bits 74 bad, 552000 bits 0 bad from 2 s after it; end 0
+  x2 with noise rms 92: data 32000 / 24000 bit/s, upstream SNR 23.5 dB, up 1481460 bits 687372 bad; end 0
+  x2 with noise rms 68: data 32000 / 24000 bit/s, upstream SNR 26.8 dB, up 1481400 bits 0 bad; end 0
+answer_x2: 396 checks, 0 failures

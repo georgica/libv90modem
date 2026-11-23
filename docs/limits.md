@@ -58,6 +58,19 @@ Each item names where it is recorded.
   for 1 s, 12 dB for 250 ms, 6 dB under for 5 s) has thresholds that come
   from the simulator's lines only. (`docs/history/PROGRESS.md`, robust 2c.)
 
+- **Clicks on the line in data mode** (the upstream QAM receiver: V.34,
+  V.90 answering, x2, K56flex). A sample more than 18 dB above the level
+  the receiver's AGC set is blanked, so a click costs the bits around it
+  and nothing more. Tested with a 0.75 ms full-scale click in simulation,
+  and on a recorded x2 call with the click added. Not covered: a click at
+  less than 18 dB over the signal (on a line much louder than the level the
+  AGC measured at the start, a full-scale click may stay under it); an
+  impulse during training (training is not blanked, since some of its own
+  peaks are that loud); and bursts of clicks. There is no watch that ends
+  an x2 or K56flex call whose upstream stays deaf. Measured by mse alone, a
+  line deafened by a click looks the same as a clean low-SNR line (Task 20,
+  `docs/history/audit-0.6.md`).
+
 ## Not checked against a specification
 
 - **The Bell 212A calling handshake** follows V.22 and what this library's
