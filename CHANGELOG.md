@@ -25,6 +25,16 @@ Added (tools):
   exactly, and a replay at a level a step away differs from the recording
   within seconds. Of `-l` and `-r` the last one given holds. Tested in
   `test/fixtures/replay-opts.sh`.
+- `v90m-replay -B` offers Bell 103 and Bell 212A as well, as a host may
+  (nsdiald's sidecar lists them): without it a recording of a caller
+  without V.8 differs from 4 s into the V.22 wait, where the recording
+  modem sent the Bell 212A answer tone. `-M` transmits mark only in data
+  mode, so that "differs in 0" proves the recording modem sent nothing
+  else. `-F` prints the caller's V.42 frames (time, length, address,
+  control, type, FCS-16 or FCS-32 good or bad) from the bits the V.42
+  endpoint receives. Without them the output is unchanged. Tested in
+  `test/fixtures/replay-opts.sh` on a simulated V.34 call with V.42 on
+  both sides (`rec_orig v34 OUT ec`, new).
 
 Changed (answering role; a host that matched on `V90M_END_FAILED` for a
 dropped call should look at `V90M_END_LOST`):

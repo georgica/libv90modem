@@ -10,7 +10,7 @@
 | `check-fixed.sh` (`make check-fixed`) | each library object's undefined symbols against an allowlist (integer helpers, mem*): no soft-float helper, no libm, malloc/free only in `api/v90modem.o` |
 | `split-check.sh [BUILD]` (in `make verify`) | each program of `SPLIT_TESTS` (run case by case on ARM: `prog --cases`, `prog N`): its cases one after another print what the whole program prints |
 | `v90m_fields.c` (`make build/v90m-fields`, not installed) | what the caller of a recorded call sent, field by field: the answering modem run as `v90m-replay` runs it, the library's V.21 and Phase 2 receivers on the caller's signal, the caller's level per state; each sequence's bits rebuilt with the caller's builders and compared (`docs/history/PROGRESS.md`, "realcheck") |
-| `rec_orig.c` (`make build/rec_orig`, host only) | a simulated call of the library's caller recorded at the answerer in the format above, the answerer set up as `v90m-replay` sets it up: `v90m-fields` reads it as it reads a real one |
+| `rec_orig.c` (`make build/rec_orig`, host only) | a simulated call of the library's caller recorded at the answerer in the format above, the answerer set up as `v90m-replay` sets it up: `v90m-fields` reads it as it reads a real one; `rec_orig v34 OUT ec` with V.42 on both sides, for `v90m-replay -F` (`test/fixtures/replay-opts.sh`) |
 | `trace.c`, `trace.h` | the replay's report: the trace hooks of the modem (built with `-DP34D_TRACE`) and the lines printed per phase; v90d's server replay prints the same |
 | `rec_v90.c`, `rec_v34.c` | record a simulated call (`make bench-v90`, `make bench-v34`) |
 | `ber_v90.c` | bit error rate of V.90 over the simulated line |

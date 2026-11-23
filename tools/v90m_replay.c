@@ -2,7 +2,7 @@
  * it made of it, phase by phase. The tool to run on a recording that comes
  * with a bug report (README: "Reporting a bug").
  *
- *   v90m-replay [-a] [-9] [-x] [-k] [-u BPS] [-d BPS] [-l DBM0 | -r RMS] [-e SAMPLES] [-P CODE] [-s SAMPLE] [-b FILE] RECORDING
+ *   v90m-replay [-a] [-9] [-x] [-k] [-B] [-M] [-F] [-u BPS] [-d BPS] [-l DBM0 | -r RMS] [-e SAMPLES] [-P CODE] [-s SAMPLE] [-b FILE] RECORDING
  *
  *   -a          A-law line (mu-law otherwise)
  *   -9          V.92 offered (PCM upstream up to 48000 bit/s unless -u)
@@ -10,6 +10,19 @@
  *   -k          K56flex offered: V.8bis comes first, and what the recording
  *               holds is lined up with our answer tone after it (V.8bis
  *               then hears silence and gives up)
+ *   -B          Bell 103 and Bell 212A offered too (V90M_MOD_BELL103,
+ *               V90M_MOD_BELL212A), as a host may offer them (nsdiald's
+ *               sidecar lists them as bell103, bell212): without them a
+ *               caller without V.8 hears no 2225 Hz from us after 4 s
+ *   -M          in data mode transmit mark only (binary 1, the idle line)
+ *               in place of what the V.42 endpoint sends: "our transmit
+ *               differs in 0" then proves the recording modem sent nothing
+ *               but mark
+ *   -F          print the caller's V.42 frames: the HDLC frames in the bits
+ *               the V.42 endpoint receives, one line each with the time,
+ *               length, address, control and frame type (SABME, UA, I with
+ *               N(S) / N(R), RR, XID, ...), and whether its FCS (16 or
+ *               32 bits) held; a count of them at the end
  *   -u, -d BPS  upstream / downstream rate ceilings (33600 or 48000; 56000)
  *   -l DBM0     transmit level (default -12); a decimal such as -14.4 is
  *               accepted, to 0.01 dB (the library's level is an rms value,
@@ -121,9 +134,61 @@ static int parse_count(const char *s, long *v)
 static v90m_ec_t *ec;
 static int ec_on;
 static long bits_rx, bits_tx;
-static int get(void *u) { (void)u; bits_tx++; return ec_on ? v90m_ec_tx_bit(ec) : 1; }
+static int opt_mark;     /* -M: mark only in data mode */
+static int get(void *u) { (void)u; bits_tx++; return ec_on && !opt_mark ? v90m_ec_tx_bit(ec) : 1; }
 static FILE *rxbits;     /* RXBITS=FILE in the environment: every bit received in data mode */
-static void put(void *u, int b) { (void)u; bits_rx++; if (rxbits) fputc('0' + b, rxbits); if (ec_on) v90m_ec_rx_bit(ec, b); }
+
+/* -F: the caller's V.42 frames, from the bits put() is given */
+static int opt_frames;
+static long now;         /* the sample being replayed, for the frame lines */
+static v42hdlc_rx_t fr_rx;
+static unsigned long fr_good, fr_bad;
+
+/* the frame type from its control field (V.42 8.2, modulo 128) */
+static void frame_type(const uint8_t *f, int len, char *out, size_t n)
+{
+    static const struct { uint8_t c; const char *name; } un[] = {
+        { 0x6F, "SABME" }, { 0x63, "UA" }, { 0x0F, "DM" }, { 0x43, "DISC" },
+        { 0x87, "FRMR" }, { 0xAF, "XID" }, { 0xE3, "TEST" }, { 0x03, "UI" } };
+    static const char *sn[4] = { "RR", "RNR", "REJ", "SREJ" };
+    uint8_t c = f[1];
+    size_t k;
+    if (!(c & 1)) {
+        if (len >= 3) snprintf(out, n, "I N(S) %d N(R) %d%s", c >> 1, f[2] >> 1, f[2] & 1 ? " P" : "");
+        else snprintf(out, n, "I (short)");
+    } else if ((c & 3) == 1) {
+        if (len >= 3) snprintf(out, n, "%s N(R) %d%s", sn[(c >> 2) & 3], f[2] >> 1, f[2] & 1 ? " P/F" : "");
+        else snprintf(out, n, "%s (short)", sn[(c >> 2) & 3]);
+    } else {
+        for (k = 0; k < sizeof un / sizeof un[0]; k++)
+            if ((c & ~0x10) == un[k].c) { snprintf(out, n, "%s%s", un[k].name, c & 0x10 ? " P/F" : ""); return; }
+        snprintf(out, n, "U 0x%02X", c);
+    }
+}
+
+static void frame_bit(int b)
+{
+    char type[48];
+    int len = v42hdlc_rx_bit(&fr_rx, b);
+    if (len > 0) {
+        fr_good++;
+        frame_type(fr_rx.buf, len, type, sizeof type);
+        printf("%7.3f s    V.42 frame in: %d octets, address 0x%02X (C/R %d), control 0x%02X, %s, FCS-%d ok\n", now / 8000.0, len,
+               fr_rx.buf[0], (fr_rx.buf[0] >> 1) & 1, fr_rx.buf[1], type, fr_rx.last_fcs32 ? 32 : 16);
+    } else if (len == V42HDLC_RX_BAD_FCS) {
+        /* the receiver keeps such a frame's octets in buf, not its length */
+        fr_bad++;
+        printf("%7.3f s    V.42 frame in: address 0x%02X, control 0x%02X, FCS bad\n", now / 8000.0, fr_rx.buf[0], fr_rx.buf[1]);
+    }
+}
+
+static void put(void *u, int b)
+{
+    (void)u; bits_rx++;
+    if (rxbits) fputc('0' + b, rxbits);
+    if (opt_frames) frame_bit(b);
+    if (ec_on) v90m_ec_rx_bit(ec, b);
+}
 static int rp_ones(void *u) { (void)u; return 1; }
 static void rp_drop(void *u, int bit) { (void)u; (void)bit; }
 
@@ -166,14 +231,15 @@ static void x2_down(const x2tx_t *t, uint8_t sent)
     }
 }
 
-static int opt_alaw, opt_v92, opt_x2, opt_k56, opt_hund = -1200, opt_up, opt_down = 56000, opt_echo = -1, opt_code;
+static int opt_alaw, opt_v92, opt_x2, opt_k56, opt_bell, opt_hund = -1200, opt_up, opt_down = 56000, opt_echo = -1, opt_code;
 static long opt_rms;    /* -r, 0 = from opt_hund */
 
 static void configure(v90m_cfg *c, int lin)
 {
     v90m_cfg_default(c);
     c->modulations = V90M_MOD_V21 | V90M_MOD_V22 | V90M_MOD_V32BIS | V90M_MOD_V34 | V90M_MOD_V90 | (opt_v92 ? V90M_MOD_V92 : 0)
-                     | (opt_x2 ? V90M_MOD_X2 : 0) | (opt_k56 ? V90M_MOD_K56 : 0);
+                     | (opt_x2 ? V90M_MOD_X2 : 0) | (opt_k56 ? V90M_MOD_K56 : 0)
+                     | (opt_bell ? V90M_MOD_BELL103 | V90M_MOD_BELL212A : 0);
     c->tx_level = opt_rms ? (int)opt_rms : level_rms(opt_hund);
     c->max_down_bps = opt_down;
     c->max_up_bps = opt_up ? opt_up : opt_v92 ? 48000 : 33600;
@@ -203,6 +269,9 @@ int main(int argc, char **argv)
         else if (!strcmp(o, "-9")) opt_v92 = 1;
         else if (!strcmp(o, "-x")) opt_x2 = 1;
         else if (!strcmp(o, "-k")) opt_k56 = 1;
+        else if (!strcmp(o, "-B")) opt_bell = 1;
+        else if (!strcmp(o, "-M")) opt_mark = 1;
+        else if (!strcmp(o, "-F")) opt_frames = 1;
         else if (arg + 1 < argc && !strcmp(o, "-b")) bits_path = argv[++arg];
         else if (arg + 1 < argc && !strcmp(o, "-u")) opt_up = atoi(argv[++arg]);
         else if (arg + 1 < argc && !strcmp(o, "-d")) opt_down = atoi(argv[++arg]);
@@ -216,9 +285,10 @@ int main(int argc, char **argv)
         else break;
     }
     if (bad || arg >= argc || !(f = fopen(argv[arg], "rb"))) {
-        fprintf(stderr, "usage: v90m-replay [-a] [-9] [-x] [-k] [-u BPS] [-d BPS] [-l DBM0 | -r RMS] [-e SAMPLES] [-P CODE] [-s SAMPLE] [-b FILE] RECORDING\n"
+        fprintf(stderr, "usage: v90m-replay [-a] [-9] [-x] [-k] [-B] [-M] [-F] [-u BPS] [-d BPS] [-l DBM0 | -r RMS] [-e SAMPLES] [-P CODE] [-s SAMPLE] [-b FILE] RECORDING\n"
                         "  -l: a number with up to two decimals, e.g. -14.4; -r: the transmit rms, 1..16384;\n"
-                        "  -s: a sample index, 0 or more\n");
+                        "  -s: a sample index, 0 or more; -B: Bell 103 and 212A offered too;\n"
+                        "  -M: mark only in data mode; -F: print the caller's V.42 frames\n");
         return 2;
     }
     len = (long)fread(file, 1, sizeof file, f);
@@ -233,6 +303,8 @@ int main(int argc, char **argv)
     if (getenv("TXBITS")) txbits = fopen(getenv("TXBITS"), "w");
     txown = getenv("TXOWN") != NULL;            /* TXBITS from our own transmit (checks the decoder) */
     v90_scr_init(&tx_dscr);
+    v42hdlc_rx_init(&fr_rx);
+    v42hdlc_rx_set_fcs(&fr_rx, V42HDLC_FCS_EITHER);
 
     configure(&c, r.lin);
     if (!(m = v90m_create(&c, &err))) { fprintf(stderr, "v90m_create: %d\n", err); return 1; }
@@ -262,6 +334,7 @@ int main(int argc, char **argv)
     tr_on = 1;
     for (i = start >= 0 ? start : ans - k0; i < r.n; i++) {
         uint8_t want = 0xFF, tx; v90m_state st;
+        now = i;
         if (i < 0) { uint8_t s = opt_alaw ? 0xD5 : 0xFF; v90m_process_g711(m, &s, &tx, 1); continue; }
         want = rec_sent(&r, i);
         /* the echo cancellers take what was really sent as their reference
@@ -320,6 +393,7 @@ int main(int argc, char **argv)
     for (i = 0; i < 120; i++) if (dsec[i]) printf("  second %ld: %ld samples differ\n", i, dsec[i]);
     printf("%ld samples; after the answer our transmit differs from the recording in %ld (first at %.3f s)\n", r.n, diff, first / 8000.0);
     if (txbits) printf("downstream frames decoded %ld, not levels %ld\n", tx_frames, tx_bad);
+    if (opt_frames) printf("V.42 frames in: %lu with a good FCS, %lu bad\n", fr_good, fr_bad);
     if (rxbits) fclose(rxbits);
     if (txbits) fclose(txbits);
     v90m_ec_destroy(ec);

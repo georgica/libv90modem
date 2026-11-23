@@ -1,6 +1,9 @@
 #!/bin/sh
-# replay-opts.sh REPLAY: v90m-replay's -s (start sample), -l (level, also
-# decimal) and -r (level as an rms) on the public recordings of fixtures.txt. Exit 1 on any failure.
+# replay-opts.sh REPLAY REC_ORIG: v90m-replay's -s (start sample), -l
+# (level, also decimal), -r (level as an rms), -B (Bell offered), -M (mark
+# only in data mode) and -F (the caller's V.42 frames) on the public
+# recordings of fixtures.txt and on a simulated call with V.42 on both
+# sides that REC_ORIG (tools/rec_orig.c) records. Exit 1 on any failure.
 #
 #   -s: the default run starts the modem a little before the answer tone; -s S
 #       starts it at sample S, and the times are the recording's either way.
@@ -18,9 +21,19 @@
 #       is the default and "-r 3148" is "-l -14"; "-r 3000" differs from
 #       "-l -14" only in the counts; of -l and -r the last one given holds;
 #       anything but a whole number 1..16384 exits 2 with the usage message.
-R=$1
-[ $# -eq 1 ] || { echo "usage: test/fixtures/replay-opts.sh REPLAY" >&2; exit 2; }
+#   -B: offering Bell 103 and 212A changes nothing for v34a, a V.8 caller;
+#       v21a (V.21 forced, no V.8, silent until it hears our V.21) then gets
+#       the Bell 212A answer tone 4 s into the V.22 wait, which its
+#       recording does not have.
+#   -M, -F: the simulated V.34 call with V.42 (rec_orig v34 OUT ec) replays
+#       with our transmit as recorded to its end (but the last block's
+#       padding); with -M it differs from the first data-mode bit on and not
+#       before; -F adds only its frame lines, the caller's XID and SABME
+#       among them with a good FCS, and the count.
+R=$1; O=${2:-}
+[ $# -eq 2 ] || { echo "usage: test/fixtures/replay-opts.sh REPLAY REC_ORIG" >&2; exit 2; }
 case $R in /*) ;; *) R=$(pwd)/$R ;; esac
+case $O in /*) ;; *) O=$(pwd)/$O ;; esac
 cd "$(dirname "$0")" || exit 1
 tmp=${TMPDIR:-/tmp}/v90m-replay-opts.$$
 rm -rf "$tmp"; mkdir -p "$tmp" || exit 1
@@ -109,5 +122,38 @@ for v in 0 16385 -5 abc "" 1.5 " 5" 3000x 1e3 99999999999; do
     "$R" -r "$v" v21a.raw > l.out 2> l.err; rc=$?
     if [ $rc -ne 2 ] || ! grep -q '^usage' l.err; then bad "-r '$v': exit $rc, want 2 and the usage message"; fi
 done
+
+# the first sample where our transmit differs from the recording, s
+first() { sed -n 's/.*differs from the recording in [0-9]* (first at \([0-9.]*\) s).*/\1/p' "$1"; }
+
+# -B
+"$R" v34a.raw > b.def; "$R" -B v34a.raw > b.bell || bad "-B v34a"
+cmp -s b.def b.bell || bad "-B changes the trace of v34a (a V.8 caller)"
+"$R" -B v21a.raw > b.bell || bad "-B v21a"
+v22=$(sed -n 's/^ *\([0-9.]*\) s  modem phase V22 .*/\1/p' l.def | head -1)
+fb=$(first b.bell)
+if [ -n "$v22" ] && [ -n "$fb" ] && awk -v b="$fb" -v v="$v22" 'BEGIN { d = b - v - 4; exit !(d > -0.01 && d < 0.01) }'; then
+    echo "  -B: a V.8 caller's trace unchanged; v21a's (no V.8) differs from the 2225 Hz tone on, 4 s into V.22 ($fb s)"
+else bad "-B on v21a: first difference at $fb s, V.22 from $v22 s (want 4 s later)"; fi
+
+# -M and -F on a simulated call with V.42
+"$O" v34 ec.raw ec > /dev/null || bad "rec_orig v34 ec"
+"$R" ec.raw > e.def || bad "ec default"
+"$R" -M ec.raw > e.mark || bad "-M"
+"$R" -F ec.raw > e.fr || bad "-F"
+conn=$(sed -n 's/^ *\([0-9.]*\) s    V.42 state 0,.*/\1/p' e.def | head -1)
+fd=$(first e.def); fm=$(first e.mark); n=$(sed -n 's/^recording: .*, \([0-9]*\) samples$/\1/p' e.def)
+if [ -z "$conn" ] || [ -z "$fd" ] || [ -z "$fm" ]; then bad "-M: no data mode or no first difference in the traces"
+elif awk -v d="$fd" -v n="$n" 'BEGIN { exit !(d * 8000 >= n - 80) }' && awk -v m="$fm" -v c="$conn" 'BEGIN { exit !(m >= c && m < c + 0.1) }'; then
+    echo "  -M: our transmit as recorded to the last block; mark only differs from $fm s, data mode at $conn s"
+else bad "-M: first differences $fd (default) and $fm (-M) s, data mode at $conn s"; fi
+grep -v -e '^ *[0-9.]* s    V.42 frame in: ' -e '^V.42 frames in: ' e.fr | cmp -s - e.def || bad "-F changes more than its own lines"
+grep -q '^ *[0-9.]* s    V.42 frame in: [0-9]* octets, address 0x03 (C/R 1), control 0xAF, XID, FCS-16 ok$' e.fr || bad "-F: no XID"
+grep -q '^ *[0-9.]* s    V.42 frame in: 2 octets, address 0x03 (C/R 1), control 0x7F, SABME P/F, FCS-16 ok$' e.fr || bad "-F: no SABME"
+grep -q '^V.42 frames in: [1-9][0-9]* with a good FCS, 0 bad$' e.fr || bad "-F: no count"
+echo "  -F: $(grep -c 'V.42 frame in:' e.fr) frames of the caller, nothing else changed"
+"$R" -Z v21a.raw > l.out 2> l.err; rc=$?
+if [ $rc -ne 2 ] || ! grep -q -- '-B\] \[-M\] \[-F\]' l.err; then bad "the usage message does not list -B, -M, -F"; fi
+
 [ $fail -eq 0 ] && echo "replay options: pass"
 [ $fail -eq 0 ] || { echo "REPLAY OPTIONS FAILED"; exit 1; }

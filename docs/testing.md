@@ -199,7 +199,7 @@ recorded call into the answering modem and reports what it made of it,
 phase by phase:
 
 ```
-v90m-replay [-a] [-9] [-x] [-k] [-u BPS] [-d BPS] [-l DBM0 | -r RMS] [-e SAMPLES] [-P CODE] [-s SAMPLE] [-b FILE] RECORDING
+v90m-replay [-a] [-9] [-x] [-k] [-B] [-M] [-F] [-u BPS] [-d BPS] [-l DBM0 | -r RMS] [-e SAMPLES] [-P CODE] [-s SAMPLE] [-b FILE] RECORDING
 ```
 
 | | |
@@ -208,6 +208,9 @@ v90m-replay [-a] [-9] [-x] [-k] [-u BPS] [-d BPS] [-l DBM0 | -r RMS] [-e SAMPLES
 | `-9` | V.92 offered (PCM upstream up to 48000 bit/s unless `-u`) |
 | `-x` | x2 offered (`V90M_MOD_X2`) |
 | `-k` | K56flex offered (`V90M_MOD_K56`): V.8bis first; the recording is lined up with our answer tone after it |
+| `-B` | Bell 103 and Bell 212A offered too (`V90M_MOD_BELL103`, `V90M_MOD_BELL212A`), as a host may offer them (nsdiald's sidecar: `bell103`, `bell212`); without them a caller without V.8 hears no 2225 Hz from us 4 s into the V.22 wait |
+| `-M` | in data mode transmit mark only (binary 1) in place of what the V.42 endpoint sends: "differs in 0" then proves the recording modem sent nothing but mark |
+| `-F` | print the caller's V.42 frames, found in the bits the V.42 endpoint receives: a line each with the time, length, address, control, type (`SABME`, `UA`, `I N(S) N(R)`, `RR`, `XID`, ...) and whether its FCS (16 or 32 bits) held; their count at the end |
 | `-u`, `-d BPS` | upstream / downstream rate ceilings |
 | `-l DBM0` | transmit level (default -12), to 0.01 dB |
 | `-r RMS` | transmit level as the rms itself, 1..16384 (`v90m_cfg.tx_level`): the level a recording's sidecar gives (nsdiald's `tx_level_rms`), which no `-l` may reach exactly; of `-l` and `-r` the last one given holds |

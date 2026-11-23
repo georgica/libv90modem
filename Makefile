@@ -360,9 +360,9 @@ verify:
 verify-phase:
 	@$(if $(RECS),RECS=$(RECS)) tools/verify-phase.sh
 # recordings of real calls (test/fixtures/fixtures.txt) through the replay tool
-test-fixtures: $(BUILD)/v90m-replay
+test-fixtures: $(BUILD)/v90m-replay $(BUILD)/rec_orig
 	@echo "== real-modem recordings =="; test/fixtures/check.sh $(abspath $(BUILD))/v90m-replay
-	@echo "== v90m-replay -s, -l and -r =="; test/fixtures/replay-opts.sh $(abspath $(BUILD))/v90m-replay
+	@echo "== v90m-replay -s, -l, -r, -B, -M and -F =="; test/fixtures/replay-opts.sh $(abspath $(BUILD))/v90m-replay $(abspath $(BUILD))/rec_orig
 # every ARM program of every directory in one pool (logs in $(BUILD)/arm_log);
 # each case of a SPLIT_TESTS program a run of its own (arm_test_p34:N);
 # ARM_SKIP=FILE leaves out the programs it lists (tools/ports-slow.txt)
