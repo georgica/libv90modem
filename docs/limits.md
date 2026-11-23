@@ -58,6 +58,15 @@ Each item names where it is recorded.
   for 1 s, 12 dB for 250 ms, 6 dB under for 5 s) has thresholds that come
   from the simulator's lines only. (`docs/history/PROGRESS.md`, robust 2c.)
 
+- **The V.92 answering side's own rate drop in data mode seldom comes, and
+  may not hold.** It needs the upstream decoder to flag 4 or more frames
+  in each of two seconds, and the modulus decoder flags few of the frames
+  noise spoils (11 to 33 in 10 s with a third of the bits wrong, on the
+  simulator); when a drop comes, the new design still takes the noise
+  floor measured at the start-up, so on a line that stays noisy the lower
+  rate can fail B1u and the call retrains without PCM upstream. A rate
+  renegotiation the caller starts is not affected. (`docs/history/audit-0.6.md`, T21.10; deferred.)
+
 ## Not checked against a specification
 
 - **The Bell 212A calling handshake** follows V.22 and what this library's

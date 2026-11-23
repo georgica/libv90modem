@@ -157,7 +157,8 @@ us), plus direct drivers of `v92_dsn_*`, `v92_trn_*` and `v92_p6_tick`.
 Counts: Bugs 3 Important (T21.1, T21.2, T21.5), 4 Minor; Robustness 4
 Important (T21.3, T21.4, T21.6, T21.7), 2 Minor (R-7 lists what holds);
 Refactor 4 Minor; Performance 2 Minor; plus the BinModem leads (two Minor
-items, the class offset and the epsilon sign) and the test gaps.
+items, the class offset and the epsilon sign) and the test gaps. Found
+later, in Task 21: T21.8 (fixed) and T21.10 (deferred).
 
 ### Bugs / correctness
 
@@ -445,6 +446,31 @@ samples of MD). The Viterbi metrics are bounded as the header says
 training receiver (`v92_trn_tick`) took a quiet TRN1u turning loud after
 the cursor was chosen, and full-scale noise, without a UBSan report
 (scratch `trn_jump`).
+
+**T21.10 The quality-driven rate drop of data mode barely fires, and its
+redesign does not see the new noise** (Important by effect, high;
+deferred: recorded, no fix in 0.6). Found with T21.5's test
+(`test_v92call` 36).
+- Where: `v92/v92_p34d.c`, `V92D_DATA` (a drop when the modulus decoder
+  flags 4 or more frames, `dec.bad_frames`, in each of two 8192-sample
+  windows); `design_start` (`c.noise = p->noise`, `c.q_quiet`: TRN1d's
+  figures from the start-up).
+- What happens: the modulus decoder flags few of the frames that noise
+  spoils: with the noise raised in data mode (3 -> 52..120 linear RMS on
+  the short line at 40000 bit/s) and a third of the upstream bits wrong,
+  11 to 33 frames were flagged in 10 s; most levels gave no drop at all,
+  and the first drop came 8 s after the noise rose. When a drop does come,
+  its design takes the start-up's noise floor (only the training residual
+  of TRN2u is new): left at the raised noise, the one-step-lower design
+  (36000) failed B1u (`V92D_ERR_B1`), and the call retrained without PCM
+  upstream. The test lowers the noise once each drop has begun for that
+  reason.
+- Fix shape (later): a quality measure that sees wrong decisions (the
+  decoder's own error estimate, `v92_dec_quality`, against the design's
+  noise, as p34d's `rate_down` uses the receiver's MSE), and a noise floor
+  for the redesign taken from data mode (the decoder's error) rather than
+  TRN1d. No recorded call has reached the path (it would show in the
+  replay proof).
 
 ### Refactor
 
