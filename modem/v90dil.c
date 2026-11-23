@@ -3,6 +3,7 @@
 #include "v90dil.h"
 #include "v90_pcm.h"
 #include "v90_enc.h"
+#include "fixmath.h"
 
 #define YF 4                        /* V90ARX_YF */
 #define ACC_MAX 1024                /* symbols summed per interval and Ucode, at most */
@@ -446,18 +447,6 @@ static int feasible(dsn_t *g, int K, int z_q4)
     return (uint64_t)g->power <= g->lim2;
 }
 
-static int32_t isqrt32(uint32_t v)
-{
-    uint32_t r = 0, b = 1u << 30;
-    while (b > v) b >>= 2;
-    while (b) {
-        if (v >= r + b) { v -= r + b; r = (r >> 1) + b; }
-        else r >>= 1;
-        b >>= 2;
-    }
-    return (int32_t)r;
-}
-
 enum { CP_K = 1, CP_Z, CP_FIN, CP_DONE };
 
 void v90dil_design_begin(v90dil_cpjob_t *j, const v90dil_res_t *res, const v90dil_req_t *req, v90_cp_t *cp, v90dil_choice_t *ch)
@@ -474,7 +463,7 @@ void v90dil_design_begin(v90dil_cpjob_t *j, const v90dil_res_t *res, const v90di
     /* Table 15 less 0.1 dB (a factor of 0.977 in power) */
     g->lim2 = (uint64_t)(lim * lim) * 977 / 1000;
     for (s = 0; s < 6; s++) {
-        g->sig[s] = isqrt32(req->sigma2_q8[s]);     /* units Q4 = Q YF */
+        g->sig[s] = (int32_t)isqrt_u64(req->sigma2_q8[s]);     /* units Q4 = Q YF */
         if (g->sig[s] < 16) g->sig[s] = 16;         /* not below one unit */
     }
     cp->is_cp = (uint8_t)(req->is_cp != 0);

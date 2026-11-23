@@ -14,6 +14,7 @@
 #include "v22bis.h"
 #include "v22_tabs.h"
 #include "sintab.h"
+#include "fixmath.h"
 
 #define U           V22_UNIT
 #define TARGET_PW   (10 * U * U)            /* mean |point|^2, both rates */
@@ -27,17 +28,6 @@
 
 #define CD_ON   (158 * 158)
 #define CD_OFF  (89 * 89)
-
-static uint32_t isqrt64(uint64_t v)
-{
-    uint64_t r = 0, b = (uint64_t)1 << 62;
-    while (b > v) b >>= 2;
-    while (b) {
-        if (v >= r + b) { v -= r + b; r = (r >> 1) + b; } else r >>= 1;
-        b >>= 2;
-    }
-    return (uint32_t)r;
-}
 
 static void q_reset(v22rx_t *r)
 {
@@ -113,7 +103,7 @@ int v22rx_s1_snr(const v22rx_t *r)
     int64_t cr = r->q_tot[0], ci = r->q_tot[1], e = r->q_tot[2], mag, noise, ratio;
     if (r->q_chunks < 2) return -1;
     while (e >= ((int64_t)1 << 30)) { e >>= 1; cr >>= 1; ci >>= 1; }
-    mag = (int64_t)isqrt64((uint64_t)(cr * cr + ci * ci));
+    mag = (int64_t)isqrt_u64((uint64_t)(cr * cr + ci * ci));
     noise = e - mag;
     if (noise < 1) noise = 1;
     ratio = mag / noise;
@@ -123,7 +113,7 @@ int v22rx_s1_snr(const v22rx_t *r)
 int v22rx_level(const v22rx_t *r)
 {
     if (!r->carrier) return 0;
-    return (int)isqrt64((uint64_t)r->pw_raw / 2);    /* envelope^2 / 2 = RMS^2 */
+    return (int)isqrt_u64((uint64_t)r->pw_raw / 2);    /* envelope^2 / 2 = RMS^2 */
 }
 
 /* deliver queued bits, oldest first, until `keep` are left */
@@ -358,7 +348,7 @@ static void half_symbol(v22rx_t *r, int32_t yr, int32_t yi)
         if (++r->agc_count == 16) {
             uint64_t avg = (uint64_t)(r->agc_acc >> 4);
             if (avg < 1) avg = 1;
-            r->gain = (int32_t)isqrt64((((uint64_t)TARGET_PW) << 24) / avg);
+            r->gain = (int32_t)isqrt_u64((((uint64_t)TARGET_PW) << 24) / avg);
         }
         r->half ^= 1;
         return;

@@ -7,6 +7,7 @@
 #include "v34_tabs.h"           /* the fractional delay bank, shared with qamrx */
 #include "v90_pcm.h"
 #include "sintab.h"           /* the band edge's image (edge_image) */
+#include "fixmath.h"
 
 #define ONE32    ((int64_t)1 << 32)
 #define AGC_RMS  4096           /* Sd at the equaliser input */
@@ -29,19 +30,6 @@
 static int64_t clamp64(int64_t v, int64_t lo, int64_t hi) { return v < lo ? lo : v > hi ? hi : v; }
 
 static int32_t asr64(int64_t v, int s) { return (int32_t)((v + ((int64_t)1 << (s - 1))) >> s); }
-
-static int32_t isqrt64(int64_t v)
-{
-    int64_t r = 0, b = (int64_t)1 << 62;
-    if (v <= 0) return 0;
-    while (b > v) b >>= 2;
-    while (b) {
-        if (v >= r + b) { v -= r + b; r = (r >> 1) + b; }
-        else r >>= 1;
-        b >>= 2;
-    }
-    return (int32_t)r;
-}
 
 static int16_t sat16(int64_t v) { return (int16_t)(v > 32767 ? 32767 : v < -32767 ? -32767 : v); }
 
@@ -460,7 +448,7 @@ static int dsn_step(v90arx_t *r)
         for (j = q->col; j < V90ARX_NF && budget > 0; j++) {
             int64_t d = (int64_t)G[TRI(j, j)] * ((int64_t)1 << 28) - dot32(&G[TRI(j, 0)], &G[TRI(j, 0)], j), g;
             if (d <= 0) { q->step = DSN_IDLE; return -1; }
-            g = isqrt64(d);                          /* d < 2^57: g < 2^29 */
+            g = isqrt_s64(d);                          /* d < 2^57: g < 2^29 */
             G[TRI(j, j)] = (int32_t)g;
             q->rc[j] = divrcp_rcp((uint64_t)g);
             for (i = j + 1; i < V90ARX_NF; i++) {
@@ -794,7 +782,7 @@ static void process(v90arx_t *r, int16_t q)
                 r->sd_br = r->sd_bi = 0; r->sd_i = 0;
             }
         } else if (st == V92_P6_REV && r->sd_cnt >= 48) {
-            int32_t rms = isqrt64(r->sd_pow / r->sd_cnt);
+            int32_t rms = isqrt_s64(r->sd_pow / r->sd_cnt);
             int64_t g;
             r->level = rms;
             if (rms < 1) rms = 1;

@@ -3,6 +3,7 @@
 #include "clock.h"
 #include "sintab.h"
 #include "v34_tabs.h"
+#include "fixmath.h"
 
 #define ONE24 (1 << 24)
 
@@ -26,23 +27,10 @@ void qamrx_init(qamrx_t *r, int sym_rate, int car_num, int car_den)
     r->zr = r->zi = 0; r->nsym = 0; r->mse = 65536; r->mse_acc = (int64_t)65536 << 8;
 }
 
-static int32_t isqrt64(int64_t v)
-{
-    int64_t r = 0, b = (int64_t)1 << 62;
-    if (v <= 0) return 0;
-    while (b > v) b >>= 2;
-    while (b) {
-        if (v >= r + b) { v -= r + b; r = (r >> 1) + b; }
-        else r >>= 1;
-        b >>= 2;
-    }
-    return (int32_t)r;
-}
-
 void qamrx_sync(qamrx_t *r, int32_t delay_q8)
 {
     int i;
-    int32_t rms = isqrt64(r->pw);
+    int32_t rms = isqrt_s64(r->pw);
     int64_t t;
     /* AGC: bring the input to an RMS of 2048 */
     if (rms < 8) rms = 8;

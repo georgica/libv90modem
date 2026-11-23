@@ -3,18 +3,7 @@
 #include "v92_design.h"
 #include "v92_mod.h"
 #include "v90_pcm.h"
-
-static uint32_t isqrt64(uint64_t v)
-{
-    uint64_t r = 0, b = (uint64_t)1 << 62;
-    while (b > v) b >>= 2;
-    while (b) {
-        if (v >= r + b) { v -= r + b; r = (r >> 1) + b; }
-        else r >>= 1;
-        b >>= 2;
-    }
-    return (uint32_t)r;
-}
+#include "fixmath.h"
 
 uint32_t v92_dsn_qvar(int alaw, int32_t a)
 {
@@ -310,7 +299,7 @@ int v92_dsn_step(v92_dsn_t *d)
             wn2 += z * z;
         }
         /* mean square of G v = Px sum (G z2)^2 = 1 at Px = 2^66 / (g4^2 sum z2^2) */
-        d->xrms_max = (uint32_t)(((uint64_t)1 << 33) / ((uint64_t)g4 * isqrt64((uint64_t)wn2)));
+        d->xrms_max = (uint32_t)(((uint64_t)1 << 33) / ((uint64_t)g4 * isqrt_u64((uint64_t)wn2)));
         d->dly = D - V92_CH_LEAD;
         d->st = ST_POINTS;
         return 0;
@@ -349,7 +338,7 @@ int v92_dsn_step(v92_dsn_t *d)
             for (pass = 0; pass < 2; pass++) {
                 uint64_t q = c->rx_linear ? 0 : v92_dsn_qvar(c->alaw, a + dd + (int32_t)(c->echo_rms + c->echo_rms / 2));
                 uint64_t var = n0 + (q * d->rho_q8 >> 8) + isi;
-                dd = (int32_t)(isqrt64(var * kap * kap) >> 4) + 1;
+                dd = (int32_t)(isqrt_u64(var * kap * kap) >> 4) + 1;
             }
             a += n == 0 ? (dd + 1) / 2 : dd;
             if (a > 32000) break;
@@ -442,7 +431,7 @@ int v92_dsn_step(v92_dsn_t *d)
         if (d->i >= V92_DSN_VERIFY || d->iacc > ((int64_t)1 << 40)) {
             int ok = d->i >= V92_DSN_VERIFY;
             d->power_q14 = (uint32_t)(d->pacc / d->i);
-            d->xpk_q4 = (uint32_t)(isqrt64((uint64_t)ratio(d->iacc, d->xacc / d->i + 1, 16)) >> 4);
+            d->xpk_q4 = (uint32_t)(isqrt_u64((uint64_t)ratio(d->iacc, d->xacc / d->i + 1, 16)) >> 4);
             if (ok && d->imax > (int64_t)20 * d->isi_var + 16 && d->pass < 3) {
                 /* The interference is not evenly spread in time: a rare
                  * large x(n) under one of the larger taps of g stands out.

@@ -154,6 +154,9 @@ void dpskrx_expect(dpskrx_t *r, int payload_bits)
     for (h = 0; h < 3; h++) for (i = 0; i < 128; i++) r->hunt[h].hist[i] = 0;
 }
 
+/* Not the shared isqrt: it starts at 2^40, so for v >= 2^42 it returns a
+ * value that is not the root, and pw / 2 is only bounded by 2^62 in
+ * principle; the shared one would give the true root there. */
 static int isqrt64(int64_t v)
 {
     int64_t r = 0, b = (int64_t)1 << 40;

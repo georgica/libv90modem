@@ -104,14 +104,3 @@ unsigned v32_word_rates(uint16_t w)
     if (w & (1u << 3))  r |= V32_R14400;
     return r;
 }
-
-uint32_t v32_isqrt64(uint64_t v)
-{
-    uint64_t r = 0, b = (uint64_t)1 << 62;
-    while (b > v) b >>= 2;
-    while (b) {
-        if (v >= r + b) { v -= r + b; r = (r >> 1) + b; } else r >>= 1;
-        b >>= 2;
-    }
-    return (uint32_t)r;
-}

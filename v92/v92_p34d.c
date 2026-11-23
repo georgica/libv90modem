@@ -3,6 +3,7 @@
 #include "v92_p34d.h"
 #include "clock.h"
 #include "v90_pcm.h"
+#include "fixmath.h"
 
 #define MS(ms) ((int32_t)(ms) * 8)
 
@@ -70,18 +71,6 @@ static void retrain(v92d_t *p, int ours)
     p->retrain_ours = ours; p->up_floor = 0;
     (void)v90tx_select(&p->tx, V90TX_SILENCE);
     enter(p, V92D_RETRAIN);
-}
-
-static uint32_t isqrt64(uint64_t v)
-{
-    uint64_t r = 0, b = (uint64_t)1 << 62;
-    while (b > v) b >>= 2;
-    while (b) {
-        if (v >= r + b) { v -= r + b; r = (r >> 1) + b; }
-        else r >>= 1;
-        b >>= 2;
-    }
-    return (uint32_t)r;
 }
 
 int v92d_init(v92d_t *p, const v92d_cfg *cfg)
@@ -279,7 +268,7 @@ int32_t v92d_up_scale(const v92_map_t *m, const v92_trn_t *t, int32_t k0, uint32
     ex = (uint64_t)eu2 * V92D_UP_EST;
     while (ex >= ((uint64_t)1 << 34) || pw >= ((uint64_t)1 << 34)) { ex >>= 1; pw >>= 1; }
     if (pw == 0 || ex == 0) return UP_UNITY;
-    c = (int32_t)isqrt64((ex << 28) / pw);                /* 1 / gain from the power, Q14 */
+    c = (int32_t)isqrt_u64((ex << 28) / pw);                /* 1 / gain from the power, Q14 */
     /* the window: 3/4 .. 4/3 of it, and a gain of 4 .. 1/4 */
     if (c > 65535 + 65535 / 3 || c < 4096 - 4096 / 4) return UP_UNITY;
     lo = c - c / 4; hi = c + c / 3;
@@ -561,7 +550,7 @@ static void design_start(v92d_t *p)
     /* the echo in data mode: what the canceller's taps make of the assumed
      * downstream power, if that is more than TRN1d gave */
     for (j = 0; j < EC_NTAP; j++) { int64_t v = p->ec.h[j] >> 12; ge += v * v; }
-    pred = (uint32_t)(((uint64_t)isqrt64((uint64_t)ge) * (uint32_t)(p->cfg.down_rms > 0 ? p->cfg.down_rms : DOWN_RMS)) >> 12);
+    pred = (uint32_t)(((uint64_t)isqrt_u64((uint64_t)ge) * (uint32_t)(p->cfg.down_rms > 0 ? p->cfg.down_rms : DOWN_RMS)) >> 12);
     c.echo_rms = pred > p->echo_rms ? pred : p->echo_rms;
     c.res = p->trn.res; c.q_trn = p->q_trn;
     c.ltot = (uint16_t)p->cfg.ltot; c.lmax = (uint16_t)p->cfg.lmax;
@@ -880,7 +869,7 @@ uint8_t v92d_tick(v92d_t *p, int16_t rxs)
                 p->ec_mu = -1;
                 p->noise = (uint32_t)(p->nz_acc / p->nz_n);
                 p->q_quiet = (uint32_t)(p->nq_acc / p->nz_n);
-                p->echo_rms = isqrt64((uint64_t)(p->ne_acc / p->nz_n));
+                p->echo_rms = isqrt_u64((uint64_t)(p->ne_acc / p->nz_n));
                 (void)v90tx_select(&p->tx, V90TX_JD);                   /* 9.5.1.1.4 */
                 v92_p6_init(&p->p6); p->revs = 0;
                 enter(p, V92D_JD);
