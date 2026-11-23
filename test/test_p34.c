@@ -128,7 +128,7 @@ static void run(const scen_t *s, out_t *o)
                                : s->gain * 2.0 * (sin(6.283185307179586 * 2400.0 * i / 8000.0) + 0.5 * sin(6.283185307179586 * 1800.0 * i / 8000.0));
         }
         if (o->d_data_at < 0 && d.state == P34_DATA) o->d_data_at = i;
-        if (o->d_data_at >= 0 && i > o->d_data_at + 8000 && d.rx.mse > o->worst_mse) o->worst_mse = d.rx.mse;
+        if (o->d_data_at >= 0 && i > o->d_data_at + 8000 && d.up.rx.mse > o->worst_mse) o->worst_mse = d.up.rx.mse;
         {
             /* milliseconds of data mode, and the first sample of each */
             int ms = o->d_data_at < 0 ? -1 : (i - o->d_data_at) / 8, ev = ms >= 0 && ((i - o->d_data_at) % 8) == 0;
@@ -140,8 +140,8 @@ static void run(const scen_t *s, out_t *o)
             if (ev && first && ms == first - 100) o->up_bad_before = dio.sink.bad;
             /* the two data streams restart with the modems' data pumps */
             if (a.data_starts != a_starts) { a_starts = a.data_starts; aio.src.s = 23; }
-            if (d.rx_ready && !d_rx) { dio.sink.s = 23; sink0_n = dio.sink.n; sink0_bad = dio.sink.bad; }
-            d_rx = d.rx_ready;
+            if (d.up.rx_ready && !d_rx) { dio.sink.s = 23; sink0_n = dio.sink.n; sink0_bad = dio.sink.bad; }
+            d_rx = d.up.rx_ready;
             if (first && ms > first && o->d_data2_at == 0 && d_was != P34_DATA && d.state == P34_DATA) o->d_data2_at = i;
             d_was = d.state;
         }
@@ -172,7 +172,7 @@ static void report(const char *name, const scen_t *s, const out_t *o)
         printf("    peer: up state %d, down state %d; sdbar %d jd %d jd' %d ri %d ribar %d mp %d mp' %d ed %d\n",
                a->us, a->ds, a->sdbar_seen, a->jd_ok, a->jdp_seen, a->ri_seen, a->ribar_seen, a->mp_seen, a->mpack_seen, a->ed_seen);
         printf("    digital: rxmode %d, s_events %d, cpt %d cp %d cp' %d e %d, tx signal %d, mse %d\n",
-               d->rxmode, d->s_events, d->got_cpt, d->got_cp, d->got_cp_ack, d->got_e, (int)v90tx_signal(&d->tx), (int)d->rx.mse);
+               d->rxmode, d->s_events, d->got_cpt, d->got_cp, d->got_cp_ack, d->got_e, (int)v90tx_signal(&d->tx), (int)d->up.rx.mse);
     }
     (void)s;
 }

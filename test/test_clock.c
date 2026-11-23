@@ -76,7 +76,7 @@ static void pcm_call(int v92)
     e = l->k + MS(300); while (l->k < e) vl_tick(l);
     jump_answer(&l->ans); jump_orig(&l->org);
     if (v92) jump_v92d(&l->ans.u.v92);
-    else { l->ans.p34.now = (uint32_t)NEAR; l->ans.p34.t = (uint32_t)NEAR; jump_qamrx(&l->ans.p34.rx); }
+    else { l->ans.p34.now = (uint32_t)NEAR; l->ans.p34.t = (uint32_t)NEAR; jump_qamrx(&l->ans.p34.up.rx); }
     d0 = l->down.got; u0 = l->up.got; f0d = l->down.fails; f0u = l->up.fails;
     e = l->k + MS(RUN_S * 1000); while (l->k < e) vl_tick(l);
     printf("  %s: %d bit/s down, %d up; after the clocks' wrap %" PRId64 " / %" PRId64 " bits, %" PRId64 " / %" PRId64 " wrong\n",
@@ -94,8 +94,8 @@ static void pcm_call(int v92)
         CHECK(l->ans.p34.now > 0x80000000u);
         /* the symbol count went on past 2^31 - 1 from 0: its low bits keep
          * cycling (the centroid nudge every 1024 symbols, qamrx.c) */
-        printf("  V.90: the answerer's symbol count %d\n", (int)l->ans.p34.rx.nsym);
-        CHECK(l->ans.p34.rx.nsym >= 0 && l->ans.p34.rx.nsym < RUN_S * 3429 - 8000);
+        printf("  V.90: the answerer's symbol count %d\n", (int)l->ans.p34.up.rx.nsym);
+        CHECK(l->ans.p34.up.rx.nsym >= 0 && l->ans.p34.up.rx.nsym < RUN_S * 3429 - 8000);
     }
     /* a rate renegotiation of ours on the symbol numbers brought back (V.90:
      * Rd, TRN2d on m_b1d's frames; V.92 also the digital modem's Ru and its
@@ -248,7 +248,7 @@ static void v34_call(void)
     CHECK(answer_moving(&A)); CHECK_EQ_I(A.modulation, ANS_MOD_V34);
     for (n = 0; n < 8000L; n++) (void)line34_step(&L, v34_a, &A, v34_c, &C);
     jump_answer(&A); A.v34.dx.now = (uint32_t)NEAR; A.v34.dx.t = (uint32_t)NEAR;
-    jump_qamrx(&A.v34.dx.rx); A.v34.dx.mod.nsym = (int32_t)NEAR;
+    jump_qamrx(&A.v34.dx.up.rx); A.v34.dx.mod.nsym = (int32_t)NEAR;
     dn0 = DN.n; up0 = UP.n; dbad0 = DN.bad; ubad0 = UP.bad;
     for (n = 0; n < 8000L * RUN_S; n++) (void)line34_step(&L, v34_a, &A, v34_c, &C);
     printf("  V.34: %d bit/s down, %d up; after the clocks' wrap %ld / %ld bits, %ld / %ld wrong\n",

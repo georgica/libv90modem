@@ -291,7 +291,7 @@ int main(int argc, char **argv)
             if (ec_on && a->phase == ANS_V90 && i % 16000 == 0) {
                 v90m_ec_status es; v90m_ec_get_status(ec, &es);
                 printf("%7.3f s      data: receiver mse %.1f dB, LAPM rx bad %lu, rx I %lu, tx I %lu, p34 state %d\n", i / 8000.0,
-                       10 * log10(a->p34.rx.mse / 65536.0 + 1e-9), es.rx_frames_bad, es.rx_i, es.tx_i, (int)a->p34.state);
+                       10 * log10(a->p34.up.rx.mse / 65536.0 + 1e-9), es.rx_frames_bad, es.rx_i, es.tx_i, (int)a->p34.state);
             }
         }
         {

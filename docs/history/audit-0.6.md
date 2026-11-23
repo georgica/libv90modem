@@ -905,3 +905,28 @@ windows, so the table does not show it):
 (armv5 uClibc, under qemu) — unchanged from v0.5.0 (README). V.42:
 `v90m_ec_mem_size()` 49792 (x86-64), 49568 (ARMv5); `v90m_async_mem_size()`
 1064 on both.
+
+## Task 24: one V.34 upstream receiver (v34up) for p34d and v34dx
+
+`modem/v34up.{c,h}` (ans R3); p34d and v34dx run on it, byte-identical
+(`make verify`: golden 128 identical, test_v34up's own new; replay 636
+identical; bench hashes identical). Cost (`make cost-x2 cost-v34
+ARM_CC=$A5 COST_TICKS=0`, armv5 uClibc), M ARM instructions per second
+of line in data mode, at 49ef8e7 (before) and with v34up (after):
+
+| | before | after | change |
+|---|---|---|---|
+| V.90 answering (`cost-x2`'s, second 15 to 16) | 39.33 | 39.52 | +0.18 |
+| V.90 answering (`cost-v34`'s, second 10 to 11) | 39.33 | 39.52 | +0.18 |
+| V.34 answering (second 10 to 11) | 40.58 | 40.59 | +0.01 |
+| x2 answering (second 15 to 16; x2d not yet on v34up) | 82.70 | 82.69 | -0.00 |
+
+Both within +0.3 M of before (and of the Phase 1 gate, 39.40 / 40.71),
+so the per-symbol functions stay out of line in v34up.c. V.90's +0.18 M
+is p34d's data path now going through v34_nl_decode / v34_nl_encode
+(identities at cfg.nonlinear 0, test_v34up) and two more calls a symbol;
+Phase 3 may inline v34up_data or skip the identities. Bench host hash =
+qemu hash, unchanged from before.
+
+Memory: p34d_t 8 octets smaller (padding; 25416 x86-64, 25344 ARMv5),
+v34dx_t unchanged (23040 / 22976), `v90m_mem_size()` unchanged.

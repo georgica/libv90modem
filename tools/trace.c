@@ -76,8 +76,8 @@ void p34d_trace(const p34d_t *p, int16_t rxs, int16_t x)
     if (tr_n == 1600) {
         printf("      p34 %6.2f s state %2d  line %7.0f rms -> after the canceller %7.0f rms (%.1f dB), delay %d, mu %d, sres_in_s %d\n", tr_t / 8000.0, (int)p->state,
                sqrt(tr_in / tr_n), sqrt(tr_out / tr_n), 10 * log10((tr_out + 1) / (tr_in + 1)), p->ecd.delay, p->ec_mu, sres_in_s(&p->sres));
-        printf("          receiver: mode %d, mse %.1f dB, gain %d, symbols %d, timing %d/%d, freq %d, got_cpt %d, tx signal %d\n", (int)p->rxmode, 10 * log10(p->rx.mse / 65536.0 + 1e-9),
-               (int)p->rx.gain, (int)p->rx.nsym, p->rx.timing_on, p->rx.timing_fast, (int)p->rx.freq, p->got_cpt, (int)v90tx_signal(&p->tx));
+        printf("          receiver: mode %d, mse %.1f dB, gain %d, symbols %d, timing %d/%d, freq %d, got_cpt %d, tx signal %d\n", (int)p->rxmode, 10 * log10(p->up.rx.mse / 65536.0 + 1e-9),
+               (int)p->up.rx.gain, (int)p->up.rx.nsym, p->up.rx.timing_on, p->up.rx.timing_fast, (int)p->up.rx.freq, p->got_cpt, (int)v90tx_signal(&p->tx));
         tr_in = tr_out = 0; tr_n = 0;
     }
 }

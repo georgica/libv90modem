@@ -526,7 +526,7 @@ int orig_snr_db10(const orig_t *o)
     if (o->phase == ORIG_V34) {
         /* as answer_snr_db10: |e|^2 / |d|^2 in Q16; in data mode only */
         if (o->v34.state != V34O_DATA) return -1;
-        v = probe_db10(65536, o->v34.dx.rx.mse > 0 ? o->v34.dx.rx.mse : 1);
+        v = probe_db10(65536, o->v34.dx.up.rx.mse > 0 ? o->v34.dx.up.rx.mse : 1);
         return v < 0 ? 0 : v > 600 ? 600 : v;
     }
     if (o->phase == ORIG_V32) {

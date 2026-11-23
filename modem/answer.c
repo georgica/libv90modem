@@ -759,7 +759,7 @@ int answer_snr_db10(const answer_t *a)
     int v;
     if (!a->connected) return -1;
     switch (a->modulation) {
-    case ANS_MOD_V90: num = 65536; den = a->p34.rx.mse; break;          /* |e|^2 / |d|^2 in Q16 */
+    case ANS_MOD_V90: num = 65536; den = a->p34.up.rx.mse; break;          /* |e|^2 / |d|^2 in Q16 */
     case ANS_MOD_V92: {
         /* the decoder's noise estimate against the mean square of the points
          * of CPd, over the six constellation frame intervals; only while that
@@ -776,7 +776,7 @@ int answer_snr_db10(const answer_t *a)
         num /= n; den = v92_dec_quality(&a->u.v92.dec);
         break;
     }
-    case ANS_MOD_V34: num = 65536; den = a->v34.dx.rx.mse; break;
+    case ANS_MOD_V34: num = 65536; den = a->v34.dx.up.rx.mse; break;
     case ANS_MOD_X2: num = 65536; den = a->u.x2.rx.mse; break;           /* the V.34 upstream */
     case ANS_MOD_K56: num = 65536; den = a->u.k56.rx.mse; break;         /* the V.34 upstream */
     case ANS_MOD_V22: case ANS_MOD_V22BIS:
@@ -824,7 +824,7 @@ int answer_retrain(answer_t *a)
 int answer_moving(const answer_t *a)
 {
     if (!a->connected || a->retraining) return 0;
-    if (a->phase == ANS_V90) return a->p34.tx_ready && a->p34.rx_ready;
+    if (a->phase == ANS_V90) return a->p34.tx_ready && a->p34.up.rx_ready;
     if (a->phase == ANS_V92) return a->u.v92.tx_ready && a->u.v92.rx_ready;
     if (a->phase == ANS_X2) return a->u.x2.state == X2D_DATA;
     if (a->phase == ANS_K56) return a->u.k56.state == K56D_DATA;
