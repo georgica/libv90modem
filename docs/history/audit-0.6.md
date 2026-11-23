@@ -1021,3 +1021,38 @@ from the smaller per-scheme functions. Bench hashes unchanged.
 Memory: answer_t gains the scheme pointer, 106232 octets on x86-64
 (105936 on ARMv5), still below orig_t (118712 / 118424): `v90m_mem_size()`
 unchanged.
+
+## Task 27: v90a.c, split into V.90 upstream, V.92 upstream, downstream sequences and the watch
+
+First, from Task 26's review (no change in behaviour): `rt_policy_t`
+loses `count_after` (no policy set it; `ans_rt_v90` is `{3, 60000}`),
+`rt_begin` / `rt_data_tick` are `ans_rt_begin` / `ans_rt_data_tick` (the
+latter returns nothing), and `modem/answer.c` checks at compile time that
+its phase table has one row per phase.
+
+`modem/v90a.c` (1441 lines) keeps init, the sample tick, the public calls
+and the call's end (201 lines). `v90a_up90.c`: Phase 3's start and V.90's
+V.34 upstream (`up_symbol`, `start_data`, the sequence being sent).
+`v90a_up92.c`: V.92's Phase 3 start, Jd / Jp / Jp', TRN2d's SUVd / CPd /
+Ed (`train92`) and the PCM upstream (`up92_symbol`, `seq_next`,
+`start_b1u`). `v90a_down.c`: the downstream sequences (Jd, Jd', the DIL,
+Ri, TRN2d, MP, Ed, B1d, data frames, Rd), the DIL's analysis and the CPt /
+CP designs as jobs, the symbol renumbering. `v90a_watch.c`: the time
+limits, the receiver's watch on itself, our renegotiation, the retrain.
+The sub-states, constants and the shared calls (`v90a__*`) are in
+`v90a_priv.h`. Byte identical (`make verify`: no golden, replay or bench
+re-record); `v90a_t` unchanged, so `v90m_mem_size()` too.
+
+ARMv5 (uClibc), M instructions per second of line (seconds 2 to 3 of data
+mode), before at 15ee679:
+
+| | before | after | |
+|---|---|---|---|
+| V.90 caller, 0 ppm | 55.21 | 55.19 | -0.02 |
+| V.90 caller, 100 ppm | 59.04 | 59.02 | -0.02 |
+| V.92 caller, 0 ppm | 70.35 | 70.33 | -0.02 |
+| V.92 caller, 100 ppm | 74.57 | 74.56 | -0.02 |
+
+The per-symbol calls that now cross files (the upstream symbol, each
+decision, the watch) cost nothing measurable; bench hashes unchanged
+(bbf20f60 V.90, 484a898d V.92, host and qemu).

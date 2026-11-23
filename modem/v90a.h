@@ -113,7 +113,7 @@ typedef enum {
 enum {
     V90A_OK = 0,
     V90A_ERR_PHASE2,                /* p2.error says how */
-    V90A_ERR_SD,                    /* no Sd-bar within 2000 ms of Ja (9.3.2.4 says 1500: v90a.c) */
+    V90A_ERR_SD,                    /* no Sd-bar within 2000 ms of Ja (9.3.2.4 says 1500: v90a_priv.h) */
     V90A_ERR_TRAIN,                 /* the receiver found no channel on TRN1d */
     V90A_ERR_JD,                    /* no Jd within 4500 ms of the end of Ja (9.3.2.7) */
     V90A_ERR_JDP,                   /* no Jd' after our S */
@@ -140,7 +140,7 @@ typedef struct {
     /* ---- receive ---- */
     v90arx_t   rx; int rx_on;
     int16_t    ecdl[V90A_ECDL]; int ecpos;
-    int        ds;                  /* downstream sub-state (v90a.c) */
+    int        ds;                  /* downstream sub-state (v90a_priv.h) */
     int        alaw;                /* the downstream's law (INFO0d bit 39) */
     /* Jd, Jd' */
     v90_scr_t  jscr; uint8_t jprev;
@@ -158,7 +158,7 @@ typedef struct {
     int32_t    cb_seg;              /* ... being handed to the receiver as known */
     v90dil_acc_t acc; int acc_on;
     v90dil_res_t res;
-    /* the DIL's analysis, CPt's and CP's designs, a step a tick (v90a.c) */
+    /* the DIL's analysis, CPt's and CP's designs, a step a tick (v90a_down.c) */
     int        job, job_new;
     union { v90dil_an_t an; v90dil_cpjob_t cp; } jw;
     uint32_t   sig_jd[6];           /* noise per interval at the end of Jd (Q8) */

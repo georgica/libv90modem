@@ -337,7 +337,10 @@ V.42 data both ways. No hardware Rockwell or Lucent client has called it.
 ### 4.2c V.90 and V.92, analogue (calling) side
 `modem/orig` runs the call from the moment the far end has answered
 (dialling and call progress are the owner's): V.8, then, when JM selects
-PCM, `modem/v90a`: Phase 2 (`p2call`), Phases 3 and 4, data. Downstream
+PCM, `modem/v90a`: Phase 2 (`p2call`), Phases 3 and 4, data (the tick
+and the calls in `v90a.c`; V.90's upstream in `v90a_up90.c`, V.92's in
+`v90a_up92.c`, the downstream sequences in `v90a_down.c`, the time limits,
+the watch and the retrain in `v90a_watch.c`). Downstream
 is the PCM receiver (`v90arx`) with the DIL (`v90dil`) and the data
 decoder (`v90adec`); upstream is V.34's transmitter (`v34mod`, the blocks
 of the V.34 caller) in V.90, PCM in V.92 (below and 4.2d). One linear
@@ -507,7 +510,7 @@ two frames late so that Rd is never handed on as data.
 
 **V.92's PCM upstream.** The decision to use it is Phase 2's (above). In
 Phases 3 and 4 the sequences are V.92's (the header of the V.92 block in
-`v90a.c` has the order), with SUVd, CPd and Ed taken out of the TRN2d
+`v90a_up92.c` has the order), with SUVd, CPd and Ed taken out of the TRN2d
 descrambler by `v92aseq` a data frame at a time: CPd may be some 20000
 bits, so it is read word by word with the CRC running along and no bit
 kept. CPd dictates the upstream: `v92/v92_enc`, the analogue transmitter as
