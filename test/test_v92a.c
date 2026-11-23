@@ -146,6 +146,36 @@ int main(void)
         CHECK_EQ_I(l->va.error, V90A_ERR_CLEARDOWN);
     }
 
+    printf("our cleardown (CPu), answered by a retrain of the digital modem's (R3)\n");
+    c = base(); c.seed = 4;
+    vl_init(l, &c);
+    run_to(l, MS(40000), V90A_DATA);
+    run_for(l, MS(300));
+    CHECK_EQ_I(l->va.state, V90A_DATA);
+    CHECK_EQ_I(l->va.pcm, 1);
+    {
+        int64_t t0 = l->k, n0;
+        int entered_p2 = 0, d_p2 = 0;
+        CHECK_EQ_I(v90a_cleardown(&l->va), 0);
+        CHECK_EQ_I(v92d_retrain(&l->v92d), 0);      /* on the next sample: silence, then Tone B */
+        n0 = l->n;
+        while (l->k < t0 + MS(3000) && l->va.state != V90A_ENDED) {
+            vl_tick(l);
+            /* the owner's part of the digital modem's retrain: 70 ms of silence, Phase 2 (9.7.1) */
+            if (!d_p2 && l->n - n0 >= MS(70)) {
+                p2d_cfg pc = l->p2.cfg;
+                p2d_init_retrain(&l->p2, &pc);
+                l->dstate = 0; d_p2 = 1;
+            }
+            if (l->va.state == V90A_RETRAIN || l->va.state == V90A_P2) entered_p2 = 1;
+        }
+        printf("  ours %d (error %d) after %d ms; Phase 2 entered %d; digital in Phase 2 %d\n", l->va.state, l->va.error,
+               (int)ms((int32_t)(l->k - t0)), entered_p2, d_p2);
+        CHECK_EQ_I(l->va.error, V90A_ERR_HANGUP);
+        CHECK(!entered_p2);
+        CHECK(l->k - t0 <= MS(2000));
+    }
+
     printf("the digital modem without V.92: V.90\n");
     c = base(); c.v92 = 0; c.seed = 3;
     vl_init(l, &c);

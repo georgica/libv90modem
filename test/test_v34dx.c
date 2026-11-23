@@ -323,6 +323,36 @@ int main(void)
         CHECK(me->mp_sent >= 1 && far->mpa_sent >= 1);
     }
 
+    /* ---- our cleardown is not turned into a retrain, either side: the far
+     * modem's retrain tone heard during it, or the renegotiation's time-out
+     * in it, ends it as our cleardown ---- */
+    for (k = 0; k < 2; k++) {
+        v34dx_t *me = k ? &P.c : &P.a;
+        long t;
+        mkcfg(&a, &c, 4, 1, 0, &CLEAN);
+        pair_init(&a, &c, &CLEAN);
+        CHECK_EQ_I(pair_to_data(8000), 1); pair_run(4000);
+        CHECK_EQ_I(v34dx_cleardown(me), 0);
+        /* the far modem stops at once for its tone: Tone B to the answer
+         * modem, Tone A to the call modem */
+        if (k) { P.line.c.mute_ac = 1; P.line.c.tone_c_hz = 2400; }
+        else { P.line.c.mute_ca = 1; P.line.c.tone_a_hz = 1200; }
+        P.line.c.tone_amp = 1500;
+        t = P.n; while (P.n < t + 8000 && me->state != DX_FAILED && me->state != DX_RETRAIN) pair_run(8);
+        printf("  %s's cleardown, the far tone during it: state %d, error %d after %ld ms\n", k ? "caller" : "answerer",
+               (int)me->state, me->error, (P.n - t) / 8);
+        CHECK_EQ_I(me->state, DX_FAILED); CHECK_EQ_I(me->error, DX_ERR_HANGUP);
+        CHECK(P.n - t < 8 * 1000);
+        /* the renegotiation's time-out (11.6) one sample away */
+        pair_init(&a, &c, &CLEAN);
+        CHECK_EQ_I(pair_to_data(8000), 1); pair_run(4000);
+        CHECK_EQ_I(v34dx_cleardown(me), 0);
+        CHECK_EQ_I(me->state, DX_P4_TRN);
+        me->t_neg = me->now - 8 * 6000;
+        (void)v34dx_tick(me, 0);
+        CHECK_EQ_I(me->state, DX_FAILED); CHECK_EQ_I(me->error, DX_ERR_HANGUP);
+    }
+
     /* ---- what must end in a retrain ---- */
     {
         long t;

@@ -169,7 +169,7 @@ stay as they were.
 | `V90M_END_NO_ANSWER_TONE` | calling only: no answer tone came |
 | `V90M_END_NO_JM` | calling only: ANSam came, but no JM in answer to CM (V.8) |
 | `V90M_END_NO_COMMON` | V.8 found no modulation in common with the far modem |
-| `V90M_END_RETRAIN_FAILED` | V.90 / V.92, V.34 (either role) (appended): a retrain failed (calling V.34: in its Phase 2; one that fails in Phases 3 and 4 is `V90M_END_LOST`), or one more was due past the limit (see `v90m_retrain`); answering x2: the client asked for a retrain in data mode or its rate change (its Tone A), which x2 cannot serve |
+| `V90M_END_RETRAIN_FAILED` | V.90 / V.92, V.34 (either role) (appended): a retrain failed (in its Phase 2, 3 or 4), or one more was due past the limit (see `v90m_retrain`); answering x2: the client asked for a retrain in data mode or its rate change (its Tone A), which x2 cannot serve |
 | `V90M_END_X2_FAILED` | answering (appended): the client took up x2 (its marker came) and the x2 start-up, or a rate change of the client's, did not complete |
 | `V90M_END_K56_FAILED` | answering (appended): K56flex was agreed and went past the point of no return (our INFO1a flagged), and the start-up, a rate renegotiation or a retrain of the client's did not complete, or the client retrained a third time in a row |
 

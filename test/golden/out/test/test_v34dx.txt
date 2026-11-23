@@ -32,7 +32,9 @@
   renegotiation took 371 ms;  answer modem, new ceiling 14400    3200 sym/s  A->C 31200 bit/s   93600 bits 0 errors   C->A 14400 bit/s   43200 bits 0 errors
   renegotiation with a Type 0 MP: precoder kept 3200 sym/s  A->C 31200 bit/s   93600 bits 0 errors   C->A 31200 bit/s   93600 bits 0 errors
   noise rises to -27 dB in data mode: 1 renegotiation(s) of our own;                                     3200 sym/s  A->C 31200 bit/s  124800 bits 0 errors   C->A 16800 bit/s   67200 bits 0 errors
+  answerer's cleardown, the far tone during it: state 11, error 7 after 228 ms
+  caller's cleardown, the far tone during it: state 11, error 7 after 228 ms
   Tone B in data mode: retrain after 61 ms
   caller's signal lost in data mode: carrier lost after 522 ms
   as call modem after V.90 Phase 2   3200 sym/s  A->C 31200 bit/s   93600 bits 0 errors   C->A 28800 bit/s   86400 bits 0 errors
-v34dx: 690 checks, 0 failures
+v34dx: 718 checks, 0 failures

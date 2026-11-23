@@ -249,6 +249,40 @@ int main(void)
         CHECK_EQ_I(O.phase, ORIG_FAILED); CHECK_EQ_I(O.end, ORIG_END_RETRAIN);
     }
 
+    /* ---- a retrain that fails in Phases 3 / 4 (its training, or the
+     * carrier lost in it) ends the call as a failed retrain, as the
+     * answering side's does (spec D3) ---- */
+    for (k = 0; k < 2; k++) {
+        if (!call_up(k ? "good line, a retrain's carrier lost" : "good line, a retrain's training fails", &good, 0, 0, 28800)) continue;
+        CHECK_EQ_I(orig_retrain(&O), 0);
+        for (t = 0; t < 5000 && O.v34.state != V34O_TRAINING; t++) run(8);
+        CHECK_EQ_I(O.v34.state, V34O_TRAINING); CHECK_EQ_I(O.connected, 1);
+        O.v34.dx.state = DX_FAILED; O.v34.dx.error = k ? DX_ERR_CARRIER : DX_ERR_B1;
+        (void)orig_tick(&O, 0);
+        printf("  a retrain's Phases 3 / 4 failed (dx error %d): v34orig %d (error %d), orig end %d\n", O.v34.dx.error,
+               O.v34.state, O.v34.error, O.end);
+        CHECK_EQ_I(O.v34.error, V34O_ERR_RETRAINS);
+        CHECK_EQ_I(O.phase, ORIG_FAILED); CHECK_EQ_I(O.end, ORIG_END_RETRAIN);
+    }
+
+    /* ---- our cleardown is not turned into a retrain: the far modem begins
+     * one on the same sample (its retrain tone heard during our cleardown),
+     * the cleardown ends as one; the caller's (k = 0), the answerer's ---- */
+    for (k = 0; k < 2; k++) {
+        if (!call_up(k ? "good line, the answerer clears, retrain" : "good line, we clear, retrain", &good, 0, 0, 28800)) continue;
+        if (k == 0) { CHECK_EQ_I(orig_cleardown(&O), 0); CHECK_EQ_I(answer_retrain(&A), 0); }
+        else { CHECK_EQ_I(answer_cleardown(&A), 0); CHECK_EQ_I(orig_retrain(&O), 0); }
+        for (t = 0; t < 3000 && (k ? A.phase != ANS_FAILED : O.phase != ORIG_FAILED); t += 10) run(80);
+        if (k == 0) {
+            printf("  our cleardown, the answerer's retrain: over in %ld ms, orig end %d, %d retrain(s)\n", t, O.end, O.v34.retrains);
+            CHECK_EQ_I(O.phase, ORIG_FAILED); CHECK_EQ_I(O.end, ORIG_END_HANGUP); CHECK_EQ_I(O.v34.retrains, 0);
+        } else {
+            printf("  the answerer's cleardown, our retrain: over in %ld ms, answer end %d, %d retrain(s)\n", t, answer_end(&A), A.v34.retrains);
+            CHECK_EQ_I(A.phase, ANS_FAILED); CHECK_EQ_I(answer_end(&A), ANS_END_CLEARDOWN_OURS); CHECK_EQ_I(A.v34.retrains, 0);
+        }
+        CHECK(t < 1000);
+    }
+
     /* ---- the answerer goes away in training: retrains (11.3.2.1), then the end ---- */
     start(&good, 0, 0, 0);
     while (L.n < 8000L * 30 && O.v34.state != V34O_TRAINING) run(8);

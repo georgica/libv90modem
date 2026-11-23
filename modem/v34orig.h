@@ -41,7 +41,8 @@ enum {
     V34O_OK = 0,
     V34O_ERR_PHASE2,        /* Phase 2 failed: p2.error says how */
     V34O_ERR_TRAINING,      /* Phase 3 / 4 failed: dx.error says how */
-    V34O_ERR_RETRAINS,      /* too many retrains in a row */
+    V34O_ERR_RETRAINS,      /* too many retrains in a row; once connected, a retrain
+                               that failed (its Phases 3 / 4, or past V34O_RT_P2_MS) */
     V34O_ERR_CLEARDOWN,     /* the answerer cleared down */
     V34O_ERR_CARRIER,       /* the answerer's signal went away */
     V34O_ERR_HANGUP         /* we cleared down (v34orig_cleardown) */

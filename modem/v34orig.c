@@ -94,9 +94,12 @@ int16_t v34orig_tick(v34orig_t *o, int16_t rx)
             /* the first S never came: "the call modem may initiate a
              * retrain during Phase 3" (11.3.2.1) */
             if (o->dx.error == DX_ERR_NO_S) retrain(o, 1);
-            else end(o, o->dx.error == DX_ERR_CLEARDOWN ? V34O_ERR_CLEARDOWN
-                      : o->dx.error == DX_ERR_HANGUP ? V34O_ERR_HANGUP
-                      : o->dx.error == DX_ERR_CARRIER ? V34O_ERR_CARRIER : V34O_ERR_TRAINING);
+            else if (o->dx.error == DX_ERR_CLEARDOWN) end(o, V34O_ERR_CLEARDOWN);
+            else if (o->dx.error == DX_ERR_HANGUP) end(o, V34O_ERR_HANGUP);
+            /* a retrain's Phases 3 / 4 (the call has carried data): a
+             * failed retrain, as the answering side's (spec D3) */
+            else if (o->state == V34O_TRAINING && o->connects > 0) end(o, V34O_ERR_RETRAINS);
+            else end(o, o->dx.error == DX_ERR_CARRIER ? V34O_ERR_CARRIER : V34O_ERR_TRAINING);
         } else if (o->state == V34O_DATA) {
             o->state = V34O_RENEG;
         }

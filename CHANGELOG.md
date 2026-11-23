@@ -64,16 +64,24 @@ Changed (calling role):
   lasts 30 s: `V90M_END_RETRAIN_FAILED`. Only a call that has reached data
   mode is affected (before it, the 60 s start-up limit applies as before).
 - V.34: too many retrains in a row once connected, a retrain's Phase 2
-  that fails (the restarts above, or any of its own limits), and the 30 s
-  limit above, end with `V90M_END_RETRAIN_FAILED`, as in V.90 and V.92
-  (they gave `V90M_END_LOST`). A V.34 retrain that fails in Phases 3 and 4
-  still ends `V90M_END_LOST`.
+  that fails (the restarts above, or any of its own limits), the 30 s
+  limit above, and a retrain that fails in Phases 3 and 4 (its training,
+  or the carrier lost in it) end with `V90M_END_RETRAIN_FAILED`, as in
+  V.90 and V.92 and on the answering side (they gave `V90M_END_LOST`).
 - V.90 and V.92: a Tone B (the server's retrain) during a cleardown of
   ours no longer turns it into a retrain. After `v90m_cleardown` the
   cleardown goes on and ends with `V90M_END_CLEARDOWN_OURS`. The same holds
   for the cleardowns the modem makes by itself: when no downstream rate
   fits (a server retrain no longer rescues it), and when one retrain more
   is due past the limit (`V90M_END_RETRAIN_FAILED`, as before).
+
+Changed (V.34, both roles):
+- A cleardown of ours (`v90m_cleardown`) is no longer turned into a
+  retrain: the far modem's retrain tone (Tone A to the caller, Tone B to
+  the answerer) heard during it is ignored, and the renegotiation's
+  time-out in it ends it as the cleardown it is. Either way the call ends
+  with `V90M_END_CLEARDOWN_OURS` (it began a retrain, which ran on to
+  whatever end the retrain found).
 
 Fixed:
 - m68k: built with GCC 12.3 for m68k (and maybe other versions) at -O1 and

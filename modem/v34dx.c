@@ -613,7 +613,9 @@ int16_t v34dx_tick(v34dx_t *p, int16_t rxs)
             if (p->sdet.present >= SDET_PRESENT) s_heard(p);
         }
     }
-    if (p->state >= DX_P4_TRN && tonedet_tick(&p->tone, x)) { retrain(p, 0); return y; }
+    /* the far modem's retrain tone; not during our cleardown, which goes on
+     * to its own end (DX_ERR_HANGUP) */
+    if (p->state >= DX_P4_TRN && !p->clearing && tonedet_tick(&p->tone, x)) { retrain(p, 0); return y; }
 
     /* transmitter sequencing and time limits */
     switch (p->state) {
@@ -677,7 +679,11 @@ int16_t v34dx_tick(v34dx_t *p, int16_t rxs)
     case DX_P4_E:
         /* 11.4.2.x.2: E (and here B1 too) within 2500 ms and three round trips */
         lim = p->in_reneg ? MS(T_RENEG_MS) : MS(T_PHASE4_MS) + 3 * p->cfg.rtd;
-        if (p->now - p->t_neg > lim) { retrain(p, 1); break; }
+        if (p->now - p->t_neg > lim) {
+            /* our cleardown's time-out ends it as itself, not as a retrain */
+            if (p->clearing) fail(p, DX_ERR_HANGUP); else retrain(p, 1);
+            break;
+        }
         if (p->state == DX_P4_TRN) {
             if (p->txsig == DXS_TRN4 && p->txn >= p->trn4_syms && !p->tx_next) {
                 set_mp_limits(p, !p->in_reneg);
