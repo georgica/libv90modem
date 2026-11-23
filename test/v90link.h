@@ -154,6 +154,9 @@ typedef struct {
     int d_rt_wait;                  /* d_retrain: samples of silence before its Phase 2 */
     int d_v92_data, d_pcm_up;       /* d_retrain: v92d reached data mode; PCM upstream offered */
     int d_retrains;                 /* d_retrain: retrains of the digital modem */
+    int d_rt_recent;                /* ... in a row, as answer.c's rt_recent: past 3 it gives up (dead);
+                                       a minute of data mode forgets one */
+    int64_t d_rt_clock;             /* samples of data mode toward that minute */
     int64_t clips;                  /* our A/D samples at full scale (+-32767) */
     /* a digital modem of the test's own (tools/rec_orig: the answerer through the
        public API): when set, it takes each network sample's codeword in place of
@@ -236,6 +239,7 @@ static void vl_start_v92(vl_t *l)
     c.down_rms = (int)r;
     c.dsn_pace = 2;
     c.getbit = vl_get_down; c.putbit = vl_put_up; c.user = l;
+    l->d_v92_data = 0;              /* (answer.c's start_v92: this start-up's own) */
     l->dstate = v92d_init(&l->v92d, &c) != 0 ? 2 : 3;
 }
 
@@ -278,10 +282,17 @@ static uint8_t vl_src(void *ctx)
                     if (l->p34.tx.nsym >= 6000) l->p34.tx.nsym = 5999;
                 } else l->p34.tx.nsym = 1u << 24;
             }
-            if (l->cfg.d_retrain && l->p34.state == P34_RETRAIN) { l->dstate = 4; l->d_rt_wait = 0; l->d_retrains++; }
+            if (l->p34.state == P34_DATA && ++l->d_rt_clock >= 8 * 60000) { l->d_rt_clock = 0; if (l->d_rt_recent > 0) l->d_rt_recent--; }
+            if (l->cfg.d_retrain && l->p34.state == P34_RETRAIN) {
+                if (l->d_rt_recent >= 3) l->dstate = 2;         /* answer.c: MAX_RETRAINS, no line */
+                else { l->dstate = 4; l->d_rt_wait = 0; l->d_retrains++; l->d_rt_recent++; }
+            }
         } else if (l->dstate == 3) {
             out = v92d_tick(&l->v92d, x);
-            if (l->v92d.state == V92D_DATA) l->d_v92_data = 1;
+            if (l->v92d.state == V92D_DATA) {
+                l->d_v92_data = 1;
+                if (++l->d_rt_clock >= 8 * 60000) { l->d_rt_clock = 0; if (l->d_rt_recent > 0) l->d_rt_recent--; }
+            }
             if (l->cfg.d_retrain && (l->v92d.state == V92D_RETRAIN
                                      || (l->v92d.state == V92D_FAILED && l->v92d.error != V92D_ERR_CLEARDOWN
                                          && l->v92d.error != V92D_ERR_HANGUP && l->v92d.error != V92D_ERR_CARRIER))) {
@@ -289,7 +300,8 @@ static uint8_t vl_src(void *ctx)
                  * digital modem never reached data mode, failed, or its
                  * upstream did not hold the lowest rate */
                 if (l->v92d.state == V92D_FAILED || !l->d_v92_data || l->v92d.up_floor) l->d_pcm_up = 0;
-                l->dstate = 4; l->d_rt_wait = 0; l->d_retrains++;
+                if (l->d_rt_recent >= 3) l->dstate = 2;         /* answer.c: MAX_RETRAINS, no line */
+                else { l->dstate = 4; l->d_rt_wait = 0; l->d_retrains++; l->d_rt_recent++; }
             }
         } else if (l->dstate == 4) {
             /* 9.5.1 / 9.7.1: 70 ms of silence, then Phase 2 of a retrain */

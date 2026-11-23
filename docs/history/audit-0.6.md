@@ -608,7 +608,8 @@ Phase 2 of a retrain, PCM upstream offered again unless the digital modem
 never reached data mode, failed, or its upstream did not hold the lowest
 rate) and `imp_ms` / `imp_amp` (a click on one A/D sample). test_v92a runs
 with `d_retrain`. Its new case, a 50-unit click in data mode, recovers in
-10.06 s with the data correct after. Without `d_retrain` it ends in
+10.06 s with the data correct after (10.97 s after Task 21b's start-up
+changes; the check allows 15 s, Task 21b fix round). Without `d_retrain` it ends in
 V90A_ERR_RETRAINS. test_v92a's other output is unchanged.
 
 Deferred (a design item after the audit): recovery in v90arx without a
@@ -620,3 +621,34 @@ retrain, by
   filter, or sum |b| bounded), at some cost in error and rate; or
 - spectral shaping (V.90 Appendix I, CP's Sr), which removes the low
   frequencies the tail comes from (listed in docs/limits.md as a gap).
+
+## Task 21b: calling start-up timing for live servers (golden changes explained)
+
+Commits 2f735ad (the far L2 read for 280 ms), 22b0f72 (the DIL up to a
+third of full scale), edadbde (Sd waited for 2000 ms), 2602a5d (guard
+tests). Two golden changes their commit messages did not explain:
+
+- test_orig_v90, "2 km, +30 ppm, 3 dB pad ... Table 1 levels" (2f735ad:
+  connected at 28000, now never reaches data mode). The row is the test's
+  deliberately wrong setting (Table 1's levels instead of what the DIL
+  measured, on a line with a 3 dB pad), there to show what the DIL
+  analysis buys; it checks only that it does worse than the DIL row. Our
+  CP design, deciding TRN2d against levels 3 dB off, measures a noise
+  that no rate fits (CP's K 0) and the calling modem clears down in Phase
+  4 (the digital modem: P34_ERR_CLEARDOWN). Up to 2f735ad it found
+  28000, the lowest rate, by a margin that the changed start-up (the
+  probe analysis over 14 blocks, Phase 2 180 ms shorter) took away. It
+  fails the same way with the old L2 read put back on top of the DIL
+  change: a marginal row, not a regression. The DIL-measured row keeps
+  48000.
+- api/test_api, "tx_level 16384 both, V.90 back to back" (22b0f72: no
+  data mode -> data mode). Not a change of headroom: the calling modem's
+  V.34 upstream still goes over full scale near the top (43 samples in
+  the mu-law call at 15360, 93 in the A-law call at 16384; peaks 41830 and
+  44619 before the clip). What
+  changed is the upstream rate the answerer picks from its measurement:
+  26400 before, where our B1 did not get through (P34_ERR_B1 in Ed), and
+  24000 now, where it does. Putting the DIL back to Ucodes 0..119 brings
+  the failure back. docs/api.md, include/v90modem.h and test_api's
+  comments say so; 15360 stays the level checked to connect.
+

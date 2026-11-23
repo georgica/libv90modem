@@ -7,7 +7,7 @@ a call, 2 km, +30 ppm, echo -10 dB, noise -75 dBm0 (downstream) / -70 dBm0 (upst
   4 s of data: down 191988 bits, 0 check failures; up 143964 bits, 0 failures
 a rate renegotiation begun by the digital modem
   the stream's break: 12 check failures (the 23-bit check across the gap)
-  1 A/D samples at full scale so far: one cost a retrain (T21.9)
+  1 A/D samples at full scale since the renegotiation began: one cost a retrain (T21.9)
   state 3, renegotiations 1, retrains 1, digital 9, up 34666; then 2 s: 96012 bits down, 69368 up, 0 new failures
 cleardown by us
   ours 5 (error 12) after 298 ms; digital 12 (error 9)

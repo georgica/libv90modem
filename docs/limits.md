@@ -60,7 +60,7 @@ Each item names where it is recorded.
 - **A single impulse can start error propagation in the V.90 / V.92
   calling receiver's decision-feedback equaliser** on lines whose
   low-frequency tail sits in the feedback; recovery is by retrain, about
-  7 s (V.90) to 10 s (V.92). On the simulator's 2 km line the feedback
+  7 s (V.90) to 11 s (V.92). On the simulator's 2 km line the feedback
   taps sum to about 4 in magnitude (the first 0.73): the few wrong
   decisions a click makes feed back errors larger than half a level step,
   which make more, and the error never decays. Measured: 50 units added to

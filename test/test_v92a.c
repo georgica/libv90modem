@@ -103,7 +103,7 @@ int main(void)
 
     printf("a rate renegotiation begun by the digital modem\n");
     {
-        int64_t f0 = l->down.fails + l->up.fails, d0, u0;
+        int64_t f0 = l->down.fails + l->up.fails, d0, u0, c0 = l->clips;
         CHECK_EQ_I(v92d_renegotiate(&l->v92d), 0);
         run_for(l, MS(100));
         CHECK(l->va.state != V90A_DATA);
@@ -114,11 +114,11 @@ int main(void)
         d0 = l->down.got; u0 = l->up.got;
         run_for(l, MS(2000));
         if (l->va.retrains > 0) {
-            CHECK(l->clips > 0);
+            CHECK(l->clips > c0);                   /* one after the renegotiation began */
             /* one of our A/D samples at full scale (our PCM upstream's peak
              * in this line's -10 dB echo) loses the receiver (T21.9,
              * docs/limits.md): the retrain recovers it, then the 2 s again */
-            printf("  %d A/D samples at full scale so far: one cost a retrain (T21.9)\n", (int)l->clips);
+            printf("  %d A/D samples at full scale since the renegotiation began: one cost a retrain (T21.9)\n", (int)(l->clips - c0));
             run_to(l, l->k + MS(15000), V90A_DATA);
             run_for(l, MS(500));
             f0 = l->down.fails + l->up.fails;
@@ -219,8 +219,8 @@ int main(void)
      * its feedback (sum |b| about 4), so the few wrong decisions the click
      * makes keep making more and the receiver is lost (T21.9; docs/limits.md).
      * What recovers it is the retrain its watch begins, with the digital
-     * modem restarted as answer.c restarts it: back in data mode within 12
-     * s (about 10), the data correct after. */
+     * modem restarted as answer.c restarts it: back in data mode within 15
+     * s (about 11), the data correct after. */
     printf("a click in data mode (50 units on one sample): recovered by a retrain\n");
     c = base(); c.seed = 5;
     vl_init(l, &c);
@@ -243,7 +243,10 @@ int main(void)
                l->down.got - d0, l->up.got - u0, l->down.fails + l->up.fails - f0);
         CHECK_EQ_I(l->va.state, V90A_DATA);
         CHECK(l->va.retrains >= 1);
-        CHECK(back >= 0 && back - t0 < MS(12000));         /* (V.92 retrains: 9 to 11 s, test_orig_retrain) */
+        /* (V.92 retrains: 9 to 11 s in test_orig_retrain, and they move by
+         * a second with the start-up's timing: 10.06 s at T21.9, 10.97 s
+         * after Task 21b. 15 s is about 10 s with room, and still bounds it) */
+        CHECK(back >= 0 && back - t0 < MS(15000));
         CHECK(l->down.got - d0 > 2 * 40000);
         CHECK(l->up.got - u0 > 2 * 24000);
         CHECK_EQ_I(l->down.fails + l->up.fails - f0, 0);

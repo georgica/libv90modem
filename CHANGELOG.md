@@ -85,10 +85,11 @@ Changed (calling role):
   followed low for a third of a second (reported by an independent
   softmodem's live calls). The constellations never use an unmeasured
   level, so CP stays under a third of full scale too: most simulated lines
-  keep their rate, some move a step either way. The DIL is about 230 ms
-  shorter. The robbed-bit verdict is taken
-  at a quarter of the Ucodes measured from 64 up (it was a fixed 16 of
-  64).
+  keep their rate, some move a step either way. The DIL is 171 ms
+  shorter (4 passes of 1818 symbols, not 2160) and Ja's descriptor 154
+  bits shorter; start-up reaches data mode about 220 ms earlier. The
+  robbed-bit verdict is taken at a quarter of the Ucodes measured from 64
+  up (it was a fixed 16 of 64).
 - V.34, V.90 and V.92: the far end's L2 is read for 280 ms, not 460 (V.34
   11.2.1.1.5, V.90 9.2.2.1.8: at most 500). Our tone now begins 290 ms
   after the far L2 began, which leaves the far end 300 ms or more before
