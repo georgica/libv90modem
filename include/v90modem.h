@@ -22,7 +22,23 @@
  * inside v90m_process_*(), at the moment the bit is needed or decided. V.42
  * (below) or a start-stop framer sits on that pump. Callbacks (getbit,
  * putbit, on_event) are only ever made from inside v90m_process_*() on the
- * calling thread. */
+ * calling thread.
+ *
+ * What a callback may do to the modem that calls it: v90m_retrain,
+ * v90m_cleardown, v90m_get_state, v90m_get_stats (and anything on another
+ * object: every v90m_ec_* and v90m_async_* function). v90m_reset returns
+ * V90M_ESTATE and changes nothing. v90m_destroy takes effect at the end of
+ * the sample under way: no event after it, the rest of the block is
+ * silence (linear 0, mu-law 0xFF, A-law 0xD5), the modem is freed (when it
+ * came from v90m_create) and v90m_process_* returns V90M_OK. v90m_init on
+ * the modem's own memory is not allowed.
+ *
+ * NULL: every function checks the object it is given (and the struct that
+ * v90m_get_state, v90m_get_stats and v90m_ec_get_status fill): with NULL a
+ * function returning int returns V90M_EINVAL, one returning size_t or
+ * unsigned long 0, a void one does nothing. Except the four called for
+ * every bit, v90m_ec_tx_bit, v90m_ec_rx_bit, v90m_async_getbit and
+ * v90m_async_putbit: their object must not be NULL. */
 #ifndef V90MODEM_H
 #define V90MODEM_H
 
@@ -237,9 +253,10 @@ size_t   v90m_mem_size(void);
 v90m_t  *v90m_init(void *mem, size_t len, const v90m_cfg *cfg, int *err);
 /* Back to the start of a new call (the line went off-hook), same memory, the
  * role and everything else from cfg. V90M_OK; or V90M_EINVAL (m or cfg NULL,
- * a value out of range) or V90M_ENOTSUP, the modem left as it was. */
+ * a value out of range), V90M_ENOTSUP, or V90M_ESTATE (from a callback of
+ * m's), the modem left as it was. */
 int      v90m_reset(v90m_t *m, const v90m_cfg *cfg);
-void     v90m_destroy(v90m_t *m);           /* NULL is fine */
+void     v90m_destroy(v90m_t *m);           /* NULL is fine; from a callback: see the top */
 
 /* The line: n received samples in, n samples to send out. Any n, 1
  * included: the result does not depend on how the samples are cut into
@@ -250,7 +267,8 @@ void     v90m_destroy(v90m_t *m);           /* NULL is fine */
  *             v90m_g711_decode gives), codewords out; V.90 / V.92 work too
  *   _linear   linear both ways (a PCM modulation then sends the linear value
  *             of its codewords)
- * Return V90M_OK, or V90M_EINVAL (m NULL, or rx or tx NULL with n > 0). */
+ * Return V90M_OK, or V90M_EINVAL (m NULL, or rx or tx NULL with n > 0).
+ * A v90m_destroy from a callback ends the block early (see the top). */
 int      v90m_process_g711(v90m_t *m, const uint8_t *rx, uint8_t *tx, size_t n);
 int      v90m_process_lin_rx(v90m_t *m, const int16_t *rx, uint8_t *tx, size_t n);
 int      v90m_process_linear(v90m_t *m, const int16_t *rx, int16_t *tx, size_t n);
@@ -412,7 +430,7 @@ typedef struct {
 void        v90m_ec_cfg_default(v90m_ec_cfg *cfg, int originator);
 /* create / init: NULL on failure, *err as for v90m_create / v90m_init (the
  * configuration's values are not checked); reset: V90M_OK, or V90M_EINVAL
- * for cfg NULL */
+ * for e or cfg NULL */
 v90m_ec_t  *v90m_ec_create(const v90m_ec_cfg *cfg, int *err);
 size_t      v90m_ec_mem_size(void);
 v90m_ec_t  *v90m_ec_init(void *mem, size_t len, const v90m_ec_cfg *cfg, int *err);

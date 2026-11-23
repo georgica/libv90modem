@@ -13,6 +13,23 @@ state (any number of modems in one process, one thread per object at a
 time). Callbacks (`getbit`, `putbit`, `on_event`) are only ever made from
 inside `v90m_process_*()` on the calling thread.
 
+What a callback may do to the modem that calls it: `v90m_retrain`,
+`v90m_cleardown`, `v90m_get_state`, `v90m_get_stats` (and anything on
+another object: every `v90m_ec_*` and `v90m_async_*` function).
+`v90m_reset` returns `V90M_ESTATE` and changes nothing. `v90m_destroy`
+takes effect at the end of the sample under way: no event after it, the
+rest of the block is silence (linear 0, mu-law 0xFF, A-law 0xD5), the
+modem is freed (when it came from `v90m_create`) and `v90m_process_*`
+returns `V90M_OK`. `v90m_init` on the modem's own memory is not allowed.
+
+NULL: every function checks the object it is given (and the struct that
+`v90m_get_state`, `v90m_get_stats` and `v90m_ec_get_status` fill): with
+NULL a function returning `int` returns `V90M_EINVAL`, one returning
+`size_t` or `unsigned long` 0, a `void` one does nothing. Except the four
+called for every bit, `v90m_ec_tx_bit`, `v90m_ec_rx_bit`,
+`v90m_async_getbit` and `v90m_async_putbit`: their object must not be
+NULL.
+
 ## Version
 
 | | |
@@ -40,8 +57,8 @@ Negative returns.
 | `v90m_t *v90m_create(const v90m_cfg *cfg, int *err)` | one modem; the only allocation the library makes for it. NULL on failure with `*err` (`err` may be NULL): `V90M_EINVAL` (cfg NULL or a value out of range), `V90M_ENOTSUP`, `V90M_ENOMEM`; `V90M_OK` otherwise |
 | `size_t v90m_mem_size(void)` | octets `v90m_init` needs |
 | `v90m_t *v90m_init(void *mem, size_t len, const v90m_cfg *cfg, int *err)` | the modem in memory of the caller's, at least `v90m_mem_size()` octets, aligned for any type; nothing is allocated, and `v90m_destroy()` then does nothing. Errors as `v90m_create`, and `V90M_EINVAL` for mem NULL or misaligned, `V90M_ENOMEM` for len too small |
-| `int v90m_reset(v90m_t *m, const v90m_cfg *cfg)` | back to the start of a new call (the line went off-hook), same memory, the role and everything else from cfg. `V90M_OK`; or `V90M_EINVAL` (m or cfg NULL, a value out of range) or `V90M_ENOTSUP`, the modem left as it was |
-| `void v90m_destroy(v90m_t *m)` | NULL is fine |
+| `int v90m_reset(v90m_t *m, const v90m_cfg *cfg)` | back to the start of a new call (the line went off-hook), same memory, the role and everything else from cfg. `V90M_OK`; or `V90M_EINVAL` (m or cfg NULL, a value out of range), `V90M_ENOTSUP`, or `V90M_ESTATE` (from a callback of m's), the modem left as it was |
+| `void v90m_destroy(v90m_t *m)` | NULL is fine; from a callback it takes effect at the end of the sample under way (above) |
 
 Memory bounds for this version, on every platform (they change with the
 version; the init functions check the length given):
@@ -105,7 +122,8 @@ codec, and the one V.90 / V.92 need); `_lin_rx` a receive side in 16-bit
 linear (Table 1 scale: what `v90m_g711_decode` gives), codewords out;
 `_linear` linear both ways (a PCM modulation then sends the linear value of
 its codewords). Return `V90M_OK`, or `V90M_EINVAL` (m NULL, or rx or tx
-NULL with n > 0). See [line-interface.md](line-interface.md).
+NULL with n > 0). A `v90m_destroy` from a callback ends the block early
+(above). See [line-interface.md](line-interface.md).
 
 ### G.711
 
@@ -250,7 +268,7 @@ control) when the far end has no V.42 and fallback is on. How to use it:
 | `v90m_ec_t *v90m_ec_create(const v90m_ec_cfg *cfg, int *err)` | NULL on failure, `*err` as for `v90m_create` (the configuration's values are not checked) |
 | `size_t v90m_ec_mem_size(void)` | |
 | `v90m_ec_t *v90m_ec_init(void *mem, size_t len, const v90m_ec_cfg *cfg, int *err)` | `*err` as for `v90m_init` |
-| `int v90m_ec_reset(v90m_ec_t *e, const v90m_ec_cfg *cfg)` | `V90M_OK`, or `V90M_EINVAL` for cfg NULL |
+| `int v90m_ec_reset(v90m_ec_t *e, const v90m_ec_cfg *cfg)` | `V90M_OK`, or `V90M_EINVAL` for e or cfg NULL |
 | `void v90m_ec_destroy(v90m_ec_t *e)` | NULL is fine |
 | `int v90m_ec_tx_bit(v90m_ec_t *e)` | from the modem's getbit |
 | `void v90m_ec_rx_bit(v90m_ec_t *e, int bit)` | from the modem's putbit |

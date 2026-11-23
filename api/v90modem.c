@@ -45,7 +45,10 @@ struct v90m {
     v90m_cfg cfg;
     int      owned;             /* from v90m_create: v90m_destroy frees it */
     /* what the last sample left, to report changes */
-    int      was_connected, was_moving, was_ended, was_mod, was_tx, was_rx;
+    uint8_t  was_connected, was_moving, was_ended;
+    uint8_t  busy;              /* inside v90m_process_*: a callback may be running */
+    uint8_t  dead;              /* v90m_destroy came from a callback: stop after this sample */
+    int      was_mod, was_tx, was_rx;
     unsigned renegotiations;
     union { answer_t a; orig_t o; } u;     /* by cfg.role */
 };
@@ -69,6 +72,7 @@ typedef char v90m_check_orig[(SAME(ORIG_MOD_V21, ANS_MOD_V21) && SAME(ORIG_MOD_V
 
 void v90m_cfg_default(v90m_cfg *cfg)
 {
+    if (!cfg) return;
     memset(cfg, 0, sizeof *cfg);
     cfg->role = V90M_ROLE_ANSWER;
     cfg->modulations = V90M_MOD_DEFAULT;
@@ -114,12 +118,10 @@ static unsigned modes_of(unsigned mods)
     return m;
 }
 
-int v90m_reset(v90m_t *m, const v90m_cfg *cfg)
+/* a checked cfg into m, whatever m held but owned */
+static void setup(v90m_t *m, const v90m_cfg *cfg)
 {
-    int r, owned;
-    if (!m || !cfg) return V90M_EINVAL;
-    if ((r = check_cfg(cfg)) != V90M_OK) return r;
-    owned = m->owned;
+    int owned = m->owned;
     /* the code underneath expects zeroed memory before answer_init */
     memset(m, 0, sizeof *m);
     m->owned = owned;
@@ -162,6 +164,16 @@ int v90m_reset(v90m_t *m, const v90m_cfg *cfg)
         }
         answer_v90_line(&m->u.a, cfg->echo_delay, cfg->max_down_bps, cfg->max_up_bps);
     }
+}
+
+int v90m_reset(v90m_t *m, const v90m_cfg *cfg)
+{
+    int r;
+    if (!m || !cfg) return V90M_EINVAL;
+    /* from a callback: the block under way runs on the modem as it is */
+    if (m->busy) return V90M_ESTATE;
+    if ((r = check_cfg(cfg)) != V90M_OK) return r;
+    setup(m, cfg);
     return V90M_OK;
 }
 
@@ -173,8 +185,9 @@ v90m_t *v90m_init(void *mem, size_t len, const v90m_cfg *cfg, int *err)
     int r;
     if (!mem || !cfg || !aligned(mem)) { seterr(err, V90M_EINVAL); return NULL; }
     if (len < sizeof *m) { seterr(err, V90M_ENOMEM); return NULL; }
+    if ((r = check_cfg(cfg)) != V90M_OK) { seterr(err, r); return NULL; }
     m->owned = 0;
-    if ((r = v90m_reset(m, cfg)) != V90M_OK) { seterr(err, r); return NULL; }
+    setup(m, cfg);
     seterr(err, V90M_OK);
     return m;
 }
@@ -187,12 +200,18 @@ v90m_t *v90m_create(const v90m_cfg *cfg, int *err)
     if ((r = check_cfg(cfg)) != V90M_OK) { seterr(err, r); return NULL; }
     if (!(m = malloc(sizeof *m))) { seterr(err, V90M_ENOMEM); return NULL; }
     m->owned = 1;
-    v90m_reset(m, cfg);
+    setup(m, cfg);
     seterr(err, V90M_OK);
     return m;
 }
 
-void v90m_destroy(v90m_t *m) { if (m && m->owned) free(m); }
+void v90m_destroy(v90m_t *m)
+{
+    if (!m) return;
+    /* from a callback: v90m_process_* ends the block and frees it */
+    if (m->busy) { m->dead = 1; return; }
+    if (m->owned) free(m);
+}
 
 /* the modem's state, whichever side it is */
 static int failed_of(const v90m_t *m) { return ORIGINATING(m) ? m->u.o.phase == ORIG_FAILED : m->u.a.phase == ANS_FAILED; }
@@ -236,7 +255,7 @@ static v90m_end end_of(const v90m_t *m)
     }
 }
 
-static void event(v90m_t *m, v90m_event ev) { if (m->cfg.on_event) m->cfg.on_event(m->cfg.user, ev); }
+static void event(v90m_t *m, v90m_event ev) { if (m->cfg.on_event && !m->dead) m->cfg.on_event(m->cfg.user, ev); }
 
 /* after each sample: only reads the modem */
 static void after(v90m_t *m)
@@ -265,55 +284,70 @@ static void after(v90m_t *m)
     }
 }
 
+/* The end of a block: when a callback destroyed the modem after sample i,
+ * the rest of the block is silence and the modem is freed (when owned). */
+static int block_end(v90m_t *m, size_t i, size_t n, uint8_t *tx8, int16_t *tx16)
+{
+    m->busy = 0;
+    if (!m->dead) return V90M_OK;
+    if (tx8) { if (n > i + 1) memset(tx8 + i + 1, m->cfg.alaw ? 0xD5 : 0xFF, n - i - 1); }
+    else for (i++; i < n; i++) tx16[i] = 0;
+    if (m->owned) free(m);
+    return V90M_OK;
+}
+
 int v90m_process_g711(v90m_t *m, const uint8_t *rx, uint8_t *tx, size_t n)
 {
     size_t i;
     if (!m || (n && (!rx || !tx))) return V90M_EINVAL;
+    m->busy = 1;
     if (ORIGINATING(m)) {
         int alaw = m->cfg.alaw != 0;
         for (i = 0; i < n; i++) {
             tx[i] = pcm_encode(alaw, orig_tick(&m->u.o, (int16_t)v90_octet_linear(alaw, rx[i])));
             after(m);
+            if (m->dead) break;
         }
-        return V90M_OK;
-    }
-    for (i = 0; i < n; i++) { tx[i] = answer_tick_pcm(&m->u.a, rx[i]); after(m); }
-    return V90M_OK;
+    } else
+        for (i = 0; i < n; i++) { tx[i] = answer_tick_pcm(&m->u.a, rx[i]); after(m); if (m->dead) break; }
+    return block_end(m, i, n, tx, NULL);
 }
 
 int v90m_process_lin_rx(v90m_t *m, const int16_t *rx, uint8_t *tx, size_t n)
 {
     size_t i;
     if (!m || (n && (!rx || !tx))) return V90M_EINVAL;
+    m->busy = 1;
     if (ORIGINATING(m)) {
         int alaw = m->cfg.alaw != 0;
-        for (i = 0; i < n; i++) { tx[i] = pcm_encode(alaw, orig_tick(&m->u.o, rx[i])); after(m); }
-        return V90M_OK;
-    }
-    for (i = 0; i < n; i++) { tx[i] = answer_tick_lin(&m->u.a, rx[i]); after(m); }
-    return V90M_OK;
+        for (i = 0; i < n; i++) { tx[i] = pcm_encode(alaw, orig_tick(&m->u.o, rx[i])); after(m); if (m->dead) break; }
+    } else
+        for (i = 0; i < n; i++) { tx[i] = answer_tick_lin(&m->u.a, rx[i]); after(m); if (m->dead) break; }
+    return block_end(m, i, n, tx, NULL);
 }
 
 int v90m_process_linear(v90m_t *m, const int16_t *rx, int16_t *tx, size_t n)
 {
     size_t i;
     if (!m || (n && (!rx || !tx))) return V90M_EINVAL;
-    if (ORIGINATING(m)) {
-        for (i = 0; i < n; i++) { tx[i] = orig_tick(&m->u.o, rx[i]); after(m); }
-        return V90M_OK;
-    }
-    for (i = 0; i < n; i++) { tx[i] = answer_tick(&m->u.a, rx[i]); after(m); }
-    return V90M_OK;
+    m->busy = 1;
+    if (ORIGINATING(m))
+        for (i = 0; i < n; i++) { tx[i] = orig_tick(&m->u.o, rx[i]); after(m); if (m->dead) break; }
+    else
+        for (i = 0; i < n; i++) { tx[i] = answer_tick(&m->u.a, rx[i]); after(m); if (m->dead) break; }
+    return block_end(m, i, n, NULL, tx);
 }
 
 int v90m_retrain(v90m_t *m)
 {
+    if (!m) return V90M_EINVAL;
     if (ORIGINATING(m)) return orig_retrain(&m->u.o) == 0 ? V90M_OK : V90M_ESTATE;
     return answer_retrain(&m->u.a) == 0 ? V90M_OK : V90M_ESTATE;
 }
 
 int v90m_cleardown(v90m_t *m)
 {
+    if (!m) return V90M_EINVAL;
     /* V.34 (11.7), V.90 (9.7), V.92 (9.11), either role; V.21, V.22, V.22bis,
      * V.32bis and Bell have none in data mode */
     if (ORIGINATING(m)) return orig_cleardown(&m->u.o) == 0 ? V90M_OK : V90M_ESTATE;
@@ -322,6 +356,7 @@ int v90m_cleardown(v90m_t *m)
 
 void v90m_get_state(const v90m_t *m, v90m_state *st)
 {
+    if (!m || !st) return;
     st->connected = connected_of(m);
     st->moving = moving_of(m);
     st->retraining = retraining_of(m);
@@ -335,6 +370,7 @@ void v90m_get_state(const v90m_t *m, v90m_state *st)
 
 void v90m_get_stats(const v90m_t *m, v90m_stats *st)
 {
+    if (!m || !st) return;
     st->modulation = (v90m_conn)mod_of(m);
     st->tx_bps = tx_of(m);
     st->rx_bps = rx_of(m);
@@ -361,7 +397,7 @@ orig_t   *v90m__orig(v90m_t *m) { return &m->u.o; }
 struct v90m_async { int owned; v14_t v; };
 
 size_t v90m_async_mem_size(void) { return sizeof(struct v90m_async); }
-void v90m_async_reset(v90m_async_t *a) { int o = a->owned; memset(a, 0, sizeof *a); a->owned = o; v14_init(&a->v); }
+void v90m_async_reset(v90m_async_t *a) { int o; if (!a) return; o = a->owned; memset(a, 0, sizeof *a); a->owned = o; v14_init(&a->v); }
 v90m_async_t *v90m_async_init(void *mem, size_t len, int *err)
 {
     v90m_async_t *a = mem;
@@ -382,14 +418,16 @@ int  v90m_async_getbit(void *a) { return v14_getbit(&((v90m_async_t *)a)->v); }
 void v90m_async_putbit(void *a, int bit) { v14_putbit(&((v90m_async_t *)a)->v, bit); }
 size_t v90m_async_write(v90m_async_t *a, const uint8_t *buf, size_t n)
 {
+    if (!a) return 0;
     return (size_t)v14_write(&a->v, buf, n > 0x7FFFFFFF ? 0x7FFFFFFF : (int)n);
 }
 size_t v90m_async_read(v90m_async_t *a, uint8_t *buf, size_t max)
 {
+    if (!a) return 0;
     return (size_t)v14_read(&a->v, buf, max > 0x7FFFFFFF ? 0x7FFFFFFF : (int)max);
 }
-size_t v90m_async_tx_pending(const v90m_async_t *a) { return (size_t)v14_tx_pending(&a->v); }
-unsigned long v90m_async_frame_errors(const v90m_async_t *a) { return (unsigned long)a->v.rx_frame_errs; }
+size_t v90m_async_tx_pending(const v90m_async_t *a) { return a ? (size_t)v14_tx_pending(&a->v) : 0; }
+unsigned long v90m_async_frame_errors(const v90m_async_t *a) { return a ? (unsigned long)a->v.rx_frame_errs : 0; }
 
 /* ------------------------------------------------------------------ V.42 */
 struct v90m_ec { int owned; v42ec_t e; };
@@ -415,6 +453,7 @@ static void cfg_in(v42ec_cfg_t *o, const v90m_ec_cfg *c)
 void v90m_ec_cfg_default(v90m_ec_cfg *c, int originator)
 {
     v42ec_cfg_t i;
+    if (!c) return;
     v42ec_cfg_default(&i, originator);
     memset(c, 0, sizeof *c);
     c->originator = i.originator; c->detect = i.detect; c->fallback = i.fallback;
@@ -435,8 +474,9 @@ void v90m_ec_cfg_default(v90m_ec_cfg *c, int originator)
 int v90m_ec_reset(v90m_ec_t *e, const v90m_ec_cfg *cfg)
 {
     v42ec_cfg_t c;
-    int o = e->owned;
-    if (!cfg) return V90M_EINVAL;
+    int o;
+    if (!e || !cfg) return V90M_EINVAL;
+    o = e->owned;
     cfg_in(&c, cfg);
     memset(e, 0, sizeof *e);
     e->owned = o;
@@ -467,24 +507,30 @@ v90m_ec_t *v90m_ec_create(const v90m_ec_cfg *cfg, int *err)
 void   v90m_ec_destroy(v90m_ec_t *e) { if (e && e->owned) free(e); }
 int    v90m_ec_tx_bit(v90m_ec_t *e) { return v42ec_tx_bit(&e->e); }
 void   v90m_ec_rx_bit(v90m_ec_t *e, int bit) { v42ec_rx_bit(&e->e, bit); }
-void   v90m_ec_tick(v90m_ec_t *e, unsigned ms) { v42ec_tick(&e->e, ms); }
-void   v90m_ec_line_stopped(v90m_ec_t *e) { v42ec_line_stopped(&e->e); }
-void   v90m_ec_line_restored(v90m_ec_t *e) { v42ec_line_restored(&e->e); }
-size_t v90m_ec_write(v90m_ec_t *e, const uint8_t *d, size_t n) { return v42ec_write(&e->e, d, n); }
-size_t v90m_ec_write_space(const v90m_ec_t *e) { return v42ec_write_space(&e->e); }
-size_t v90m_ec_read(v90m_ec_t *e, uint8_t *d, size_t max) { return v42ec_read(&e->e, d, max); }
-size_t v90m_ec_read_avail(const v90m_ec_t *e) { return v42ec_read_avail(&e->e); }
-int    v90m_ec_tx_idle(const v90m_ec_t *e) { return v42ec_tx_idle(&e->e); }
-int    v90m_ec_tx_busy(const v90m_ec_t *e) { return e->e.hdlc_tx_on && v42hdlc_tx_busy(&e->e.htx); }
-void   v90m_ec_release(v90m_ec_t *e) { v42ec_release(&e->e); }
-void   v90m_ec_abort(v90m_ec_t *e) { v42lapm_abort(&e->e.lapm, V42LAPM_R_LOCAL); }
-int    v90m_ec_send_break(v90m_ec_t *e, int opt, int len10ms) { return v42ec_send_break(&e->e, opt, len10ms) == 0 ? V90M_OK : V90M_ESTATE; }
-int    v90m_ec_get_break(v90m_ec_t *e, int *opt, int *len10ms) { return v42ec_get_break(&e->e, opt, len10ms); }
-int    v90m_ec_state(const v90m_ec_t *e) { return v42ec_state(&e->e); }
+/* NULL (the header): every function checks its object but the two per-bit ones */
+void   v90m_ec_tick(v90m_ec_t *e, unsigned ms) { if (e) v42ec_tick(&e->e, ms); }
+void   v90m_ec_line_stopped(v90m_ec_t *e) { if (e) v42ec_line_stopped(&e->e); }
+void   v90m_ec_line_restored(v90m_ec_t *e) { if (e) v42ec_line_restored(&e->e); }
+size_t v90m_ec_write(v90m_ec_t *e, const uint8_t *d, size_t n) { return e ? v42ec_write(&e->e, d, n) : 0; }
+size_t v90m_ec_write_space(const v90m_ec_t *e) { return e ? v42ec_write_space(&e->e) : 0; }
+size_t v90m_ec_read(v90m_ec_t *e, uint8_t *d, size_t max) { return e ? v42ec_read(&e->e, d, max) : 0; }
+size_t v90m_ec_read_avail(const v90m_ec_t *e) { return e ? v42ec_read_avail(&e->e) : 0; }
+int    v90m_ec_tx_idle(const v90m_ec_t *e) { return e ? v42ec_tx_idle(&e->e) : V90M_EINVAL; }
+int    v90m_ec_tx_busy(const v90m_ec_t *e) { return e ? e->e.hdlc_tx_on && v42hdlc_tx_busy(&e->e.htx) : V90M_EINVAL; }
+void   v90m_ec_release(v90m_ec_t *e) { if (e) v42ec_release(&e->e); }
+void   v90m_ec_abort(v90m_ec_t *e) { if (e) v42lapm_abort(&e->e.lapm, V42LAPM_R_LOCAL); }
+int    v90m_ec_send_break(v90m_ec_t *e, int opt, int len10ms)
+{
+    if (!e) return V90M_EINVAL;
+    return v42ec_send_break(&e->e, opt, len10ms) == 0 ? V90M_OK : V90M_ESTATE;
+}
+int    v90m_ec_get_break(v90m_ec_t *e, int *opt, int *len10ms) { return e ? v42ec_get_break(&e->e, opt, len10ms) : V90M_EINVAL; }
+int    v90m_ec_state(const v90m_ec_t *e) { return e ? v42ec_state(&e->e) : V90M_EINVAL; }
 
 void v90m_ec_get_status(const v90m_ec_t *e, v90m_ec_status *st)
 {
     v42ec_status_t s;
+    if (!e || !st) return;
     v42ec_get_status(&e->e, &s);
     memset(st, 0, sizeof *st);
     st->state = s.state; st->reason = s.reason;

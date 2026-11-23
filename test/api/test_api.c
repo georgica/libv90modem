@@ -1546,6 +1546,183 @@ static void test_end_codes(void)
     CHECK_EQ_I(sx.renegotiations, 1);
 }
 
+/* ---- callbacks (docs/api.md "Callbacks"): what one may do to its own modem ---- */
+enum { CB_RESET = 1, CB_DESTROY, CB_CLEARDOWN };
+typedef struct {
+    v90m_t *m; int what; int rc; int fired; long at;
+    int ev[NEV]; int n_ev;
+} cb_t;
+static void cb_event(void *u, v90m_event ev)
+{
+    cb_t *c = u;
+    if (c->n_ev < NEV) c->ev[c->n_ev] = (int)ev;
+    c->n_ev++;
+    if (c->fired) return;
+    if (c->what == CB_RESET && ev == V90M_EV_ENDED) {
+        v90m_cfg o; v90m_cfg_default(&o); o.role = V90M_ROLE_ORIGINATE; o.on_event = cb_event; o.user = c;
+        c->rc = v90m_reset(c->m, &o); c->fired = 1;
+    } else if (c->what == CB_DESTROY && ev == V90M_EV_ENDED) {
+        v90m_destroy(c->m); c->fired = 1;
+    } else if (c->what == CB_CLEARDOWN && ev == V90M_EV_DATA_MOVING) {
+        c->rc = v90m_cleardown(c->m); c->fired = 1;
+    }
+}
+
+/* an answerer hearing silence, in blocks of blk (law: 0 mu-law, 1 A-law,
+ * 2 linear), until it ends or up to `upto` samples; the samples done */
+static long cb_silence(cb_t *c, int law, int blk, long upto, uint8_t *tx8, int16_t *tx16, int *rc)
+{
+    static uint8_t sil[2][4000]; static const int16_t rx16[4000] = { 0 };
+    long k = 0;
+    v90m_state st;
+    memset(sil[0], 0xFF, sizeof sil[0]); memset(sil[1], 0xD5, sizeof sil[1]);
+    *rc = V90M_OK;
+    while (k < upto && !c->fired) {
+        int b = upto - k < blk ? (int)(upto - k) : blk;
+        *rc = law == 2 ? v90m_process_linear(c->m, rx16, tx16, (size_t)b) : v90m_process_g711(c->m, sil[law], tx8, (size_t)b);
+        k += b;
+        if (c->fired || *rc != V90M_OK) break;
+        v90m_get_state(c->m, &st);
+        if (st.end != V90M_END_NONE) break;
+    }
+    return k;
+}
+
+static int all_is(const uint8_t *p, size_t n, uint8_t v) { size_t i; for (i = 0; i < n; i++) if (p[i] != v) return 0; return 1; }
+static int all_zero(const int16_t *p, size_t n) { size_t i; for (i = 0; i < n; i++) if (p[i]) return 0; return 1; }
+
+static void test_callbacks(void)
+{
+    static union { v90m_align a; uint8_t b[V90M_MEM_SIZE]; } mem;
+    static uint8_t tx8[4000]; static int16_t tx16[4000];
+    int law, err, rc;
+    for (law = 0; law < 3; law++) {
+        static cb_t c;
+        v90m_cfg cfg; v90m_state st;
+        long k_end, k;
+        int owned = law != 2, rc_reset;
+        /* reset from the callback at the end: refused, the modem as it was */
+        memset(&c, 0, sizeof c);
+        v90m_cfg_default(&cfg); cfg.alaw = law == 1; cfg.on_event = cb_event; cfg.user = &c;
+        c.what = CB_RESET;
+        c.m = owned ? v90m_create(&cfg, &err) : v90m_init(mem.b, sizeof mem.b, &cfg, &err);
+        CHECK(c.m != NULL);
+        if (!c.m) continue;
+        k_end = cb_silence(&c, law, 1, 8000L * 200, tx8, tx16, &rc);
+        v90m_get_state(c.m, &st);
+        CHECK_EQ_I(c.fired, 1);
+        CHECK_EQ_I(c.rc, V90M_ESTATE);
+        CHECK_EQ_I(st.end, V90M_END_FAILED);
+        rc_reset = c.rc;
+        v90m_destroy(c.m);
+        if (law == 0) {
+            /* the same in blocks of 4000: the rest of the block runs on the
+             * answerer, which a reset to the calling role would have replaced */
+            memset(&c, 0, sizeof c); c.what = CB_RESET;
+            c.m = v90m_create(&cfg, &err);
+            CHECK(c.m != NULL);
+            if (!c.m) continue;
+            cb_silence(&c, law, 4000, 8000L * 200, tx8, tx16, &rc);
+            if (rc == V90M_OK && c.fired) rc = v90m_process_g711(c.m, tx8, tx8, 4000);
+            v90m_get_state(c.m, &st);
+            CHECK_EQ_I(c.rc, V90M_ESTATE); CHECK_EQ_I(rc, V90M_OK); CHECK_EQ_I(st.end, V90M_END_FAILED);
+            v90m_destroy(c.m);
+        }
+        /* destroy from the callback at the end, in the middle of a block of
+         * 1000: the block finishes in silence, the modem freed when owned */
+        memset(&c, 0, sizeof c);
+        c.what = CB_DESTROY;
+        c.m = owned ? v90m_create(&cfg, &err) : v90m_init(mem.b, sizeof mem.b, &cfg, &err);
+        CHECK(c.m != NULL);
+        if (!c.m) continue;
+        k = cb_silence(&c, law, 4000, k_end - 500, tx8, tx16, &rc);
+        CHECK_EQ_I(c.fired, 0);
+        CHECK(k == k_end - 500);
+        memset(tx8, 0x55, sizeof tx8); memset(tx16, 0x55, sizeof tx16);
+        k = cb_silence(&c, law, 1000, 1000, tx8, tx16, &rc);
+        CHECK_EQ_I(c.fired, 1);
+        CHECK_EQ_I(rc, V90M_OK);
+        if (law == 2) CHECK(all_zero(tx16 + 500, 500));
+        else CHECK(all_is(tx8 + 500, 500, law ? 0xD5 : 0xFF));
+        CHECK_EQ_I(c.n_ev, 1);                      /* no event after the destroy */
+        printf("  %s: reset from the callback %d at sample %ld; destroy from it, the rest of the block %s\n",
+               law == 2 ? "linear, caller's memory" : law ? "A-law" : "mu-law", rc_reset, k_end,
+               law == 2 ? (all_zero(tx16 + 500, 500) ? "silent" : "not silent")
+                        : (all_is(tx8 + 500, 500, law ? 0xD5 : 0xFF) ? "silent" : "not silent"));
+    }
+}
+
+/* one V.90 call, the answerer in blocks of 1, 160 and 4000 samples (a line
+ * delay of 4000 one way); its callback clears down when the data moves */
+static void test_block_sizes(void)
+{
+    static const int blk[3] = { 1, 160, 4000 };
+    static int16_t line[4000], up[4000], down[4000];
+    uint32_t hash[3]; int n_ev[3], ev[3][NEV]; v90m_state st[3];
+    int j, i, f, err, rc_cd[3];
+    for (j = 0; j < 3; j++) {
+        static end_t cl; static cb_t c;
+        v90m_cfg cfg;
+        end_init(&cl, V90M_ROLE_ORIGINATE, V90M_MOD_V90 | V90M_MOD_V34);
+        memset(&c, 0, sizeof c); c.what = CB_CLEARDOWN; c.rc = 99;
+        v90m_cfg_default(&cfg); cfg.modulations = V90M_MOD_V90 | V90M_MOD_V34; cfg.on_event = cb_event; cfg.user = &c;
+        cfg.getbit = ones_get; cfg.putbit = bits_put;
+        c.m = v90m_create(&cfg, &err);
+        CHECK(c.m != NULL && cl.m != NULL);
+        memset(line, 0, sizeof line);
+        hash[j] = 2166136261u;
+        memset(&st[j], 0, sizeof st[j]);
+        for (f = 0; f < 2 * 60 && c.m && cl.m; f++) {
+            v90m_process_linear(cl.m, line, up, 4000);
+            for (i = 0; i < 4000; i += blk[j]) v90m_process_linear(c.m, up + i, down + i, (size_t)blk[j]);
+            memcpy(line, down, sizeof line);
+            hash[j] = fnv(hash[j], down, sizeof down);
+            v90m_get_state(c.m, &st[j]);
+            if (st[j].end != V90M_END_NONE) break;
+        }
+        rc_cd[j] = c.rc; n_ev[j] = c.n_ev; memcpy(ev[j], c.ev, sizeof ev[j]);
+        v90m_destroy(c.m); v90m_destroy(cl.m); v90m_async_destroy(cl.a);
+    }
+    printf("  V.90, the answerer in blocks of 1, 160, 4000: end %d %d %d, %d events, cleardown from the callback %d, samples %s\n",
+           (int)st[0].end, (int)st[1].end, (int)st[2].end, n_ev[0], rc_cd[0],
+           hash[1] == hash[0] && hash[2] == hash[0] ? "the same" : "different");
+    CHECK_EQ_I(rc_cd[0], V90M_OK);
+    CHECK_EQ_I(st[0].end, V90M_END_CLEARDOWN_OURS);
+    CHECK_EQ_I(hash[1], hash[0]); CHECK_EQ_I(hash[2], hash[0]);
+    CHECK(n_ev[1] == n_ev[0] && n_ev[2] == n_ev[0] && !memcmp(ev[1], ev[0], sizeof ev[0]) && !memcmp(ev[2], ev[0], sizeof ev[0]));
+    CHECK_EQ_I(rc_cd[1], V90M_OK); CHECK_EQ_I(rc_cd[2], V90M_OK);
+}
+
+/* ---- NULL (docs/api.md "NULL"): every object pointer is checked but the
+ * per-bit functions' ---- */
+static void test_null(void)
+{
+    static union { v90m_align a; uint8_t b[V90M_MEM_SIZE]; } mem;
+    v90m_cfg c; v90m_ec_cfg ec; v90m_state st; v90m_stats sx; v90m_ec_status es;
+    v90m_t *m; uint8_t b[4] = { 1, 2, 3, 4 }; int err, opt = 7, len = 7;
+    v90m_cfg_default(NULL); v90m_ec_cfg_default(NULL, 1);
+    v90m_cfg_default(&c); v90m_ec_cfg_default(&ec, 1);
+    CHECK_EQ_I(v90m_reset(NULL, &c), V90M_EINVAL);
+    CHECK_EQ_I(v90m_retrain(NULL), V90M_EINVAL);
+    CHECK_EQ_I(v90m_cleardown(NULL), V90M_EINVAL);
+    v90m_get_state(NULL, &st); v90m_get_stats(NULL, &sx);
+    m = v90m_init(mem.b, sizeof mem.b, &c, &err);
+    v90m_get_state(m, NULL); v90m_get_stats(m, NULL);
+    v90m_destroy(m);
+    v90m_async_reset(NULL);
+    CHECK(v90m_async_write(NULL, b, 4) == 0); CHECK(v90m_async_read(NULL, b, 4) == 0);
+    CHECK(v90m_async_tx_pending(NULL) == 0); CHECK(v90m_async_frame_errors(NULL) == 0);
+    v90m_ec_tick(NULL, 1); v90m_ec_line_stopped(NULL); v90m_ec_line_restored(NULL);
+    v90m_ec_release(NULL); v90m_ec_abort(NULL); v90m_ec_get_status(NULL, &es);
+    CHECK(v90m_ec_write(NULL, b, 4) == 0); CHECK(v90m_ec_write_space(NULL) == 0);
+    CHECK_EQ_I(v90m_ec_read(NULL, b, 4), 0); CHECK(v90m_ec_read_avail(NULL) == 0);
+    CHECK_EQ_I(v90m_ec_tx_idle(NULL), V90M_EINVAL); CHECK_EQ_I(v90m_ec_tx_busy(NULL), V90M_EINVAL);
+    CHECK_EQ_I(v90m_ec_send_break(NULL, V90M_BRK_DESTRUCTIVE_EXPEDITED, 1), V90M_EINVAL);
+    CHECK_EQ_I(v90m_ec_get_break(NULL, &opt, &len), V90M_EINVAL);
+    CHECK_EQ_I(v90m_ec_state(NULL), V90M_EINVAL);
+    CHECK_EQ_I(v90m_ec_reset(NULL, &ec), V90M_EINVAL);    /* last: crashed before */
+}
+
 int main(void)
 {
     test_cfg();
@@ -1562,5 +1739,8 @@ int main(void)
     test_k56_reneg();
     test_k56_retrain();
     test_end_codes();
+    test_callbacks();
+    test_block_sizes();
+    test_null();
     T_REPORT("api");
 }

@@ -112,6 +112,26 @@ Fixed:
   keeps calling `v90m_process_*` after `V90M_EV_ENDED` no longer overflows
   them either. Shorter calls are unchanged.
 
+Changed (API: callbacks, NULL, configuration checks):
+- From a callback (`getbit`, `putbit`, `on_event`), `v90m_reset` on the
+  modem that calls it returns `V90M_ESTATE` and changes nothing (it reset
+  the modem under the block being processed: undefined behaviour), and
+  `v90m_destroy` takes effect at the end of the sample under way: no event
+  after it, the rest of the block is silence (linear 0, mu-law 0xFF, A-law
+  0xD5), the modem is freed when owned, and `v90m_process_*` returns
+  `V90M_OK` (it freed the modem under the block: a use after free).
+  `v90m_init` on the modem's own memory from a callback is documented as
+  not allowed.
+- NULL: every function checks its object (and the struct that
+  `v90m_get_state`, `v90m_get_stats`, `v90m_ec_get_status` fill): an `int`
+  function returns `V90M_EINVAL` (`v90m_ec_state`, `v90m_ec_tx_idle`,
+  `v90m_ec_tx_busy`, `v90m_ec_get_break` included), a `size_t` or
+  `unsigned long` one 0, a `void` one does nothing; `v90m_retrain`,
+  `v90m_cleardown`, `v90m_ec_reset` and most `v90m_ec_*` and
+  `v90m_async_*` functions crashed. The four per-bit functions
+  (`v90m_ec_tx_bit`, `v90m_ec_rx_bit`, `v90m_async_getbit`,
+  `v90m_async_putbit`) are not checked: their object must not be NULL.
+
 ## 0.5.0 (2026-11-21)
 
 K56flex, Rockwell's and Lucent's 56k scheme of 1997, on the answering
