@@ -20,7 +20,11 @@ another object: every `v90m_ec_*` and `v90m_async_*` function).
 takes effect at the end of the sample under way: no event after it, the
 rest of the block is silence (linear 0, mu-law 0xFF, A-law 0xD5), the
 modem is freed (when it came from `v90m_create`) and `v90m_process_*`
-returns `V90M_OK`. `v90m_init` on the modem's own memory is not allowed.
+returns `V90M_OK`. After a `v90m_destroy` from `getbit` or `putbit` the
+rest of that sample still calls `getbit` and `putbit` with the host's
+`user` pointer: free the user object (a `v90m_ec_t`, a `v90m_async_t`)
+only after `v90m_process_*` returns, and never from a callback of a modem
+that goes on. `v90m_init` on the modem's own memory is not allowed.
 
 NULL: every function checks the object it is given (and the struct that
 `v90m_get_state`, `v90m_get_stats` and `v90m_ec_get_status` fill): with
@@ -286,7 +290,7 @@ A value outside these ranges is `V90M_EINVAL` from create, init and reset.
 | `int v90m_ec_tx_idle(const v90m_ec_t *e)` | everything written was acknowledged |
 | `int v90m_ec_tx_busy(const v90m_ec_t *e)` | a frame is still leaving the transmitter |
 | `void v90m_ec_release(v90m_ec_t *e)` | orderly: DISC, wait for UA |
-| `void v90m_ec_abort(v90m_ec_t *e)` | the line is gone: stop without a word |
+| `void v90m_ec_abort(v90m_ec_t *e)` | the line is gone: stop without a word, in every state; `v90m_ec_state` is `V90M_EC_DISCONNECTED` (reason `V90M_EC_R_LOCAL`) on return |
 | `int v90m_ec_send_break(v90m_ec_t *e, int opt, int len10ms)` | V.42 12.3.1; `V90M_OK` when the break is on its way; `V90M_EINVAL` for an `opt` other than the three `V90M_BRK_*`; `V90M_ESTATE` when error control is not up (`V90M_EC_CONNECTED`) or a break of ours is still pending |
 | `int v90m_ec_get_break(v90m_ec_t *e, int *opt, int *len10ms)` | 1 with `*opt` and `*len10ms` when a break came (in its place among the octets read), else 0 |
 | `int v90m_ec_state(const v90m_ec_t *e)` | `V90M_EC_DETECT` ... |

@@ -430,7 +430,10 @@ void v42ec_rx_bit(v42ec_t *e, int bit)
         if (e->det_rx.last_char >= 0) async_char(e, e->det_rx.last_char);
         if (e->cfg.originator) {
             if (e->want_hdlc || e->want_async) return;
-            if (r == V42DET_ADP_V42) e->want_hdlc = 1;
+            /* an answerer without the detection phase (7.2.1) sends flags
+             * instead of the ADP: they too say it does LAPM */
+            v42hdlc_rx_bit(&e->hrx, bit);
+            if (r == V42DET_ADP_V42 || e->hrx.flag_run >= FLAGS_SEEN) e->want_hdlc = 1;
             else if (r == V42DET_ADP_NOEC) {
                 e->want_async = 1;
                 ring_reset(&e->rxr);
@@ -584,6 +587,14 @@ void v42ec_release(v42ec_t *e)
     default:
         break;
     }
+}
+
+void v42ec_abort(v42ec_t *e)
+{
+    if (e->state == V42EC_DISCONNECTED) return;
+    v42lapm_abort(&e->lapm, V42LAPM_R_LOCAL);   /* only a UA or DM owed still goes */
+    e->orig_wait = 0;
+    finish(e, V42LAPM_R_LOCAL);
 }
 
 int v42ec_send_break(v42ec_t *e, int opt, int len10ms)

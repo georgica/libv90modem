@@ -150,6 +150,22 @@ Changed (API: callbacks, NULL, configuration checks):
 - `v90m_ec_tick` with `ms` above `INT_MAX` expires the timers (it extended
   them).
 
+Fixed (error control):
+- `v90m_ec_abort` stops the endpoint in every state, and
+  `v90m_ec_state` says `V90M_EC_DISCONNECTED` (reason `V90M_EC_R_LOCAL`)
+  on return. In the detection phase it did nothing (the endpoint went on
+  to start-stop mode at T400 and delivered what the line carried); in
+  start-stop mode it did nothing (data kept moving, writes were taken);
+  in error-corrected mode the state showed it only after the next call.
+- An originator with the detection phase takes the answerer's HDLC flags
+  as the sign of an error-correcting answerer, as the answerer takes the
+  originator's: against an answerer without the detection phase (V.42
+  7.2.1) it went to start-stop mode at T400 and read the flags as
+  characters, while the answerer waited for a SABME.
+- Documented: after a `v90m_destroy` from `getbit` or `putbit`, the rest of
+  that sample still calls `getbit` and `putbit` with the host's `user`
+  pointer; free the user object only after `v90m_process_*` returns.
+
 ## 0.5.0 (2026-11-21)
 
 K56flex, Rockwell's and Lucent's 56k scheme of 1997, on the answering

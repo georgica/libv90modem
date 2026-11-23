@@ -62,7 +62,8 @@ modems that both named LAPM in V.8, V.92 9.3.1), set `detect = 0`: the
 caller skips the detection phase.
 
 **The detection phase** (V.42 7.2.1). The originator sends the ODP until
-two ADPs are seen or T400 passes; the answerer sends mark until the ODP,
+two ADPs are seen, or the answerer's flags (an answerer without the
+detection phase), or T400 passes; the answerer sends mark until the ODP,
 then the ADP. If T400 passes without an error-correcting peer, the
 endpoint goes to `V90M_EC_ASYNC` (start-stop, no correction) with
 `fallback` 1, or disconnects (`V90M_EC_R_NO_EC`) with `fallback` 0
@@ -115,7 +116,9 @@ Robotics x2 client resumes after its rate change. v90d also holds V.42's
 timers while the data are stopped (`DESIGN.md`, 4.2).
 
 **The end.** `v90m_ec_release` is orderly (DISC, then wait for UA);
-`v90m_ec_abort` stops without a word when the line is gone. After
+`v90m_ec_abort` stops without a word when the line is gone, in every
+state (detection and start-stop mode included), and the state is
+`V90M_EC_DISCONNECTED` (`V90M_EC_R_LOCAL`) on return. After
 `V90M_EC_DISCONNECTED`, if the line is still up, keep the bits moving for a
 few dozen more so that a final UA or DM gets out; data already received
 stays readable (`v42/v42.h`). Then the modem's cleardown, where there is

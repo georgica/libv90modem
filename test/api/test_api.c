@@ -471,6 +471,48 @@ static void test_ec(void)
     v90m_ec_destroy(o); v90m_ec_destroy(a);
 }
 
+/* v90m_ec_abort: stopped at once in every state, the state says so */
+static void test_ec_abort(void)
+{
+    v90m_ec_cfg co, ca; v90m_ec_t *e, *o, *a; v90m_ec_status st;
+    uint8_t b[1] = { 'x' };
+    int i, ms, err;
+
+    /* detection: no start-stop mode when T400 runs out */
+    v90m_ec_cfg_default(&ca, 0);
+    e = v90m_ec_create(&ca, &err); CHECK(e != NULL);
+    v90m_ec_abort(e);
+    CHECK_EQ_I(v90m_ec_state(e), V90M_EC_DISCONNECTED);
+    for (i = 0; i < 1000; i++) v90m_ec_tick(e, 1);
+    CHECK_EQ_I(v90m_ec_state(e), V90M_EC_DISCONNECTED);
+    /* start-stop mode */
+    CHECK_EQ_I(v90m_ec_reset(e, &ca), V90M_OK);
+    for (i = 0; i < 1000; i++) v90m_ec_tick(e, 1);
+    CHECK_EQ_I(v90m_ec_state(e), V90M_EC_ASYNC);
+    v90m_ec_abort(e);
+    CHECK_EQ_I(v90m_ec_state(e), V90M_EC_DISCONNECTED);
+    CHECK_EQ_I(v90m_ec_write(e, b, 1), 0);
+    v90m_ec_get_status(e, &st);
+    CHECK_EQ_I(st.reason, V90M_EC_R_LOCAL);
+    v90m_ec_destroy(e);
+
+    /* connected: no call needed before the state shows it */
+    v90m_ec_cfg_default(&co, 1);
+    o = v90m_ec_create(&co, &err); a = v90m_ec_create(&ca, &err);
+    CHECK(o != NULL && a != NULL);
+    for (ms = 0; ms < 2000; ms++) {
+        int k;
+        for (k = 0; k < 24; k++) { v90m_ec_rx_bit(a, v90m_ec_tx_bit(o)); v90m_ec_rx_bit(o, v90m_ec_tx_bit(a)); }
+        v90m_ec_tick(o, 1); v90m_ec_tick(a, 1);
+    }
+    CHECK_EQ_I(v90m_ec_state(a), V90M_EC_CONNECTED);
+    v90m_ec_abort(a);
+    CHECK_EQ_I(v90m_ec_state(a), V90M_EC_DISCONNECTED);
+    v90m_ec_get_status(a, &st);
+    CHECK_EQ_I(st.reason, V90M_EC_R_LOCAL);
+    v90m_ec_destroy(o); v90m_ec_destroy(a);
+}
+
 /* ---- the calling role: an API caller and an API answerer back to back ---- */
 typedef struct { v90m_t *m; v90m_async_t *a; int ev[8]; int n_ev; } end_t;
 static void end_event(void *u, v90m_event ev) { end_t *e = u; if (e->n_ev < 8) e->ev[e->n_ev] = (int)ev; e->n_ev++; }
@@ -1645,12 +1687,103 @@ static void test_callbacks(void)
         CHECK_EQ_I(rc, V90M_OK);
         if (law == 2) CHECK(all_zero(tx16 + 500, 500));
         else CHECK(all_is(tx8 + 500, 500, law ? 0xD5 : 0xFF));
-        CHECK_EQ_I(c.n_ev, 1);                      /* no event after the destroy */
+        CHECK_EQ_I(c.n_ev, 1);                      /* ENDED only (test_destroy_calling has an event to lose) */
         printf("  %s: reset from the callback %d at sample %ld; destroy from it, the rest of the block %s\n",
                law == 2 ? "linear, caller's memory" : law ? "A-law" : "mu-law", rc_reset, k_end,
                law == 2 ? (all_zero(tx16 + 500, 500) ? "silent" : "not silent")
                         : (all_is(tx8 + 500, 500, law ? 0xD5 : 0xFF) ? "silent" : "not silent"));
     }
+}
+
+/* destroy from a callback of the calling role: from on_event (an event
+ * with a successor in the same sample, which must not arrive), from getbit
+ * and from putbit, the caller run through v90m_process_lin_rx in blocks of
+ * 160. A V.22 call to an API answerer; 2 s into data mode the caller hears
+ * silence, so the call ends. */
+enum { DX_NONE, DX_EVENT, DX_GETBIT, DX_PUTBIT };
+typedef struct {
+    v90m_t *m; v90m_async_t *a;
+    int mode, at_ev, moving, dead;
+    long sample, ev_sample[NEV], bits, bits_after;
+    int ev[NEV], n_ev, ev_after;
+} dx_t;
+static void dx_event(void *u, v90m_event ev)
+{
+    dx_t *d = u;
+    if (d->dead) { d->ev_after++; return; }
+    if (d->n_ev < NEV) { d->ev[d->n_ev] = (int)ev; d->ev_sample[d->n_ev] = d->sample; }
+    d->n_ev++;
+    if (ev == V90M_EV_DATA_MOVING) d->moving = 1;
+    if (d->mode == DX_EVENT && d->n_ev == d->at_ev) { v90m_destroy(d->m); d->dead = 1; }
+}
+static void dx_bit(dx_t *d, int mode)
+{
+    if (d->dead) { d->bits_after++; return; }
+    if (d->moving && d->mode == mode && ++d->bits == 1000) { v90m_destroy(d->m); d->dead = 1; }
+}
+static int dx_get(void *u) { dx_t *d = u; dx_bit(d, DX_GETBIT); return v90m_async_getbit(d->a); }
+static void dx_put(void *u, int b) { dx_t *d = u; dx_bit(d, DX_PUTBIT); v90m_async_putbit(d->a, b); }
+
+/* the call; blk 1 numbers each event's sample. The caller's last
+ * v90m_process_lin_rx return code. */
+static int dx_call(dx_t *d, int mode, int at_ev, int blk)
+{
+    static end_t an;
+    static int16_t c_rx[160], a_rx[160], a_tx[160]; static uint8_t c_tx[160];
+    v90m_cfg c; int err, i, rc = V90M_OK;
+    long k, cut = -1;
+    memset(d, 0, sizeof *d);
+    d->mode = mode; d->at_ev = at_ev;
+    d->a = v90m_async_create(&err);
+    v90m_cfg_default(&c);
+    c.role = V90M_ROLE_ORIGINATE; c.modulations = V90M_MOD_V22 | V90M_MOD_V21;
+    c.getbit = dx_get; c.putbit = dx_put; c.on_event = dx_event; c.user = d;
+    d->m = v90m_create(&c, &err);
+    end_init(&an, V90M_ROLE_ANSWER, V90M_MOD_V22 | V90M_MOD_V21);
+    CHECK(d->m != NULL && d->a != NULL);
+    memset(c_rx, 0, sizeof c_rx); memset(a_rx, 0, sizeof a_rx);
+    for (k = 0; k < 8000L * 20 && d->m && !d->dead; k += blk) {
+        for (i = 0; i < blk; i++) if (cut >= 0 && k + i >= cut) c_rx[i] = 0;
+        d->sample = k;
+        rc = v90m_process_lin_rx(d->m, c_rx, c_tx, (size_t)blk);
+        if (d->dead) break;
+        for (i = 0; i < blk; i++) a_rx[i] = v90m_g711_decode(0, c_tx[i]);
+        v90m_process_linear(an.m, a_rx, a_tx, (size_t)blk);
+        memcpy(c_rx, a_tx, sizeof c_rx[0] * (size_t)blk);
+        if (cut < 0 && d->moving) cut = k + 8000L * 2;
+        if (d->n_ev > 0 && d->ev[d->n_ev - 1] == V90M_EV_ENDED) break;
+    }
+    if (!d->dead) v90m_destroy(d->m);
+    v90m_destroy(an.m); v90m_async_destroy(an.a); v90m_async_destroy(d->a);
+    return rc;
+}
+
+static void test_destroy_calling(void)
+{
+    static dx_t d;
+    int i, pair = -1, rc;
+    /* which event has a successor in its own sample */
+    dx_call(&d, DX_NONE, 0, 1);
+    CHECK(d.n_ev >= 3);
+    CHECK_EQ_I(d.ev[d.n_ev - 1], V90M_EV_ENDED);
+    for (i = 0; i + 1 < d.n_ev && i + 1 < NEV; i++)
+        if (d.ev_sample[i + 1] == d.ev_sample[i]) { pair = i; break; }
+    CHECK(pair >= 0);
+    if (pair < 0) return;
+    printf("  calling role, destroy from callbacks: events %d and %d come in one sample\n", d.ev[pair], d.ev[pair + 1]);
+    /* destroy on the first of the two: the second never arrives */
+    rc = dx_call(&d, DX_EVENT, pair + 1, 160);
+    CHECK_EQ_I(d.dead, 1); CHECK_EQ_I(rc, V90M_OK);
+    CHECK_EQ_I(d.n_ev, pair + 1);
+    CHECK_EQ_I(d.ev_after, 0);
+    /* from getbit and from putbit, in data mode: getbit and putbit may still
+     * be called until the sample ends, but no event */
+    rc = dx_call(&d, DX_GETBIT, 0, 160);
+    CHECK_EQ_I(d.dead, 1); CHECK_EQ_I(rc, V90M_OK); CHECK_EQ_I(d.ev_after, 0);
+    CHECK(d.bits_after < 16);
+    rc = dx_call(&d, DX_PUTBIT, 0, 160);
+    CHECK_EQ_I(d.dead, 1); CHECK_EQ_I(rc, V90M_OK); CHECK_EQ_I(d.ev_after, 0);
+    CHECK(d.bits_after < 16);
 }
 
 /* one V.90 call, the answerer in blocks of 1, 160 and 4000 samples (a line
@@ -1903,6 +2036,7 @@ int main(void)
     test_call();
     test_blocks();
     test_ec();
+    test_ec_abort();
     test_originate();
     test_bell();
     test_bell_originate();
@@ -1912,6 +2046,7 @@ int main(void)
     test_k56_retrain();
     test_end_codes();
     test_callbacks();
+    test_destroy_calling();
     test_block_sizes();
     test_null();
     test_cfg_ranges();

@@ -30,8 +30,12 @@
  * V90M_ESTATE and changes nothing. v90m_destroy takes effect at the end of
  * the sample under way: no event after it, the rest of the block is
  * silence (linear 0, mu-law 0xFF, A-law 0xD5), the modem is freed (when it
- * came from v90m_create) and v90m_process_* returns V90M_OK. v90m_init on
- * the modem's own memory is not allowed.
+ * came from v90m_create) and v90m_process_* returns V90M_OK. After a
+ * v90m_destroy from getbit or putbit the rest of that sample still calls
+ * getbit and putbit with the host's user pointer: free the user object
+ * (a v90m_ec_t, a v90m_async_t) only after v90m_process_* returns, and
+ * never from a callback of a modem that goes on. v90m_init on the modem's
+ * own memory is not allowed.
  *
  * NULL: every function checks the object it is given (and the struct that
  * v90m_get_state, v90m_get_stats and v90m_ec_get_status fill): with NULL a
@@ -466,7 +470,8 @@ int         v90m_ec_tx_idle(const v90m_ec_t *e);        /* everything written wa
 int         v90m_ec_tx_busy(const v90m_ec_t *e);        /* a frame is still leaving the transmitter */
 
 void        v90m_ec_release(v90m_ec_t *e);              /* orderly: DISC, wait for UA */
-void        v90m_ec_abort(v90m_ec_t *e);                /* the line is gone: stop without a word */
+void        v90m_ec_abort(v90m_ec_t *e);                /* the line is gone: stop without a word, in
+                                                           every state: V90M_EC_DISCONNECTED on return */
 /* break signals (V.42 12.3.1): opt is one of these, len10ms the length in
  * 10 ms units. send_break: V90M_OK when the break is on its way;
  * V90M_EINVAL for any other opt; V90M_ESTATE when error control is not up
