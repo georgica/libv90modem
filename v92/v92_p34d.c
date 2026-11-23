@@ -467,10 +467,13 @@ static void ru_heard(v92d_t *p)
     if (p->rx_ready && p->rx_on && !p->cd_quiet) {
         unsigned n = ru_run(p), j;
         int32_t y[4 * V92_VIT_DEPTH + V92_TFRAME];
-        /* the decoder's inputs again, the newest first (the baseline as it
-         * is now: it moves slowly) */
-        for (j = 0; j < sizeof y / sizeof y[0]; j++)
-            y[j] = (int32_t)v92_trn_sample(&p->trn, p->data_k - 1 - (int32_t)j) - (p->base_q4 >> 4);
+        /* the decoder's inputs again, the newest first, each against the
+         * baseline it was taken with (Ru, decided as data before it was
+         * heard, has moved the baseline since by up to some 125) */
+        for (j = 0; j < sizeof y / sizeof y[0]; j++) {
+            int32_t k = p->data_k - 1 - (int32_t)j;
+            y[j] = (int32_t)v92_trn_sample(&p->trn, k) - p->trn.sb[k & 255];
+        }
         if (n > 0) v92_dec_flush_before(&p->dec, n + V92_DFRAME, y);
     }
     p->rx_ready = 0;
@@ -619,7 +622,12 @@ uint8_t v92d_tick(v92d_t *p, int16_t rxs)
                  * the baseline by an eighth: slow against the symbols, fast
                  * against the wander; less where the error is the codec's
                  * quantiser or may be a wrong decision (base_step). */
-                int32_t y = (int32_t)v92_trn_sample(&p->trn, p->data_k++) - (p->base_q4 >> 4), tent;
+                int32_t y, tent;
+                /* the baseline this sample is taken against, kept for ru_heard
+                 * (trn.sb is free in data mode: v92_trn_resume fills it
+                 * again before the training receiver reads it) */
+                p->trn.sb[p->data_k & 255] = (int16_t)(p->base_q4 >> 4);
+                y = (int32_t)v92_trn_sample(&p->trn, p->data_k++) - (p->base_q4 >> 4);
                 v92_dec_put(&p->dec, y, &tent);
                 p->base_q4 += base_step(p, y - tent, tent);
                 if (p->base_q4 > BASE_MAX_Q4) p->base_q4 = BASE_MAX_Q4;

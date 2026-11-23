@@ -320,6 +320,15 @@ int main(int argc, char **argv)
         run(&s, &o); report(&s, &o); check_good(&s, &o);
         CHECK_EQ_I(o.req_rc, 0); CHECK_EQ_I(o.renegs, 1); CHECK_EQ_I(a.renegs, 1);
         CHECK(o.up_bits2 > 2 * 24000); CHECK_EQ_I(o.up_bad2, 0);
+        /* the same on a noisy line: the data frames the decoder held before
+         * Ru are delivered, decided on the inputs it had (the baseline moved
+         * under Ru before it was heard) */
+        base(&s, "15b caller renegotiates, short noisy line", 0, 0, 40, 40);
+        s.echo = 0.05; s.level = 4000; s.phase0 = 0.4;
+        s.a_reneg_ms = 5541; s.seconds = 11;
+        run(&s, &o); report(&s, &o); check_good(&s, &o);
+        CHECK_EQ_I(o.req_rc, 0); CHECK_EQ_I(o.renegs, 1);
+        CHECK_EQ_I(o.up_bad2, 0);
         base(&s, "16 we renegotiate", 1, 1, 3, 40);
         s.d_reneg_ms = 5500; s.seconds = 11;
         run(&s, &o); report(&s, &o); check_good(&s, &o);

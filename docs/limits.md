@@ -87,8 +87,9 @@ delivered).
   recover them. The answering modem then delivers the frames its decoder
   held, but for one data frame of margin before where Ru was found to
   begin (as V.90's). Measured on the simulator: 11 or 12 data frames
-  (`dly` 114 to 116) in 40 renegotiations, either end's, nothing wrong
-  delivered; at most `dly` / 12 + 3.
+  (`dly` 114 to 116) in 40 renegotiations, either end's, and nothing
+  wrong delivered in those or in 46 more over eight kinds of line (noise
+  40, pads, a strong echo, a bump); at most `dly` / 12 + 3.
 
 ## x2 (answering)
 
