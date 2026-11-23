@@ -267,9 +267,10 @@ also start from `V92D_RENEG` / `V92D_PH4` after data mode was reached.
 **T21.3 `v92_p6_tick` overflows int on loud samples** (Important, high,
 reproduced).
 - Where: `v92/v92_rx.c:17-27`: `X(k)` is `int32_t`, so
-  `X(0) * X(6) - X(48) * X(54)` and its `2 *`, and the sums of squares in
-  `e48` / `e3`, are int arithmetic; with |x| above about 23170 they exceed
-  INT32_MAX before reaching the int64 accumulators.
+  `X(0) * X(6) - X(48) * X(54)` and its `2 *` are int arithmetic; with |x|
+  above about 23170 the `2 *` products (in `c48`, `a48`, `c6`) exceed
+  INT32_MAX before reaching the int64 accumulators. The sums of squares in
+  `e48` / `e3` overflow only at -32768 (review correction).
 - Reached by: Phase 3 (`V92D_WAIT_RU`, `JD`, `JP`), data mode and rate
   renegotiation in `v92d` (`v92_p34d.c:578, 642, 662, 770, 789`), on the
   echo-cancelled input; also the calling side's Sd detector
@@ -281,8 +282,11 @@ reproduced).
   (`V92D_ERR_DESIGN` / `V92D_ERR_CPT`) with no further report.
 - Fix: `X(k)` as `int64_t`. Same values whenever nothing overflowed; the
   replay proof checks the recordings.
-- Test that fails today (check-ubsan): `v92/test_rx`: Ru at amplitude
-  32767 through `v92_p6_tick` is detected and raises no UBSan report.
+- Test that fails today (check-ubsan): `v92/test_rx`: a full-scale Ru
+  the detector accepts (32767, and -32768 samples) through `v92_p6_tick`
+  raises no UBSan report; detection is checked as well.
+- Fixed in Task 21 (T21.3): `X(k)` as `int64_t`; `test_p6_full` in
+  `v92/test/test_rx.c`.
 
 **T21.4 The CPd design overflows on a long low-pass channel estimate**
 (Important, high, reproduced).

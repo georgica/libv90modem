@@ -96,6 +96,13 @@ Changed (V.22bis, both roles):
   high gain early in the data, an undefined behaviour); output is
   unchanged where they did not overflow.
 
+Changed (V.92, both roles):
+- The detector of Ru, Su and Sd (the answering V.92 modem's Phase 3, data
+  mode and rate renegotiation; the calling side's wait for Sd) forms its
+  correlations in 64 bits: with samples past about 23170 they overflowed a
+  signed 32-bit value, an undefined behaviour. Output is unchanged where
+  they did not overflow; a full-scale Ru (to 32767 and -32768) is detected.
+
 Fixed:
 - V.90 and V.92, calling role: the last data frame before the digital
   modem's Rd (its rate renegotiation or cleardown) is delivered. It was
