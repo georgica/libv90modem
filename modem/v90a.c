@@ -64,7 +64,7 @@ static void end(v90a_t *a, int err)
 static void ugo(v90a_t *a, int s) { a->us = s; a->un = 0; }
 /* S (a renegotiation, a cleardown): in data mode once the mapping frame
  * under way is out, so that every bit taken from getbit is sent whole */
-static void go_s(v90a_t *a) { ugo(a, a->us == U_DATA ? U_DATA_END : U_RS); }
+static void go_s(v90a_t *a) { if (a->us != U_DATA_END) ugo(a, a->us == U_DATA ? U_DATA_END : U_RS); }
 
 /* jobs (below): the DIL's analysis, CPt's design, CP's design */
 enum { JOB_NONE, JOB_DIL, JOB_CPT, JOB_CP };

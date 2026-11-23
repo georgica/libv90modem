@@ -261,28 +261,35 @@ static void cases(int v92)
 /* the answerer's rate renegotiation, no V.42: the data both ways is counter
  * words. Downstream none is lost or repeated, and no bit, at its Rd
  * (9.6.1.1 / 9.8.1.1: the frames before Rd are data, every one of them).
- * Upstream the same across V.90's S: we send the mapping frame under way
- * whole, the answerer delivers the frames its decoder still held. V.92's
- * Ru (on a data frame boundary, 9.8.2.1.1) cuts off what the caller's
- * prefilter still held: those frames never reach the far end, and the
- * answerer drops its decoder's (printed, not checked) */
+ * Upstream, across V.90's S: we send the mapping frame under way whole, and
+ * the answerer delivers the frames its decoder still held but one, the
+ * margin against an S found late (v34_rx_flush_before): exactly one mapping
+ * frame is lost, nothing repeated or wrong. V.92's Ru (on a data frame
+ * boundary, 9.8.2.1.1) cuts off what the caller's prefilter still held
+ * (about dly samples: those frames never reach the far end), and the
+ * answerer keeps a data frame of margin too: whole data frames are lost,
+ * no more than dly / 12 + 3 of them, nothing wrong */
 static void words_reneg(int v92)
 {
     vl_t *l = &L;
-    int64_t t0, w0, lost0, brk0, u0, ulost0, ubrk0;
+    int64_t t0, w0, lost0, brk0, u0, ulost0, ubrk0, ugap0, gap, K = 0, dly = 0, frame = 0;
     int32_t ms;
     CHECK(connect_w(l, v92, 80 + v92, 1));
+    /* the upstream's frame as it was when the data stopped */
+    if (v92) { K = l->ans.u.v92.cpd.map.K; dly = l->ans.u.v92.dsn.dly; }
+    else frame = (int64_t)l->ans.p34.up_rate * 8 / l->ans.p34.cfg.sym_rate;
     w0 = l->wdown.words; lost0 = l->wdown.lost; brk0 = l->wdown.breaks;
-    u0 = l->wup.words; ulost0 = l->wup.lost; ubrk0 = l->wup.breaks;
+    u0 = l->wup.words; ulost0 = l->wup.lost; ubrk0 = l->wup.breaks; ugap0 = l->wup.gap_bits;
     t0 = l->k;
     if (v92) CHECK_EQ_I(v92d_renegotiate(&l->ans.u.v92), 0);
     else CHECK_EQ_I(p34d_renegotiate(&l->ans.p34), 0);
     ms = back(l, t0, 30000);
     run_ms(l, 2000);
+    gap = l->wup.gap_bits - ugap0;
     printf("%s: the answerer renegotiates, counter words: back %d ms, words before %" PRId64 ", after %" PRId64 ", lost %" PRId64 "\n",
            v92 ? "V.92" : "V.90", (int)ms, w0, l->wdown.words - w0, l->wdown.lost - lost0);
-    printf("  upstream: words before %" PRId64 ", after %" PRId64 ", lost %" PRId64 "; breaks down %" PRId64 ", up %" PRId64 " (%" PRId64 " bits missing)\n",
-           u0, l->wup.words - u0, l->wup.lost - ulost0, l->wdown.breaks - brk0, l->wup.breaks - ubrk0, l->wup.gap_bits);
+    printf("  upstream: words before %" PRId64 ", after %" PRId64 ", lost %" PRId64 ", again %" PRId64 "; breaks down %" PRId64 ", up %" PRId64 " (%" PRId64 " bits missing)\n",
+           u0, l->wup.words - u0, l->wup.lost - ulost0, l->wup.again, l->wdown.breaks - brk0, l->wup.breaks - ubrk0, gap);
     CHECK(ms > 0);
     CHECK(w0 > 1000);
     CHECK(l->wdown.words - w0 > 1000);
@@ -291,9 +298,18 @@ static void words_reneg(int v92)
     CHECK_EQ_I(l->wdown.locked, 1);
     CHECK(u0 > 1000);
     CHECK(l->wup.words - u0 > 1000);
+    CHECK_EQ_I(l->wup.again, 0);
+    CHECK_EQ_I(l->wup.breaks - ubrk0, 1);
     if (!v92) {
-        CHECK_EQ_I(l->wup.lost - ulost0, 0);            /* (27 words, 432 bits, were) */
-        CHECK_EQ_I(l->wup.breaks - ubrk0, 0);
+        /* one mapping frame (432 bits, 6 frames, were) */
+        CHECK(gap >= frame - 1 && gap <= frame);
+        CHECK(16 * (l->wup.lost - ulost0) >= gap && 16 * (l->wup.lost - ulost0) < gap + 32);
+    } else {
+        /* whole data frames, within the bound (672 bits, 14 frames, were) */
+        printf("  V.92: %" PRId64 " data frames of %d bits lost, the bound %d (dly %d)\n", gap / K, (int)K,
+               (int)(dly / V92_DFRAME + 3), (int)dly);
+        CHECK(gap > 0 && gap % K == 0);
+        CHECK(gap / K <= dly / V92_DFRAME + 3);
     }
     CHECK_EQ_I(l->wup.locked, 1);
 }

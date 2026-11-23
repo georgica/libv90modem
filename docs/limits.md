@@ -65,6 +65,31 @@ Each item names where it is recorded.
   212A specification document was to hand. The 3 s and 6 s fallbacks to
   Bell 103 are this library's choices. (README, `DESIGN.md` 4.2e.)
 
+## Data across a rate renegotiation or cleardown (no error control)
+
+With V.42 the frames below are sent again; without it they are lost. The
+downstream loses nothing (V.90 and V.92: the frames before Rd are all
+delivered).
+
+- **V.90 upstream: one mapping frame at each S** (about 2.5 ms; 72 bits at
+  28800 bit/s). The answering modem delivers what its decoder held when it
+  heard S, but where S begins is found from S's points, which a real
+  channel turns for the first few symbols (up to 37 degrees in a
+  recording): the frame before the start found is held back, so that no
+  frame S cut or that holds S is delivered. The calling modem sends the
+  mapping frame under way whole before its S.
+- **V.92 upstream: what the caller's prefilter held when Ru began.** V.92
+  begins Ru on a data frame boundary (9.8.2.1.1). The symbols reach the
+  digital modem through the prefilter `dsn.dly` samples later (some 116
+  on the simulator's lines), and Ru, sent in their place, cuts that tail
+  off: about `dly` / 12 data frames (10 at 32000 bit/s, 480 bits) never
+  reach the line. Inherent to Ru on a frame boundary; neither end can
+  recover them. The answering modem then delivers the frames its decoder
+  held, but for one data frame of margin before where Ru was found to
+  begin (as V.90's). Measured on the simulator: 11 or 12 data frames
+  (`dly` 114 to 116) in 40 renegotiations, either end's, nothing wrong
+  delivered; at most `dly` / 12 + 3.
+
 ## x2 (answering)
 
 - **Offered only** with `V90M_MOD_X2` and `V90M_MOD_V34`, answering, to a

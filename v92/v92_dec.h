@@ -110,6 +110,15 @@ void v92_dec_set_hard(v92_dec_t *d, int on);
  * before a cleardown). Only whole data frames are delivered. */
 void v92_dec_flush(v92_dec_t *d);
 
+/* The same for the decisions on the inputs before the n newest only (a rate
+ * renegotiation's Ru: the data the caller sent before it); whole data frames
+ * only. y (may be NULL): the inputs given, the newest first, at least the
+ * ones not decided yet (n + 4 * V92_VIT_DEPTH is enough): the path through
+ * those delivered is then the survivor that costs least over them, not the
+ * one through what followed. The decoder is to be initialised again before
+ * it decodes on. */
+void v92_dec_flush_before(v92_dec_t *d, unsigned n, const int32_t *y);
+
 /* Smoothed squared distance between the received values and the decoded
  * path, per symbol, in linear units squared (an estimate of the noise
  * variance). It rises to the scale of the squared point spacing when frame

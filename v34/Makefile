@@ -16,7 +16,7 @@ LIB_HDR := v34.h v34_priv.h
 SUP_HDR := ../test/test.h test/fig5_data.h test/spec_tables.h test/testutil.h
 TESTS   := test_scr test_params test_constel test_shell test_trellis \
            test_train test_roundtrip test_precoder test_ber test_resync \
-           test_bench test_nl
+           test_bench test_nl test_sflush
 
 .PHONY: all test test-arm cost-arm tables clean build-tests build-tests-arm print-tests print-tests-arm
 all: test

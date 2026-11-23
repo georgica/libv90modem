@@ -91,12 +91,22 @@ Fixed:
   it was lost.
 - V.90, answering role: the upstream data the caller sent before its S (a
   rate renegotiation or cleardown, the caller's, or its answer to ours) is
-  delivered. The decoder's decision delay still held some 13 ms of it (24
-  4D symbols, up to 5 mapping frames) when S was heard, and it was dropped;
-  V.42 sent it again, without error control it was lost. Now every whole
-  mapping frame before S goes on (where S begins is found from S's two
-  points among the last symbols); a frame S cut short is still dropped.
-  Calls without S in data mode are unchanged.
+  delivered but for one mapping frame. The decoder's decision delay still
+  held some 13 ms of it (24 4D symbols, up to 5 mapping frames) when S was
+  heard, and it was dropped; V.42 sent it again, without error control it
+  was lost. Now the whole mapping frames that end at least one frame before
+  where S was found to begin go on (S's start is found from its two points
+  among the last symbols; a channel turns the first few, so the start can
+  be found late, and the frame of margin keeps a frame that S cut, or that
+  holds S, from being delivered). Calls without S in data mode are
+  unchanged.
+- V.92, answering role: the same for the caller's Ru. The data frames the
+  decoder held that end at least one data frame before where Ru was found
+  to begin (Ru repeats every 6 samples) are delivered; they were dropped
+  (some 13 ms). What the caller's prefilter held when Ru began (about
+  `dly` / 12 data frames, 10 at 32000 bit/s) never reaches the line and is
+  still lost without error control (V.92 begins Ru on a data frame
+  boundary): docs/limits.md.
 - V.90, calling role: S (a renegotiation or cleardown) begins once the
   mapping frame under way is sent, up to 7 symbols later. It began at
   once, and the rest of the frame, its bits already taken from the host,

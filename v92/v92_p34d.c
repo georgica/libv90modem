@@ -431,6 +431,51 @@ static void sel(v92d_t *p, v90tx_sig_t s)
 
 /* ---- rate renegotiation ---- */
 
+/* Ru heard in data mode: how many of the newest received samples (the
+ * decoder has them all) are Ru. Ru repeats every 6 samples and is its own
+ * inverse 3 later; what the channel makes of its start rises over some 15
+ * samples, so only the signs are compared (a sample too small to have one,
+ * an eighth of the level, passes): the run of samples whose sign is that 6
+ * before and the opposite of that 3 before, plus the 6 the first of them
+ * looks back on. Data passes a sample by chance one time in four, so the
+ * start comes out early by a sample or so. 0: none found. */
+static unsigned ru_run(const v92d_t *p)
+{
+    int32_t k = p->data_k - 1, a = 0, fl, i;
+#define RB(j) ((int32_t)v92_trn_sample(&p->trn, (j)))
+    for (i = 0; i < 12; i++) a += RB(k - i) < 0 ? -RB(k - i) : RB(k - i);
+    fl = a / 96;                                /* an eighth of the mean level */
+    if (fl < RU_FLOOR / 8) return 0;
+    for (i = 0; i < 240; i++) {
+        int32_t x0 = RB(k - i), x6 = RB(k - i - 6), x3 = RB(k - i - 3);
+        if (x0 > -fl && x0 < fl) continue;
+        if (!(x6 > -fl && x6 < fl) && (x0 > 0) != (x6 > 0)) break;
+        if (!(x3 > -fl && x3 < fl) && (x0 > 0) == (x3 > 0)) break;
+    }
+#undef RB
+    return i < 12 ? 0 : (unsigned)i + 6;
+}
+
+/* Ru in data mode: the data frames the decoder still holds that end at
+ * least a data frame before where Ru was found to begin go on (the start is
+ * found late by the channel's spread of Ru's beginning; no frame that could
+ * hold Ru is delivered); then no more data. What the caller's prefilter
+ * still held when Ru began never reached the line (V.92 begins Ru on a data
+ * frame boundary): that is lost. */
+static void ru_heard(v92d_t *p)
+{
+    if (p->rx_ready && p->rx_on && !p->cd_quiet) {
+        unsigned n = ru_run(p), j;
+        int32_t y[4 * V92_VIT_DEPTH + V92_TFRAME];
+        /* the decoder's inputs again, the newest first (the baseline as it
+         * is now: it moves slowly) */
+        for (j = 0; j < sizeof y / sizeof y[0]; j++)
+            y[j] = (int32_t)v92_trn_sample(&p->trn, p->data_k - 1 - (int32_t)j) - (p->base_q4 >> 4);
+        if (n > 0) v92_dec_flush_before(&p->dec, n + V92_DFRAME, y);
+    }
+    p->rx_ready = 0;
+}
+
 static void reneg_begin(v92d_t *p, int ours)
 {
     /* our own: what the caller sends until it has seen Rd is still data */
@@ -781,7 +826,7 @@ uint8_t v92d_tick(v92d_t *p, int16_t rxs)
 
     case V92D_DATA:
         /* 9.8.1.2.1: Ru in data mode */
-        if (v92_p6_tick(&p->p6, x, RU_FLOOR) & V92_P6_ON) { reneg_begin(p, 0); break; }
+        if (v92_p6_tick(&p->p6, x, RU_FLOOR) & V92_P6_ON) { ru_heard(p); reneg_begin(p, 0); break; }
         if (carrier_lost(p, x)) { fail(p, V92D_ERR_CARRIER); break; }
         /* is the line still good enough for the rate? */
         if ((p->t & 8191) == 0) {
@@ -801,7 +846,7 @@ uint8_t v92d_tick(v92d_t *p, int16_t rxs)
          * can look like the start of Ru to the detector */
         if (!p->revs && carrier_lost(p, x)) { fail(p, V92D_ERR_CARRIER); break; }
         r = v92_p6_tick(&p->p6, x, RU_FLOOR);
-        if (r) p->rx_ready = 0;                 /* Ru: no more data (the last 13 ms in the decoder are dropped) */
+        if (r && p->rx_ready) ru_heard(p);     /* Ru: no more data (what came before it, whole) */
         if ((r & V92_P6_REV) && !p->revs) {
             p->revs = 1;
             reneg_resume(p);

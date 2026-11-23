@@ -769,9 +769,13 @@ void v34_rx_flush_before(v34_rx_t *rx, unsigned n)
     uint32_t m[2 * V34_VIT_DEPTH][8];
     uint64_t best = UINT64_MAX;
 
-    if (rx->hard || !rx->xmode || pend <= n)
+    /* a mapping frame (8 symbols) of margin: where S begins is found from
+     * its points, and a real channel turns the first few of them (up to 37
+     * degrees in a recording), so the start found can be late by several
+     * symbols; a frame that could hold S is never delivered */
+    if (rx->hard || !rx->xmode || pend <= n + 8)
         return;
-    c = (pend - n) / 2;                     /* 4D symbols wholly before them */
+    c = (pend - n - 8) / 2;                 /* 4D symbols wholly before the margin */
     c = ((rx->j + c) / 4) * 4;              /* ... to the end of the last whole frame */
     if (c <= rx->j)
         return;

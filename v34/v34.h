@@ -345,9 +345,12 @@ void v34_rx_flush(v34_rx_t *rx);
  * ending on point 0 turned 90 degrees anticlockwise). */
 unsigned v34_rx_s_run(const v34_rx_t *rx);
 
-/* Force out the whole mapping frames that lie before the n newest inputs
- * (n = v34_rx_s_run(): the data the far end sent before S; a frame that S
- * cut short is not delivered). The path through them is the survivor that
+/* Force out the whole mapping frames that end at least one mapping frame
+ * (8 symbols) before the n newest inputs (n = v34_rx_s_run(): the data the
+ * far end sent before S). The margin covers a start of S found late (its
+ * first points turned by the channel): no frame that S cut, or that holds S,
+ * is delivered; an S that began on a frame boundary costs the frame before
+ * it. The path through them is the survivor that
  * costs least over them, not the one through what followed. Inputs through
  * v34_rx_put() only; with v34_rx_put_y(), or hard decisions, nothing. */
 void v34_rx_flush_before(v34_rx_t *rx, unsigned n);
