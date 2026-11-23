@@ -1,20 +1,20 @@
 the library's caller (V.8, V.92 analogue) against the library's answerer, 10 s of data per line
   line                                    mod data ms   down     up SNR dB   rtd  bits down  fail    bits up  fail
-  2 km,    0 ppm, -75 dBm0               V.92   11266  52000  36000  53.8   184     520026     0     359964     0
-  0 km, +100 ppm, -75 dBm0               V.92   12770  46666  34666  52.5   184     466620     0     346632     0
-  6 km, -100 ppm, -75 dBm0               V.92   11281  46666  33333  51.3   183     466725     0     333350     0
-  4 km,  +50 ppm, -65 dBm0               V.92   11349  40000  34666  45.5   185     399960     0     346632     0
-  2 km,  +30 ppm, 3 dB pad               V.92   13520  48000  34666  51.7   184     479988     0     346632     0
-  2 km,  -30 ppm, 6 dB pad               V.92   12025  45333  34666  50.7   184     453356     0     346632     0
-  2 km,  +30 ppm, robbed bit             V.92   13528  46666  33333  55.5   184     466655     0     333300     0
-  2 km,  +30 ppm, 6 dB pad, robbed bit   V.92   13609  41333  34666  49.8   184     413323     0     346684     0
-  2 km,  -50 ppm, A-law                  V.92   11356  46666  37333  52.8   183     466690     0     373352     0
+  2 km,    0 ppm, -75 dBm0               V.92   11835  52000  36000  55.3   184     520026     0     359964     0
+  0 km, +100 ppm, -75 dBm0               V.92   12589  46666  34666  50.7   184     466620     0     346632     0
+  6 km, -100 ppm, -75 dBm0               V.92   11923  46666  34666  51.3   183     466725     0     346684     0
+  4 km,  +50 ppm, -65 dBm0               V.92   12694  40000  32000  46.0   185     399990     0     319968     0
+  2 km,  +30 ppm, 3 dB pad               V.92   11835  46666  34666  51.7   184     466620     0     346632     0
+  2 km,  -30 ppm, 6 dB pad               V.92   12597  45333  34666  50.2   184     453356     0     346632     0
+  2 km,  +30 ppm, robbed bit             V.92   11845  45333  34666  51.2   184     453288     0     346632     0
+  2 km,  +30 ppm, 6 dB pad, robbed bit   V.92   11902  44000  34666  49.5   184     439956     0     346632     0
+  2 km,  -50 ppm, A-law                  V.92   11176  46666  37333  53.4   183     466690     0     373352     0
 V.90 when V.92 is not on both sides
-  the answerer without V.92              V.90   10463  52000  28800  54.6   184     519987     0     288000     0
-  ours with V.92 off                     V.90   10463  52000  28800  55.4   184     519987     0     288000     0
+  the answerer without V.92              V.90   10283  52000  28800  54.5   184     519987     0     288000     0
+  ours with V.92 off                     V.90   10283  52000  28800  55.4   184     519987     0     288000     0
 reported only: the upstream through the downstream's loop and codec response
-  2 km,    0 ppm, dschan's response up   V.92   11319  52000  36000  54.5   195     520026     0     359964     0
+  2 km,    0 ppm, dschan's response up   V.92   13386  50666  32000  54.9   195     506692     0     319968     0
 ending a call
   ours: caller ended 4 after 798 ms (end 7), answerer phase 3, cleared 1
-  the answerer's: caller ended after 3210 ms, end 6
+  the answerer's: caller ended after 3961 ms, end 6
 orig_v92: 109 checks, 0 failures

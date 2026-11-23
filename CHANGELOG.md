@@ -71,6 +71,17 @@ Changed (answering role, K56flex):
   Simulation only.
 
 Changed (calling role):
+- V.34, V.90 and V.92: the far end's L2 is read for 280 ms, not 460 (V.34
+  11.2.1.1.5, V.90 9.2.2.1.8: at most 500). Our tone now begins 290 ms
+  after the far L2 began, which leaves the far end 300 ms or more before
+  its own wait ends (600 ms plus a round trip, V.34 11.2.2.2.3; V.90's
+  digital modem 650 ms, 9.2.1.2.5); at 460 ms it had about 100 ms. A real
+  answering modem that used nearly all of those 100 ms ignored the
+  reversal that followed (live calls reported by an independent
+  softmodem). Phase 2 is 180 ms shorter; the probe analysis on 14 blocks of
+  20 ms instead of 23 moves some INFO1c / INFO1a choices and so the rates
+  of some simulated lines by a step either way. The answering side still
+  reads 460 ms (docs/limits.md).
 - A retrain's Phase 2 is bounded whatever the answerer does. An answerer
   that kept repeating its INFO0 (V.90 and V.92: INFO0d; V.34: INFO0a) sent
   the calling modem back to the start of the exchange each time, for as

@@ -334,6 +334,11 @@ which makes it about 123 M counted instructions a second.
   ends the call (`V90M_END_NO_COMMON`).
 - The calling V.90 / V.92 modem does not measure the echo delay: it uses
   `v90m_cfg.echo_delay` as a fixed value, -1 taken as 0 (`modem/orig.c`).
+- The answering side (V.34, V.90, V.92) still reads the caller's L2 for
+  460 ms of the 500 V.34 11.2.1.2.8 / V.90 9.2.1.1.5 allow; the calling
+  side reads 280 ms since 0.6.0. Shortening it moves the answerer's Tone A
+  and its probe analysis, which changes 624 of the 636 replays of recorded
+  calls, so it waits for those to be checked against the recordings.
 - After the answering V.92 modem retrains because the upstream did not hold
   even the lowest PCM rate, the call goes on as V.90 for its rest, by
   design (`DESIGN.md`, 4.2a).

@@ -7,10 +7,10 @@ k56 rx 58993208
 v34 tx bfb47ae9
 v34 rx 8d9206c2
 v90a dec cdf21a51
-v90c tx fa7486c7
+v90c tx c4919e40
 v90c rx 64820c91
-v92c tx 22bf87ff
-v92c rx 64820c91
+v92c tx 783ed03a
+v92c rx 0e9531e0
 bell103 tx 377ce603
 bell103 rx 4b9d7347
 bell212 tx 5d8bf6f1

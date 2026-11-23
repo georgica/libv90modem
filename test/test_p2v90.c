@@ -27,7 +27,7 @@ typedef struct {
     int seconds;
 } scen_t;
 
-typedef struct { p2d_t d; p2call_t a; int a_done, d_done; int l12_samples; int d_inits; } run_t;
+typedef struct { p2d_t d; p2call_t a; int a_done, d_done; int l12_samples; int d_inits; int tone_at; } run_t;
 
 /* noise without the C library's maths (its log and sqrt differ in the last
  * bit between libraries, and so would this test's output): the sum of four
@@ -78,6 +78,7 @@ static void run(const scen_t *s, run_t *r)
         ba[(n + s->io - s->io / 2) % MAXD] = ta;         /* on the line io - io/2 samples later */
         ba[(n + 1 + s->io - s->io / 2) % MAXD] = 0;
         if (r->a.probing) r->l12_samples++;
+        if (r->a.state == P2L_A_WAIT_INFO1D && !r->tone_at) r->tone_at = n;     /* our Tone A (9.2.2.1.8) */
         if (r->a_done < 0 && (r->a.state == P2L_DONE || r->a.state == P2L_FAILED)) r->a_done = n;
         if (r->d_done < 0 && (r->d.state == P2D_DONE || r->d.state == P2D_FAILED)) r->d_done = n;
         if (r->a_done >= 0 && (r->d_done >= 0 || s->d_reinit)) break;
@@ -130,6 +131,12 @@ int main(void)
     /* L1 160 ms and L2 until Tone B: the digital modem listens to 460 ms of L2 */
     printf("    our probing lasted %d ms\n", r.l12_samples / 8);
     CHECK(r.l12_samples > 8 * 500 && r.l12_samples < 8 * 800);
+    /* 9.2.2.1.8 lets us read the digital modem's L2 for up to 500 ms; we
+     * read it for no more than 300 ms from its start (it began 10 ms before
+     * probe_from), so that a far end waiting 600 ms plus a round trip from
+     * the start of its L2 hears our Tone A with time to spare */
+    printf("    our Tone A %d ms after the start of the digital modem's L2\n", (r.tone_at - (r.a.probe_from - 80)) / 8);
+    CHECK(r.tone_at - (r.a.probe_from - 80) <= 8 * 300);
 
     s = base(); s.d_ad = 300; s.d_da = 250; s.g_ad = 0.2; s.g_da = 0.15; s.echo = 0.3; s.noise = 10;
     run(&s, &r);

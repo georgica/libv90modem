@@ -6,4 +6,4 @@ answerer got "hello from the caller"
 caller   SNR 60.0 dB, round trip 2 samples
 answerer ended: far end cleared down
 caller   ended: we cleared down
-line time 12.51 s
+line time 12.33 s
