@@ -443,7 +443,7 @@ uint8_t p34d_tick(p34d_t *p, int16_t rxs)
     }
     if (p->state == P34_FAILED || p->state == P34_RETRAIN) return octet;
 
-    if (qamrx_tick(&p->rx, x)) rx_symbol(p);
+    if (qamrx_tick(&p->rx, p->rxmode == RX_DATA ? qamrx_blank(&p->rx, x) : x)) rx_symbol(p);
     if (p->state == P34_FAILED) return octet;
     if (p->rxmode == RX_DATA) {
         (void)sdet_tick(&p->sdet, x);

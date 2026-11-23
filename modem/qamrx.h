@@ -67,5 +67,21 @@ int  qamrx_tick(qamrx_t *r, int16_t x);
 void qamrx_update(qamrx_t *r, int32_t dr, int32_t di, int flags, int mu_shift);
 /* centre of gravity of the equaliser taps, in T/3 taps x 256 */
 int  qamrx_centroid(const qamrx_t *r);
+/* For data mode: x, or 0 when it is an impulse, more than 18 dB above the
+ * input RMS measured at S (8 times it: gain is set once in qamrx_sync and
+ * is not changed in data mode, so this threshold does not follow later
+ * level changes, and a full-scale click needs an RMS at S under about
+ * 4015, -12 dBm0, to be caught). A click let in
+ * passes along the whole equaliser line, and each update on the way moves
+ * every tap by the error times the click; where the signal has little
+ * energy (the band edges) the tracking step never takes that back, and
+ * the receiver stays deaf for the rest of the call (Task 20,
+ * docs/history/audit-0.6.md). Data's own peaks stay under this level;
+ * those of some training sequences do not, hence data mode only. */
+#define QRX_BLANK 16384
+static inline int16_t qamrx_blank(const qamrx_t *r, int16_t x)
+{
+    return (int32_t)(x < 0 ? -x : x) * r->gain > (int32_t)QRX_BLANK * 256 ? 0 : x;
+}
 
 #endif

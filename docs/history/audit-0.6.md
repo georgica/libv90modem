@@ -747,3 +747,90 @@ tests). Two golden changes their commit messages did not explain:
   the failure back. docs/api.md, include/v90modem.h and test_api's
   comments say so; 15360 stays the level checked to connect.
 
+## x2: one click must not ruin the upstream (Task 20; dsp 2.1, 2.2; D11)
+
+The case: the x2 call of `tools/rec_x2 40 0`, with the six samples to the
+answerer at 15.000 s replaced by full-scale mu-law (0x80 / 0x00
+alternated, 0.75 ms). The upstream mse went from 16 to 257..363 (Q16) and
+stayed there to the end of the call; x2d has no retrain, so the call stayed
+up and decoded garbage. The same happened on the live x2 line
+(x2-usr-ppp3-fixed.rec, replayed with the click added at 50 s): -39 dB to
+-27 dB for the remaining 190 s.
+
+**Root cause: equaliser-tap damage, not the loops.** Two answerers ran on
+the same recording, one with the click. At 15.5 s one part of the clean
+receiver's state was copied into the clicked one, a part at a time. Copying
+`freq`, `theta`, `t_integ` or `tnext` / `m` / `nsym` left 300 000 of 713 400
+bits wrong. Copying the taps `cr` / `ci` restored the call: the bits lined
+up again, and the only errors were in the half second before the copy. The
+click passes along the whole 72-tap line (24 symbols), and each LMS update
+on the way moves every tap by the error times the click. The resulting tap
+error sits at the band edges (about +-3200 to 3600 Hz, up to half the
+passband gain). The signal has little energy there, so the tracking step
+(2^-13) never takes it back: the error is the same 10 s later. The
+wandering of `freq` and `t_integ` that dsp saw is a result of the bad
+decisions, not their cause.
+
+The brief's bounds, each alone, then combined (bits wrong of 713 400; the
+clean run unchanged in every case):
+
+| try | result |
+|---|---|
+| (a) er, ei clamped to +-32767 before the updates (the largest error in the click is 39101) | 299 483 |
+| (b) freq's step per symbol bounded, phi to +-8192 = +-2^17 (clean max 5851) | 299 725 |
+| (b) t_integ bounded to +-2048 (clean max 599) | 300 063 |
+| (b) both | 299 796 |
+| (a) + (b) | 299 325 |
+
+**The fix (c): impulse blanking in data mode.** In data mode x2d, k56d,
+p34d and v34dx pass the receiver's input through `qamrx_blank()`
+(qamrx.h): a sample more than 18 dB above the input RMS measured at S (8 times
+it; the AGC gain is set once there and frozen in data mode, so the
+threshold does not follow later level changes; a full-scale click of 32124
+is blanked only if that RMS was under 4015, about -12 dBm0) goes in as 0. No field was added (F27). With it
+the click costs 74 bits in x2, and 0 bits are wrong from 2 s after it; the
+same holds for K56flex, V.90 and V.34 (test_answer_x2, _k56, _v90, _v34).
+On the live x2 line, 63 bits differ around the click and none after it.
+Variants that were rejected:
+- Blanking in `qamrx_tick` in every phase at 18 dB: some training sequences
+  have peaks that loud (mid-call changes in com1, c3, pw_19_v90 and
+  pw_29_v90).
+- Blanking at the interpolator's clip (24 dB): it never fires on a line
+  louder than the AGC target, and the V.90 click test fails.
+
+**Replay proof: 42 runs re-recorded (the controller's ruling).** The
+blanking fires in exactly 42 of the 636 runs, and those are exactly the
+runs that differ. In each, it fires on a single burst of 67 to 84
+full-scale samples that begins 54 to 72 ms before the recording ends: the
+line's hang-up click. Every run is byte-identical up to that point, and
+only the printed trace changes, not the bits. The recordings are
+ab_cc_v34, ab_cl_v34, v34c, x2b, x2r1, x2r3 and x2r4, each in all six
+flag sets. The goldens of the other programs and the bench hashes did not
+change.
+
+**D11's watchdog is not used.** It would end x2 / K56flex data when the mse
+stayed above p34d's `mse_limit` for 2 s. For x2 at 24000 up and 3200 baud
+that limit is 128 (-27.1 dB). No mse threshold separates a line deafened by
+a click from a clean low-SNR line:
+- The lowest SNR at which x2 connects in the test harness (noise rms 92,
+  23.5 dB) runs at mse ~290, and the click left 257..363.
+- The lowest SNR with a clean upstream (noise rms 68, 26.8 dB: 0 bad bits
+  in 60 s) runs at ~137, above the limit.
+The watchdog would end error-free calls near 27 dB. Both lines are in
+test_answer_x2 (not ended; the second also clean).
+
+dsp 2.2 (er / ei unbounded before 32-bit products): the clamp (a) did
+nothing for the click. The largest error seen in it was 39101, which keeps
+`pr * x` (at most about 1.8e9) inside 32 bits, and UBSan stays silent on
+it. The clamp does not qualify as a fix (D11), so it was not added; a
+larger disturbance than this click is still open there.
+
+Cost (ARMv5, `make cost-x2 ARM_CC=$A5`, x2 data mode, ARM instructions per
+second of line):
+
+| | before (42e1c67) | after | change |
+|---|---|---|---|
+| x2 data mode | 82 757 983 | 82 845 486 | +0.09 M |
+| V.90 data mode | 39 347 034 | 39 410 948 | +0.06 M |
+
+That is one compare and one multiply per sample (the brief allows +0.3 M).

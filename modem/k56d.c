@@ -582,7 +582,7 @@ uint8_t k56d_tick(k56d_t *d, int16_t rxs)
     } else if (d->rxmode == RX_WAIT_S) {
         wait_s(d, x);
     } else {
-        if (qamrx_tick(&d->rx, x)) rx_symbol(d);
+        if (qamrx_tick(&d->rx, d->rxmode == RX_DATA ? qamrx_blank(&d->rx, x) : x)) rx_symbol(d);
         if (d->state == K56D_ENDED) return 0xff;
         if (d->rxmode == RX_DATA && d->state != K56D_TRAIN2) {
             /* its S from its data's first symbol on (B1, and its data before

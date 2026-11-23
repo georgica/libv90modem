@@ -90,6 +90,27 @@ Each item names where it is recorded.
   renegotiation the caller starts is not affected.
   (`docs/history/audit-0.6.md`, T21.10; deferred.)
 
+- **Clicks on the line in data mode** (the upstream QAM receiver: V.34,
+  V.90 answering, x2, K56flex). The receiver's AGC gain is set once, when
+  the far end's S is detected, and is not changed in data mode. A data-mode
+  sample is blanked when it exceeds about 8 times (18 dB) the input RMS
+  measured over S, so a click costs the bits around it and nothing more.
+  Tested with a 0.75 ms full-scale click in simulation, and on a recorded
+  x2 call with the click added. Not covered: a click under that threshold.
+  A full-scale click (32124) is blanked only if the line's RMS at S was
+  below about 4015 (about -12 dBm0); a line hotter than that at S gets no
+  protection. If the level rises by 5 to 8 dB during data mode, real peaks
+  would start to be blanked (untested). The echo canceller still adapts on
+  the click. Post-audit item: make the threshold track the data-mode level.
+  Also not covered: an impulse during training (training is not blanked, since some of its own
+  peaks are that loud); and bursts of clicks. There is no watch that ends
+  an x2 or K56flex call whose upstream stays deaf. Measured by mse alone, a
+  line deafened by a click looks the same as a clean low-SNR line (Task 20,
+  `docs/history/audit-0.6.md`).
+- **x2 on a noisy line can stay up with most upstream bits wrong.** In the
+  noise test (RMS 92) an x2 call stays up for 60 s with about 46% of the
+  upstream bits wrong and no end code. There is no watchdog, by ruling.
+
 ## Not checked against a specification
 
 - **The Bell 212A calling handshake** follows V.22 and what this library's

@@ -67,6 +67,8 @@
  *     sends the same octets), the x2 client (sim/x2call) with x2 offered
  *     too;
  *   - an A-law line: not one transmit sample differs (no CRe).
+ * A click in data mode (Task 20: 0.75 ms of full scale on the line to us,
+ * 4 s into data mode): the upstream clean from 2 s after it.
  * The delays K56flex adds before our ANSam are printed (docs/limits.md). */
 #include <stdio.h>
 #include <string.h>
@@ -369,6 +371,8 @@ typedef struct {
     int retrain_ms, retrains, retrain_200;                          /* k56call_cfg's */
     int heavy_up, retrain_in_reneg;                                 /* k56call_cfg's */
     int hold;               /* seconds of data mode to run (no end at the data check) */
+    int click_ms;           /* a click on the line to us this long into data mode (Task 20):
+                               six samples of full-scale mu-law, 0x80 and 0x00 alternated */
 } kd_opts;
 
 /* the data check of one data segment (from data mode, or from data mode
@@ -392,6 +396,7 @@ typedef struct {
      * not ended), answer_retrain in ANS_K56RT */
     long rt_at, k56rt_at, rt_in, rt_not_retraining, move_at;
     int rt_ret;
+    long click_at, click_bad, click_n;  /* the click, the upstream errors and bits 2 s after it */
 } kd_out;
 
 /* the data check from here on: the counts cleared, the 64 good bits again */
@@ -446,10 +451,17 @@ static void kd_call(const kd_opts *ko, long secs, kd_out *o)
     k56call_init(&K, &kc);
     o->rn_at = o->reneg_seen = o->rt_at = o->k56rt_at = -1;
     o->rt_ret = 1;
+    o->click_at = -1;
     for (n = 0; n < 8000L * secs; n++) {
         int i = (int)(n & (XD - 1));
         double v;
-        uint8_t atx = answer_tick_pcm(&A, arx);
+        uint8_t atx;
+        if (ko->click_ms && o->data_at >= 0) {
+            o->click_at = o->data_at + 8L * ko->click_ms;
+            if (n >= o->click_at && n < o->click_at + 6) arx = (n - o->click_at) & 1 ? 0x00 : 0x80;
+            if (n == o->click_at + 8000L * 2) { o->click_bad = DA.bad; o->click_n = DA.n; }
+        }
+        atx = answer_tick_pcm(&A, arx);
         if (A.phase == ANS_K56 && o->k56_at < 0) o->k56_at = n;
         if (A.connected) { o->connected_once = 1; o->mod = A.modulation; o->down = A.bitrate; o->up = A.rx_bitrate; }
         if (A.phase == ANS_K56 && A.connected && o->data_at < 0) o->data_at = n;
@@ -618,6 +630,18 @@ static void k56_data_tests(void)
            o.cd_ret, o.cd_octet, o.cd_phase, o.cleared);
     CHECK_EQ_I(o.cd_ret, 0); CHECK_EQ_I(o.cd_octet, 0xff); CHECK_EQ_I(o.cd_phase, ANS_FAILED);
     CHECK_EQ_I(o.cleared, 2); CHECK_EQ_I(o.k56_failed, 0); CHECK_EQ_I(o.error, K56D_ERR_HANGUP);
+
+    /* a click in data mode (Task 20): 0.75 ms of full scale on the line
+     * to us, 4 s into data mode, then 14 s more. From 2 s after it the
+     * upstream is clean again, or the call has ended within 3 s of it as
+     * lost: never up and deaf */
+    kd_default(&ko); ko.rate = 1; ko.click_ms = 4000; ko.hold = 18;
+    kd_call(&ko, 60, &o);
+    kd_report("K56flex client, r = 1, a click 4 s into data mode", &o);
+    printf("     from 2 s after the click: up %ld bits %ld bad\n", DA.n - o.click_n, DA.bad - o.click_bad);
+    CHECK_EQ_I(o.connected_once, 1); CHECK(o.click_at > 0);
+    CHECK((DA.bad == o.click_bad && DA.n - o.click_n >= 10L * o.up && answer_end(&A) == ANS_END_NONE)
+          || (o.end_at >= 0 && answer_end(&A) == ANS_END_LOST && o.end_at <= o.click_at + 8000L * 3));
 
     /* Review Focus 4: the client silent after our flagged INFO1a, before
      * its S, before J24, before its MP, before its E, in data mode: the

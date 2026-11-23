@@ -622,7 +622,7 @@ int16_t v34dx_tick(v34dx_t *p, int16_t rxs)
     if (p->rxmode == RX_WAIT_S) {
         if (wait_s(p, x)) enter(p, DX_P3_RX);
     } else if (p->rxmode != RX_OFF) {
-        if (qamrx_tick(&p->rx, x)) rx_symbol(p);
+        if (qamrx_tick(&p->rx, p->rxmode == RX_DATA ? qamrx_blank(&p->rx, x) : x)) rx_symbol(p);
         if (p->state == DX_FAILED || p->state == DX_RETRAIN) return y;
         if (p->rxmode == RX_DATA) {
             (void)sdet_tick(&p->sdet, x);

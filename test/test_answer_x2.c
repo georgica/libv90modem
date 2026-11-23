@@ -29,7 +29,12 @@
  *     frame before it), it checks our answer frame by frame, and the call
  *     goes on at 46666 and then 54666 down, 28800 up, the bits end to end; one asking for an index without a bank (0),
  *     or other MD, ends the call (x2_failed: V90M_END_X2_FAILED); our
- *     cleardown during it ends the call as ours. */
+ *     cleardown during it ends the call as ours;
+ *   - a click in data mode (Task 20: 0.75 ms of full scale on the line to
+ *     us, 15 s into the call of tools/rec_x2): the upstream clean from 2 s
+ *     after it; and two noisy lines (TEST_SHORT: not run), 60 s of data
+ *     each: the lowest SNR x2 connects at is not ended, the lowest with a
+ *     clean upstream stays clean. */
 #include <stdio.h>
 #include <string.h>
 #include "test.h"
@@ -250,6 +255,13 @@ static struct { int armed, done; uint32_t st; long at, lost, extra; } UG;
  * its 1800 Hz guard tone (80 % / 20 % of the power, as the U.S. Robotics
  * 56K did on 2026-11-21) until the call ends; at (sample) when the tone began */
 static struct { int ms; long at; double amp, df; } TA;
+/* a click on the line to us (Task 20), for the next x2_call (which clears
+ * it): from sample at, six samples replaced by full-scale mu-law (0x80 and
+ * 0x00 alternated, 0.75 ms); the upstream errors and bits counted once
+ * from2 samples later. The noise at our side (rms, 2.0 unless set), for the
+ * next x2_call too */
+static struct { long at, from2, bad, n; } CK;
+static double NZ;
 static long up_taken;
 /* downstream: our getbit to the client's putbit; upstream the other way */
 /* our data bits taken from the point x2tx left data mode for its answer to
@@ -332,7 +344,10 @@ static void x2_call(int pad, int index, uint16_t up_mask, int silent, int echo_d
     for (n = 0; n < 8000L * secs; n++) {
         int i = (int)(n & (XD - 1));
         double v;
-        uint8_t atx = answer_tick_pcm(&A, arx);
+        uint8_t atx;
+        if (CK.at && n >= CK.at && n < CK.at + 6) arx = (n - CK.at) & 1 ? 0x00 : 0x80;
+        if (CK.at && n == CK.at + CK.from2) { CK.bad = UP.bad; CK.n = UP.n; }
+        atx = answer_tick_pcm(&A, arx);
         down[i] = atx;
         dl[i] = (double)ulaw_to_linear(atx);
         up[i] = x2call_tick(&X, down[(n - d_ac) & (XD - 1)]);
@@ -349,7 +364,7 @@ static void x2_call(int pad, int index, uint16_t up_mask, int silent, int echo_d
         /* what reaches us: the client, our own echo off the line's hybrid, noise */
         v = 0.5 * up[(n - d_ca) & (XD - 1)]
             + 0.12 * dl[(n - e - 2) & (XD - 1)] + 0.08 * dl[(n - e - 4) & (XD - 1)] - 0.05 * dl[(n - e - 9) & (XD - 1)]
-            + 2.0 * rng_gauss(&rng);
+            + (NZ > 0 ? NZ : 2.0) * rng_gauss(&rng);
         arx = linear_to_ulaw((int32_t)lround(v));
         if (A.phase == ANS_X2 && o->x2_at < 0) o->x2_at = n;
         if (X.quiet && o->quiet_at < 0) o->quiet_at = n;
@@ -380,7 +395,7 @@ static void x2_call(int pad, int index, uint16_t up_mask, int silent, int echo_d
             if (o->renegs == (RN.index2 ? 2 : 1) && UG.done && DN.n - o->dn0 >= data_bits && UP.n - o->up0 >= data_bits) break;
         }
     }
-    memset(&RN, 0, sizeof RN); TA.ms = 0; TA.amp = TA.df = 0;
+    memset(&RN, 0, sizeof RN); TA.ms = 0; TA.amp = TA.df = 0; CK.at = 0; NZ = 0;
     o->ok = A.connected && A.phase == ANS_X2 && x2call_state(&X) == X2C_DATA;
     o->down = A.bitrate; o->up = A.rx_bitrate; o->mod = A.modulation;
     o->error = A.u.x2.error; o->x2_failed = x2_failed_of(&A);
@@ -639,6 +654,43 @@ static void x2_tests(void)
             CHECK(o.end_at > TA.at && o.end_at - TA.at <= 8000L / 5);
         }
     }
+    /* 7. a click in data mode (Task 20): 0.75 ms of full scale on the line
+     *    to us, 15.000 s into the call of tools/rec_x2 (40 s, no pad, the
+     *    echo delay measured). From 2 s after it the upstream is clean
+     *    again, or the call has ended within 3 s of it as lost: never
+     *    up and deaf */
+    {
+        long errs;
+        int end;
+        CK.at = 8000L * 15; CK.from2 = 8000L * 2;
+        x2_call(0, 1, 0x03FE, X2C_SIL_NONE, -1, 40, 0, &o);
+        end = answer_end(&A);
+        errs = UP.bad - CK.bad;
+        printf("  x2 click at 15.000 s: up %ld bits %ld bad, %ld bits %ld bad from 2 s after it; end %d%s\n",
+               UP.n, UP.bad, UP.n - CK.n, errs, end, o.end_at < 0 ? "" : " (ended)");
+        CHECK(o.connected_once);
+        CHECK((errs == 0 && UP.n - CK.n >= 8L * 24000 && end == ANS_END_NONE)
+              || (o.end_at >= 0 && end == ANS_END_LOST && o.end_at <= 8000L * 15 + 8000L * 3));
+    }
+#ifndef TEST_SHORT     /* on ARM under qemu: 144 s of line */
+    /* 8. noisy lines, 60 s of data mode each: the lowest SNR at which x2
+     *    connects today (noise rms 92 at our side, some 23 dB; the
+     *    upstream then has errors) is not ended, and the lowest at which
+     *    its upstream is clean (rms 68, some 27 dB) stays clean */
+    {
+        static const double nz[2] = { 92, 68 };
+        int j;
+        for (j = 0; j < 2; j++) {
+            NZ = nz[j];
+            x2_call(0, 1, 0x03FE, X2C_SIL_NONE, -1, 72, 0, &o);
+            printf("  x2 with noise rms %.0f: %s %d / %d bit/s, upstream SNR %.1f dB, up %ld bits %ld bad; end %d\n",
+                   nz[j], o.ok ? "data" : "NO DATA", o.down, o.up, answer_snr_db10(&A) / 10.0, UP.n, UP.bad, answer_end(&A));
+            CHECK(o.ok); CHECK(UP.n >= 60L * 24000);
+            CHECK_EQ_I(answer_end(&A), ANS_END_NONE);
+            if (j == 1) CHECK_EQ_I(UP.bad, 0);
+        }
+    }
+#endif
 }
 
 int main(void)
