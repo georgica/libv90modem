@@ -83,6 +83,19 @@ Changed (V.34, both roles):
   with `V90M_END_CLEARDOWN_OURS` (it began a retrain, which ran on to
   whatever end the retrain found).
 
+Changed (V.22bis, both roles):
+- The wait for the end of a far-end S1 is bounded at 1 s (S1 is 100 ms): a
+  steady tone at the receive carrier (1200 or 1205 Hz for the answerer,
+  2400 for the caller) looks like S1 for as long as it lasts and kept a
+  connected call in that wait with no end code for as long as it went on
+  (600 s in the test). In a retrain the wait now ends with our own retrain
+  signal, so the retrain limit applies and the call ends `V90M_END_LOST`
+  (about 11 s); in start-up it goes back to waiting for the far end.
+- The V.22bis receiver forms its carrier-loop and equaliser products in 64
+  bits (they overflowed a signed 32-bit value on a full-scale click into a
+  high gain early in the data, an undefined behaviour); output is
+  unchanged where they did not overflow.
+
 Fixed:
 - V.90 and V.92, calling role: the last data frame before the digital
   modem's Rd (its rate renegotiation or cleardown) is delivered. It was

@@ -176,6 +176,8 @@ static void slice(const v22rx_t *r, int32_t zr, int32_t zi, int *x, int *y)
     }
 }
 
+static int32_t sat32(int64_t v) { return v > INT32_MAX ? INT32_MAX : v < INT32_MIN ? INT32_MIN : (int32_t)v; }
+
 static void symbol(v22rx_t *r)
 {
     static const int dib[4] = { 1 /* 0 deg: 01 */, 0 /* +90: 00 */, 2 /* +180: 10 */, 3 /* +270: 11 */ };
@@ -234,7 +236,7 @@ static void symbol(v22rx_t *r)
         int32_t perr = im * 4 / (x * x + y * y);       /* radians, Q12 */
         r->freq += perr * 326;
         if (r->freq > FREQ_MAX) r->freq = FREQ_MAX; else if (r->freq < -FREQ_MAX) r->freq = -FREQ_MAX;
-        r->theta += (uint32_t)(perr * 20861 + r->freq);
+        r->theta += (uint32_t)((int64_t)perr * 20861 + r->freq);
     } else {
         r->theta += (uint32_t)r->freq;
     }
@@ -248,8 +250,10 @@ static void symbol(v22rx_t *r)
         fr = (er * c - ei * s) >> 15;
         fi = (ei * c + er * s) >> 15;
         for (k = 0; k < V22_EQN; k++) {
-            r->wr[k] -= (fr * r->xr[k] + fi * r->xi[k] + 16) >> 5;   /* rounded: truncation is a steady drift */
-            r->wi[k] -= (fi * r->xr[k] - fr * r->xi[k] + 16) >> 5;
+            /* 64-bit products, as a click on a high gain overflows 32 bits; the
+             * taps saturate */
+            r->wr[k] = sat32((int64_t)r->wr[k] - (((int64_t)fr * r->xr[k] + (int64_t)fi * r->xi[k] + 16) >> 5));   /* rounded: truncation is a steady drift */
+            r->wi[k] = sat32((int64_t)r->wi[k] - (((int64_t)fi * r->xr[k] - (int64_t)fr * r->xi[k] + 16) >> 5));
         }
     }
 
