@@ -43,12 +43,14 @@ typedef struct {
     int suvd_wait, cpd_wait;    /* the caller's patience in Phase 4, symbols (0: any) */
     int first_cpd_plain;        /* the caller answers a first CPd with the acknowledge bit by silence */
     int b1u_lead, z2_dead, conv_start, ja_no_ones, ntrn1, jd_wait;      /* the caller's ways, see ../sim/v92a.h */
+    int drop_cpd;               /* the caller misses its first so many CPds */
 } scen_t;
 
 typedef struct {
     int state, error, d_data_at, a_tx, a_rx, up_rate, down_rate, renegs, d_end_at, req_rc;
     int reneg_at;               /* the first sample in V92D_RENEG (-1: never) */
     int retrain_at;             /* the first sample in V92D_RETRAIN (-1: never) */
+    int cpd_copies, cpd_run;    /* CPds we sent; the most of them in a row with no SUVd between */
     long up_bits, up_bad, down_bits, down_bad;
     long up_bits2, up_bad2;     /* upstream after the last (re)start */
     int peak;                   /* where the channel peak ended up, 1/256 sample */
@@ -67,7 +69,9 @@ static void run(const scen_t *s, out_t *o)
     v92d_cfg dc; v92a_cfg ac; v92chan_cfg cc;
     uint8_t oct = v90_pcm_octet(s->alaw, 0, 1), idle = oct;
     int16_t rx = 0;
-    int i, k, a_starts = 0, d_rx = 0;
+    int i, k, a_starts = 0, d_rx = 0, cpd_run = 0, cpd_more = 0;
+    v90tx_sig_t psig = V90TX_SILENCE;
+    uint32_t punits = 0;
     long sink0_n = 0, sink0_bad = 0;
 
     memset(&dc, 0, sizeof dc); memset(&ac, 0, sizeof ac); memset(&cc, 0, sizeof cc);
@@ -95,7 +99,7 @@ static void run(const scen_t *s, out_t *o)
     ac.b1u_lead = s->b1u_lead; ac.conv_start = s->conv_start; ac.ja_no_ones = s->ja_no_ones;
     if (s->ntrn1) ac.ntrn1 = s->ntrn1;
     if (s->jd_wait) ac.jd_wait = s->jd_wait;
-    ac.z2_dead = s->z2_dead;
+    ac.z2_dead = s->z2_dead; ac.drop_cpd = s->drop_cpd;
     ac.getbit = src_bit; ac.putbit = sink_bit; ac.user = &aio;
     v92a_init(&a, &ac);
     a.phase = s->phase0;
@@ -107,6 +111,23 @@ static void run(const scen_t *s, out_t *o)
         if (s->tone_a_ms && ms >= s->tone_a_ms && ms < s->tone_a_ms + 120)      /* the caller's Tone A */
             rx = (int16_t)(3000.0 * sin(2 * 3.14159265358979 * 2400.0 * i / 8000.0));
         oct = v92d_tick(&d, rx);
+        {
+            /* what we send: a CPd begins (a new signal, or another copy of
+             * the one running: its unit count steps at the last sample of
+             * a copy, and the signal is still a CPd on the next); an SUVd
+             * between ends a run */
+            v90tx_sig_t sg = v90tx_signal(&d.tx);
+            uint32_t u = v90tx_units(&d.tx);
+            int is_cpd = sg == V90TX_CPD || sg == V90TX_CPD_ACK;
+            if (is_cpd && (sg != psig || (cpd_more && sg == psig))) {
+                o->cpd_copies++;
+                if (++cpd_run > o->cpd_run) o->cpd_run = cpd_run;
+            } else if ((sg == V90TX_SUVD || sg == V90TX_SUVD_ACK) && sg != psig) {
+                cpd_run = 0;
+            }
+            cpd_more = is_cpd && sg == psig && u != punits;
+            psig = sg; punits = u;
+        }
         dl_o[i % MAXD] = oct;
         valid = v92a_tick(&a, s->deaf_ms && ms >= s->deaf_ms ? idle : dl_o[(i - s->d_down + MAXD) % MAXD], &amp, &frac);
         if (s->mute_ms && ms >= s->mute_ms) valid = 0;
@@ -451,6 +472,26 @@ int main(int argc, char **argv)
         s.level = 2700; s.echo = 0.02; s.echo_tail = 1.2; s.echo_delay = 270; s.echo_search = 1;
         s.pace = 8; s.suvd_wait = 30400; s.cpd_wait = 28000; s.first_cpd_plain = 1; s.seconds = 14;
         run(&s, &o); report(&s, &o); check_good(&s, &o);
+        CHECK_EQ_I(o.cpd_copies, 1); CHECK_EQ_I(o.cpd_run, 1);
+
+        /* a caller that misses its first CPds (9.6.1.1.3): CPd again, each
+         * copy with SUVd before it, as Figure 14 draws; a real Agere
+         * engine cleared down on CPds sent back to back */
+        {
+            static const int drop[] = { 2, 4 };
+            static char name[48];
+            unsigned n;
+            for (n = 0; n < sizeof drop / sizeof drop[0]; n++) {
+                snprintf(name, sizeof name, "25e the caller misses %d CPds", drop[n]);
+                base(&s, name, (int)n, 0, 3, n ? 40 : 0);
+                s.drop_cpd = drop[n]; s.seconds = 11;
+                run(&s, &o); report(&s, &o); check_good(&s, &o);
+                printf("    CPds sent %d, at most %d in a row\n", o.cpd_copies, o.cpd_run);
+                CHECK_EQ_I(a.cpd_dropped, drop[n]);
+                CHECK(o.cpd_copies >= drop[n] + 1);
+                CHECK_EQ_I(o.cpd_run, 1);
+            }
+        }
 
         /* and what it showed in data mode: a slow wander under the symbols
          * (our own low frequencies, which the tail estimate does not take

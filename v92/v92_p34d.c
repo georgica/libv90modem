@@ -969,19 +969,22 @@ uint8_t v92d_tick(v92d_t *p, int16_t rxs)
                 (void)v90tx_select(&p->tx, V90TX_ED);
                 enter(p, V92D_ED);
             } else if (is_suvd) {
-                if (p->cpd_sent == 1) { p->cpd_sent = 2; p->t_cpd = p->now; }       /* the single CPd is out */
+                if (p->cpd_sent == 1) { p->cpd_sent = 2; p->t_cpd = p->now; }       /* the CPd is out */
                 /* 9.6.1.1.2. The first CPd without the acknowledge bit, also when
                  * CPu is in already (SUVd went out before the design was done):
                  * a U.S. Robotics 5686 answered a first CPd that had the bit set
                  * with silence, seven calls of seven, and a plain one never. */
                 if (p->got_suvu && !p->cpd_sent) sel(p, V90TX_CPD);
-                else if (p->cpd_sent == 2 && !p->got_ack && !p->cpd_repeat
+                else if (p->cpd_sent == 2 && !p->got_ack
                          && clk_diff(p->now, p->t_cpd) > MS(100) + p->cfg.rtd + 1200) { p->cpd_repeat = 1; sel(p, cpd); }   /* 9.6.1.1.3 */
                 else if (sig != suvd) sel(p, suvd);                                 /* the acknowledge bit */
             } else if (is_cpd) {
-                if (!p->cpd_sent) p->cpd_sent = 1;
-                if (!p->cpd_repeat || p->got_ack) sel(p, suvd);                     /* a single CPd, then SUVd again */
-                else if (sig != cpd) sel(p, cpd);
+                /* one CPd at a time, then SUVd: a repeat of 9.6.1.1.3 too,
+                 * with SUVd between the copies until it is answered (Figure
+                 * 14 draws CPd, then SUVd until CPu'; an Agere engine cleared
+                 * down on CPds sent back to back) */
+                p->cpd_sent = 1;
+                sel(p, suvd);
             }
         }
         if (p->state == V92D_PH4 && (int64_t)p->t > MS(p->in_reneg ? T_RENEG_MS + pace_ms(p) : T_PHASE4_MS) + 6 * p->cfg.rtd) {

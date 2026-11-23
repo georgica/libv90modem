@@ -136,6 +136,11 @@ Fixed:
   and four CPds with drn = 0 (built from the CPd in use) go out without
   waiting, then silence; nothing in the cleardown retrains. A caller that
   hears us sees the same signals, sooner.
+- V.92, answering role: a CPd the caller does not answer (9.6.1.1.3) is
+  repeated one copy at a time, with SUVd between the copies, as Figure 14
+  of V.92 draws. The repeats went out back to back until the answer came;
+  a real Agere engine is reported to clear down on that. A caller that
+  answers the first CPd (every real call recorded) sees no change.
 - V.92, answering role: a caller whose data mode arrives louder or weaker
   than the CPd design asked for (implementations differ on the power
   reference of V.92 8.8.3) is decoded. B1u failed (`V92D_ERR_B1`, then a

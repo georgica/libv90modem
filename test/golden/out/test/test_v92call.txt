@@ -30,6 +30,10 @@
   25b weak echo under its own slow tail mu-law shape 0 noise 5  : state 9 err 0, data after 3201 ms, up 32000 bit/s (LC 28, K 48, 4G 105, 192 taps, delay 116), down 50666, up 249504 bits 0 bad, down 397708 bits 0 bad, tx power 0.83, peak at -0.05 T
     echo delay found: 263
   25c a caller that waits 3.8 s for SUVd, 3.5 s for CPd mu-law shape 0 noise 5  : state 9 err 0, data after 7083 ms, up 38666 bit/s (LC 38, K 58, 4G 106, 192 taps, delay 116), down 50666, up 267380 bits 0 bad, down 353058 bits 0 bad, tx power 0.76, peak at -0.05 T
+  25e the caller misses 2 CPds       mu-law shape 0 noise 3  : state 9 err 0, data after 4041 ms, up 40000 bit/s (LC 39, K 60, 4G 72, 192 taps, delay 116), down 50666, up 278280 bits 0 bad, down 355186 bits 0 bad, tx power 0.42, peak at -0.05 T
+    CPds sent 3, at most 1 in a row
+  25e the caller misses 4 CPds       A-law  shape 0 noise 3  : state 9 err 0, data after 4626 ms, up 40000 bit/s (LC 40, K 60, 4G 71, 192 taps, delay 116), down 50666, up 254880 bits 0 bad, down 325584 bits 0 bad, tx power 0.32, peak at -0.05 T
+    CPds sent 5, at most 1 in a row
   25d a slow wander under the data   mu-law shape 0 noise 5  : state 9 err 0, data after 3020 ms, up 38666 bit/s (LC 38, K 58, 4G 106, 192 taps, delay 116), down 50666, up 308502 bits 0 bad, down 406980 bits 0 bad, tx power 0.76, peak at -0.05 T
   26 a data frame of Ki = 0 before B1u mu-law shape 1 noise 3  : state 9 err 0, data after 3066 ms, up 40000 bit/s (LC 39, K 60, 4G 79, 192 taps, delay 114), down 50666, up 237300 bits 0 bad, down 303354 bits 0 bad, tx power 0.77, peak at -0.05 T
   27 the same, A-law, another line   A-law  shape 0 noise 3  : state 9 err 0, data after 2991 ms, up 40000 bit/s (LC 40, K 60, 4G 71, 192 taps, delay 116), down 50666, up 240300 bits 0 bad, down 307192 bits 0 bad, tx power 0.33, peak at -0.05 T
@@ -57,4 +61,4 @@
   33 1.4 of the design, renegotiates, noisy mu-law shape 0 noise 40 : state 9 err 0, data after 3056 ms, up 37333 bit/s (LC 31, K 56, 4G 73, 192 taps, delay 116), down 50666, up 248838 bits 0 bad, down 349904 bits 0 bad, tx power 0.91, peak at -0.03 T
   34 2.4 of the design on a long line A-law  shape 1 noise 3  : state 9 err 0, data after 3060 ms, up 38666 bit/s (LC 37, K 58, 4G 79, 192 taps, delay 114), down 50666, up 229622 bits 234 bad, down 303544 bits 0 bad, tx power 0.51, peak at -0.05 T
   35 symbols on the points at scale 2 only: scale 1.000 with the power as designed, 1.953 with it 6 dB under
-v92call: 1689 checks, 0 failures
+v92call: 1767 checks, 0 failures

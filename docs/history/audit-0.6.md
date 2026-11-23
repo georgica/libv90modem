@@ -221,6 +221,11 @@ medium-high).
 - Test that fails today: `test_v92call`: a caller that misses its first two
   CPds still reaches data mode, and between any two CPd / CPd' the
   answerer sends at least one SUVd' (today 2 CPd' in a row).
+- Fixed in Task 21 (T21.2): every CPd, a repeat included, is followed by
+  SUVd (with the acknowledge bit once CPu is in); the next copy goes out
+  when 100 ms + rtd + 150 ms have passed with no acknowledge. `sim/v92a`
+  has the knob (`drop_cpd`); `test_v92call` 25e (2 and 4 CPds missed:
+  data mode, never two CPds in a row; before the fix 3 and 5 in a row).
 
 **T21.5 The rate drop of data mode double-counts earlier drops**
 (Important, high by reading).

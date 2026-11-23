@@ -281,7 +281,8 @@ static void train_frame_done(v92a_t *p, const uint8_t *bits, int D)
             if (r > 0) { p->suvd_n++; if (s.ack) p->suvd_ack = 1; }
         } else {
             r = v92_cpd_parse(p->mb, p->mbn, D, &p->cpd_new);
-            if (r > 0) {
+            if (r > 0 && p->cpd_dropped < p->cfg.drop_cpd) p->cpd_dropped++;     /* missed */
+            else if (r > 0) {
                 p->cpd = p->cpd_new; p->cpd_n++;
                 if (p->cfg.first_cpd_plain && p->cpd_n == 1 && p->cpd.ack) p->us = VA_DOWN;
                 if (p->cpd.ack) p->cpd_ack = 1;

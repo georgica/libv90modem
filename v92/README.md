@@ -610,7 +610,9 @@ sample; both include the transmitter and the echo canceller).
 36. E1u and E2u are looked for only after a complete CPt, or CPu / SUVu
     with the acknowledge, has been received.
 37. 9.6.1.1.3 gives no time for repeating CPd. It is sent again when no CPu
-    has come 100 ms + a round trip + 150 ms after the last one ended.
+    has come 100 ms + a round trip + 150 ms after the last one ended, one
+    copy at a time with SUVd between (Figure 14 draws CPd, then SUVd until
+    CPu'; an Agere engine cleared down on CPds sent back to back).
 38. 9.11: we clear down with a rate renegotiation of ours that sends Rd,
     Rd-bar, 48 data frames of TRN2d and four CPd carrying drn = 0 (the CPd
     in use, no new design), then silence, whether the caller's Ru-bar came
