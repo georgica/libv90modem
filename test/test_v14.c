@@ -45,7 +45,11 @@ int main(void)
     v14_init(&a);
     memset(in, 0x55, 600);
     n = v14_write(&a, in, 600);
-    CHECK(n < 600 && n >= V14_QSIZE - 1);
+    CHECK_EQ_I(n, V14_QSIZE);
+    CHECK_EQ_I(v14_tx_pending(&a), V14_QSIZE);
+    CHECK_EQ_I(v14_getbit(&a), 0);                    /* the first start bit */
+    CHECK_EQ_I(v14_write(&a, in, 2), 1);              /* one slot freed, one octet taken */
+    CHECK_EQ_I(v14_tx_pending(&a), V14_QSIZE + 1);    /* the full queue and the one in flight */
 
     /* V.14 stop-bit deletion: "A" "B" with the stop of A missing still decodes */
     v14_init(&b);

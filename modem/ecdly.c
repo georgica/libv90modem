@@ -8,6 +8,12 @@ void ecdly_init(ecdly_t *d, int delay)
     d->delay = delay > 0 ? delay : 0;
 }
 
+void ecdly_near(ecdly_t *d, int rtd)
+{
+    int b = rtd + ECDLY_MAXLAG / 5 - ECDLY_MAXLAG;
+    d->base = b < 0 ? 0 : b > ECDLY_MAXBASE ? ECDLY_MAXBASE : b;
+}
+
 static int search(ecdly_t *d)
 {
     int k, i;
@@ -16,11 +22,11 @@ static int search(ecdly_t *d)
         /* window sample i was received when pos was s_pos - ECDLY_WIN + 1 + i;
          * what we sent `lag` samples before it sits lag + 1 behind that write
          * position (the sample of the same tick is stored before the canceller runs) */
-        int base = d->s_pos - ECDLY_WIN - d->s_lag;
+        int base = d->s_pos - ECDLY_WIN - d->base - d->s_lag;
         for (i = 0; i < ECDLY_WIN; i++)
             acc += (int32_t)d->win[i] * d->hist[(base + i) & (ECDLY_HIST - 1)];
         if (acc < 0) acc = -acc;
-        if (acc > d->best) { d->best = acc; d->best_lag = d->s_lag; }
+        if (acc > d->best) { d->best = acc; d->best_lag = d->base + d->s_lag; }
     }
     if (d->s_lag <= ECDLY_MAXLAG) return 0;
     d->delay = d->best_lag > 8 ? d->best_lag - 8 : 0;
