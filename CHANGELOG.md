@@ -71,6 +71,13 @@ Changed (answering role, K56flex):
   Simulation only.
 
 Changed (calling role):
+- V.90 and V.92: Sd-bar is waited for 2000 ms from the start of Ja, not
+  1500 (a stated deviation from V.90 9.3.2.4 and V.92 9.5.2.2.1, which add
+  no round trip: a digital modem may wait 500 ms after a whole Ja, so on a
+  round trip of about 0.9 s or more one that follows the text cannot meet
+  1500 ms; a live server answered about 2 s after Ja on a VoIP path). A
+  call with no Sd now begins its retrain (or ends, `V90A_ERR_SD` inside
+  the calling modem) 500 ms later; nothing changes when Sd comes.
 - V.90 and V.92: the DIL asks for Ucodes 0 to 100 only, the loudest at or
   under a third of full scale in either law (V.90 8.4.1 leaves the DIL's
   contents to the analogue modem); it asked for 0 to 119. A softphone's

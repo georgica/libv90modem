@@ -112,7 +112,7 @@ typedef enum {
 enum {
     V90A_OK = 0,
     V90A_ERR_PHASE2,                /* p2.error says how */
-    V90A_ERR_SD,                    /* no Sd-bar within 1500 ms of Ja (9.3.2.4) */
+    V90A_ERR_SD,                    /* no Sd-bar within 2000 ms of Ja (9.3.2.4 says 1500: v90a.c) */
     V90A_ERR_TRAIN,                 /* the receiver found no channel on TRN1d */
     V90A_ERR_JD,                    /* no Jd within 4500 ms of the end of Ja (9.3.2.7) */
     V90A_ERR_JDP,                   /* no Jd' after our S */

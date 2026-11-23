@@ -65,7 +65,7 @@ int main(void)
     CHECK_EQ_I(v90a_rx_rate(&l->va), l->p34.down_rate);
     CHECK_EQ_I(v90a_tx_rate(&l->va), l->p34.up_rate);
     CHECK(v90a_tx_rate(&l->va) >= 24000);
-    /* 9.3.2.4: Sd-bar within 1500 ms of Ja; 9.3.2.7: Jd within 4500 ms of
+    /* 9.3.2.4: Sd-bar within 1500 ms of Ja (we wait 2000); 9.3.2.7: Jd within 4500 ms of
      * its end; 9.3.2.10: the DIL ended within 5000 ms of S; 9.4.2: B1d
      * within 15 s of INFO1a */
     CHECK(l->va.t_info1a < l->va.t_sd && l->va.t_sd < l->va.t_jd && l->va.t_jd < l->va.t_jdp);
@@ -192,7 +192,7 @@ int main(void)
     {
         static const struct { const char *name; int at; int err; double lo, hi; } T[] = {
             /* at: 0 the start of its Phase 3, 1 Sd-bar heard, 2 Jd', 3 Ri-bar, 4 data */
-            { "the start of Phase 3 (no Sd): 1500 ms from Ja", 0, V90A_ERR_SD, 1400, 1700 },
+            { "the start of Phase 3 (no Sd): 2000 ms from Ja", 0, V90A_ERR_SD, 1950, 2200 },
             { "TRN1d learnt (no Jd): 4500 ms from Ja's end", 1, V90A_ERR_JD, 4300, 5500 },
             { "Jd' (no DIL)", 2, V90A_ERR_DIL, 0, 6000 },
             { "Ri-bar (no MP): 15 s from INFO1a", 3, V90A_ERR_PHASE4, 0, 16000 },

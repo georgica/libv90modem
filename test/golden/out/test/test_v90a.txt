@@ -17,7 +17,7 @@ our cleardown, answered by a retrain of the digital modem's (R3)
 a retrain's Phase 2 bounded: 30000 ms (spec D5)
   ours 5 (error 16)
 time-outs: the digital modem silent from
-  the start of Phase 3 (no Sd): 1500 ms from Ja    ended 5, error 2, 1500 ms after Ja
+  the start of Phase 3 (no Sd): 2000 ms from Ja    ended 5, error 2, 2000 ms after Ja
   TRN1d learnt (no Jd): 4500 ms from Ja's end      ended 5, error 4, 4500 ms after the end of Ja
   Jd' (no DIL)                                     ended 5, error 6, 916 ms after the silence
   Ri-bar (no MP): 15 s from INFO1a                 ended 5, error 8, 15028 ms after INFO1a

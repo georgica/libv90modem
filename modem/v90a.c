@@ -18,7 +18,15 @@
 #define CLEAR_CPS    4              /* CP with drn = 0 sent before we go silent (9.7) */
 #define LOSS_SYMS    4000           /* data mode: half a second of an input 12 dB under the start's */
 /* time limits */
-#define T_SD_MS      1500           /* 9.3.2.4: Sd-bar within 1500 ms of the start of Ja */
+/* Sd-bar within 2000 ms of the start of Ja: a stated deviation from V.90
+ * 9.3.2.4 (V.92 9.5.2.2.1), which says 1500 ms and adds no round trip. The
+ * digital modem may wait 500 ms after receiving a whole Ja (9.3.1.3), then
+ * sends 54 ms of Sd and Sd-bar; on a round trip of about 0.9 s or more one
+ * that follows the text cannot meet 1500 ms, and a live server was seen
+ * answering about 2 s after the start of Ja on a VoIP path (reported by an
+ * independent softmodem). Waiting longer is bounded and costs nothing when
+ * Sd comes. (docs/limits.md) */
+#define T_SD_MS      2000
 #define T_JD_MS      4500           /* 9.3.2.7: Jd within 4500 ms of the end of Ja */
 #define T_JDP_MS     3000           /* Jd' after our S (Jd is 9 ms; the digital modem answers at once) */
 #define T_DIL_MS     4000           /* enough DIL within this of Jd' (9.3.2.10: 5000 ms) */

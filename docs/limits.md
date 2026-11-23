@@ -81,6 +81,16 @@ Each item names where it is recorded.
   212A specification document was to hand. The 3 s and 6 s fallbacks to
   Bell 103 are this library's choices. (README, `DESIGN.md` 4.2e.)
 
+- **The calling V.90 / V.92 modem waits 2000 ms for Sd-bar from the start
+  of Ja**, where V.90 9.3.2.4 and V.92 9.5.2.2.1 say 1500 ms. A stated
+  deviation: the clause adds no round trip, and a digital modem that
+  follows the text (up to 500 ms after a whole Ja, 9.3.1.3) cannot meet
+  1500 ms on a round trip of about 0.9 s or more; a live server on a VoIP
+  path answered about 2 s after Ja (reported by an independent softmodem).
+  The wait stays bounded. The calling modem does not send S before Jd has
+  arrived, as that softmodem does for servers that wait for S without a
+  round trip: V.90 9.3.2.7 has S follow the reception of Jd.
+
 ## Data across a rate renegotiation or cleardown (no error control)
 
 With V.42 the frames below are sent again; without it they are lost. The

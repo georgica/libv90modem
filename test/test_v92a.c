@@ -72,7 +72,7 @@ int main(void)
     CHECK_EQ_I(v90a_rx_rate(&l->va), l->v92d.down_rate);
     CHECK_EQ_I(v90a_tx_rate(&l->va), l->v92d.up_rate);
     CHECK(v90a_tx_rate(&l->va) >= 24000);
-    /* 9.5.2.2.1: Sd-bar within 1500 ms of Ja; 9.5.2.2.2: Jd within 4500 ms
+    /* 9.5.2.2.1: Sd-bar within 1500 ms of Ja (we wait 2000; our digital modem meets 1500); 9.5.2.2.2: Jd within 4500 ms
      * of its end; 9.5.2.1.11: CPt within 5000 ms of the second Su-bar;
      * 9.6.2.2.1: B1d within 20 s of INFO1a */
     CHECK(l->va.t_info1a < l->va.t_sd && l->va.t_sd < l->va.t_jd && l->va.t_jd <= l->va.t_su && l->va.t_su < l->va.t_jp);
@@ -253,7 +253,7 @@ int main(void)
     {
         static const struct { const char *name; int at; int err; double lo, hi; } T[] = {
             /* at: 0 the start of its Phase 3, 1 Sd-bar heard, 2 our Su, 3 Jp', 4 Ri-bar, 5 data */
-            { "the start of Phase 3 (no Sd): 1500 ms from Ja", 0, V90A_ERR_SD, 1400, 1700 },
+            { "the start of Phase 3 (no Sd): 2000 ms from Ja", 0, V90A_ERR_SD, 1950, 2200 },
             { "TRN1d learnt (no Jd): 4500 ms from Ja's end", 1, V90A_ERR_JD, 4300, 5500 },
             { "our Su (no Jp)", 2, V90A_ERR_JP, 0, 6000 },
             { "Jp' (no DIL)", 3, V90A_ERR_DIL, 0, 6000 },
