@@ -15,6 +15,7 @@
 #include <string.h>
 #include "test.h"
 #include "../modem/answer.h"
+#include "../modem/ans_scheme.h"   /* ans_enter: a phase put in place by hand */
 #include "../modem/info.h"
 #include "../sim/v92call.h"
 #include "../sim/v34peer.h"
@@ -179,11 +180,11 @@ int main(void)
     {
         static answer_t E;
         E = A;
-        E.phase = ANS_P3; E.p34.ecd.delay = 123; E.u.v92.ecd.delay = 77;
+        ans_enter(&E, ANS_P3); E.p34.ecd.delay = 123; E.u.v92.ecd.delay = 77;
         CHECK_EQ_I(answer_echo_delay(&E), 123);
-        E.phase = ANS_RETRAIN;
+        ans_enter(&E, ANS_RETRAIN);
         CHECK_EQ_I(answer_echo_delay(&E), 77);      /* between engines: the modulation's */
-        E.phase = ANS_FAILED;
+        ans_enter(&E, ANS_FAILED);
         CHECK_EQ_I(answer_echo_delay(&E), 77);
     }
 

@@ -982,3 +982,42 @@ side has its own near echo, 0.3, and a far canceller on with nothing at
 the round trip). The answer side is clean throughout. The 12000 is frozen
 in test/golden/out/test/test_v34dx.txt; a fix that raises it changes that
 golden line on purpose.
+
+## Task 26: answer.c, one file per scheme behind a phase table
+
+`modem/answer.c` (887 lines) keeps init, V.8, the dispatch, the end codes
+and the backstop (289 lines); the schemes are `modem/ans_legacy.c`
+(V.21, Bell 103, V.22bis / V.22 / Bell 212A with the 1270 Hz and 980 Hz
+detectors, V.32bis), `ans_v90.c` (Phase 2 and the retrain silence, V.90,
+V.92, the hand-off to V.34), `ans_v34.c`, `ans_x2.c`, `ans_k56.c`
+(V.8bis, K56flex, its client's retrain), behind `ans_scheme_t`
+(`modem/ans_scheme.h`). `answer_t.s` is the scheme of the phase, set by
+`ans_enter` from a phase table. The signal to noise, round trip and the
+echo delay between engines stay the modulation's, as before. Byte
+identical (`make verify`: no golden, replay or bench re-record; the two
+white-box tests that put a phase in place by hand now use `ans_enter`).
+
+Retrain counting as it was, per scheme. V.90, V.92 and V.34 after a V.90
+Phase 2 share `ans_rt_v90` (`rt_policy_t {3, 60000, 0}`): the retrain due
+with 3 in a row ends the call before it is counted; a clock running
+through every data mode sample forgets one per minute. K56flex keeps its
+own code (counted, clock restarted, then the third ends the call as
+K56flex's; all forgotten after 2 s of data mode on a clock that runs only
+while there are any). V.34 from V.8 and V.32bis count in their engines;
+x2 has none.
+
+ARMv5 (uClibc), M instructions per second of line, before at 8d0c652:
+
+| | before | after | |
+|---|---|---|---|
+| x2 answering (second 15 to 16) | 82.83 | 82.80 | -0.03 |
+| K56flex answering (second 20 to 21) | 39.58 | 39.54 | -0.04 |
+| V.90 answering (second 15 to 16) | 39.44 | 39.49 | +0.05 |
+
+The per-sample tick now goes through `a->s->tick` (an indirect call in
+place of the switch); V.90 pays +0.05 M, x2 and K56flex gain a little
+from the smaller per-scheme functions. Bench hashes unchanged.
+
+Memory: answer_t gains the scheme pointer, 106232 octets on x86-64
+(105936 on ARMv5), still below orig_t (118712 / 118424): `v90m_mem_size()`
+unchanged.

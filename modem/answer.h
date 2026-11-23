@@ -143,9 +143,12 @@ typedef struct {
 
 #define ANS_MAX_TX_CODE 23
 
+struct ans_scheme;            /* modem/ans_scheme.h */
+
 typedef struct {
     answer_cfg cfg;
     ans_phase  phase;
+    const struct ans_scheme *s;  /* the scheme of the phase: set with it */
     int32_t    t;            /* samples in this phase (saturates) */
     int32_t    t_phase;      /* the backstop's clock (saturating): samples in this phase, or
                                 in V.34's Phase 2 within ANS_V34 since it began */

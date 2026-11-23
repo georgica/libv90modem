@@ -4,6 +4,7 @@
 #include <string.h>
 #include "test.h"
 #include "../modem/answer.h"
+#include "../modem/ans_scheme.h"   /* ans_enter: a phase put in place by hand */
 #include "../modem/v14.h"
 #include "../modem/tonedet.h"
 #include "../sim/callpeer.h"
@@ -534,7 +535,7 @@ int main(void)
         answer_init(&a, &ac);
         p2d_init(&a.p2, &a.p2cfg);
         a.p2.state = P2D_DONE; a.p2.mode = P2D_MODE_V90; a.p2.info1a.v90 = 1; a.p2.info1a.up_sr = 4;
-        a.phase = ANS_P2; a.t = 0;
+        ans_enter(&a, ANS_P2); a.t = 0;
         (void)answer_tick(&a, 0);
         CHECK_EQ_I(a.phase, ANS_P3); CHECK_EQ_I(a.t_phase, 0);
         a.t_phase = 60000 * 8 - 1;
@@ -549,7 +550,7 @@ int main(void)
             memset(&vc, 0, sizeof vc);
             vc.level = 3000; vc.law = 1; vc.getbit = v14_getbit; vc.putbit = v14_putbit; vc.user = &dte;
             v34ans_init(&a.v34, &vc);
-            a.phase = ANS_V34; a.t = 0; a.connected = conn;
+            ans_enter(&a, ANS_V34); a.t = 0; a.connected = conn;
             (void)answer_tick(&a, 0);
             CHECK_EQ_I(a.phase, ANS_V34); CHECK_EQ_I(a.v34.state, V34A_PHASE2);
             a.t_phase = 30000 * 8 - 1;
@@ -565,7 +566,7 @@ int main(void)
         answer_init(&a, &ac);
         v34ans_init(&a.v34, &vc);
         a.v34.state = V34A_RETRAIN; a.v34.t = 0; a.v34.have0c = 1;
-        a.phase = ANS_V34; a.t = 0; a.connected = 1;
+        ans_enter(&a, ANS_V34); a.t = 0; a.connected = 1;
         a.t_phase = 100000 * 8;
         for (k = 0; k < 8 * 70 && a.v34.state == V34A_RETRAIN; k++) (void)answer_tick(&a, 0);
         CHECK_EQ_I(a.phase, ANS_V34); CHECK_EQ_I(a.v34.state, V34A_PHASE2);
