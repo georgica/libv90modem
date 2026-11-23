@@ -12,7 +12,11 @@
  *   - Ed reported once, for the first frame of zeros after the last
  *     sequence, and not for zeros elsewhere;
  *   - a CPd with one bit wrong is not taken, and the next one is;
- *   - nothing is reported on ones, zeros or random bits alone. */
+ *   - nothing is reported on ones, zeros or random bits alone;
+ *   - a CPd that leaves parts out (Table 30 bits 19:21) changes only what it
+ *     carries: the parts it leaves out are kept from the CPds before it in
+ *     the same Phase 4 (and a rate renegotiation's), forgotten at the start
+ *     of the next. */
 #include <stdio.h>
 #include <string.h>
 #include "test.h"
@@ -163,6 +167,99 @@ int main(void)
         }
         printf("ones, zeros, random: events 0x%x\n", ev_all);
         CHECK_EQ_I(ev_all, 0);
+    }
+    /* partial CPds: merged into the stored one */
+    {
+        static v92_cpd_t A, B;
+        int D2 = 18, pos, f, n, ncpd;
+        v92_suvd_t sg;
+        make_cpd(&A, &g, 3, 40, 120, 0);
+        make_cpd(&B, &g, 2, 30, 60, 1);
+        B.has_filt = 0; B.has_const = 0;                       /* only the moduli changed */
+        B.drn = (uint8_t)(A.drn == 19 ? 18 : A.drn + 1);
+        B.filt.gain4 = (uint16_t)(A.filt.gain4 ^ 0x5A5A ? A.filt.gain4 ^ 0x5A5A : 1);
+        /* a full CPd A, then B carrying the moduli only */
+        pos = 0;
+        put_const(&pos, 1, 10 * D2);
+        n = v92_cpd_build(&A, D2, bits); put_seq(&pos, bits, n);
+        put_const(&pos, 1, 10 * D2);
+        n = v92_cpd_build(&B, D2, bits); put_seq(&pos, bits, n);
+        put_const(&pos, 1, 10 * D2);
+        v92aseq_init(&s);
+        memset(&got, 0, sizeof got);
+        CHECK_EQ_I(v92aseq_cpd_complete(&s), 0);
+        for (f = 0, ncpd = 0; f < pos / D2; f++) {
+            int ev = v92aseq_frame(&s, stream + f * D2, D2, &sg, &got);
+            if (ev & V92AS_CPD) {
+                if (++ncpd == 1) CHECK_EQ_I(v92aseq_cpd_complete(&s), 1);
+            }
+            CHECK_EQ_I(ev & V92AS_BAD, 0);
+        }
+        printf("full CPd then moduli only: %d taken; has %d %d %d\n", ncpd, got.has_mod, got.has_filt, got.has_const);
+        CHECK_EQ_I(ncpd, 2);
+        {
+            v92_cpd_t *cpd = &got;
+            CHECK_EQ_I(cpd->has_mod, 1); CHECK_EQ_I(cpd->has_filt, 1); CHECK_EQ_I(cpd->has_const, 1);
+            /* always carried: B's */
+            CHECK_EQ_I(cpd->drn, B.drn); CHECK_EQ_I(cpd->map.trellis, B.map.trellis);
+            CHECK_EQ_I(cpd->e2u_extend, B.e2u_extend); CHECK_EQ_I(cpd->ack, 1);
+            CHECK_EQ_I(cpd->filt.gain4, B.filt.gain4);
+            CHECK_EQ_I(cpd->map.K, V92_UP_K(B.drn));
+            /* the part B carries: B's; the parts it leaves out: A's */
+            CHECK(memcmp(cpd->map.M, B.map.M, sizeof B.map.M) == 0); CHECK_EQ_I(cpd->map.M[0], B.map.M[0]);
+            CHECK(memcmp(cpd->filt.coef, A.filt.coef, sizeof A.filt.coef) == 0);
+            CHECK_EQ_I(cpd->filt.lz1, A.filt.lz1); CHECK_EQ_I(cpd->filt.lp1, A.filt.lp1);
+            CHECK_EQ_I(cpd->filt.lz2, A.filt.lz2); CHECK_EQ_I(cpd->filt.lp2, A.filt.lp2);
+            CHECK(memcmp(cpd->map.cidx, A.map.cidx, sizeof A.map.cidx) == 0);
+            CHECK(memcmp(cpd->map.lc, A.map.lc, sizeof A.map.lc) == 0);
+            CHECK(memcmp(cpd->map.pt, A.map.pt, sizeof A.map.pt) == 0);
+        }
+        CHECK_EQ_I(v92aseq_cpd_complete(&s), 1);
+
+        /* a rate renegotiation: hunting afresh keeps what is stored */
+        v92aseq_restart(&s);
+        CHECK_EQ_I(v92aseq_cpd_complete(&s), 1);
+        pos = 0;
+        put_const(&pos, 1, 10 * D2);
+        n = v92_cpd_build(&B, D2, bits); put_seq(&pos, bits, n);
+        put_const(&pos, 1, 10 * D2);
+        for (f = 0, ncpd = 0; f < pos / D2; f++)
+            if (v92aseq_frame(&s, stream + f * D2, D2, &sg, &got) & V92AS_CPD) ncpd++;
+        CHECK_EQ_I(ncpd, 1);
+        CHECK_EQ_I(v92aseq_cpd_complete(&s), 1);
+        CHECK_EQ_I(got.has_filt, 1); CHECK_EQ_I(got.has_const, 1);
+        CHECK(memcmp(got.map.pt, A.map.pt, sizeof A.map.pt) == 0);
+
+        /* a CPd that fails its CRC leaves the stored one as it was */
+        pos = 0;
+        put_const(&pos, 1, 10 * D2);
+        n = v92_cpd_build(&A, D2, bits); put_seq(&pos, bits, n);
+        stream[10 * D2 + n / 2] ^= 1;                          /* inside the points */
+        put_const(&pos, 1, 10 * D2);
+        ref = got;
+        for (f = 0, ncpd = 0; f < pos / D2; f++)
+            if (v92aseq_frame(&s, stream + f * D2, D2, &sg, &got) & V92AS_CPD) ncpd++;
+        CHECK_EQ_I(ncpd, 0);
+        CHECK(same_cpd(&got, &ref));
+        CHECK_EQ_I(v92aseq_cpd_complete(&s), 1);
+
+        /* the next Phase 4: B alone is not a whole CPd */
+        v92aseq_phase4(&s);
+        CHECK_EQ_I(v92aseq_cpd_complete(&s), 0);
+        pos = 0;
+        put_const(&pos, 1, 10 * D2);
+        n = v92_cpd_build(&B, D2, bits); put_seq(&pos, bits, n);
+        put_const(&pos, 1, 10 * D2);
+        for (f = 0, ncpd = 0; f < pos / D2; f++)
+            if (v92aseq_frame(&s, stream + f * D2, D2, &sg, &got) & V92AS_CPD) ncpd++;
+        CHECK_EQ_I(ncpd, 1);
+        CHECK_EQ_I(v92aseq_cpd_complete(&s), 0);
+        CHECK_EQ_I(got.has_mod, 1); CHECK_EQ_I(got.has_filt, 0); CHECK_EQ_I(got.has_const, 0);
+        /* what it leaves out is as v92_cpd_parse() leaves it: zero */
+        n = v92_cpd_build(&B, D2, bits);
+        CHECK_EQ_I(v92_cpd_parse(bits, n, D2, &ref), n);
+        CHECK(same_cpd(&got, &ref));
+        printf("next Phase 4, moduli only: complete %d\n", v92aseq_cpd_complete(&s));
     }
     T_REPORT("v92aseq");
 }

@@ -1895,8 +1895,11 @@ static int lvl_pair(unsigned mods, int alaw, int c_level, int secs, v90m_state *
 static void test_cfg_ranges(void)
 {
     static union { v90m_align a; uint8_t b[V90M_EC_MEM_SIZE]; } ecmem;
-    /* (a calling V.90 modem's V.34 upstream clips at the top: at 16384 its
-     * B1 does not get through on a mu-law line; 15360 does) */
+    /* (a calling V.90 modem's V.34 upstream clips at the top: some tens of
+     * samples a call over full scale at 15360 and at 16384. At 16384 on a
+     * mu-law line its B1 failed when the answerer picked 26400 up, up to
+     * 0.5.0; since 0.6.0's start-up (Task 21b) it picks 24000 and connects:
+     * luck of the measurement, so 15360 stays the level checked) */
     static const struct { unsigned mods; int alaw, c_level; const char *what; } lvl[] = {
         { V90M_MOD_V21, 0, 16384, "V.21" }, { V90M_MOD_V22, 0, 16384, "V.22bis" },
         { V90M_MOD_V32BIS, 0, 16384, "V.32bis" }, { V90M_MOD_V34, 0, 16384, "V.34" },
@@ -1941,7 +1944,8 @@ static void test_cfg_ranges(void)
     }
     {
         /* the mu-law V.90 caller at 16384 too: clipped, not wrapped; the call
-         * ends with a defined end code */
+         * connects (since Task 21b: the answerer picks 24000 up; it picked
+         * 26400 before and B1 failed) or ends with a defined end code */
         int ok = lvl_pair(V90M_MOD_V90 | V90M_MOD_V34, 0, 16384, 40, &sc, &sa);
         printf("  tx_level %d both, V.90 back to back: %s, answerer end %d\n", V90M_TX_LEVEL_MAX,
                ok ? "data mode" : "no data mode", (int)sa.end);

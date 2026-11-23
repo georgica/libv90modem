@@ -65,7 +65,7 @@ int main(void)
     CHECK_EQ_I(v90a_rx_rate(&l->va), l->p34.down_rate);
     CHECK_EQ_I(v90a_tx_rate(&l->va), l->p34.up_rate);
     CHECK(v90a_tx_rate(&l->va) >= 24000);
-    /* 9.3.2.4: Sd-bar within 1500 ms of Ja; 9.3.2.7: Jd within 4500 ms of
+    /* 9.3.2.4: Sd-bar within 1500 ms of Ja (we wait 2000); 9.3.2.7: Jd within 4500 ms of
      * its end; 9.3.2.10: the DIL ended within 5000 ms of S; 9.4.2: B1d
      * within 15 s of INFO1a */
     CHECK(l->va.t_info1a < l->va.t_sd && l->va.t_sd < l->va.t_jd && l->va.t_jd < l->va.t_jdp);
@@ -78,6 +78,16 @@ int main(void)
     CHECK(l->va.trn2d_frames > 1000);
     CHECK_EQ_I(l->va.trn2d_bad, 0);
     CHECK_EQ_I(l->va.b1d_bad, 0);
+    /* 8.5.2 allows a CP to name fewer constellations than intervals and
+     * share them; a real server froze in data mode on such a CP (reported
+     * by an independent softmodem's live calls). Ours name one per interval
+     * (six), CPt's too. */
+    {
+        int s, six = v90_cp_nconst(&l->va.cpt) == 6 && v90_cp_nconst(&l->va.cp) == 6;
+        for (s = 0; s < 6; s++) six = six && l->va.cpt.idx[s] == s && l->va.cp.idx[s] == s;
+        printf("  constellations in CPt / CP as sent: %d / %d\n", v90_cp_nconst(&l->va.cpt), v90_cp_nconst(&l->va.cp));
+        CHECK(six);
+    }
     {
         int64_t d0 = l->down.got, u0 = l->up.got;
         run_for(l, MS(4000));
@@ -188,11 +198,45 @@ int main(void)
     CHECK_EQ_I(l->va.state, V90A_ENDED);
     CHECK_EQ_I(l->va.error, V90A_ERR_RETRAINS);
 
+    /* A live server's habit (reported by an independent softmodem's calls):
+     * TRN1d for about 4 s, Jd at the last moment 9.3.1.4 allows, and S
+     * wanted within 9.3.1.5's 5100 ms of the start of TRN1d. Jd is within
+     * 9.3.2.7's 4500 ms of the end of Ja, S follows it at once. Jd in 4100 ms
+     * (past 9.3.1.4) is still taken; in 4600 ms, past 9.3.2.7's limit, it is
+     * a retrain's (V90A_ERR_JD). */
+    printf("a server's long TRN1d, Jd at its end\n");
+    {
+        static const int TJ[] = { 4000, 4100, 4600 };
+        int i;
+        for (i = 0; i < 3; i++) {
+            int32_t jd_at = -1;
+            c = base(); c.seed = (uint32_t)(30 + i); c.trn1d_ms = TJ[i];
+            vl_init(l, &c);
+            while (l->k < MS(30000) && l->va.state != V90A_DATA && l->va.state != V90A_ENDED) {
+                vl_tick(l);
+                if (jd_at < 0 && l->p34.state == P34_JD) jd_at = (int32_t)(l->p34.now - l->p34.t_trn1d);
+            }
+            printf("  TRN1d %d ms: Jd %d ms into it; ours %d (error %d), Jd read %d ms after the end of Ja, Jd' %d ms after that; digital %d\n",
+                   TJ[i], jd_at < 0 ? -1 : (int)ms(jd_at), l->va.state, l->va.error,
+                   l->va.t_jd != CLK_NONE ? (int)ms(clk_diff(l->va.t_jd, l->va.t_ja_end)) : -1,
+                   l->va.t_jdp != CLK_NONE ? (int)ms(clk_diff(l->va.t_jdp, l->va.t_jd)) : -1, l->p34.state);
+            if (TJ[i] <= 4100) {
+                CHECK(ms(jd_at) >= TJ[i] && ms(jd_at) < TJ[i] + 50);
+                CHECK_EQ_I(l->va.state, V90A_DATA);
+                CHECK(l->p34.state != P34_FAILED);
+                CHECK(clk_diff(l->va.t_jdp, l->va.t_jd) < MS(200));
+            } else {
+                CHECK_EQ_I(l->va.state, V90A_ENDED);
+                CHECK_EQ_I(l->va.error, V90A_ERR_JD);
+            }
+        }
+    }
+
     printf("time-outs: the digital modem silent from\n");
     {
         static const struct { const char *name; int at; int err; double lo, hi; } T[] = {
             /* at: 0 the start of its Phase 3, 1 Sd-bar heard, 2 Jd', 3 Ri-bar, 4 data */
-            { "the start of Phase 3 (no Sd): 1500 ms from Ja", 0, V90A_ERR_SD, 1400, 1700 },
+            { "the start of Phase 3 (no Sd): 2000 ms from Ja", 0, V90A_ERR_SD, 1950, 2200 },
             { "TRN1d learnt (no Jd): 4500 ms from Ja's end", 1, V90A_ERR_JD, 4300, 5500 },
             { "Jd' (no DIL)", 2, V90A_ERR_DIL, 0, 6000 },
             { "Ri-bar (no MP): 15 s from INFO1a", 3, V90A_ERR_PHASE4, 0, 16000 },

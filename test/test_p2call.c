@@ -44,6 +44,7 @@ typedef struct {
     int l1_samples, l2_samples;
     double l1_pw, l2_pw;
     int a_restarts;         /* times the harness played the answerer's side of a retrain */
+    int tone_at;            /* when the caller ended its reading of L2 (Tone B: 11.2.1.1.5) */
 } run_t;
 
 static double lp[NLP];
@@ -127,6 +128,7 @@ static void run(const scen_t *s, run_t *r, const p2ans_cfg *ac, const p2call_cfg
         ctx = p2call_tick(&r->c, lrx[(i - s->io_rx + MAXD) % MAXD]);
         if (r->a.state == P2N_DONE && r->a_done_at < 0) r->a_done_at = i;
         if (r->c.state == P2L_DONE && r->c_done_at < 0) r->c_done_at = i;
+        if (r->c.state == P2L_WAIT_REV3 && !r->tone_at) r->tone_at = i;
         /* the answerer's side of a retrain after its Phase 2 was over: its
          * Phase 3 gave up by itself (Tone A after 70 ms of silence), or it
          * heard our Tone B for 50 ms (11.5.2.2: 70 ms of silence, Tone A) */
@@ -288,6 +290,13 @@ int main(void)
     CHECK_EQ_I(r.c.state, P2L_DONE); CHECK_EQ_I(r.a.state, P2N_DONE);
     CHECK_EQ_I(r.c.error, 0);
     CHECK(r.n < 8000 * 4);
+    /* 11.2.1.1.5 lets the call modem read L2 for up to 500 ms; we read it
+     * for no more than 300 ms from its start (the answerer's L2 began 10 ms
+     * before probe_from): a real modem whose tone came 92 to 103 ms after
+     * ours arrived ignored the reversal when we listened 460 ms (reported by
+     * an independent softmodem's live calls) */
+    printf("  p2call clean: Tone B %d ms after the start of the answerer's L2\n", (r.tone_at - (r.c.probe_from - 80)) / 8);
+    CHECK(r.tone_at - (r.c.probe_from - 80) <= 8 * 300);
     CHECK_EQ_I(r.c.n_info0c, 1); CHECK_EQ_I(r.a.n_info0a, 1);
     CHECK_EQ_I(r.c.retrains, 0); CHECK_EQ_I(r.c.restarts, 0); CHECK_EQ_I(r.c.rev3_timeouts, 0);
     CHECK_EQ_I(r.a.retrains, 0); CHECK_EQ_I(r.a.restarts, 0);

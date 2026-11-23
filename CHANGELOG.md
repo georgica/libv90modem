@@ -54,7 +54,53 @@ dropped call should look at `V90M_END_LOST`):
   accordingly (renegotiations of V.34, x2 and K56flex no longer print
   retraining 1).
 
+Changed (answering role, K56flex):
+- A client that ignores our MP and sends x2's upstream (64 states,
+  non-linear, expanded shaping) is decoded: its B1 fails under what our MP
+  asked for (16 states, linear, minimum shaping), and the points kept
+  since its E are decoded again under x2's configuration (3 every 2
+  symbol periods, the live ones joining them; caught up after about
+  110 ms); if B1 passes there, the data goes on under it (it ended with
+  `V90M_END_K56_FAILED`). Its data mode costs about what x2's does on the
+  CPU. A wrong B1 under both still ends the call, about 40 ms later than
+  before. Calls whose B1 passes are unchanged.
+  Simulation only.
+- A client that gives up its renegotiation and retrains (its tone B during
+  the renegotiation) is followed as a retrain from data mode is; the call
+  ended at the renegotiation's time limit (`V90M_END_K56_FAILED`, 6 s).
+  Simulation only.
+
 Changed (calling role):
+- V.90 and V.92: Sd-bar is waited for 2000 ms from the start of Ja, not
+  1500 (a stated deviation from V.90 9.3.2.4 and V.92 9.5.2.2.1, which add
+  no round trip: a digital modem may wait 500 ms after a whole Ja, so on a
+  round trip of about 0.9 s or more one that follows the text cannot meet
+  1500 ms; a live server answered about 2 s after Ja on a VoIP path). A
+  call with no Sd now begins its retrain (or ends, `V90A_ERR_SD` inside
+  the calling modem) 500 ms later; nothing changes when Sd comes.
+- V.90 and V.92: the DIL asks for Ucodes 0 to 100 only, the loudest at or
+  under a third of full scale in either law (V.90 8.4.1 leaves the DIL's
+  contents to the analogue modem); it asked for 0 to 119. A softphone's
+  gain control was seen to hold louder codewords down and read what
+  followed low for a third of a second (reported by an independent
+  softmodem's live calls). The constellations never use an unmeasured
+  level, so CP stays under a third of full scale too: most simulated lines
+  keep their rate, some move a step either way. The DIL is 171 ms
+  shorter (4 passes of 1818 symbols, not 2160) and Ja's descriptor 154
+  bits shorter; start-up reaches data mode about 220 ms earlier. The
+  robbed-bit verdict is taken at a quarter of the Ucodes measured from 64
+  up (it was a fixed 16 of 64).
+- V.34, V.90 and V.92: the far end's L2 is read for 280 ms, not 460 (V.34
+  11.2.1.1.5, V.90 9.2.2.1.8: at most 500). Our tone now begins 290 ms
+  after the far L2 began, which leaves the far end 300 ms or more before
+  its own wait ends (600 ms plus a round trip, V.34 11.2.2.2.3; V.90's
+  digital modem 650 ms, 9.2.1.2.5); at 460 ms it had about 100 ms. A real
+  answering modem that used nearly all of those 100 ms ignored the
+  reversal that followed (live calls reported by an independent
+  softmodem). Phase 2 is 180 ms shorter; the probe analysis on 14 blocks of
+  20 ms instead of 23 moves some INFO1c / INFO1a choices and so the rates
+  of some simulated lines by a step either way. The answering side still
+  reads 460 ms (docs/limits.md).
 - A retrain's Phase 2 is bounded whatever the answerer does. An answerer
   that kept repeating its INFO0 (V.90 and V.92: INFO0d; V.34: INFO0a) sent
   the calling modem back to the start of the exchange each time, for as
@@ -74,6 +120,22 @@ Changed (calling role):
   for the cleardowns the modem makes by itself: when no downstream rate
   fits (a server retrain no longer rescues it), and when one retrain more
   is due past the limit (`V90M_END_RETRAIN_FAILED`, as before).
+- V.90 and V.92: PCM is chosen only when the answerer's JM names a digital
+  modem (V.8's PCM category, "V.90/V.92 digital"). A JM naming only "PCM
+  analogue" (an analogue V.90/V.92 modem answering, which cannot carry a
+  PCM downstream) selected V.90 and the call failed in Phase 2
+  (`V90M_END_FAILED`); it now gives V.34 (or the lowest mode in
+  common). Against this library's answerer, whose JM names the digital
+  modem, nothing changes.
+- V.92: a CPd that carries only some of its three parts (moduli, filters,
+  constellations; Table 30's bits 19 to 21), as a digital modem may send
+  in a rate renegotiation when only part of it changed, is merged with the
+  CPd before it: the parts it leaves out are kept. It was refused, and the
+  renegotiation became a retrain (8 to 11 s each; past the limit,
+  `V90M_END_RETRAIN_FAILED`). The first CPd after Phase 3 (start-up or
+  retrain) must still bring all three parts, else that start-up or
+  retrain fails as before. This library's answerer always sends all
+  three; no real server's partial CPd has been seen.
 
 Changed (V.34, both roles):
 - A cleardown of ours (`v90m_cleardown`) is no longer turned into a

@@ -217,8 +217,10 @@ typedef struct {
     int            tx_level;        /* transmit RMS outside PCM modes, 16-bit units, 0 ..
                                        V90M_TX_LEVEL_MAX (else V90M_EINVAL); default 3000. Near
                                        the top the peaks of V.34-family signals clip: a calling
-                                       V.90 modem at 16384 does not get through its training
-                                       back to back, at 15360 it does */
+                                       V.90 modem's V.34 upstream at 15360 or 16384 goes over
+                                       full scale some tens of samples a call, and whether its
+                                       B1 gets through depends on the upstream rate the answerer
+                                       picks (docs/api.md); 15360 is the level tested to connect */
     int            max_tx_code;     /* answering, V.90 / V.92: the most downstream power the caller
                                        may ask for, -0.5 dBm0 less 0.5 dB per step, 1..31;
                                        0 = 23 (-12 dBm0). Calling: unused (0..31 accepted) */

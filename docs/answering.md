@@ -172,6 +172,17 @@ answering, on a mu-law line: never with `alaw` set.
   our flagged INFO1a in the simulator; `tx_bps` is the downstream payload
   (32000 to 56000, as a Rockwell modem prints it), `rx_bps` the client's
   V.34 upstream (the highest rate its MP allows, capped by `max_up_bps`).
+- **A client that ignores our MP.** Our MP asks the client's transmitter
+  for 16 states, linear, minimum shaping, and nothing it sends says what
+  it will use. A client that sends x2's upstream regardless (64 states,
+  non-linear, expanded shaping) fails B1 under what we asked; its points
+  since its E are kept (192 symbols), decoded again under x2's
+  configuration, 3 every 2 symbol periods until the receiver has caught up
+  (about 110 ms; B1 is decided about 36 ms after the retry), the
+  equaliser back as it was at its E, and if B1 passes there the call goes
+  on under it (a renegotiation starts from the configuration that passed,
+  and tries the other if its B1 fails). Otherwise, as before,
+  `V90M_END_K56_FAILED`. Only the simulated client has done it.
 - **Renegotiation.** The client's (its S in data mode) is followed: our
   data stops at a frame's end, our short training, its MP, our MP, then
   data at the new rate: `V90M_EV_DATA_STOPPED`, `V90M_EV_RATES`,
@@ -182,20 +193,26 @@ answering, on a mu-law line: never with `alaw` set.
   retrain Phase 2 with INFO1a flagged again, then the whole training:
   `V90M_EV_DATA_STOPPED` with `retraining` set, then
   `V90M_EV_DATA_MOVING` at the rates it agrees (some 10.5 s later in the
-  simulator), and `v90m_stats.retrains` counts it. Only a tone B in data
-  mode is a retrain: a client that gives up during a training (the first,
-  or a retrain's) and retrains again is not followed, and the call ends at
-  that training's time limit (`V90M_END_K56_FAILED`). The third retrain
-  in a row from data mode ends the call too; retrains are forgotten after
-  2 s of data mode. We never start one: `v90m_retrain` gives
-  `V90M_ESTATE`.
+  simulator), and `v90m_stats.retrains` counts it. A tone B in data mode
+  or in the client's renegotiation (one it gives up) is a retrain; a
+  client that gives up during a training (the first, or a retrain's) and
+  retrains again is not followed, and the call ends at that training's
+  time limit (`V90M_END_K56_FAILED`). A retrain from its renegotiation
+  is counted twice, in `renegotiations` (its S stopped the data) and in
+  `retrains`. The third retrain in a row from data mode ends the call
+  too; retrains are forgotten after 2 s of data mode. We never start
+  one: `v90m_retrain` gives `V90M_ESTATE`.
 - **Cleardown and failures.** `v90m_cleardown` ends the call at once
   (`V90M_END_CLEARDOWN_OURS`), with nothing sent: no K56flex cleardown is
   known. A start-up, renegotiation or retrain that does not complete in
   its time ends the call with `V90M_END_K56_FAILED`; an upstream lost in
   data mode, with `V90M_END_LOST`.
 - **CPU.** K56flex data mode costs about the same as V.90's (it asks the
-  client for V.90's upstream options) ([limits.md](limits.md)).
+  client for V.90's upstream options); with a client that ignores our MP,
+  about x2's (84 M ARM instructions a second against 39 M), and up to
+  128 M a second for the 110 ms of catching up after its B1, about the
+  box's whole CPU: v90d's answers come at most 11.7 ms late, inside its
+  20 ms of prefill ([limits.md](limits.md), `docs/history/audit-0.6.md`).
 
 ## Retrains, rate renegotiation, cleardown
 

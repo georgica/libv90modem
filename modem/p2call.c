@@ -6,7 +6,16 @@
 #define TONE_SEEN 160           /* 20 ms of steady carrier = tone detected */
 #define TURN 320                /* the 40 ms turn-round */
 #define TAIL 80                 /* 10 ms of tone after a reversal */
-#define PROBE_BLOCKS 23         /* 460 ms of L2 analysed (not to exceed 500 ms) */
+/* L2 read from 10 ms in for 280 ms: our tone 290 ms after L2 began. V.34
+ * 11.2.1.1.5 and V.90 9.2.2.1.8 allow up to 500 ms; the far end waits for
+ * our tone 600 ms (V.34 11.2.2.2.3; V.90's digital modem 650 ms, 9.2.1.2.5)
+ * plus a round trip from the start of its L2, and so has 300 ms or more to
+ * hear it over the echo of its own L2, where 500 ms left 100. A real
+ * answering modem used nearly all of the 100 ms that 500 ms leave (its tone
+ * A came 92 to 103 ms after ours arrived) and ignored the reversal that
+ * followed (live calls reported by an independent softmodem, which reads
+ * 300 ms). 14 blocks of 20 ms still average one or two jitter-buffer slips. */
+#define PROBE_BLOCKS 14
 #define TX_FLUSH 60             /* samples from the start of the last bit to its end on the line */
 /* time limits: the Recommendation's where it gives one */
 #define T_INFO0_MS   8000       /* INFO0a and Tone A (none given) */
@@ -761,7 +770,7 @@ static int16_t p2call_tick_v90(p2call_t *p, int16_t x)
 
     case P2L_A_WAIT_REV2:
         if (ev & DPSK_EV_REVERSAL) {
-            /* 9.2.2.1.7, .8: L1 160 ms, then L2 (analysed, at most 500 ms) */
+            /* 9.2.2.1.7, .8: L1 160 ms, then L2 (analysed 280 ms; at most 500 ms) */
             int32_t line = p->now - DPSK_RX_REV_DELAY;
             p->t_rev2 = line;
             p->probe_from = line + TAIL + MS(160) + MS(10);

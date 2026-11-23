@@ -671,7 +671,8 @@ int16_t answer_tick(answer_t *a, int16_t rx)
                     : a->connected && d->error == K56D_ERR_CARRIER ? ANS_END_LOST : ANS_END_K56_FAILED);
             tx = 0;
         } else if (d->state == K56D_RETRAIN) {
-            /* its tone B in data mode (decision 14): retrains in a row, the
+            /* its tone B in data mode or in its renegotiation (decision 14):
+             * retrains in a row, the
              * third ends the call as K56flex's */
             a->retrains++; a->retraining = 1; a->rt_clock = 0;
             if (++a->rt_recent >= MAX_RETRAINS) { fail(a, ANS_END_K56_FAILED); tx = 0; break; }

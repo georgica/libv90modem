@@ -6,6 +6,8 @@ CJ after the second JM, whatever the delay (8.1.2)
   delays 0 to 30 ms: CJ at most 0.533 s after JM reached us; 0 of 31 waited for a third JM
 PCM: a V.90 / V.92 analogue caller to a digital answerer
   result 1, selected 100 (V.90 / V.92 is 100), answerer selected 100
+PCM: a JM naming PCM-analogue only (an analogue answerer): V.34, not V.90
+  result 1, JM pcm 1/0x1, selected 1
 nothing in common: JM with no modulation mode (8.1.2)
   result 5, answerer result 1
 a pre-V.8 answerer: ANS (V.25), so no CM (V.8 7.2)
@@ -14,4 +16,4 @@ ANSam but never a JM
   result 4 after 6.730 s; CM from 1.730 s
 no answer tone at all
   result 3 after 10.000 s
-v8orig: 54 checks, 0 failures
+v8orig: 58 checks, 0 failures

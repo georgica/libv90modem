@@ -29,6 +29,7 @@
 #                        under qemu, through the internals and the public API
 #   make bench-x2        the same for x2 (a call of the simulated client); cost-x2 counts
 #   make bench-k56       the same for K56flex (the simulated client at 56000); cost-k56 counts
+#                        (K56_ARGS=heavy: a client ignoring our MP, x2's upstream)
 #   make bench-v90a      the same for the V.90 analogue modem's downstream receiver
 #   make bench-v90c      the same for the whole V.90 calling modem (orig, v90a)
 #   make bench-v92c      ... and for it in V.92 (PCM upstream); cost-v92c counts
@@ -488,8 +489,11 @@ cost-x2: bench-x2 bench-v90
 # 20: its data mode starts at 16.2 s, after V.8bis) and for V.90, as cost-x2
 # does ----
 K56_REC := $(BUILD)/k56_call.rec
+# rec_k56's options after its file: K56_ARGS=heavy, a client that ignores our
+# MP (x2's upstream: 64 states, non-linear, expanded shaping)
+K56_ARGS ?=
 bench-k56: $(BUILD)/rec_k56 $(BUILD)/bench_v90 $(BUILD)/bench_v90.arm
-	$(abspath $(BUILD))/rec_k56 40 0 $(K56_REC) | tail -2
+	$(abspath $(BUILD))/rec_k56 40 0 $(K56_REC) $(K56_ARGS) | tail -2
 	$(abspath $(BUILD))/bench_v90 -k $(K56_REC)
 	$(QEMU) $(abspath $(BUILD))/bench_v90.arm -k $(K56_REC)
 $(BUILD)/rec_k56: tools/rec_k56.c $(SIM_SRC) $(MODEM_SRC) $(HDRS)

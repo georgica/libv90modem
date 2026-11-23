@@ -560,3 +560,168 @@ another implementation's bench, checked against our code; not authority):
   Su (9.5.1.2.2), no CPt (`T_TRAIN_MS`), refused design, refused UINFO
   (B-4); each ends in a retrain or a failure no test checks.
 - No ARM cost run for V.92 answering (P-1).
+
+## K56flex: a client that ignores our MP (Task 19)
+
+`rec_k56 40 0 build/k56h.rec heavy` (the simulated client sends x2's
+upstream: 64 states, non-linear, expanded shaping), then
+`make cost-k56 K56_REC=build/k56h.rec K56_ARGS=heavy ARM_CC=$A5`:
+
+| | ARM instructions per second of line |
+|---|---|
+| K56flex data mode, the heavy client (second 20 to 21) | 84.43 M (84.42 M at fix round 1) |
+| V.90 data mode, the same run (second 15 to 16) | 39.35 M |
+| K56flex data mode, a client that keeps to our MP (baseline above) | 39.27 M |
+| x2 data mode (baseline above) | 82.57 M |
+
+The transmit hash of the heavy call is the normal call's (52c83abc): our
+downstream does not change; 742404 bits up, 0 bad.
+
+The catch-up, from the same recording: `bench_v90.arm -k` (armv5) on
+prefixes 10 ms apart, instructions per 10 ms block. B1 fails under our
+MP's configuration at 16.202 s of the call (54 ms after its E: one data
+frame and the Viterbi's delay, 173 symbols, under the ring's 192). Lateness
+is when v90d's single pump thread would hand back each block's answer
+after the block came in, at 122 M instructions a second with nothing else
+running (each block starts when it arrives or when the one before is done;
+v90d prefills 20 ms, `fw/drv/pump.c`).
+
+First version (3 stored points every symbol period, catch-up about 27 ms):
+
+| block (s of the call) | heavy client | lateness | a client that keeps to our MP |
+|---|---|---|---|
+| 16.19-16.20 | 0.34 M | 2.8 ms | 0.31 M |
+| 16.20-16.21 | 1.73 M | 14.2 ms | 0.32 M |
+| 16.21-16.22 | 1.94 M | 20.1 ms | 0.38 M |
+| 16.22-16.23 | 2.02 M | **26.7 ms** | 0.41 M |
+| 16.23-16.24 | 0.93 M | 24.3 ms | 0.40 M |
+| 16.24-16.25 | 0.84 M | 21.2 ms | 0.40 M |
+
+Over the 20 ms prefill: about 12 ms of idle codewords on the line at our
+first data frames (Task 19 review). Ruling (amends D12): 3 stored points
+every 2 symbol periods. As committed (B1 under x2's configuration decided
+36 ms after the retry, caught up about 110 ms after it):
+
+| block (s of the call) | heavy client | CPU at 122 M/s | lateness |
+|---|---|---|---|
+| 16.19-16.20 | 0.34 M | 2.8 ms | 2.8 ms |
+| 16.20-16.21 | 1.24 M | 10.2 ms | 10.2 ms |
+| 16.21-16.22 | 1.18 M | 9.6 ms | 9.8 ms |
+| 16.22-16.23 | 1.18 M | 9.7 ms | 9.7 ms |
+| 16.23-16.24 | 1.19 M | 9.7 ms | 9.7 ms |
+| 16.24-16.25 | **1.28 M** (the heaviest) | 10.5 ms | 10.5 ms |
+| 16.25-16.31 (6 blocks) | 1.24-1.25 M | 10.2 ms each | 10.7 to **11.7 ms** |
+| 16.31-16.32 | 0.94 M | 7.7 ms | 9.4 ms |
+| 16.32-16.33 | 0.84 M | 6.9 ms | 6.9 ms |
+
+The blocks run at about 10.2 ms of CPU for 10 ms of line, not the review's
+estimate of 9.3 ms (the live 64-state decoding, 0.84 M a block, comes on top
+of the stored points' 0.4 M). The lateness grows by about 0.2 ms a block
+and peaks at 11.7 ms, inside the 20 ms prefill with 8.3 ms to spare, with
+the box doing nothing else. The equaliser is put back as it was at its E
+before the stored points are decoded again (its taps, 576 bytes, kept in
+k56d_t: 22272 -> 22848 bytes, still inside the union under v92d_t).
+
+## T21.9: the calling receiver lost to one sample (found in Task 21b)
+
+Found when Task 21b's start-up timing made test_v92a fail: after a rate
+renegotiation begun by the digital modem, our V.92 calling side retrained
+and the retrain failed. Present at e71e131 and at c282fb1 (before the
+audit). test_v92a passed only because its windows (4 s of data, a
+renegotiation, 2 s) ended before the event.
+
+The line: test_v92a's (p2d and v92d without answer.c, 2 km, +30 ppm, echo
+-10 dB). Data mode from 8.17 s; at 13.24 s the receiver's error goes from
+4.7e4 to 2.4e7 in 2 ms and keeps growing. Up to then, sampled every
+250 ms: A/D input about 6000 RMS, canceller output about 1650 (the echo
+stays cancelled), the timing step at 1.0000300 (+30 ppm), its delta within
++-30, the error 13000 to 18000. Our clock slips one sample against the
+network's at 6.2, 10.4 and 14.5 s, not at 13.24 s; the canceller runs on
+our clock, so the drift does not move our echo. (The first guess, a
+canceller not following the drift, is wrong.)
+
+What happens at 13.231 s: the only full-scale A/D sample of the call's
+data mode. Our PCM upstream peaks at 15783 (RMS about 2500); its echo is
+-34392 there and the A/D sample would be -35579, clipped at -32767 (an
+error of 2812). The error grows from 64 samples later, the delay from the
+A/D to the decision at the equaliser's cursor.
+
+The same without clipping (echo -16 dB, which never clips): 50 units added
+to one A/D sample at 11.000 s lose the V.92 downstream for good (5000 and
+more check failures, then our retrain); -50, 1000 and 20000 too; 20 and
+less are survived. V.90 (V.34 upstream) the same.
+
+Mechanism: the equaliser's feedback carries the line's low-frequency tail.
+On this line b[0] = 0.73, b[1] = -0.55, b[3] = -0.30, ..., sum |b| = 3.9,
+sum b^2 = 1.23. A wrong decision feeds back errors larger than half a level
+step; they make more wrong decisions and the error never decays. Not the
+adaptation: holding the taps (rx.hold) for 50 ms or 500 ms from the
+impulse changes nothing. Feeding back the equaliser's soft output for
+unreliable decisions does not stop it either (at e^2 above 64 gmse the
+runaway goes on; at 16, 9 or 4 gmse the receiver is lost without any
+impulse: the feedback is unstable run linearly).
+
+Treating the clipped sample as an erasure (ruling (e)): tried and not
+taken. The sample cannot be repaired: replaced by 0 it is off by the
+downstream signal (1187 here), kept it is off by the clipping (2812), and
+the decisions survive 20 to 50. Neither changes the outcome (the call ends
+the same, at 21.56 s, the retrain failing in this harness). Nor does
+feeding back soft values for 48, 96 or 160 symbols after it. Bounding our
+own PCM upstream's peaks: not taken. They are the codewords the digital
+modem decodes level by level (V.92 bounds the average power, not the
+peaks), so cutting them would corrupt the upstream data; a conformant
+reduction would go through the digital modem's precoder and filter
+choices (CPd), which are not ours to make.
+
+Taken (ruling (d)): recovery by retrain, as a real call recovers. The
+receiver's watch retrains (12 dB over for 250 ms); in a whole call answer.c
+restarts the digital modem. test/v90link.h gains `d_retrain` (a retrain of
+either end restarts p34d / v92d the way answer.c does: 70 ms of silence,
+Phase 2 of a retrain, PCM upstream offered again unless the digital modem
+never reached data mode, failed, or its upstream did not hold the lowest
+rate) and `imp_ms` / `imp_amp` (a click on one A/D sample). test_v92a runs
+with `d_retrain`. Its new case, a 50-unit click in data mode, recovers in
+10.06 s with the data correct after (10.97 s after Task 21b's start-up
+changes; the check allows 15 s, Task 21b fix round). Without `d_retrain` it ends in
+V90A_ERR_RETRAINS. test_v92a's other output is unchanged.
+
+Deferred (a design item after the audit): recovery in v90arx without a
+retrain, by
+- re-seeding the feedback line and decisions after a runaway from a
+  feedback-free estimate (whether a linear equaliser decides well enough
+  at 48 kbit/s on this tail is open);
+- a feedback design that cannot run away (part of the tail in the forward
+  filter, or sum |b| bounded), at some cost in error and rate; or
+- spectral shaping (V.90 Appendix I, CP's Sr), which removes the low
+  frequencies the tail comes from (listed in docs/limits.md as a gap).
+
+## Task 21b: calling start-up timing for live servers (golden changes explained)
+
+Commits 2f735ad (the far L2 read for 280 ms), 22b0f72 (the DIL up to a
+third of full scale), edadbde (Sd waited for 2000 ms), 2602a5d (guard
+tests). Two golden changes their commit messages did not explain:
+
+- test_orig_v90, "2 km, +30 ppm, 3 dB pad ... Table 1 levels" (2f735ad:
+  connected at 28000, now never reaches data mode). The row is the test's
+  deliberately wrong setting (Table 1's levels instead of what the DIL
+  measured, on a line with a 3 dB pad), there to show what the DIL
+  analysis buys; it checks only that it does worse than the DIL row. Our
+  CP design, deciding TRN2d against levels 3 dB off, measures a noise
+  that no rate fits (CP's K 0) and the calling modem clears down in Phase
+  4 (the digital modem: P34_ERR_CLEARDOWN). Up to 2f735ad it found
+  28000, the lowest rate, by a margin that the changed start-up (the
+  probe analysis over 14 blocks, Phase 2 180 ms shorter) took away. It
+  fails the same way with the old L2 read put back on top of the DIL
+  change: a marginal row, not a regression. The DIL-measured row keeps
+  48000.
+- api/test_api, "tx_level 16384 both, V.90 back to back" (22b0f72: no
+  data mode -> data mode). Not a change of headroom: the calling modem's
+  V.34 upstream still goes over full scale near the top (43 samples in
+  the mu-law call at 15360, 93 in the A-law call at 16384; peaks 41830 and
+  44619 before the clip). What
+  changed is the upstream rate the answerer picks from its measurement:
+  26400 before, where our B1 did not get through (P34_ERR_B1 in Ed), and
+  24000 now, where it does. Putting the DIL back to Ucodes 0..119 brings
+  the failure back. docs/api.md, include/v90modem.h and test_api's
+  comments say so; 15360 stays the level checked to connect.
+

@@ -11,6 +11,23 @@ void v92aseq_init(v92aseq_t *s)
     s->crc_at = NONE_YET;
 }
 
+void v92aseq_phase4(v92aseq_t *s)
+{
+    v92aseq_init(s);            /* nothing stored */
+}
+
+void v92aseq_restart(v92aseq_t *s)
+{
+    uint8_t has = s->has;
+    v92aseq_init(s);
+    s->has = has;
+}
+
+int v92aseq_cpd_complete(const v92aseq_t *s)
+{
+    return s->has == (V92AS_HAS_MOD | V92AS_HAS_FILT | V92AS_HAS_CONST);
+}
+
 static void hunt(v92aseq_t *s)
 {
     s->in = 0; s->ones = 0;
@@ -82,7 +99,7 @@ static void begin(v92aseq_t *s, unsigned v)
 {
     v92_cpd_t *c = &s->cpd;
     s->w0 = (uint16_t)v;
-    s->kind = (int)(v & 1) ? V92_DN_SUVD : V92_DN_CPD;
+    s->kind = (uint8_t)((v & 1) ? V92_DN_SUVD : V92_DN_CPD);
     if (s->kind == V92_DN_SUVD) { s->crc_at = 1; return; }
     memset(c, 0, sizeof *c);
     c->has_mod = (uint8_t)((v >> 1) & 1);
@@ -100,6 +117,37 @@ static void begin(v92aseq_t *s, unsigned v)
     }
 }
 
+/* A CPd that checked out, into the stored one *o: what is always carried
+ * and each part it carries replace what was there; a part it leaves out is
+ * kept, or zero (as v92_cpd_parse() leaves it) when none is stored. The
+ * CPd being received (s->cpd) has its absent parts zero (begin()). */
+static void merge(v92aseq_t *s, v92_cpd_t *o)
+{
+    const v92_cpd_t *c = &s->cpd;
+    o->drn = c->drn;
+    o->e2u_extend = c->e2u_extend;
+    o->ack = c->ack;
+    o->map.K = c->map.K;
+    o->map.trellis = c->map.trellis;
+    o->filt.gain4 = c->filt.gain4;
+    if (c->has_mod || !(s->has & V92AS_HAS_MOD)) memcpy(o->map.M, c->map.M, sizeof o->map.M);
+    if (c->has_filt || !(s->has & V92AS_HAS_FILT)) {
+        o->filt.lz1 = c->filt.lz1; o->filt.lp1 = c->filt.lp1;
+        o->filt.lz2 = c->filt.lz2; o->filt.lp2 = c->filt.lp2;
+        memcpy(o->filt.coef, c->filt.coef, sizeof o->filt.coef);
+    }
+    if (c->has_const || !(s->has & V92AS_HAS_CONST)) {
+        memcpy(o->map.cidx, c->map.cidx, sizeof o->map.cidx);
+        memcpy(o->map.lc, c->map.lc, sizeof o->map.lc);
+        memcpy(o->map.pt, c->map.pt, sizeof o->map.pt);
+    }
+    s->has = (uint8_t)(s->has | (c->has_mod ? V92AS_HAS_MOD : 0) | (c->has_filt ? V92AS_HAS_FILT : 0)
+                       | (c->has_const ? V92AS_HAS_CONST : 0));
+    o->has_mod = (uint8_t)((s->has & V92AS_HAS_MOD) != 0);
+    o->has_filt = (uint8_t)((s->has & V92AS_HAS_FILT) != 0);
+    o->has_const = (uint8_t)((s->has & V92AS_HAS_CONST) != 0);
+}
+
 /* the CRC word is in: the sequence, if it checks out */
 static void done(v92aseq_t *s, unsigned v, v92_suvd_t *suvd, v92_cpd_t *cpd)
 {
@@ -111,7 +159,7 @@ static void done(v92aseq_t *s, unsigned v, v92_suvd_t *suvd, v92_cpd_t *cpd)
     } else {
         v92_cpd_t *c = &s->cpd;
         c->map.K = (uint8_t)(c->drn >= 1 && c->drn <= V92_UP_NUM_RATES ? V92_UP_K(c->drn) : 0);
-        *cpd = *c;
+        merge(s, cpd);
         s->ev |= V92AS_CPD;
     }
     hunt(s);

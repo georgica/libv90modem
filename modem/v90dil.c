@@ -22,15 +22,15 @@ void v90dil_design(v90_dil_t *d, int uinfo)
         if (i >= 3) d->tp[i >> 3] |= (uint8_t)(1u << (i & 7));
     }
     for (c = 0; c < 8; c++) { d->h[c] = 2; d->ref[c] = (uint8_t)(uinfo & 127); }
-    /* up by the even Ucodes, down by the odd ones (0 2 ... 118 119 117 ...
+    /* up by the even Ucodes, down by the odd ones (0 2 ... 100 99 97 ...
      * 1, then 0 again): no segment follows one much larger than itself. In
-     * the order 0 .. 119 the segment of Ucode 0 followed that of 119, and
+     * the order 0 .. 119 (the DIL of 0.5) the segment of Ucode 0 followed that of 119, and
      * what the equaliser leaves of fifteen symbols at the largest level (its
      * residual interference, deterministic in a pattern that repeats every
      * pass, so not averaged out) stood in the means of Ucodes 0 to 6 at up
      * to 160 units on a 0 km line, where their true levels are 0 to 50:
      * CP then took such a Ucode as its smallest point (docs/history/PROGRESS.md, robust) */
-    for (i = 0; i < V90DIL_NU; i++) d->train[i] = (uint8_t)(i < V90DIL_NU / 2 ? 2 * i : 2 * (V90DIL_NU - 1 - i) + 1);
+    for (i = 0; i < V90DIL_NU; i++) d->train[i] = (uint8_t)(i < (V90DIL_NU + 1) / 2 ? 2 * i : 2 * (V90DIL_NU - 1 - i) + 1);
 }
 
 void v90dil_cur_init(v90dil_cur_t *c) { c->seg = c->pos = 0; }
@@ -269,7 +269,8 @@ int v90dil_analyse_step(v90dil_an_t *an, v90dil_res_t *r)
         if (++an->s == 6) an->phase = AN_END;
         return 0;
     }
-    case AN_END:
+    case AN_END: {
+        int looked = 0;                 /* Ucodes from 64 up measured in all six */
         /* A robbed bit takes one interval in six away from the others: where the
          * others agree (their median), it stands off by more than a quarter of
          * the Ucode's step at many Ucodes (mu-law; with a pad in front the
@@ -279,6 +280,7 @@ int v90dil_analyse_step(v90dil_an_t *an, v90dil_res_t *r)
             int i, j, ok = 1;
             for (i = 0; i < 6; i++) { vv[i] = r->lv[i][u]; if (vv[i] < 0) ok = 0; }
             if (!ok) continue;
+            looked++;
             for (i = 1; i < 6; i++) for (j = i; j > 0 && vv[j - 1] > vv[j]; j--) { t = vv[j]; vv[j] = vv[j - 1]; vv[j - 1] = t; }
             med = (vv[2] + vv[3]) / 2;
             for (s = 0; s < 6; s++) {
@@ -287,7 +289,8 @@ int v90dil_analyse_step(v90dil_an_t *an, v90dil_res_t *r)
                 if (d > step / 4 && r->robbed[s] < 255) r->robbed[s]++;
             }
         }
-        for (s = 0; s < 6; s++) r->robbed[s] = (uint8_t)(r->robbed[s] >= 16);     /* a quarter of 64 Ucodes */
+        /* at a quarter of the Ucodes looked at (the DIL has 37 from 64 up) */
+        for (s = 0; s < 6; s++) r->robbed[s] = (uint8_t)(looked > 0 && 4 * r->robbed[s] >= looked);
         for (s = 0; s < 6; s++)
             for (u = 64; u < 128; u++) {
                 int32_t t = t1[u] * (1 << YF), e;
@@ -300,6 +303,7 @@ int v90dil_analyse_step(v90dil_an_t *an, v90dil_res_t *r)
             }
         an->phase = AN_DONE;
         return 1;
+    }
     default:
         return 1;
     }
