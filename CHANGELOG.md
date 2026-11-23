@@ -84,10 +84,11 @@ Changed (V.34, both roles):
   whatever end the retrain found).
 
 Fixed:
-- V.90 and V.92, calling role: the last data frame before the digital
-  modem's Rd (its rate renegotiation or cleardown) is delivered. It was
-  dropped, 21 to 42 bits once per renegotiation or cleardown begun by the
-  answerer: V.42 sent it again, without error control it was lost.
+- V.90 and V.92, calling role: the last data frame before every Rd of
+  the digital modem's (its rate renegotiation or cleardown, or its answer
+  to a renegotiation or cleardown of ours) is delivered. It was dropped,
+  21 to 42 bits at each such Rd: V.42 sent it again, without error control
+  it was lost.
 - V.90, answering role: the upstream data the caller sent before its S (a
   rate renegotiation or cleardown, the caller's, or its answer to ours) is
   delivered. The decoder's decision delay still held some 13 ms of it (24

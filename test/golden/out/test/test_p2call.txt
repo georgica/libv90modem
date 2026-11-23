@@ -15,4 +15,6 @@
   clock from a hostile L2 (ci +2^41, cr 2^20): -256000/256 ppm
   clock from a hostile L2 (ci -2^41, cr 2^20): 256000/256 ppm
   clock from a tone at 1050 Hz, ci/cr -1/476: 4076/256 ppm
-p2call: 255 checks, 0 failures
+  clock at the limit (ci/cr 140): -256000/256 ppm
+  clock at the limit, one past (ci/cr 140 + 1/x): -256000/256 ppm
+p2call: 259 checks, 0 failures

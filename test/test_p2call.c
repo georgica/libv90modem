@@ -534,7 +534,22 @@ int main(void)
         pr.nblk = 50;
         pr.cr[7] = (int64_t)1 << 30; pr.ci[7] = -((int64_t)1 << 30) / 476; pr.pw[7] = (int64_t)1 << 30;
         printf("  clock from a tone at 1050 Hz, ci/cr -1/476: %d/256 ppm\n", (int)p2call_clock_q8(&pr));
-        CHECK(p2call_clock_q8(&pr) > 0 && p2call_clock_q8(&pr) < 256000);
+        CHECK_EQ_I(p2call_clock_q8(&pr), 4076);         /* 256e6 / (476 6 pi 7) */
+        /* right at the limit: num = 20 den with den at its largest (2^31 - 1
+         * after the scaling loop), the largest product the multiply takes
+         * (20 (2^31 - 1) 13581342, about 5.8e17); one step past it, the
+         * early clamp. 1050 Hz alone: num = 7 (ci >> 8), den = 49 (cr >> 8) */
+        for (sgn = 0; sgn <= 1; sgn++) {
+            const int64_t x = 43826196;                 /* 49 x <= 2^31 - 1 */
+            memset(&pr, 0, sizeof pr);
+            pr.nblk = 50;
+            pr.cr[7] = 256 * x; pr.ci[7] = 256 * 140 * x + 256 * sgn;
+            pr.pw[7] = pr.ci[7] + pr.cr[7] / 64;
+            CHECK(proberx_snr(&pr, 7) >= 200);
+            printf("  clock at the limit%s (ci/cr 140%s): %d/256 ppm\n", sgn ? ", one past" : "", sgn ? " + 1/x" : "",
+                   (int)p2call_clock_q8(&pr));
+            CHECK_EQ_I(p2call_clock_q8(&pr), -256000);
+        }
     }
 
     T_REPORT("p2call");

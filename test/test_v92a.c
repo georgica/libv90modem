@@ -145,6 +145,10 @@ int main(void)
         run_for(l, MS(12000));
         printf("  ours %d (error %d) after %d ms\n", l->va.state, l->va.error, (int)ms((int32_t)(l->k - t0)));
         CHECK_EQ_I(l->va.error, V90A_ERR_CLEARDOWN);
+        /* every bit the digital modem sent before its Rd arrived (a frame
+         * held back at Rd was dropped, 0.5.0) */
+        printf("  downstream: %" PRId64 " bits sent, %" PRId64 " not received\n", l->down.sent, l->down.sent - l->down.got);
+        CHECK_EQ_I(l->down.sent - l->down.got, 0);
     }
 
     printf("our cleardown (CPu), answered by a retrain of the digital modem's (R3)\n");

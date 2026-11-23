@@ -12,6 +12,7 @@ cleardown by us
   ours 5 (error 12) after 299 ms; digital 12 (error 9)
 cleardown by the digital modem
   ours 5 (error 11) after 3960 ms
+  downstream: 14868 bits sent, 0 not received
 our cleardown (CPu), answered by a retrain of the digital modem's (R3)
   ours 5 (error 12) after 298 ms; Phase 2 entered 0; digital in Phase 2 1
 the digital modem without V.92: V.90
@@ -23,4 +24,4 @@ time-outs: the digital modem silent from
   Jp' (no DIL)                                     ended 5, error 6, 1087 ms after the silence
   Ri-bar (no CPd): 20 s from INFO1a                ended 5, error 8, 20138 ms after INFO1a
   data mode: carrier lost                          ended 5, error 13, 593 ms after the silence
-v92a: 73 checks, 0 failures
+v92a: 74 checks, 0 failures
