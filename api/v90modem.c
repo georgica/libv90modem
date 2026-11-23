@@ -10,6 +10,7 @@
 #include "../include/v90modem.h"
 #pragma GCC visibility pop
 #include "v90modem_priv.h"
+#include "v90modem_fields.h"
 #include "../modem/pcmenc.h"
 #include "../modem/v14.h"
 #include "../v90/v90_pcm.h"
@@ -30,12 +31,21 @@ typedef char v90m_check_ec[(SAME(V90M_EC_DETECT, V42EC_DETECT) && SAME(V90M_EC_E
                             && SAME(V90M_BRK_DESTRUCTIVE_EXPEDITED, V42_BRK_DESTRUCTIVE_EXPEDITED)
                             && SAME(V90M_BRK_NONDESTRUCTIVE_EXPEDITED, V42_BRK_NONDESTRUCTIVE_EXPEDITED)) ? 1 : -1];
 
-/* the strictest alignment any member can need */
-#define V90M_ALIGN offsetof(struct { char c; v90m_align u; }, u)
+/* the strictest alignment any member can need: where a v90m_align lands
+ * after a char */
+typedef struct { char c; v90m_align u; } v90m_align_probe;
+#define V90M_ALIGN offsetof(v90m_align_probe, u)
 static int aligned(const void *p) { return ((uintptr_t)p % V90M_ALIGN) == 0; }
 static void seterr(int *err, int e) { if (err) *err = e; }
 
-const char *v90m_version(void) { return "0.5.0"; }
+/* the header's numbers as "MAJOR.MINOR.PATCH" (make check-version holds
+ * them to the Makefile's VERSION) */
+#define V90M_STR_(x) #x
+#define V90M_STR(x)  V90M_STR_(x)
+const char *v90m_version(void)
+{
+    return V90M_STR(V90M_VERSION_MAJOR) "." V90M_STR(V90M_VERSION_MINOR) "." V90M_STR(V90M_VERSION_PATCH);
+}
 
 uint8_t v90m_g711_encode(int alaw, int16_t linear) { return pcm_encode(alaw != 0, linear); }
 int16_t v90m_g711_decode(int alaw, uint8_t codeword) { return (int16_t)v90_octet_linear(alaw != 0, codeword); }
@@ -220,20 +230,21 @@ void v90m_destroy(v90m_t *m)
     if (m->owned) free(m);
 }
 
-/* the modem's state, whichever side it is */
-static int failed_of(const v90m_t *m) { return ORIGINATING(m) ? m->u.o.phase == ORIG_FAILED : m->u.a.phase == ANS_FAILED; }
-static int connected_of(const v90m_t *m) { return ORIGINATING(m) ? m->u.o.connected : m->u.a.connected; }
-static int moving_of(const v90m_t *m) { return ORIGINATING(m) ? orig_moving(&m->u.o) : answer_moving(&m->u.a); }
-static int retraining_of(const v90m_t *m)
+/* the modem's state, on the side orig says (ORIGINATING(m)): a constant
+ * where the role is known, as in after_answer and after_orig */
+static int failed_of(const v90m_t *m, int orig) { return orig ? m->u.o.phase == ORIG_FAILED : m->u.a.phase == ANS_FAILED; }
+static int connected_of(const v90m_t *m, int orig) { return orig ? m->u.o.connected : m->u.a.connected; }
+static int moving_of(const v90m_t *m, int orig) { return orig ? orig_moving(&m->u.o) : answer_moving(&m->u.a); }
+static int retraining_of(const v90m_t *m, int orig)
 {
-    if (ORIGINATING(m)) return orig_retraining(&m->u.o);
+    if (orig) return orig_retraining(&m->u.o);
     return m->u.a.retraining;
 }
-static int mod_of(const v90m_t *m) { return ORIGINATING(m) ? m->u.o.modulation : m->u.a.modulation; }
-static int tx_of(const v90m_t *m) { return ORIGINATING(m) ? m->u.o.bitrate : m->u.a.bitrate; }
-static int rx_of(const v90m_t *m)
+static int mod_of(const v90m_t *m, int orig) { return orig ? m->u.o.modulation : m->u.a.modulation; }
+static int tx_of(const v90m_t *m, int orig) { return orig ? m->u.o.bitrate : m->u.a.bitrate; }
+static int rx_of(const v90m_t *m, int orig)
 {
-    if (ORIGINATING(m)) return m->u.o.rx_bitrate > 0 ? m->u.o.rx_bitrate : m->u.o.bitrate;
+    if (orig) return m->u.o.rx_bitrate > 0 ? m->u.o.rx_bitrate : m->u.o.bitrate;
     return m->u.a.rx_bitrate > 0 ? m->u.a.rx_bitrate : m->u.a.bitrate;
 }
 
@@ -264,24 +275,24 @@ static v90m_end end_of(const v90m_t *m)
 
 static void event(v90m_t *m, v90m_event ev) { if (m->cfg.on_event && !m->dead) m->cfg.on_event(m->cfg.user, ev); }
 
-/* after each sample: only reads the modem */
-static void after(v90m_t *m)
+/* after each sample: only reads the modem, on the side orig says */
+static inline void after(v90m_t *m, int orig)
 {
-    int moving, rx, connected = connected_of(m), failed = failed_of(m);
+    int moving, rx, connected = connected_of(m, orig), failed = failed_of(m, orig);
     if (!connected && !m->was_connected && !failed) return;   /* start-up: nothing to report */
-    moving = moving_of(m);
-    rx = rx_of(m);
+    moving = moving_of(m, orig);
+    rx = rx_of(m, orig);
     if (connected && !m->was_connected) {
         m->was_connected = 1;
-        m->was_mod = mod_of(m); m->was_tx = tx_of(m); m->was_rx = rx;
+        m->was_mod = mod_of(m, orig); m->was_tx = tx_of(m, orig); m->was_rx = rx;
         event(m, V90M_EV_CONNECTED);
-    } else if (m->was_connected && (mod_of(m) != m->was_mod || tx_of(m) != m->was_tx || rx != m->was_rx)) {
-        m->was_mod = mod_of(m); m->was_tx = tx_of(m); m->was_rx = rx;
+    } else if (m->was_connected && (mod_of(m, orig) != m->was_mod || tx_of(m, orig) != m->was_tx || rx != m->was_rx)) {
+        m->was_mod = mod_of(m, orig); m->was_tx = tx_of(m, orig); m->was_rx = rx;
         event(m, V90M_EV_RATES);
     }
     if (moving != m->was_moving) {
         /* a stop that is neither a retrain nor the end: a rate renegotiation */
-        if (!moving && connected && !retraining_of(m) && !failed) m->renegotiations++;
+        if (!moving && connected && !retraining_of(m, orig) && !failed) m->renegotiations++;
         m->was_moving = moving;
         event(m, moving ? V90M_EV_DATA_MOVING : V90M_EV_DATA_STOPPED);
     }
@@ -290,6 +301,9 @@ static void after(v90m_t *m)
         event(m, V90M_EV_ENDED);
     }
 }
+/* one per role, for the loops of v90m_process_*, which know theirs */
+static void after_answer(v90m_t *m) { after(m, 0); }
+static void after_orig(v90m_t *m) { after(m, 1); }
 
 /* The end of a block: when a callback destroyed the modem after sample i,
  * the rest of the block is silence and the modem is freed (when owned). */
@@ -312,11 +326,11 @@ int v90m_process_g711(v90m_t *m, const uint8_t *rx, uint8_t *tx, size_t n)
         int alaw = m->cfg.alaw != 0;
         for (i = 0; i < n; i++) {
             tx[i] = pcm_encode(alaw, orig_tick(&m->u.o, (int16_t)v90_octet_linear(alaw, rx[i])));
-            after(m);
+            after_orig(m);
             if (m->dead) break;
         }
     } else
-        for (i = 0; i < n; i++) { tx[i] = answer_tick_pcm(&m->u.a, rx[i]); after(m); if (m->dead) break; }
+        for (i = 0; i < n; i++) { tx[i] = answer_tick_pcm(&m->u.a, rx[i]); after_answer(m); if (m->dead) break; }
     return block_end(m, i, n, tx, NULL);
 }
 
@@ -327,9 +341,9 @@ int v90m_process_lin_rx(v90m_t *m, const int16_t *rx, uint8_t *tx, size_t n)
     m->busy = 1;
     if (ORIGINATING(m)) {
         int alaw = m->cfg.alaw != 0;
-        for (i = 0; i < n; i++) { tx[i] = pcm_encode(alaw, orig_tick(&m->u.o, rx[i])); after(m); if (m->dead) break; }
+        for (i = 0; i < n; i++) { tx[i] = pcm_encode(alaw, orig_tick(&m->u.o, rx[i])); after_orig(m); if (m->dead) break; }
     } else
-        for (i = 0; i < n; i++) { tx[i] = answer_tick_lin(&m->u.a, rx[i]); after(m); if (m->dead) break; }
+        for (i = 0; i < n; i++) { tx[i] = answer_tick_lin(&m->u.a, rx[i]); after_answer(m); if (m->dead) break; }
     return block_end(m, i, n, tx, NULL);
 }
 
@@ -339,9 +353,9 @@ int v90m_process_linear(v90m_t *m, const int16_t *rx, int16_t *tx, size_t n)
     if (!m || (n && (!rx || !tx))) return V90M_EINVAL;
     m->busy = 1;
     if (ORIGINATING(m))
-        for (i = 0; i < n; i++) { tx[i] = orig_tick(&m->u.o, rx[i]); after(m); if (m->dead) break; }
+        for (i = 0; i < n; i++) { tx[i] = orig_tick(&m->u.o, rx[i]); after_orig(m); if (m->dead) break; }
     else
-        for (i = 0; i < n; i++) { tx[i] = answer_tick(&m->u.a, rx[i]); after(m); if (m->dead) break; }
+        for (i = 0; i < n; i++) { tx[i] = answer_tick(&m->u.a, rx[i]); after_answer(m); if (m->dead) break; }
     return block_end(m, i, n, NULL, tx);
 }
 
@@ -363,26 +377,30 @@ int v90m_cleardown(v90m_t *m)
 
 void v90m_get_state(const v90m_t *m, v90m_state *st)
 {
+    int orig;
     if (!m || !st) return;
-    st->connected = connected_of(m);
-    st->moving = moving_of(m);
-    st->retraining = retraining_of(m);
-    st->modulation = (v90m_conn)mod_of(m);
-    st->tx_bps = tx_of(m);
-    st->rx_bps = rx_of(m);
-    st->used_v8 = ORIGINATING(m) ? m->u.o.used_v8 : m->u.a.used_v8;
-    st->odp_bypass = ORIGINATING(m) ? 0 : answer_odp_bypass(&m->u.a);
+    orig = ORIGINATING(m);
+    st->connected = connected_of(m, orig);
+    st->moving = moving_of(m, orig);
+    st->retraining = retraining_of(m, orig);
+    st->modulation = (v90m_conn)mod_of(m, orig);
+    st->tx_bps = tx_of(m, orig);
+    st->rx_bps = rx_of(m, orig);
+    st->used_v8 = orig ? m->u.o.used_v8 : m->u.a.used_v8;
+    st->odp_bypass = orig ? 0 : answer_odp_bypass(&m->u.a);
     st->end = end_of(m);
 }
 
 void v90m_get_stats(const v90m_t *m, v90m_stats *st)
 {
+    int orig;
     if (!m || !st) return;
-    st->modulation = (v90m_conn)mod_of(m);
-    st->tx_bps = tx_of(m);
-    st->rx_bps = rx_of(m);
+    orig = ORIGINATING(m);
+    st->modulation = (v90m_conn)mod_of(m, orig);
+    st->tx_bps = tx_of(m, orig);
+    st->rx_bps = rx_of(m, orig);
     st->renegotiations = m->renegotiations;
-    if (ORIGINATING(m)) {
+    if (orig) {
         const orig_t *o = &m->u.o;
         st->snr_db10 = orig_snr_db10(o);
         st->rtd = orig_rtd(o);
@@ -439,69 +457,15 @@ unsigned long v90m_async_frame_errors(const v90m_async_t *a) { return a ? (unsig
 /* ------------------------------------------------------------------ V.42 */
 struct v90m_ec { int owned; v42ec_t e; };
 
-static int in(int v, int lo, int hi) { return v >= lo && v <= hi; }
-static int flag(int v) { return v == 0 || v == 1; }
-
-/* the ranges of the header: a value the code underneath would clamp to
- * another is refused (0 only where it means the default or off) */
-static int check_ec_cfg(const v90m_ec_cfg *c)
-{
-    if (!flag(c->originator) || !flag(c->detect) || !flag(c->fallback) || c->t400_ms < 0 || c->establish_ms < 0
-        || !in(c->comp_policy, V90M_COMP_AUTO, V90M_COMP_NEVER))
-        return V90M_EINVAL;
-    if (!flag(c->lapm.use_xid) || !flag(c->lapm.fcs32) || !flag(c->lapm.v42bis_tx) || !flag(c->lapm.v42bis_rx)
-        || !flag(c->lapm.v44_tx) || !flag(c->lapm.v44_rx))
-        return V90M_EINVAL;
-    if (!in(c->lapm.k_tx, 1, V42_MAX_K) || !in(c->lapm.k_rx, 1, 127)
-        || !in(c->lapm.n401_tx, 1, V42_MAX_N401) || !in(c->lapm.n401_rx, 1, V42_MAX_N401))
-        return V90M_EINVAL;
-    if (!in(c->lapm.v42bis_p1, 512, V42COMP_MAX_CODEWORDS) || !in(c->lapm.v42bis_p2, 6, 250))
-        return V90M_EINVAL;
-    if (!in(c->lapm.v44_p1_tx, 256, V44COMP_MAX_CODEWORDS) || !in(c->lapm.v44_p1_rx, 256, V44COMP_MAX_CODEWORDS)
-        || !in(c->lapm.v44_p2_tx, 32, 255) || !in(c->lapm.v44_p2_rx, 32, 255)
-        || !in(c->lapm.v44_p3_tx, 512, V44COMP_MAX_HISTORY) || !in(c->lapm.v44_p3_rx, 512, V44COMP_MAX_HISTORY))
-        return V90M_EINVAL;
-    if (c->lapm.t401_ms < 1 || c->lapm.t403_ms < 0 || c->lapm.n400 < 1) return V90M_EINVAL;
-    return V90M_OK;
-}
-
-static void cfg_in(v42ec_cfg_t *o, const v90m_ec_cfg *c)
-{
-    memset(o, 0, sizeof *o);
-    o->originator = c->originator; o->detect = c->detect; o->fallback = c->fallback;
-    o->t400_ms = c->t400_ms; o->establish_ms = c->establish_ms; o->comp_policy = c->comp_policy;
-    o->lapm.use_xid = c->lapm.use_xid;
-    o->lapm.k_tx = c->lapm.k_tx; o->lapm.k_rx = c->lapm.k_rx;
-    o->lapm.n401_tx = c->lapm.n401_tx; o->lapm.n401_rx = c->lapm.n401_rx;
-    o->lapm.fcs32 = c->lapm.fcs32;
-    o->lapm.comp_tx = c->lapm.v42bis_tx; o->lapm.comp_rx = c->lapm.v42bis_rx;
-    o->lapm.comp_p1 = c->lapm.v42bis_p1; o->lapm.comp_p2 = c->lapm.v42bis_p2;
-    o->lapm.v44_tx = c->lapm.v44_tx; o->lapm.v44_rx = c->lapm.v44_rx;
-    o->lapm.v44_p1_tx = c->lapm.v44_p1_tx; o->lapm.v44_p1_rx = c->lapm.v44_p1_rx;
-    o->lapm.v44_p2_tx = c->lapm.v44_p2_tx; o->lapm.v44_p2_rx = c->lapm.v44_p2_rx;
-    o->lapm.v44_p3_tx = c->lapm.v44_p3_tx; o->lapm.v44_p3_rx = c->lapm.v44_p3_rx;
-    o->lapm.t401_ms = c->lapm.t401_ms; o->lapm.t403_ms = c->lapm.t403_ms; o->lapm.n400 = c->lapm.n400;
-}
+/* check_ec_cfg, cfg_in, cfg_out and status_out: api/v90modem_fields.h,
+ * from its lists of the fields */
 
 void v90m_ec_cfg_default(v90m_ec_cfg *c, int originator)
 {
     v42ec_cfg_t i;
     if (!c) return;
     v42ec_cfg_default(&i, originator);
-    memset(c, 0, sizeof *c);
-    c->originator = i.originator; c->detect = i.detect; c->fallback = i.fallback;
-    c->t400_ms = i.t400_ms; c->establish_ms = i.establish_ms; c->comp_policy = i.comp_policy;
-    c->lapm.use_xid = i.lapm.use_xid;
-    c->lapm.k_tx = i.lapm.k_tx; c->lapm.k_rx = i.lapm.k_rx;
-    c->lapm.n401_tx = i.lapm.n401_tx; c->lapm.n401_rx = i.lapm.n401_rx;
-    c->lapm.fcs32 = i.lapm.fcs32;
-    c->lapm.v42bis_tx = i.lapm.comp_tx; c->lapm.v42bis_rx = i.lapm.comp_rx;
-    c->lapm.v42bis_p1 = i.lapm.comp_p1; c->lapm.v42bis_p2 = i.lapm.comp_p2;
-    c->lapm.v44_tx = i.lapm.v44_tx; c->lapm.v44_rx = i.lapm.v44_rx;
-    c->lapm.v44_p1_tx = i.lapm.v44_p1_tx; c->lapm.v44_p1_rx = i.lapm.v44_p1_rx;
-    c->lapm.v44_p2_tx = i.lapm.v44_p2_tx; c->lapm.v44_p2_rx = i.lapm.v44_p2_rx;
-    c->lapm.v44_p3_tx = i.lapm.v44_p3_tx; c->lapm.v44_p3_rx = i.lapm.v44_p3_rx;
-    c->lapm.t401_ms = i.lapm.t401_ms; c->lapm.t403_ms = i.lapm.t403_ms; c->lapm.n400 = i.lapm.n400;
+    cfg_out(c, &i);
 }
 
 int v90m_ec_reset(v90m_ec_t *e, const v90m_ec_cfg *cfg)
@@ -566,21 +530,7 @@ void v90m_ec_get_status(const v90m_ec_t *e, v90m_ec_status *st)
     v42ec_status_t s;
     if (!e || !st) return;
     v42ec_get_status(&e->e, &s);
-    memset(st, 0, sizeof *st);
-    st->state = s.state; st->reason = s.reason;
-    st->k_tx = s.k_tx; st->k_rx = s.k_rx; st->n401_tx = s.n401_tx; st->n401_rx = s.n401_rx;
-    st->comp_alg = s.comp_alg; st->comp_tx = s.comp_tx; st->comp_rx = s.comp_rx;
-    st->enc_on = e->e.comp_tx; st->dec_on = e->e.comp_rx; st->alg_on = e->e.comp_alg;
-    st->comp_n2 = s.comp_n2; st->comp_n7 = s.comp_n7;
-    st->v44_n2_tx = s.v44_n2_tx; st->v44_n7_tx = s.v44_n7_tx; st->v44_n8_tx = s.v44_n8_tx;
-    st->v44_n2_rx = s.v44_n2_rx; st->v44_n7_rx = s.v44_n7_rx; st->v44_n8_rx = s.v44_n8_rx;
-    st->fcs32 = s.fcs32;
-    st->tx_queued = s.tx_queued; st->rx_avail = s.rx_avail; st->unacked = s.unacked;
-    st->rx_frames = s.rx_frames; st->rx_frames_bad = s.rx_frames_bad;
-    st->tx_i = s.tx_i; st->tx_i_retx = s.tx_i_retx; st->rx_i = s.rx_i; st->rx_i_dropped = s.rx_i_dropped;
-    st->tx_rej = s.tx_rej; st->rx_rej = s.rx_rej; st->t401_expiries = s.t401_expiries; st->violations = s.violations;
-    st->comp_in = s.comp_in; st->comp_out = s.comp_out; st->decomp_in = s.decomp_in; st->decomp_out = s.decomp_out;
-    st->async_overruns = s.async_overruns; st->async_framing = s.async_framing;
+    status_out(st, &s, &e->e);
 }
 
 v42ec_t *v90m__ec(v90m_ec_t *e) { return &e->e; }

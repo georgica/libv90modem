@@ -13,12 +13,17 @@ The host suite:
   printing `name: N checks, 0 failures`; then `ALL TESTS PASS`;
 - `test/api/test_api.c`, the public API against the static library as it
   is installed (only `v90m_*` visible), with a simulated caller from the
-  development archive;
+  development archive; `test/api/test_ec_fields.c`, the V.42 endpoint's
+  field lists (`api/v90modem_fields.h`: range check, configuration in,
+  defaults and status out) against the code they replaced, at and around
+  every field's bounds;
 - `examples/call_loop` (a caller and an answerer back to back through the
   public API);
 - the real-modem fixtures through `v90m-replay` (below);
 - `check-symbols`: the static library defines only `v90m_*` (its
   internals renamed `v90m__i_*`) and the compiler's helpers;
+- `check-version`: the Makefile's `VERSION` is the header's
+  `V90M_VERSION_*` (`version: 0.5.0 everywhere`);
 - `check-headers`: every header under `modem/`, `v34/`, `v90/`, `v92/`,
   `v32/`, `v42/` and `include/` compiles alone with only `-I. -Iinclude`
   (each includes what it uses, by a path relative to itself);

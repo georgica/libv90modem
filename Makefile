@@ -16,6 +16,8 @@
 #                        no allocation outside api/v90modem.o
 #   make check-headers   every header compiles alone with -I. -Iinclude (its includes
 #                        relative to itself); make check runs it
+#   make check-version   the Makefile's VERSION is the header's V90M_VERSION_*; make
+#                        check runs it
 #   make verify          per commit (tools/verify.sh): host check and golden outputs,
 #                        replay proof, bench hashes, UBSan, the armv7hf short suite
 #                        and an aarch64be (big-endian) one against the host short set
@@ -93,7 +95,7 @@ CORE_SRC := $(wildcard modem/*.c) $(wildcard v90/*.c) $(wildcard v34/*.c) $(wild
             $(addprefix v42/,v42_hdlc.c v42_detect.c v42_comp.c v44_comp.c v42_lapm.c v42.c)
 API_SRC  := api/v90modem.c
 LIB_SRC  := $(API_SRC) $(CORE_SRC)
-LIB_HDR  := include/v90modem.h api/v90modem_priv.h $(wildcard modem/*.h v90/*.h v34/*.h v32/*.h v92/*.h v42/*.h)
+LIB_HDR  := include/v90modem.h api/v90modem_priv.h api/v90modem_fields.h $(wildcard modem/*.h v90/*.h v34/*.h v32/*.h v92/*.h v42/*.h)
 LIB_OBJ  := $(patsubst %.c,$(BUILD)/obj/%.o,$(LIB_SRC))
 PIC_OBJ  := $(patsubst %.c,$(BUILD)/pic/%.o,$(LIB_SRC))
 
@@ -130,7 +132,7 @@ TESTS    := test_g711 test_noise test_filt test_resamp test_channel test_v21 tes
 # runner (check-arm) runs each case as its own job
 SPLIT_TESTS := test_p34 test_orig_v92 test_orig_seeds test_orig_bell
 # the public API, against the library as it is installed
-API_TESTS := test_api
+API_TESTS := test_api test_ec_fields
 SUBS     := v34 v90 v92 v42 v32
 
 .PHONY: test-x2-courier test-k56-sm56 test-fixtures test-examples all lib dev install uninstall clean check check-arm check-ubsan test test-arm test-all test-times test-api test-interop examples bench-v90 bench-v34 bench-v90a bench-v90c bench-v92c replay
@@ -173,6 +175,17 @@ check-soname: $(SHARED)
 	 got=$$($(READELF) -d $(SHARED) | sed -n 's/.*(SONAME).*\[\(.*\)\].*/\1/p'); \
 	 if [ "$$got" != "$(NAME).so.$$want" ]; then echo "soname: SONAME [$$got], want $(NAME).so.$$want"; exit 1; fi; \
 	 echo "soname: $$got"
+# one version: the Makefile's VERSION (the .so, the .pc) is the header's
+# V90M_VERSION_MAJOR.MINOR.PATCH, which v90m_version() is made from
+.PHONY: check-version
+check-version:
+	@h=; for p in MAJOR MINOR PATCH; do \
+	   n=$$(sed -n "s/^#define V90M_VERSION_$$p  *\([0-9][0-9]*\)\$$/\1/p" include/v90modem.h); \
+	   [ -n "$$n" ] || { echo "version: no V90M_VERSION_$$p in include/v90modem.h"; exit 1; }; \
+	   h=$$h$${h:+.}$$n; \
+	 done; \
+	 if [ "$$h" != "$(VERSION)" ]; then echo "version: Makefile $(VERSION), include/v90modem.h $$h"; exit 1; fi; \
+	 echo "version: $(VERSION) everywhere"
 # every header of the library, its subdirectories' tests and include/
 # compiled alone with only -I. -Iinclude: each includes what it uses, by a
 # path relative to itself
@@ -271,9 +284,9 @@ $(BUILD)/arm_test_x2map: test/test_x2map.c $(BUILD)/arm/libtest.a tools/x2_pad.c
 # (only v90m_* visible), the simulated caller from the dev archive. Both
 # carry the modem's code; the static library's copy is local to it.
 API_INC := -Iinclude -Itest -Isim -Imodem -Iv90 -Iv92 -Iv34
-$(BUILD)/api_test_%: test/api/test_%.c $(STATIC) $(DEV) include/v90modem.h
+$(BUILD)/api_test_%: test/api/test_%.c $(STATIC) $(DEV) include/v90modem.h api/v90modem_fields.h
 	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -o $@ $< $(STATIC) $(DEV) $(LDLIBS)
-$(BUILD)/arm/api_test_%: test/api/test_%.c include/v90modem.h
+$(BUILD)/arm/api_test_%: test/api/test_%.c include/v90modem.h api/v90modem_fields.h
 	$(MAKE) -s BUILD=$(BUILD)/arm CC=$(ARM_CC) $(BUILD)/arm/$(NAME).a $(BUILD)/arm/$(NAME)-dev.a check-symbols
 	$(ARM_CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -static -o $@ $< $(BUILD)/arm/$(NAME).a $(BUILD)/arm/$(NAME)-dev.a $(LDLIBS)
 
@@ -333,7 +346,7 @@ endif
 test-times:
 	@tools/par-run.sh --merge $(BUILD)/test-times.txt tools/test-times.txt && echo "tools/test-times.txt: from $(BUILD)/test-times.txt"
 
-check: test-all test-api test-examples test-fixtures check-symbols check-soname check-headers
+check: test-all test-api test-examples test-fixtures check-symbols check-soname check-version check-headers
 	@echo "ALL HOST CHECKS PASS"
 # Golden outputs (tools/golden.sh): every program of make check, its output
 # (less host timing) against test/golden/out/<dir>/<prog>.txt. golden runs
