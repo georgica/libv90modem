@@ -203,6 +203,8 @@ static void tx_symbol(v34dx_t *p, int32_t *re, int32_t *im)
 
     *re = *im = 0;
     if (p->txsig == DXS_SIL) return;
+    /* a renegotiation's or cleardown's S, once the mapping frame is out */
+    if (p->txsig == DXS_DATA && p->tx_next && p->vtx.pos >= 8) { p->tx_next = 0; tx_go(p, DXS_S); }
     p->tx_count[p->txsig]++;
     switch (p->txsig) {
     case DXS_S:
@@ -276,7 +278,7 @@ static void tx_symbol(v34dx_t *p, int32_t *re, int32_t *im)
         if (++p->txn * nb >= 20) { v34_tx_init(&p->vtx, &p->tpar, tx_getbit, p); p->tx_starts++; tx_go(p, DXS_DATA); }
         break;
     default:    /* DXS_DATA */
-        if (!v34_tx_in_b1(&p->vtx)) p->tx_ready = 1;
+        if (!p->tx_next && !v34_tx_in_b1(&p->vtx)) p->tx_ready = 1;
         v34_tx_symbol(&p->vtx, &pt, NULL); g = p->tx_dg;
         break;
     }
@@ -397,15 +399,18 @@ static void reneg_begin(v34dx_t *p)
     if (!p->in_reneg) { p->in_reneg = 1; neg_reset(p); }
 }
 
-/* S for 128 T, S-bar for 16 T, a short TRN, MP: all with four points (11.6) */
+/* S for 128 T, S-bar for 16 T, a short TRN, MP: all with four points (11.6),
+ * from the end of the mapping frame being sent */
 static void start_reneg_tx(v34dx_t *p)
 {
     reneg_begin(p);
     p->tx_ready = 0;
     p->phase4 = 1; p->tx_pts = 4; p->tx_g = 16384;
     p->trn4_syms = (int32_t)RENEG_TRN_MS * p->cfg.sym_rate / 1000;
-    p->tx_next = 0;
-    tx_go(p, DXS_S);
+    /* in data mode S follows the mapping frame under way (tx_next), so that
+     * every bit taken from getbit is sent whole: up to 7 symbols later */
+    p->tx_next = p->txsig == DXS_DATA;
+    if (!p->tx_next) tx_go(p, DXS_S);
     p->t_neg = p->now; enter(p, DX_P4_TRN);
 }
 
@@ -423,8 +428,18 @@ static void rate_down(v34dx_t *p)
     start_reneg_tx(p);
 }
 
+/* S in data mode (11.6): what the far end sent before it is data, every
+ * whole mapping frame of it. The decoder's decision delay still holds some
+ * (S among the newest inputs): they go on now, but for a frame of margin
+ * (v34_rx_flush_before). Called on each sample from S heard on, until S is
+ * followed (an S too new in the decoder is waited for, SDET_RUN_WAIT) */
 static void s_heard(v34dx_t *p)
 {
+    if (p->rx_ready) {
+        unsigned n = v34_rx_s_run(&p->vrx);
+        if (n == 0 && p->sdet.present < SDET_PRESENT + SDET_RUN_WAIT) return;
+        if (n > 0) v34_rx_flush_before(&p->vrx, n);
+    }
     p->rx_ready = 0;
     reneg_begin(p);
     sres_resume(&p->sres);

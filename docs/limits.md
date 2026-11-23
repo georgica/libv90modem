@@ -78,6 +78,10 @@ delivered).
   recording): the frame before the start found is held back, so that no
   frame S cut or that holds S is delivered. The calling modem sends the
   mapping frame under way whole before its S.
+- **V.34 (both ways), and the V.34 upstream of x2 and K56flex: the same
+  one mapping frame at each S** (78 bits at 31200 bit/s). Our transmitter
+  sends its mapping frame under way whole before its S; a far modem that
+  cuts its frame with S loses that frame too (two in all).
 - **V.92 upstream: what the caller's prefilter held when Ru began.** V.92
   begins Ru on a data frame boundary (9.8.2.1.1). The symbols reach the
   digital modem through the prefilter `dsn.dly` samples later (some 116

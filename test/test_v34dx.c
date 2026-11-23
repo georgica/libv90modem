@@ -7,6 +7,8 @@
 #include "dxline.h"
 #include "../modem/v34ans.h"
 #include "../modem/clock.h"
+#include <inttypes.h>
+#include "wctr.h"
 
 typedef struct {
     v34dx_t a, c; bend_t ua, uc; dxline_t line;
@@ -72,6 +74,12 @@ static int pair_to_data(int max_ms)
 }
 
 static void sinks_reset(void) { P.ua.sink.n = P.ua.sink.errs = P.uc.sink.n = P.uc.sink.errs = 0; P.pw_a = P.pw_c = 0; P.pw_n = 0; }
+
+/* counter words (test/wctr.h) each way: what an end sends, what it receives */
+typedef struct { wctr_t out, in; } wend_t;
+static wend_t WA, WC;
+static int w_get(void *u) { return wctr_get(&((wend_t *)u)->out); }
+static void w_put(void *u, int bit) { wctr_put(&((wend_t *)u)->in, bit); }
 
 static const dxline_cfg CLEAN = { 20, 24, 0.5, 0.5, 0.3, 0.3, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 
@@ -275,6 +283,47 @@ int main(void)
         CHECK_EQ_I(P.ua.sink.errs, 0); CHECK_EQ_I(P.uc.sink.errs, 0);
         printf("  renegotiation took %ld ms;", (P.n - 8000L * 3 - t0) / 8);
         report(k == 0 ? "begun by the answer modem" : k == 1 ? "begun by both at once" : "answer modem, new ceiling 14400");
+    }
+    /* ---- the data whole across a rate renegotiation (11.6), begun by either
+     * end: counter words each way. Each transmitter sends its mapping frame
+     * under way whole before its S; each receiver delivers the frames its
+     * decoder still held at the far S but one, the margin against an S
+     * found late (v34_rx_flush_before): exactly one mapping frame is lost
+     * each way, nothing repeated or wrong ---- */
+    for (k = 0; k < 2; k++) {
+        static const char *const who[2] = { "the answer modem", "the call modem" };
+        wend_t *rx[2] = { &WC, &WA };   /* A -> C, C -> A */
+        int64_t w0[2], l0[2], b0[2], g0[2], frame[2];
+        int d;
+        mkcfg(&a, &c, 4, 1, 0, &CLEAN);
+        a.getbit = c.getbit = w_get; a.putbit = c.putbit = w_put; a.user = &WA; c.user = &WC;
+        memset(&WA, 0, sizeof WA); memset(&WC, 0, sizeof WC);
+        WA.out.gen = 0x5a00; WC.out.gen = 0x2c00;
+        pair_init(&a, &c, &CLEAN);
+        CHECK_EQ_I(pair_to_data(8000), 1); pair_run(8000);
+        frame[0] = (int64_t)P.a.tx_rate * 8 / P.a.cfg.sym_rate; frame[1] = (int64_t)P.a.rx_rate * 8 / P.a.cfg.sym_rate;
+        for (d = 0; d < 2; d++) {
+            w0[d] = rx[d]->in.words; l0[d] = rx[d]->in.lost; b0[d] = rx[d]->in.breaks; g0[d] = rx[d]->in.gap_bits;
+        }
+        CHECK_EQ_I(v34dx_renegotiate(k ? &P.c : &P.a, 0), 0);
+        pair_run(80);
+        CHECK_EQ_I(pair_to_data(3000), 1);
+        CHECK_EQ_I(P.a.n_reneg, 1); CHECK_EQ_I(P.c.n_reneg, 1);
+        pair_run(8000L * 2);
+        printf("  renegotiation begun by %s, counter words:\n", who[k]);
+        for (d = 0; d < 2; d++) {
+            const wctr_t *w = &rx[d]->in;
+            int64_t gap = w->gap_bits - g0[d];
+            printf("    %s words before %" PRId64 ", after %" PRId64 ", lost %" PRId64 ", again %" PRId64 "; breaks %" PRId64
+                   " (%" PRId64 " bits missing, the mapping frame %" PRId64 ")\n", d ? "C->A" : "A->C", w0[d], w->words - w0[d],
+                   w->lost - l0[d], w->again, w->breaks - b0[d], gap, frame[d]);
+            CHECK(w0[d] > 1000); CHECK(w->words - w0[d] > 1000);
+            CHECK_EQ_I(w->again, 0);
+            CHECK_EQ_I(w->breaks - b0[d], 1);
+            CHECK(gap >= frame[d] - 1 && gap <= frame[d]);
+            CHECK(16 * (w->lost - l0[d]) >= gap && 16 * (w->lost - l0[d]) < gap + 32);
+            CHECK_EQ_I(w->locked, 1);
+        }
     }
     {
         /* A renegotiation whose MP is Type 0 (a Conexant CX93001 does that) leaves the

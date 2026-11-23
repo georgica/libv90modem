@@ -65,6 +65,8 @@ typedef struct {
     int reneg_md;           /* ... its MD; 0 = 5 */
     int reneg_index2;       /* a second rate change, reneg_ms after the first's data, asking
                                for this index (same mask and MD); 0 = none */
+    int reneg_whole;        /* its S once the mapping frame under way is out (0: at once,
+                               cutting it) */
     int  (*getbit)(void *user);
     void (*putbit)(void *user, int bit);
     void *user;

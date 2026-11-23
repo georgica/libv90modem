@@ -66,6 +66,8 @@
 #include <string.h>
 #include <inttypes.h>
 #include "test.h"
+#include <inttypes.h>
+#include "wctr.h"
 #include "../modem/answer.h"
 /* the old cleared flag, from the end reason: 1 the caller's cleardown, 2 ours */
 static int cleared_of(const answer_t *a)
@@ -344,9 +346,11 @@ static void p23_init(p23_t *p, uint32_t seed) { memset(p, 0, sizeof *p); p->tx =
 /* an all-zero receiver predicts itself: the counted bits must be about half ones */
 #define BALANCED(p) ((p).ones * 10 > (p).n * 4 && (p).ones * 10 < (p).n * 6)
 static p23_t DA, DC;    /* up: the client sends, we check; down: we send, the client checks */
+/* KW: the upstream is counter words (test/wctr.h) in KWU, DA counting them */
+static int KW; static wctr_t KWU;
 static int  kd_aget(void *u) { (void)u; return p23_get(&DC); }
-static void kd_aput(void *u, int b) { (void)u; p23_put(&DA, b); }
-static int  kd_cget(void *u) { (void)u; return p23_get(&DA); }
+static void kd_aput(void *u, int b) { (void)u; if (KW) { wctr_put(&KWU, b); DA.n++; } else p23_put(&DA, b); }
+static int  kd_cget(void *u) { (void)u; return KW ? wctr_get(&KWU) : p23_get(&DA); }
 static void kd_cput(void *u, int b) { (void)u; p23_put(&DC, b); }
 
 typedef struct {
@@ -804,6 +808,33 @@ static void k56_reneg_tests(void)
     CHECK(o.end_at - o.quiet_at <= 8000L * 10);
     CHECK_EQ_I(o.phase, ANS_FAILED); CHECK_EQ_I(o.error, K56D_ERR_RENEG);
     CHECK_EQ_I(o.k56_failed, 1); CHECK_EQ_I(o.k56_lost, 0); CHECK_EQ_I(o.cleared, 0); CHECK_EQ_I(o.connected_once, 1);
+
+    /* the upstream whole across its renegotiation: counter words. Its S
+     * after its mapping frame (1000 ms into data mode: 3200 symbols) loses
+     * exactly the one frame k56d keeps as a margin against an S found late
+     * (v34_rx_flush_before); its S 3 symbols into a frame (1001 ms) loses
+     * that one too. Nothing repeated or wrong either way. */
+    for (j = 0; j < 2; j++) {
+        int64_t frame = 31200 * 8 / 3200, gap;
+        kd_default(&ko); ko.reneg_ms = j ? 1001 : 1000; ko.reneg_rate = 10;
+        KW = 1; memset(&KWU, 0, sizeof KWU); KWU.gen = 0x2c00;
+        kd_call(&ko, 60, &o);
+        KW = 0;
+        gap = KWU.gap_bits;
+        printf("  K56flex client renegotiates, its S %s, counter words up: %ld words, lost %" PRId64 ", again %" PRId64
+               "; breaks %" PRId64 " (%" PRId64 " bits missing, the mapping frame %" PRId64 ")\n",
+               j ? "3 symbols into a mapping frame" : "after its mapping frame", (long)KWU.words, KWU.lost, KWU.again,
+               KWU.breaks, gap, frame);
+        CHECK_EQ_I(K.renegs, 1); CHECK_EQ_I(o.nmove, 2);
+        CHECK_EQ_I(A.phase, ANS_K56); CHECK_EQ_I(A.u.k56.state, K56D_DATA);
+        CHECK(KWU.words > DBITS / 16);
+        CHECK_EQ_I(KWU.again, 0);
+        CHECK_EQ_I(KWU.breaks, 1);
+        if (!j) CHECK(gap >= frame - 1 && gap <= frame);
+        else CHECK(gap >= frame - 1 && gap <= 2 * frame);
+        CHECK(16 * KWU.lost >= gap && 16 * KWU.lost < gap + 32);
+        CHECK_EQ_I(KWU.locked, 1);
+    }
 
     /* we never start one: HOLD_S of data mode without the client's, no R in
      * our data (the client finds none), data on all of it */

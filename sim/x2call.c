@@ -138,7 +138,7 @@ static void tx_symbol(x2call_t *c, int32_t *re, int32_t *im)
     int32_t g = 16384;
     int k;
     *re = *im = 0;
-    if (c->reneg_due && c->sig == SIG_DATA) {
+    if (c->reneg_due && c->sig == SIG_DATA && (!c->cfg.reneg_whole || c->vtx.pos >= 8)) {
         /* the rate change: S in data mode, then as Phase 4 with a short TRN */
         c->reneg_due = 0; c->renegs++; c->reneg_mp = 0; c->rr_acked = 0;
         c->rr_base = c->seen.rr_nak + c->seen.rr_ack;

@@ -155,6 +155,21 @@ Fixed:
   mapping frame under way is sent, up to 7 symbols later. It began at
   once, and the rest of the frame, its bits already taken from the host,
   was not sent.
+- V.34, both roles; x2 and K56flex, answering (their V.34 upstream): the
+  data the far end sent before its S in data mode (a rate renegotiation or
+  cleardown, either end's, or x2's rate change) is delivered but for one
+  mapping frame, as V.90's above. The decoder's decision delay held up to
+  5 mapping frames when S was heard, and they were dropped. An S heard
+  before the decoder holds four symbols of it (its carrier line can build
+  up early) is waited for, up to 32 samples, so that its start can be
+  found; one that is not found still drops them, as before.
+- V.34, both roles: our S (a rate renegotiation or cleardown, ours or our
+  answer to the far end's) begins once the mapping frame under way is
+  sent, up to 7 symbols later. It began at once, and the rest of the
+  frame, its bits already taken from the host, was not sent. Together:
+  exactly one mapping frame is lost each way across a renegotiation
+  between two of ours, where 5 or 6 were (390 to 468 bits at 31200 bit/s).
+  Calls without S in data mode are unchanged.
 - V.92, calling role: the clock offset measured on the digital modem's L2
   can no longer overflow (undefined behaviour in C) when the line turns
   its tones far beyond 1000 ppm per block; it gives the +-1000 ppm limit,

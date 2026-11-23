@@ -54,6 +54,8 @@ static int x2_failed_of(const answer_t *a)
 #include "../sim/x2call.h"
 #include "../sim/noise.h"
 #include "line34.h"
+#include <inttypes.h>
+#include "wctr.h"
 
 #define FS 8000
 
@@ -229,8 +231,12 @@ static x2call_t X; static rbits_t DN, UP;
 /* the client's rate change, for the next x2_call (which clears it): ms
  * into data mode (0 none), its index, mask and MD (0: 5); index2 a second
  * one's, ms after the first's data (0 none); md0 the first MP's MD;
- * hangup: our cleardown once x2d is in the rate change */
-static struct { int ms, index, index2, md, md0, hangup; uint16_t mask; } RN;
+ * hangup: our cleardown once x2d is in the rate change; whole: the
+ * client's S once its mapping frame under way is out (x2call_cfg) */
+static struct { int ms, index, index2, md, md0, hangup, whole, words; uint16_t mask; } RN;
+/* RN.words: the upstream is counter words (test/wctr.h), the client's S
+ * after its mapping frame (RN.whole) or where it falls */
+static wctr_t WU;
 /* the upstream across the client's rate change: its V.34 stops where it
  * is (its last bits, still in our receiver's decision delay, do not come,
  * or its S comes out as bits before we have seen it). The bits it took
@@ -256,6 +262,11 @@ static int s_get(void *u) { (void)u; dn_taken++; return rnext(&DN.tx); }
 static void s_put(void *u, int bit)
 {
     (void)u;
+    if (RN.words) {
+        if (UG.armed && x2call_state(&X) != X2C_RENEG) { UG.armed = 0; UG.done = 1; }
+        wctr_put(&WU, bit); UP.n++;
+        return;
+    }
     if (UG.armed) {
         if (x2call_state(&X) != X2C_RENEG) {
             UG.armed = 0; UG.done = 1;
@@ -267,7 +278,7 @@ static void s_put(void *u, int bit)
     }
     r_check(&UP, bit);
 }
-static int c_get(void *u) { (void)u; up_taken++; return rnext(&UP.tx); }
+static int c_get(void *u) { (void)u; up_taken++; return RN.words ? wctr_get(&WU) : rnext(&UP.tx); }
 static void c_put(void *u, int bit) { (void)u; r_check(&DN, bit); }
 typedef struct {
     int ok;                     /* both in data mode */
@@ -314,6 +325,8 @@ static void x2_call(int pad, int index, uint16_t up_mask, int silent, int echo_d
     xc.md = RN.md0;
     xc.reneg_ms = RN.ms; xc.reneg_index = RN.index; xc.reneg_mask = RN.mask; xc.reneg_md = RN.md;
     xc.reneg_index2 = RN.index2;
+    xc.reneg_whole = RN.whole;
+    memset(&WU, 0, sizeof WU); WU.gen = 0x2c00;
     x2call_init(&X, &xc);
     for (n = 0; n < 8000L * secs; n++) {
         int i = (int)(n & (XD - 1));
@@ -507,6 +520,31 @@ static void x2_tests(void)
         CHECK_EQ_I(UP.bad, 0); CHECK(o.up0 > 0); CHECK(UP.n - o.up0 >= 50000);
         CHECK_EQ_I(UG.done, 1); CHECK(UG.lost >= 0 && UG.lost <= 2 * 512); CHECK(UG.extra <= 2 * 512);
         CHECK_EQ_I(dn_early, 0);        /* no data bit before data moves again */
+    }
+
+    /* 4b. the upstream whole across the client's rate change: counter words.
+     *    A client that sends its mapping frame under way whole before its S
+     *    loses exactly the one frame x2d keeps as a margin against an S
+     *    found late (v34_rx_flush_before); one that cuts it loses that one
+     *    too. Nothing repeated or wrong either way. */
+    for (pad = 0; pad < 2; pad++) {
+        int64_t frame, gap;
+        const int j = pad;
+        RN.ms = 2000; RN.index = 8; RN.mask = 0x1FFE; RN.whole = !j; RN.words = 1;
+        x2_call(0, 1, 0x03FE, X2C_SIL_NONE, 0, 40, 50000, &o);
+        frame = 24000 * 8 / 3200;
+        gap = WU.gap_bits;
+        printf("  x2 rate change to 8, the client's S %s, counter words up: %ld words, lost %" PRId64 ", again %" PRId64
+               "; breaks %" PRId64 " (%" PRId64 " bits missing, the mapping frame %" PRId64 ")\n",
+               j ? "where it falls" : "after its mapping frame", (long)WU.words, WU.lost, WU.again, WU.breaks, gap, frame);
+        CHECK(o.ok); CHECK_EQ_I(X.renegs, 1); CHECK_EQ_I(o.renegs, 1);
+        CHECK(UP.n - o.up0 >= 50000);
+        CHECK_EQ_I(WU.again, 0);
+        CHECK_EQ_I(WU.breaks, 1);
+        if (!j) CHECK(gap >= frame - 1 && gap <= frame);
+        else CHECK(gap >= frame - 1 && gap <= 2 * frame);
+        CHECK(16 * WU.lost >= gap && 16 * WU.lost < gap + 32);
+        CHECK_EQ_I(WU.locked, 1);
     }
 
     /* 5. a rate change we cannot serve: an index without a bank (0), or

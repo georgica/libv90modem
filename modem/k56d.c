@@ -250,6 +250,15 @@ static void seq_bit(k56d_t *d, int bit)
  * The carrier is locked: S is believed at once (as x2d). */
 static void reneg_begin(k56d_t *d)
 {
+    /* the frames its V.34 decoder still holds from before S are data: they
+     * go on now, but for a frame of margin (as p34d's s_heard). Called on
+     * each sample from S heard on: an S too new in the decoder is waited
+     * for (SDET_RUN_WAIT) */
+    if (d->rx_ready) {
+        unsigned n = v34_rx_s_run(&d->vrx);
+        if (n == 0 && d->sdet.present < SDET_PRESENT + SDET_RUN_WAIT) return;
+        if (n > 0) v34_rx_flush_before(&d->vrx, n);
+    }
     d->rx_ready = d->tx_ready = 0;
     d->got_mp = d->got_e = 0; d->cand_ok = 0;
     d->fn = d->ones = 0;

@@ -57,18 +57,20 @@
   r = 3, pad 0, robbed 1F (J octet 37): K56flex 36000 / 31200 bit/s (client 36000 / 31200), data 100013 bits 0 bad down, 111999 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3575 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
   r = 13, pad 2, robbed 1F (J octet B7): K56flex 56000 / 31200 bit/s (client 56000 / 31200), data 153129 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3192 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
   r = 3, pad 2, robbed 1F (J octet B7): K56flex 36000 / 31200 bit/s (client 36000 / 31200), data 100013 bits 0 bad down, 111999 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3575 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
-  renegotiations 13 -> 10 -> 12, robbed 00: K56flex 54000 / 31200 bit/s (client 54000 / 31200), data 173114 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 32 MP' 32 (0 wrong), E 1, B1 bad 0, frames 13095 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+  renegotiations 13 -> 10 -> 12, robbed 00: K56flex 54000 / 31200 bit/s (client 54000 / 31200), data 173114 bits 0 bad down, 100066 bits 0 bad up; client: 0 bad training octets, Js 1, MP 32 MP' 32 (0 wrong), E 1, B1 bad 0, frames 13095 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
      tx_bps 56000, 50000, 54000; the last TRN2A 2048, TRN2B 2048 symbols; bad octets by segment: 0 0 0 0 0 0 0 0 0 0 0 0 0 0
      segment 0: down 274985 bits 0 bad, up 153362 bits 0 bad
      segment 1: down 246186 bits 0 bad, up 153729 bits 0 bad
-     segment 2: down 173114 bits 0 bad, up 100065 bits 0 bad
-  renegotiations 13 -> 10 -> 12, robbed 24: K56flex 54000 / 31200 bit/s (client 54000 / 31200), data 160286 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 32 MP' 32 (0 wrong), E 1, B1 bad 0, frames 13095 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
+     segment 2: down 173114 bits 0 bad, up 100066 bits 0 bad
+  renegotiations 13 -> 10 -> 12, robbed 24: K56flex 54000 / 31200 bit/s (client 54000 / 31200), data 160286 bits 0 bad down, 100066 bits 0 bad up; client: 0 bad training octets, Js 1, MP 32 MP' 32 (0 wrong), E 1, B1 bad 0, frames 13095 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
      tx_bps 56000, 50000, 54000; the last TRN2A 2048, TRN2B 2048 symbols; bad octets by segment: 0 0 0 0 0 0 0 0 0 0 0 0 0 0
      segment 0: down 255337 bits 0 bad, up 153362 bits 0 bad
-     segment 1: down 226486 bits 0 bad, up 153730 bits 0 bad
-     segment 2: down 160286 bits 0 bad, up 100065 bits 0 bad
+     segment 1: down 226486 bits 0 bad, up 153729 bits 0 bad
+     segment 2: down 160286 bits 0 bad, up 100066 bits 0 bad
   K56flex client, a renegotiation MP with rate 0: ended 0.26 s after its S, error 11, cleared 1, k56_failed 0, lost 0
   K56flex client silent after its renegotiation's S: ended 5.98 s later, error 10, k56_failed 1, lost 0
+  K56flex client renegotiates, its S after its mapping frame, counter words up: 8121 words, lost 5, again 0; breaks 1 (78 bits missing, the mapping frame 78)
+  K56flex client renegotiates, its S 3 symbols into a mapping frame, counter words up: 8121 words, lost 10, again 0; breaks 1 (156 bits missing, the mapping frame 78)
   K56flex client, no renegotiation: K56flex 56000 / 31200 bit/s (client 56000 / 31200), data 3359633 bits 0 bad down, 1872303 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 59995 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
      60 s of data mode, R in our data 0 times
   K56flex client, a retrain 5000 ms into data mode, robbed 00: K56flex 56000 / 31200 bit/s (client 56000 / 31200), data 179227 bits 0 bad down, 100010 bits 0 bad up; client: 0 bad training octets, Js 1, MP 32 MP' 32 (0 wrong), E 1, B1 bad 0, frames 8114 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
@@ -92,4 +94,4 @@
   our calling modem in V.90, K56flex offered: mod 4, 52000 / 28800 bit/s, 180570 / 100008 bits, 0 / 0 fail (without: mod 4, 52000 / 28800)
   our calling modem in V.92, K56flex offered: mod 7, 52000 / 34666 bit/s, 150072 / 100048 bits, 0 / 0 fail (without: mod 7, 52000 / 34666)
   x2 client, x2 and K56flex offered: x2 32000 / 24000 bit/s, down 118512 bits 0 bad, up 100020 bits 0 bad (without K56flex: 32000 / 24000)
-answer_k56: 1430 checks, 0 failures
+answer_k56: 1450 checks, 0 failures

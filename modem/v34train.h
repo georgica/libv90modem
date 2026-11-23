@@ -58,6 +58,11 @@ void sdet_init(sdet_t *d, int sym_rate, int car_num, int car_den);
 int  sdet_tick(sdet_t *d, int16_t x);
 #define SDET_DELAY(d) (((d)->len * 3) / 4)
 #define SDET_PRESENT 80             /* samples of tone = "S detected" */
+/* S heard in data mode before the V.34 decoder holds four symbols of it (its
+ * carrier line can build up early): data decoding goes on for up to this
+ * many samples more (9 symbols or more), until v34_rx_s_run() finds S. The
+ * decoder delivers what it decided 48 symbols back, data still */
+#define SDET_RUN_WAIT 32
 
 /* ---- re-acquisition on a later S, equaliser kept ----
  * After a silence the far transmitter's symbol clock has drifted and its

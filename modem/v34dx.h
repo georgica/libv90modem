@@ -110,7 +110,8 @@ typedef struct {
     /* ---- transmit ---- */
     v34mod_t    mod;
     int         txsig; int32_t txn; /* signal and symbol index in it */
-    int         tx_next;            /* leave J / TRN at the next chance */
+    int         tx_next;            /* leave J / TRN at the next chance; data at the end of its
+                                       mapping frame (a renegotiation's or cleardown's S) */
     int         phase4;             /* S-bar is followed by TRN, not PP */
     int         tx_pts; int32_t tx_g;   /* TRN / MP / E: 4 or 16 points, and their gain */
     int32_t     trn_syms, trn4_syms;
