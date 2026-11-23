@@ -567,7 +567,8 @@ static void ri_dec(v90a_t *a, const v90arx_dec_t *d)
         a->mbn = a->mones = 0; a->got_mp = a->got_mpa = a->after_mpa = a->got_ed = 0;
         a->trn2d_syms = 0;
         if (a->pcm) {
-            v92aseq_init(&a->aseq); a->got_suvd = a->got_cpd = a->got_ack = 0;
+            /* a Phase 4: its first CPd must carry all three parts */
+            v92aseq_phase4(&a->aseq); a->got_suvd = a->got_cpd = a->got_ack = 0;
         }
         a->ds = D_TRAIN;
     }
@@ -731,8 +732,9 @@ static int renegotiate(v90a_t *a, int kind)
     a->state = V90A_RENEG; a->t = 0;
     if (a->pcm) {
         /* 9.8.2.1.1: Ru on our next data frame boundary; what Phase 4 heard
-         * (SUVd, CPd, their acknowledge bits, Ed) is not this one's */
-        v92aseq_init(&a->aseq); a->got_suvd = a->got_cpd = a->got_ack = a->got_ed = 0;
+         * (SUVd, CPd, their acknowledge bits, Ed) is not this one's; the
+         * CPd in use stays, for a CPd that carries only what changed */
+        v92aseq_restart(&a->aseq); a->got_suvd = a->got_cpd = a->got_ack = a->got_ed = 0;
         a->ru_due = 1;
     } else go_s(a);                     /* 9.6.2.1.1: S, S-bar */
     return 0;
@@ -822,8 +824,9 @@ static void rd_dec(v90a_t *a, const v90arx_dec_t *d)
         a->trn2d_syms = TRN2D_MEAS;     /* CP stays as it was */
         if (a->reneg_ours) { a->trn2d_syms = 0; a->cp_ready = 0; }   /* ours: designed on TRN2d's noise */
         if (a->pcm) {
-            /* 9.8.2.2.2: Ru on our next data frame boundary */
-            v92aseq_init(&a->aseq); a->got_suvd = a->got_cpd = a->got_ack = 0;
+            /* 9.8.2.2.2: Ru on our next data frame boundary; the CPd in
+             * use stays (v92aseq_restart) */
+            v92aseq_restart(&a->aseq); a->got_suvd = a->got_cpd = a->got_ack = 0;
             if (a->us == P_DATA) a->ru_due = 1;
         }
         a->ds = D_TRAIN;
@@ -1056,12 +1059,13 @@ static int enc_get(void *user)
     return a->cfg.getbit ? a->cfg.getbit(a->cfg.user) & 1 : 1;
 }
 
-/* E2u is over: B1u and data with CPd's parameters (8.7.1) */
+/* E2u is over: B1u and data with CPd's parameters (8.7.1), as stored: the
+ * parts a later CPd left out are the earlier ones' (v92aseq) */
 static void start_b1u(v90a_t *a)
 {
     const v92_cpd_t *c = &a->cpd;
     if (!a->got_cpd || c->drn < 1 || c->drn > V92_UP_NUM_RATES || !((a->up92_rates >> (c->drn - 1)) & 1)
-        || !c->has_mod || !c->has_filt || !c->has_const
+        || !v92aseq_cpd_complete(&a->aseq)
         || v92_enc_init(&a->enc, &a->cpd.map, &a->cpd.filt, enc_get, a) != 0) { end(a, V90A_ERR_CPD); return; }
     a->b1_bits = (int32_t)V92_B1U_FRAMES * c->map.K;
     a->up_rate = V92_UP_BPS(c->drn);

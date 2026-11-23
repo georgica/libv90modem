@@ -62,11 +62,18 @@ when answering. At least one is required (0 gives `V90M_EINVAL`).
   designed from the DIL and the noise. Data mode in the simulator was
   reached some 10 to 14 s from the start of the call
   (`docs/history/PROGRESS.md`, C5-2 and C6-2).
+- **Who answers.** V.90 / V.92 needs a digital modem at the far end: PCM
+  is chosen only when the answerer's JM names one. A JM naming only "PCM
+  analogue" (another analogue V.90/V.92 modem) gives V.34, or the lowest
+  other mode in common.
 - **V.92.** With `V90M_MOD_V92` it says V.92 in Phase 2 and selects PCM
   upstream when the digital modem allows it; the upstream is then PCM
   through the precoder and prefilter the digital modem dictates, on the
   network's clock. Otherwise the call is V.90. `v90m_state.modulation` is
-  `V90M_CONN_V92` only when the upstream is PCM.
+  `V90M_CONN_V92` only when the upstream is PCM. The digital modem's CPd
+  (the moduli, the precoder and prefilter, the constellations) must be
+  whole in Phase 4; in a rate renegotiation a CPd may carry only the parts
+  that changed, the others being kept from the CPd before.
 - **Retrains**, either end: `v90m_retrain`, or the answerer's Tone B. Ours
   is 70 ms of silence and Tone A, then Phase 2 to data mode again, some 7
   to 11 s, with the receiver and (V.92) the PCM upstream trained afresh.

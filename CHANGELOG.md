@@ -90,6 +90,22 @@ Changed (calling role):
   for the cleardowns the modem makes by itself: when no downstream rate
   fits (a server retrain no longer rescues it), and when one retrain more
   is due past the limit (`V90M_END_RETRAIN_FAILED`, as before).
+- V.90 and V.92: PCM is chosen only when the answerer's JM names a digital
+  modem (V.8's PCM category, "V.90/V.92 digital"). A JM naming only "PCM
+  analogue" (an analogue V.90/V.92 modem answering, which cannot carry a
+  PCM downstream) selected V.90 and the call failed in Phase 2
+  (`V90M_END_FAILED`); it now gives V.34 (or the lowest mode in
+  common). Against this library's answerer, whose JM names the digital
+  modem, nothing changes.
+- V.92: a CPd that carries only some of its three parts (moduli, filters,
+  constellations; Table 30's bits 19 to 21), as a digital modem may send
+  in a rate renegotiation when only part of it changed, is merged with the
+  CPd before it: the parts it leaves out are kept. It was refused, and the
+  renegotiation became a retrain (8 to 11 s each; past the limit,
+  `V90M_END_RETRAIN_FAILED`). The first CPd after Phase 3 (start-up or
+  retrain) must still bring all three parts, else that start-up or
+  retrain fails as before. This library's answerer always sends all
+  three; no real server's partial CPd has been seen.
 
 Changed (V.34, both roles):
 - A cleardown of ours (`v90m_cleardown`) is no longer turned into a
