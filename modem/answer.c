@@ -38,8 +38,8 @@ static const ans_scheme_t *const phase_scheme[] = {
     [ANS_K56] = &ans_k56, [ANS_K56RT] = &ans_k56rt,
     [ANS_FAILED] = &ans_ended
 };
-/* one row per phase (ANS_K56RT is the last) */
-typedef char phase_scheme_rows[sizeof phase_scheme / sizeof phase_scheme[0] == ANS_K56RT + 1 ? 1 : -1];
+/* one row per phase: a new last phase without its row fails to compile */
+typedef char phase_scheme_rows[sizeof phase_scheme / sizeof phase_scheme[0] == ANS_NPHASES ? 1 : -1];
 
 void ans_enter(answer_t *a, ans_phase p) { a->phase = p; a->s = phase_scheme[p]; }
 

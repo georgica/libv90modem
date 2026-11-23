@@ -73,9 +73,10 @@ typedef enum {
     ANS_X2,              /* x2: the client sent the marker; its start-up and data mode (u.x2) */
     ANS_V8BIS,           /* K56flex offered: V.8bis before V.8 (u.v8b), then ANS_V8 */
     ANS_K56,             /* K56flex: from our flagged INFO1a on (u.k56), its data mode included */
-    ANS_K56RT            /* K56flex: the client's retrain (its tone B in data mode): 70 ms of
+    ANS_K56RT,           /* K56flex: the client's retrain (its tone B in data mode): 70 ms of
                             silence, then V.34's Phase 2 of a retrain (v34.p2, INFO1a flagged
                             again), then ANS_K56 from the start */
+    ANS_NPHASES          /* the number of phases (not a phase): a new one goes above */
 } ans_phase;
 
 /* in answer_cfg.modes, next to the V8_MOD_ bits (which fit 16 bits): offer
