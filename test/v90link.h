@@ -152,6 +152,7 @@ typedef struct {
     int d_rt_wait;                  /* d_retrain: samples of silence before its Phase 2 */
     int d_v92_data, d_pcm_up;       /* d_retrain: v92d reached data mode; PCM upstream offered */
     int d_retrains;                 /* d_retrain: retrains of the digital modem */
+    int64_t clips;                  /* our A/D samples at full scale (+-32767) */
     /* a digital modem of the test's own (tools/rec_orig: the answerer through the
        public API): when set, it takes each network sample's codeword in place of
        the ones above and gives the codeword it sends */
@@ -379,6 +380,7 @@ static void vl_tick(vl_t *l)
         rx = (int16_t)(v > 32767 ? 32767 : v < -32767 ? -32767 : v);
     }
     l->last_rx = rx;
+    if (rx >= 32767 || rx <= -32767) l->clips++;
     tx = l->cfg.caller_orig ? orig_tick(&l->org, rx) : v90a_tick(&l->va, rx);
     n = l->cfg.up_line ? lresamp_push(&l->lrs, tx, o, 4) : sresamp_push(&l->rs, tx, o, 4);
     for (i = 0; i < n; i++) {

@@ -113,9 +113,22 @@ int main(void)
         f0 = l->down.fails + l->up.fails;
         d0 = l->down.got; u0 = l->up.got;
         run_for(l, MS(2000));
-        printf("  state %d, renegotiations %d, digital %d, up %d; then 2 s: %" PRId64 " bits down, %" PRId64 " up, %" PRId64 " new failures\n",
-               l->va.state, l->va.renegs, l->v92d.state, v90a_tx_rate(&l->va), l->down.got - d0, l->up.got - u0,
+        if (l->va.retrains > 0) {
+            CHECK(l->clips > 0);
+            /* one of our A/D samples at full scale (our PCM upstream's peak
+             * in this line's -10 dB echo) loses the receiver (T21.9,
+             * docs/limits.md): the retrain recovers it, then the 2 s again */
+            printf("  %d A/D samples at full scale so far: one cost a retrain (T21.9)\n", (int)l->clips);
+            run_to(l, l->k + MS(15000), V90A_DATA);
+            run_for(l, MS(500));
+            f0 = l->down.fails + l->up.fails;
+            d0 = l->down.got; u0 = l->up.got;
+            run_for(l, MS(2000));
+        }
+        printf("  state %d, renegotiations %d, retrains %d, digital %d, up %d; then 2 s: %" PRId64 " bits down, %" PRId64 " up, %" PRId64 " new failures\n",
+               l->va.state, l->va.renegs, l->va.retrains, l->v92d.state, v90a_tx_rate(&l->va), l->down.got - d0, l->up.got - u0,
                l->down.fails + l->up.fails - f0);
+        CHECK(l->va.retrains <= 1);
         CHECK_EQ_I(l->va.state, V90A_DATA);
         CHECK_EQ_I(l->va.renegs, 1);
         CHECK_EQ_I(l->v92d.state, V92D_DATA);

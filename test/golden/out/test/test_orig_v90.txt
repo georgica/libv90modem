@@ -1,18 +1,18 @@
 the library's caller (V.8, V.90 analogue) against the library's answerer, 10 s of data per line
   line                                   data ms   down     up SNR dB   rtd  bits down  fail    bits up  fail  robbed
-  2 km,    0 ppm, -75 dBm0                 10112  52000  28800  54.9    46     519987     0     288000     0  000000
-  0 km, +100 ppm, -75 dBm0                 10116  46666  28800  52.8    47     466620     0     288000     0  000000
-  6 km, -100 ppm, -75 dBm0                 10114  48000  28800  53.2    46     480024     0     288000     0  000000
-  4 km,  +50 ppm, -65 dBm0                 10115  40000  28800  45.8    47     399990     0     288000     0  000000
-  2 km,  +30 ppm, 3 dB pad                 10115  48000  28800  51.6    47     479988     0     288000     0  000000
+  2 km,    0 ppm, -75 dBm0                  9892  52000  28800  55.0    46     519987     0     288000     0  000000
+  0 km, +100 ppm, -75 dBm0                  9896  46666  28800  52.9    47     466620     0     288000     0  000000
+  6 km, -100 ppm, -75 dBm0                  9895  46666  28800  52.9    46     466690     0     288000     0  000000
+  4 km,  +50 ppm, -65 dBm0                  9896  40000  28800  46.2    47     399990     0     288000     0  000000
+  2 km,  +30 ppm, 3 dB pad                  9893  48000  28800  52.1    47     479988     0     288000     0  000000
     ... Table 1 levels                         0      0      0   0.0     0          0     0          0     0  000000
-  2 km,  -30 ppm, 6 dB pad                 10114  45333  28800  50.3    46     453356     0     288000     0  000000
-    ... Table 1 levels                     10114  29333  28800  36.5    45     293348     0     288000     0  000000
-  2 km,  +30 ppm, robbed bit               10115  48000  28800  54.0    47     479988     0     288000     0  000010
-    ... Table 1 levels                     10115  32000  28800   0.0    47      72720  3932      65376  1494  000001
-  2 km,  +30 ppm, 6 dB pad, robbed bit     10115  44000  28800  49.7    47     439989     0     288000     0  010000
-  2 km,  -50 ppm, A-law                    10114  46666  28800  52.7    46     466690     0     288000     0  000000
+  2 km,  -30 ppm, 6 dB pad                  9895  44000  28800  50.2    46     440022     0     288000     0  000000
+    ... Table 1 levels                      9895  28000  28800  37.3    45     280014     0     288000     0  000000
+  2 km,  +30 ppm, robbed bit                9893  49333  28800  53.8    47     493321     0     288000     0  000001
+    ... Table 1 levels                      9896  29333  28800   0.0    47     201454  3790     201816  1528  100000
+  2 km,  +30 ppm, 6 dB pad, robbed bit      9896  45333  28800  50.2    47     453322     0     288000     0  001000
+  2 km,  -50 ppm, A-law                     9895  46666  28800  53.6    46     466690     0     288000     0  000000
 ending a call
-  ours: caller ended 4 after 1225 ms (end 7), answerer phase 3, cleared 1
+  ours: caller ended 4 after 1224 ms (end 7), answerer phase 3, cleared 1
   the answerer's: caller ended after 99 ms, end 6
 orig_v90: 104 checks, 0 failures
