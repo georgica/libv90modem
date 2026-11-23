@@ -3,6 +3,7 @@
  * with optional delay, random bit errors, error bursts and line cut; plus
  * single-endpoint runs against scripted start-stop peers for the detection
  * phase fallbacks. Every transfer is checked octet for octet. */
+#include <limits.h>
 #include <string.h>
 #include "test.h"
 #include "v42.h"
@@ -1263,6 +1264,22 @@ static void test_coarse_timing(void)
     check_flow(&ab); check_flow(&ba);
 }
 
+/* v42ec_tick with any ms: past INT_MAX it expires the timers, not
+ * extends them */
+static void test_tick_huge(void)
+{
+    static v42ec_t E;
+    v42ec_cfg_t c;
+    v42ec_cfg_default(&c, 0);
+    v42ec_init(&E, &c);
+    CHECK_EQ_I(v42ec_state(&E), V42EC_DETECT);
+    v42ec_tick(&E, UINT_MAX);
+    CHECK_EQ_I(E.t400, -1);                             /* T400 expired: no V.42 peer */
+    CHECK_EQ_I(v42ec_state(&E), V42EC_ASYNC);
+    v42ec_tick(&E, 0x80000000u);
+    CHECK_EQ_I(v42ec_state(&E), V42EC_ASYNC);
+}
+
 int main(void)
 {
     test_handshake();
@@ -1291,6 +1308,7 @@ int main(void)
     test_break();
     test_octet_pump();
     test_coarse_timing();
+    test_tick_huge();
 
     /* V.44: its own cases, then the data tests above once more with V.44
      * doing the compression */

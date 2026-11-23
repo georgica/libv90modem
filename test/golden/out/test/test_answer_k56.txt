@@ -1,3 +1,4 @@
+  answer_v90_cfg after the first sample: offers and phase kept (V.8 after V.8bis at 1.79 s)
   K56flex client, K56flex not offered: V.34 28800 / 28800 bit/s, 0 bad; agreed 0, JM 1, x2 0 (flipped 0), CL 0 (ok 0), MS 0, ACK 0, NAK 0
   K56flex client, K56flex and x2 offered: NO DATA 56000 / 31200 bit/s, -1 bad; agreed 1, JM 1, x2 0 (flipped 0), CL 1 (ok 1), MS 1, ACK 1, NAK 0
      our ANSam 3.613 s after answering (0.200 s without K56flex); INFO1a offset 1 at 3200 baud, ANS_K56 at 7.884 s, the client took the flag at 7.873 s; K56flex 56000 / 31200 bit/s
@@ -91,4 +92,4 @@
   our calling modem in V.90, K56flex offered: mod 4, 52000 / 28800 bit/s, 180570 / 100008 bits, 0 / 0 fail (without: mod 4, 52000 / 28800)
   our calling modem in V.92, K56flex offered: mod 7, 52000 / 34666 bit/s, 150072 / 100048 bits, 0 / 0 fail (without: mod 7, 52000 / 34666)
   x2 client, x2 and K56flex offered: x2 32000 / 24000 bit/s, down 118512 bits 0 bad, up 100020 bits 0 bad (without K56flex: 32000 / 24000)
-answer_k56: 1417 checks, 0 failures
+answer_k56: 1430 checks, 0 failures

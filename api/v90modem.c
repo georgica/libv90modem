@@ -84,7 +84,8 @@ static int check_cfg(const v90m_cfg *c)
 {
     if (c->role != V90M_ROLE_ANSWER && c->role != V90M_ROLE_ORIGINATE) return V90M_EINVAL;
     if (c->modulations & ~V90M_MOD_ALL) return V90M_EINVAL;
-    if (c->max_tx_code < 0 || c->max_tx_code > 31 || c->tx_level < 0 || c->max_down_bps < 0 || c->max_up_bps < 0 || c->echo_delay < -1)
+    if (c->max_tx_code < 0 || c->max_tx_code > 31 || c->tx_level < 0 || c->tx_level > V90M_TX_LEVEL_MAX
+        || c->max_down_bps < 0 || c->max_up_bps < 0 || c->echo_delay < -1)
         return V90M_EINVAL;
     if (!c->modulations) return V90M_EINVAL;
     /* V.92 is V.90's start-up with PCM upstream on top, in either role */
@@ -98,6 +99,12 @@ static int check_cfg(const v90m_cfg *c)
         if (c->modulations & ~V90M_MOD_ORIG) return V90M_ENOTSUP;
         /* V.92 is V.90's start-up with PCM upstream on top */
         if ((c->modulations & V90M_MOD_V92) && !(c->modulations & V90M_MOD_V90)) return V90M_ENOTSUP;
+    } else {
+        /* answering, Bell 212A is the fallback of the V.22 answerer */
+        if ((c->modulations & V90M_MOD_BELL212A) && !(c->modulations & V90M_MOD_V22)) return V90M_ENOTSUP;
+        /* x2's and K56flex's upstream is V.34 from 2400 bit/s: a lower ceiling
+         * leaves the client no rate after the point of no return */
+        if ((c->modulations & (V90M_MOD_X2 | V90M_MOD_K56)) && c->max_up_bps > 0 && c->max_up_bps < 2400) return V90M_EINVAL;
     }
     return V90M_OK;
 }
@@ -432,6 +439,32 @@ unsigned long v90m_async_frame_errors(const v90m_async_t *a) { return a ? (unsig
 /* ------------------------------------------------------------------ V.42 */
 struct v90m_ec { int owned; v42ec_t e; };
 
+static int in(int v, int lo, int hi) { return v >= lo && v <= hi; }
+static int flag(int v) { return v == 0 || v == 1; }
+
+/* the ranges of the header: a value the code underneath would clamp to
+ * another is refused (0 only where it means the default or off) */
+static int check_ec_cfg(const v90m_ec_cfg *c)
+{
+    if (!flag(c->originator) || !flag(c->detect) || !flag(c->fallback) || c->t400_ms < 0 || c->establish_ms < 0
+        || !in(c->comp_policy, V90M_COMP_AUTO, V90M_COMP_NEVER))
+        return V90M_EINVAL;
+    if (!flag(c->lapm.use_xid) || !flag(c->lapm.fcs32) || !flag(c->lapm.v42bis_tx) || !flag(c->lapm.v42bis_rx)
+        || !flag(c->lapm.v44_tx) || !flag(c->lapm.v44_rx))
+        return V90M_EINVAL;
+    if (!in(c->lapm.k_tx, 1, V42_MAX_K) || !in(c->lapm.k_rx, 1, 127)
+        || !in(c->lapm.n401_tx, 1, V42_MAX_N401) || !in(c->lapm.n401_rx, 1, V42_MAX_N401))
+        return V90M_EINVAL;
+    if (!in(c->lapm.v42bis_p1, 512, V42COMP_MAX_CODEWORDS) || !in(c->lapm.v42bis_p2, 6, 250))
+        return V90M_EINVAL;
+    if (!in(c->lapm.v44_p1_tx, 256, V44COMP_MAX_CODEWORDS) || !in(c->lapm.v44_p1_rx, 256, V44COMP_MAX_CODEWORDS)
+        || !in(c->lapm.v44_p2_tx, 32, 255) || !in(c->lapm.v44_p2_rx, 32, 255)
+        || !in(c->lapm.v44_p3_tx, 512, V44COMP_MAX_HISTORY) || !in(c->lapm.v44_p3_rx, 512, V44COMP_MAX_HISTORY))
+        return V90M_EINVAL;
+    if (c->lapm.t401_ms < 1 || c->lapm.t403_ms < 0 || c->lapm.n400 < 1) return V90M_EINVAL;
+    return V90M_OK;
+}
+
 static void cfg_in(v42ec_cfg_t *o, const v90m_ec_cfg *c)
 {
     memset(o, 0, sizeof *o);
@@ -475,7 +508,7 @@ int v90m_ec_reset(v90m_ec_t *e, const v90m_ec_cfg *cfg)
 {
     v42ec_cfg_t c;
     int o;
-    if (!e || !cfg) return V90M_EINVAL;
+    if (!e || !cfg || check_ec_cfg(cfg) != V90M_OK) return V90M_EINVAL;
     o = e->owned;
     cfg_in(&c, cfg);
     memset(e, 0, sizeof *e);
@@ -489,7 +522,7 @@ size_t v90m_ec_mem_size(void) { return sizeof(struct v90m_ec); }
 v90m_ec_t *v90m_ec_init(void *mem, size_t len, const v90m_ec_cfg *cfg, int *err)
 {
     v90m_ec_t *e = mem;
-    if (!mem || !cfg || !aligned(mem)) { seterr(err, V90M_EINVAL); return NULL; }
+    if (!mem || !cfg || !aligned(mem) || check_ec_cfg(cfg) != V90M_OK) { seterr(err, V90M_EINVAL); return NULL; }
     if (len < sizeof *e) { seterr(err, V90M_ENOMEM); return NULL; }
     e->owned = 0; v90m_ec_reset(e, cfg); seterr(err, V90M_OK);
     return e;
@@ -498,7 +531,7 @@ v90m_ec_t *v90m_ec_init(void *mem, size_t len, const v90m_ec_cfg *cfg, int *err)
 v90m_ec_t *v90m_ec_create(const v90m_ec_cfg *cfg, int *err)
 {
     v90m_ec_t *e;
-    if (!cfg) { seterr(err, V90M_EINVAL); return NULL; }
+    if (!cfg || check_ec_cfg(cfg) != V90M_OK) { seterr(err, V90M_EINVAL); return NULL; }
     if (!(e = malloc(sizeof *e))) { seterr(err, V90M_ENOMEM); return NULL; }
     e->owned = 1; v90m_ec_reset(e, cfg); seterr(err, V90M_OK);
     return e;
@@ -521,7 +554,8 @@ void   v90m_ec_release(v90m_ec_t *e) { if (e) v42ec_release(&e->e); }
 void   v90m_ec_abort(v90m_ec_t *e) { if (e) v42lapm_abort(&e->e.lapm, V42LAPM_R_LOCAL); }
 int    v90m_ec_send_break(v90m_ec_t *e, int opt, int len10ms)
 {
-    if (!e) return V90M_EINVAL;
+    if (!e || (opt != V90M_BRK_NONDESTRUCTIVE_INSEQ && opt != V90M_BRK_NONDESTRUCTIVE_EXPEDITED
+               && opt != V90M_BRK_DESTRUCTIVE_EXPEDITED)) return V90M_EINVAL;
     return v42ec_send_break(&e->e, opt, len10ms) == 0 ? V90M_OK : V90M_ESTATE;
 }
 int    v90m_ec_get_break(v90m_ec_t *e, int *opt, int *len10ms) { return e ? v42ec_get_break(&e->e, opt, len10ms) : V90M_EINVAL; }

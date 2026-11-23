@@ -505,6 +505,7 @@ void v42ec_line_restored(v42ec_t *e)
 void v42ec_tick(v42ec_t *e, unsigned ms)
 {
     if (e->state == V42EC_DISCONNECTED || e->state == V42EC_ASYNC) return;
+    if (ms > 1000000u) ms = 1000000u;       /* as v42lapm_tick: past every timer, and an int */
 
     if (e->t400 >= 0) {
         e->t400 -= (int)ms;

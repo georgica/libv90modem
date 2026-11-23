@@ -1,6 +1,7 @@
 /* The public API (include/v90modem.h), from the outside: the answering modem
  * comes from libv90modem.a as it is installed (only v90m_* visible); the
  * simulated calling modem and V.14 terminal come from the dev archive. */
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -1723,6 +1724,177 @@ static void test_null(void)
     CHECK_EQ_I(v90m_ec_reset(NULL, &ec), V90M_EINVAL);    /* last: crashed before */
 }
 
+/* ---- configuration ranges (include/v90modem.h, next to each field) ---- */
+/* an API caller at c_level and an API answerer at the highest transmit
+ * level, back to back: 1 when both reach data mode within secs */
+static int lvl_pair(unsigned mods, int alaw, int c_level, int secs, v90m_state *sc, v90m_state *sa)
+{
+    static end_t e[2];
+    long k; int j, ok = 0;
+    int16_t c_rx = 0, a_rx = 0;
+    for (j = 0; j < 2; j++) {
+        v90m_cfg c; int err;
+        memset(&e[j], 0, sizeof e[j]);
+        e[j].a = v90m_async_create(&err);
+        v90m_cfg_default(&c);
+        c.role = j ? V90M_ROLE_ANSWER : V90M_ROLE_ORIGINATE; c.modulations = mods; c.alaw = alaw;
+        c.tx_level = j ? V90M_TX_LEVEL_MAX : c_level;
+        c.getbit = end_get; c.putbit = end_put; c.on_event = end_event; c.user = &e[j];
+        e[j].m = v90m_create(&c, &err);
+        CHECK(e[j].m != NULL);
+    }
+    memset(sc, 0, sizeof *sc); memset(sa, 0, sizeof *sa);
+    for (k = 0; e[0].m && e[1].m && k < 8000L * secs; k++) {
+        int16_t c_tx, a_tx;
+        v90m_process_linear(e[0].m, &c_rx, &c_tx, 1);
+        v90m_process_linear(e[1].m, &a_rx, &a_tx, 1);
+        a_rx = c_tx; c_rx = a_tx;
+        if ((k & 255) == 0) {
+            v90m_get_state(e[0].m, sc); v90m_get_state(e[1].m, sa);
+            if (sc->moving && sa->moving) { ok = 1; break; }
+            if (sc->end || sa->end) break;
+        }
+    }
+    for (j = 0; j < 2; j++) { v90m_destroy(e[j].m); v90m_async_destroy(e[j].a); }
+    return ok;
+}
+
+static void test_cfg_ranges(void)
+{
+    static union { v90m_align a; uint8_t b[V90M_EC_MEM_SIZE]; } ecmem;
+    /* (a calling V.90 modem's V.34 upstream clips at the top: at 16384 its
+     * B1 does not get through on a mu-law line; 15360 does) */
+    static const struct { unsigned mods; int alaw, c_level; const char *what; } lvl[] = {
+        { V90M_MOD_V21, 0, 16384, "V.21" }, { V90M_MOD_V22, 0, 16384, "V.22bis" },
+        { V90M_MOD_V32BIS, 0, 16384, "V.32bis" }, { V90M_MOD_V34, 0, 16384, "V.34" },
+        { V90M_MOD_V90 | V90M_MOD_V34, 0, 15360, "V.90" }, { V90M_MOD_V90 | V90M_MOD_V34, 1, 16384, "V.90 A-law" },
+    };
+    v90m_cfg c, bad; v90m_t *m; v90m_ec_cfg ec, eb; v90m_ec_t *e; v90m_state sc, sa;
+    int err, k, j;
+
+    /* tx_level: 0..V90M_TX_LEVEL_MAX */
+    CHECK_EQ_I(V90M_TX_LEVEL_MAX, 16384);
+    v90m_cfg_default(&c);
+    for (j = 0; j < 2; j++) {
+        c.role = j ? V90M_ROLE_ORIGINATE : V90M_ROLE_ANSWER;
+        bad = c; bad.tx_level = INT_MAX;  CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
+        bad = c; bad.tx_level = 16385;    CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
+        bad = c; bad.tx_level = 16384;    m = v90m_create(&bad, &err); CHECK(m != NULL); CHECK_EQ_I(err, V90M_OK); v90m_destroy(m);
+        bad = c; bad.tx_level = 0;        m = v90m_create(&bad, &err); CHECK(m != NULL); v90m_destroy(m);
+    }
+    /* ... at which every modulation connects */
+    for (k = 0; k < (int)(sizeof lvl / sizeof lvl[0]); k++) {
+        int ok = lvl_pair(lvl[k].mods, lvl[k].alaw, lvl[k].c_level, 40, &sc, &sa);
+        printf("  tx_level %d (the caller %d), %s back to back: %s (%d / %d bit/s)\n", V90M_TX_LEVEL_MAX, lvl[k].c_level,
+               lvl[k].what, ok ? "data mode" : "no data mode", sa.tx_bps, sa.rx_bps);
+        CHECK(ok);
+    }
+    {
+        /* V.22 at 1200 bit/s: the answerer at 16384, a V.22 caller (sim) */
+        static call_t k; v90m_cfg c2; int16_t l[160]; int f;
+        call_init(&k);
+        v90m_destroy(k.m);
+        v90m_cfg_default(&c2); c2.modulations = V90M_MOD_V22 | V90M_MOD_V21; c2.tx_level = V90M_TX_LEVEL_MAX;
+        c2.getbit = async_get; c2.putbit = async_put; c2.on_event = on_event; c2.user = &k;
+        k.m = v90m_create(&c2, &err);
+        callpeer_init(&k.c, 1, V8_MOD_V22 | V8_MOD_V21, 0, 3000);
+        memset(l, 0, sizeof l);
+        for (f = 0; f < 50 * 15 && k.m; f++) call_run(&k, l, 160, 160);
+        v90m_get_state(k.m, &sa);
+        printf("  tx_level %d, V.22 (a caller without 2400): %s %d bit/s\n", V90M_TX_LEVEL_MAX,
+               sa.modulation == V90M_CONN_V22 ? "V.22" : "?", sa.tx_bps);
+        CHECK_EQ_I(sa.connected, 1); CHECK_EQ_I(sa.modulation, V90M_CONN_V22); CHECK_EQ_I(sa.tx_bps, 1200);
+        v90m_destroy(k.m); v90m_async_destroy(k.a);
+    }
+    {
+        /* the mu-law V.90 caller at 16384 too: clipped, not wrapped; the call
+         * ends with a defined end code */
+        int ok = lvl_pair(V90M_MOD_V90 | V90M_MOD_V34, 0, 16384, 40, &sc, &sa);
+        printf("  tx_level %d both, V.90 back to back: %s, answerer end %d\n", V90M_TX_LEVEL_MAX,
+               ok ? "data mode" : "no data mode", (int)sa.end);
+        CHECK(ok || sa.end != V90M_END_NONE || sc.end != V90M_END_NONE);
+    }
+    /* x2, K56flex: an upstream ceiling under 2400 leaves the client no rate */
+    for (j = 0; j < 2; j++) {
+        v90m_cfg_default(&c); c.modulations = V90M_MOD_V34 | (j ? V90M_MOD_K56 : V90M_MOD_X2);
+        bad = c; bad.max_up_bps = 2399; CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
+        bad = c; bad.max_up_bps = 1;    CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
+        bad = c; bad.max_up_bps = 2400; m = v90m_create(&bad, &err); CHECK(m != NULL); v90m_destroy(m);
+        bad = c; bad.max_up_bps = 0;    m = v90m_create(&bad, &err); CHECK(m != NULL); v90m_destroy(m);
+    }
+    /* Bell 212A answering only with V.22 (calling: on its own too) */
+    v90m_cfg_default(&c);
+    c.modulations = V90M_MOD_BELL212A;                  CHECK(v90m_create(&c, &err) == NULL); CHECK_EQ_I(err, V90M_ENOTSUP);
+    c.modulations = V90M_MOD_BELL212A | V90M_MOD_V21;   CHECK(v90m_create(&c, &err) == NULL); CHECK_EQ_I(err, V90M_ENOTSUP);
+    c.role = V90M_ROLE_ORIGINATE; c.modulations = V90M_MOD_BELL212A;
+    m = v90m_create(&c, &err); CHECK(m != NULL); v90m_destroy(m);
+
+    /* V.42: each value out of range, through create, init and reset */
+    v90m_ec_cfg_default(&ec, 1);
+    e = v90m_ec_create(&ec, &err); CHECK(e != NULL);
+    for (k = 0; ; k++) {
+        v90m_ec_t *x; int r;
+        eb = ec;
+        switch (k) {
+        case 0: eb.comp_policy = 3; break;
+        case 1: eb.comp_policy = -1; break;
+        case 2: eb.establish_ms = -1; break;
+        case 3: eb.lapm.t403_ms = -1; break;
+        case 4: eb.lapm.v42bis_p1 = 4096; break;
+        case 5: eb.lapm.v42bis_p1 = 2049; break;
+        case 6: eb.lapm.v42bis_p1 = 511; break;
+        case 7: eb.lapm.v42bis_p2 = 5; break;
+        case 8: eb.lapm.v42bis_p2 = 251; break;
+        case 9: eb.originator = 2; break;
+        case 10: eb.detect = -1; break;
+        case 11: eb.fallback = 2; break;
+        case 12: eb.t400_ms = -1; break;
+        case 13: eb.lapm.use_xid = 2; break;
+        case 14: eb.lapm.k_tx = 0; break;
+        case 15: eb.lapm.k_tx = 33; break;
+        case 16: eb.lapm.k_rx = 128; break;
+        case 17: eb.lapm.n401_tx = 257; break;
+        case 18: eb.lapm.n401_rx = 0; break;
+        case 19: eb.lapm.fcs32 = 2; break;
+        case 20: eb.lapm.v42bis_tx = 2; break;
+        case 21: eb.lapm.v44_rx = -1; break;
+        case 22: eb.lapm.v44_p1_tx = 2049; break;
+        case 23: eb.lapm.v44_p1_rx = 255; break;
+        case 24: eb.lapm.v44_p2_tx = 31; break;
+        case 25: eb.lapm.v44_p2_rx = 256; break;
+        case 26: eb.lapm.v44_p3_tx = 4097; break;
+        case 27: eb.lapm.v44_p3_rx = 511; break;
+        case 28: eb.lapm.t401_ms = 0; break;
+        case 29: eb.lapm.n400 = 0; break;
+        case 30: eb.lapm.v42bis_rx = 2; break;
+        case 31: eb.lapm.v44_tx = 2; break;
+        default: break;
+        }
+        if (k > 31) break;
+        err = 99; x = v90m_ec_create(&eb, &err);
+        r = err; v90m_ec_destroy(x);
+        if (x != NULL || r != V90M_EINVAL) printf("  V.42 value %d accepted by create\n", k);
+        CHECK(x == NULL); CHECK_EQ_I(r, V90M_EINVAL);
+        err = 99; CHECK(v90m_ec_init(ecmem.b, sizeof ecmem.b, &eb, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
+        if (e) CHECK_EQ_I(v90m_ec_reset(e, &eb), V90M_EINVAL);
+    }
+    /* the edges themselves are fine */
+    eb = ec; eb.lapm.v42bis_p1 = 2048; eb.lapm.v42bis_p2 = 250; eb.lapm.k_tx = 32; eb.lapm.k_rx = 127;
+    eb.lapm.n401_tx = eb.lapm.n401_rx = 256; eb.establish_ms = 0; eb.t400_ms = 0;
+    eb.lapm.v44_p1_tx = 2048; eb.lapm.v44_p3_rx = 4096; eb.lapm.v44_p2_tx = 255;
+    if (e) CHECK_EQ_I(v90m_ec_reset(e, &eb), V90M_OK);
+    eb = ec; eb.lapm.v42bis_p1 = 512; eb.lapm.v42bis_p2 = 6; eb.lapm.k_tx = 1; eb.lapm.n401_tx = 1;
+    eb.lapm.v44_p1_rx = 256; eb.lapm.v44_p2_rx = 32; eb.lapm.v44_p3_tx = 512; eb.lapm.t401_ms = 1; eb.lapm.n400 = 1;
+    if (e) CHECK_EQ_I(v90m_ec_reset(e, &eb), V90M_OK);
+    /* a break option V.42 12.3.1 does not define */
+    if (e) {
+        CHECK_EQ_I(v90m_ec_send_break(e, 0x80, 10), V90M_EINVAL);
+        CHECK_EQ_I(v90m_ec_send_break(e, 0x01, 10), V90M_EINVAL);
+        CHECK_EQ_I(v90m_ec_send_break(e, V90M_BRK_NONDESTRUCTIVE_INSEQ, 10), V90M_ESTATE);   /* valid, not up */
+    }
+    v90m_ec_destroy(e);
+}
+
 int main(void)
 {
     test_cfg();
@@ -1742,5 +1914,6 @@ int main(void)
     test_callbacks();
     test_block_sizes();
     test_null();
+    test_cfg_ranges();
     T_REPORT("api");
 }

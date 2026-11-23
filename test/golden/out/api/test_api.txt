@@ -42,4 +42,12 @@
   A-law: reset from the callback -4 at sample 266202; destroy from it, the rest of the block silent
   linear, caller's memory: reset from the callback -4 at sample 266202; destroy from it, the rest of the block silent
   V.90, the answerer in blocks of 1, 160, 4000: end 4 4 4, 4 events, cleardown from the callback 0, samples the same
-api: 651 checks, 0 failures
+  tx_level 16384 (the caller 16384), V.21 back to back: data mode (300 / 300 bit/s)
+  tx_level 16384 (the caller 16384), V.22bis back to back: data mode (2400 / 2400 bit/s)
+  tx_level 16384 (the caller 16384), V.32bis back to back: data mode (14400 / 14400 bit/s)
+  tx_level 16384 (the caller 16384), V.34 back to back: data mode (24000 / 26400 bit/s)
+  tx_level 16384 (the caller 15360), V.90 back to back: data mode (49333 / 28800 bit/s)
+  tx_level 16384 (the caller 16384), V.90 A-law back to back: data mode (56000 / 24000 bit/s)
+  tx_level 16384, V.22 (a caller without 2400): V.22 1200 bit/s
+  tx_level 16384 both, V.90 back to back: no data mode, answerer end 1
+api: 873 checks, 0 failures

@@ -131,6 +131,24 @@ Changed (API: callbacks, NULL, configuration checks):
   `v90m_async_*` functions crashed. The four per-bit functions
   (`v90m_ec_tx_bit`, `v90m_ec_rx_bit`, `v90m_async_getbit`,
   `v90m_async_putbit`) are not checked: their object must not be NULL.
+- `tx_level` above `V90M_TX_LEVEL_MAX` (16384, new) is `V90M_EINVAL`: a
+  larger one overflowed (`INT_MAX`: undefined behaviour) or wrapped the
+  16-bit tone amplitude (from 23171 up: a sign-flipped, clipped answer
+  tone).
+- Answering with x2 or K56flex, `max_up_bps` 1..2399 is `V90M_EINVAL`: it
+  left the client no upstream rate after the point of no return, and the
+  call ended `V90M_END_X2_FAILED` / `V90M_END_K56_FAILED`.
+- Answering, `V90M_MOD_BELL212A` without `V90M_MOD_V22` is `V90M_ENOTSUP`
+  (it was accepted and Bell 212A never offered).
+- `v90m_ec_create`, `v90m_ec_init`, `v90m_ec_reset` check the
+  configuration: a value outside the ranges now written next to each field
+  of `v90m_ec_cfg` is `V90M_EINVAL` (it was clamped or taken as something
+  else: `comp_policy` 3 as AUTO, `establish_ms` < 0 as never, `t403_ms` < 0
+  as off, `v42bis_p1` above 2048 agreed but not run, and so on).
+- `v90m_ec_send_break` with an `opt` other than the three `V90M_BRK_*` is
+  `V90M_EINVAL` (0x80 went out as a combination V.42 does not define).
+- `v90m_ec_tick` with `ms` above `INT_MAX` expires the timers (it extended
+  them).
 
 ## 0.5.0 (2026-11-21)
 

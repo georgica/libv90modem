@@ -213,7 +213,8 @@ uint8_t answer_tick_pcm(answer_t *a, uint8_t rx);
  * quantiser. Set cfg.rx_linear with it. */
 uint8_t answer_tick_lin(answer_t *a, int16_t rx);
 /* optional, between answer_init and the first tick: Phase 2 parameters other
- * than the defaults (-12 dBm0, mu-law, no I/O delay, 3200 and 3000 symbols/s) */
+ * than the defaults (-12 dBm0, mu-law, no I/O delay, 3200 and 3000 symbols/s);
+ * after the first tick it changes nothing */
 void    answer_v90_cfg(answer_t *a, const p2d_cfg *cfg);
 /* optional, likewise (V.92, V.90 and V.34; for V.34 max_down is the ceiling of
  * what we send, max_up of what we receive): echo_delay = samples from handing a codeword to the

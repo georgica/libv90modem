@@ -1157,8 +1157,42 @@ static void x2_tests(void)
 
 #endif
 
+/* answer_v90_cfg after the first sample changes nothing: neither what is
+ * offered nor the phase (it re-ran the offers: K56flex's flag overwritten,
+ * x2 withdrawn, and V.8bis begun again when called as V.8 follows it) */
+static void cfg_after_start_tests(void)
+{
+    answer_cfg ac;
+    p2d_cfg pc;
+    long n;
+    int k56, x2, ph;
+    memset(&ac, 0, sizeof ac);
+    ac.level = 3000; ac.modes = BASE | ANS_MODE_K56 | ANS_MODE_X2; ac.getbit = p_get; ac.putbit = p_put; ac.user = &UA;
+    /* before the first sample: the law decides the offers */
+    answer_init(&A, &ac);
+    CHECK_EQ_I(A.k56_offered, 1); CHECK_EQ_I(A.x2_offered, 1); CHECK_EQ_I(A.phase, ANS_V8BIS);
+    pc = A.p2cfg; pc.alaw = 1; answer_v90_cfg(&A, &pc);
+    CHECK_EQ_I(A.k56_offered, 0); CHECK_EQ_I(A.x2_offered, 0); CHECK_EQ_I(A.phase, ANS_V8);
+    /* after it: nothing changes */
+    answer_init(&A, &ac);
+    (void)answer_tick(&A, 0);
+    k56 = A.k56_offered; x2 = A.x2_offered; ph = A.phase;
+    pc = A.p2cfg; pc.alaw = 1; answer_v90_cfg(&A, &pc);
+    CHECK_EQ_I(A.k56_offered, k56); CHECK_EQ_I(A.x2_offered, x2); CHECK_EQ_I(A.phase, ph);
+    CHECK_EQ_I(A.p2cfg.alaw, 0);
+    /* nor at the sample V.8 follows V.8bis (its clock starts at 0 again) */
+    answer_init(&A, &ac);
+    for (n = 0; n < MS(20000) && A.phase == ANS_V8BIS; n++) (void)answer_tick(&A, 0);
+    CHECK_EQ_I(A.phase, ANS_V8);
+    pc = A.p2cfg; answer_v90_cfg(&A, &pc);
+    CHECK_EQ_I(A.phase, ANS_V8);
+    CHECK_EQ_I(A.k56_offered, 1);
+    printf("  answer_v90_cfg after the first sample: offers and phase kept (V.8 after V.8bis at %.2f s)\n", n / 8000.0);
+}
+
 int main(void)
 {
+    cfg_after_start_tests();
     k56_client_tests();
     k56_data_tests();
     k56_rate_tests();

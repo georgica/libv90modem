@@ -45,7 +45,7 @@ Negative returns.
 |---|---|---|
 | `V90M_OK` | 0 | |
 | `V90M_EINVAL` | -1 | a NULL or misaligned argument, or a configuration value out of range |
-| `V90M_ENOTSUP` | -2 | a combination not implemented in this version (V.92 without V.90) |
+| `V90M_ENOTSUP` | -2 | a combination not implemented in this version: V.92 without V.90; x2 or K56flex without V.34, or calling; answering Bell 212A without V.22; calling, no modulation the calling role has |
 | `V90M_ENOMEM` | -3 | create could not allocate, or init was given too little memory |
 | `V90M_ESTATE` | -4 | not possible in the present state of the call |
 
@@ -78,9 +78,9 @@ version; the init functions check the length given):
 | `modulations` | `V90M_MOD_*`; default all but V.92, Bell, x2 and K56flex. Either role: at least one (0 gives `V90M_EINVAL`), and V.92 only with V.90 (else `V90M_ENOTSUP`); x2 and K56flex answering only and with V.34 (else `V90M_ENOTSUP`) |
 | `alaw` | the codec's law: 0 mu-law, 1 A-law |
 | `codec_linear_rx` | answering: 1 = the codec receives in 16-bit linear, with no G.711 quantiser on the receive path (V.92 then designs the upstream constellation without its share of the noise); 0 = the received samples went through G.711, also when handed over as linear values. Calling: unused |
-| `tx_level` | transmit RMS outside PCM modes, 16-bit units, >= 0; default 3000 |
+| `tx_level` | transmit RMS outside PCM modes, 16-bit units, 0 .. `V90M_TX_LEVEL_MAX` (16384; else `V90M_EINVAL`); default 3000. Near the top the peaks of V.34-family signals clip: a calling V.90 modem at 16384 does not get through its training back to back, at 15360 it does |
 | `max_tx_code` | answering, V.90 / V.92: the most downstream power the caller may ask for, -0.5 dBm0 less 0.5 dB per step, 1..31; 0 = 23 (-12 dBm0). Calling: unused (0..31 accepted) |
-| `max_down_bps`, `max_up_bps` | rate ceilings, bit/s, >= 0; 0 = none. `max_down` caps what we send, `max_up` what we receive (named from the answering, server side), in V.34, V.90 and V.92, either role: V.92's PCM upstream (up to 48000) under `max_up` answering, `max_down` calling; 33600 holds it at 33333. V.32bis (either role): one rate both ways, under the lower of the two. V.21, V.22, V.22bis, Bell: unused |
+| `max_down_bps`, `max_up_bps` | rate ceilings, bit/s, >= 0; 0 = none. `max_down` caps what we send, `max_up` what we receive (named from the answering, server side), in V.34, V.90 and V.92, either role: V.92's PCM upstream (up to 48000) under `max_up` answering, `max_down` calling; 33600 holds it at 33333. V.32bis (either role): one rate both ways, under the lower of the two. V.21, V.22, V.22bis, Bell: unused. With x2 or K56flex, `max_up` 1..2399 is `V90M_EINVAL` (their V.34 upstream starts at 2400) |
 | `echo_delay` | samples from a sample leaving to its echo starting back (the driver's buffering), >= 0; -1 = measure it in every start-up. Calling V.90 / V.92: never measured, used as given, 0 .. 511 (-1 taken as 0); see [line-interface.md](line-interface.md) |
 | `getbit` | `int (*)(void *user)`: the next bit to send, 0 or 1 |
 | `putbit` | `void (*)(void *user, int bit)`: a bit received |
@@ -99,7 +99,7 @@ version; the init functions check the length given):
 | `V90M_MOD_V90` | 0x0010 | answering: the digital (server) side; calling: the analogue (client) side |
 | `V90M_MOD_V92` | 0x0020 | with `V90M_MOD_V90` (alone: `V90M_ENOTSUP`): PCM upstream on offer (answering), or asked for (calling); not in the defaults |
 | `V90M_MOD_BELL103` | 0x0040 | not in the defaults, either role |
-| `V90M_MOD_BELL212A` | 0x0080 | not in the defaults, either role; answering only with `V90M_MOD_V22` |
+| `V90M_MOD_BELL212A` | 0x0080 | not in the defaults, either role; answering only with `V90M_MOD_V22` (without: `V90M_ENOTSUP`) |
 | `V90M_MOD_X2` | 0x0100 | answering only (calling: `V90M_ENOTSUP`), with `V90M_MOD_V34` (without: `V90M_ENOTSUP`), not in the defaults: x2 as its server, offered on a mu-law line to a caller whose CM offers V.34 and no PCM; see [answering.md](answering.md), "x2" |
 | `V90M_MOD_K56` | 0x0200 | answering only (calling: `V90M_ENOTSUP`), with `V90M_MOD_V34` (without: `V90M_ENOTSUP`), not in the defaults; experimental: K56flex as its server, offered on a mu-law line in V.8bis before V.8 (every caller then hears our answer tone later: 1.790 s without V.8bis, 3.807 s for a V.8bis caller without K56flex, 3.413 s for a K56flex client); see [answering.md](answering.md), "K56flex" |
 
@@ -245,30 +245,34 @@ control) when the far end has no V.42 and fallback is on. How to use it:
 | field | |
 |---|---|
 | `originator` | 1 = the calling end, 0 = the answering end |
-| `detect` | run the detection phase (V.42 7.2.1) |
+| `detect` | run the detection phase (V.42 7.2.1), 0..1 |
 | `fallback` | when detection fails: 1 = start-stop, 0 = disconnect |
-| `t400_ms` | detection phase timer, default 750 |
-| `establish_ms` | answerer: give up when no SABME comes this long after detection; 0 = never |
+| `t400_ms` | detection phase timer, >= 0; 0 = the default, 750 |
+| `establish_ms` | answerer: give up when no SABME comes this long after detection, >= 0; 0 = never |
 | `comp_policy` | `V90M_COMP_AUTO` (0) / `V90M_COMP_ALWAYS` (1) / `V90M_COMP_NEVER` (2) for our encoder |
-| `lapm.use_xid` | originator: negotiate with XID before SABME |
-| `lapm.k_tx`, `lapm.k_rx` | window |
-| `lapm.n401_tx`, `lapm.n401_rx` | information field, octets |
-| `lapm.fcs32` | |
-| `lapm.v42bis_tx`, `lapm.v42bis_rx` | V.42bis wanted, our send / receive direction |
-| `lapm.v42bis_p1`, `lapm.v42bis_p2` | codewords (512..), string length (6..250) |
-| `lapm.v44_tx`, `lapm.v44_rx` | V.44 wanted (preferred over V.42bis) |
-| `lapm.v44_p1_tx` ... `lapm.v44_p3_rx` | V.44 parameters per direction |
-| `lapm.t401_ms`, `lapm.t403_ms`, `lapm.n400` | |
+| `lapm.use_xid` | originator: negotiate with XID before SABME, 0..1 |
+| `lapm.k_tx`, `lapm.k_rx` | window, 1..32 (`k_tx`), 1..127 (`k_rx`) |
+| `lapm.n401_tx`, `lapm.n401_rx` | information field, octets, 1..256 |
+| `lapm.fcs32` | 0..1 |
+| `lapm.v42bis_tx`, `lapm.v42bis_rx` | V.42bis wanted, our send / receive direction, 0..1 |
+| `lapm.v42bis_p1`, `lapm.v42bis_p2` | codewords 512..2048, string length 6..250 |
+| `lapm.v44_tx`, `lapm.v44_rx` | V.44 wanted (preferred over V.42bis), 0..1 |
+| `lapm.v44_p1_tx`, `lapm.v44_p1_rx` | V.44 codewords, 256..2048 |
+| `lapm.v44_p2_tx`, `lapm.v44_p2_rx` | V.44 string length, 32..255 |
+| `lapm.v44_p3_tx`, `lapm.v44_p3_rx` | V.44 history, octets, 512..4096 |
+| `lapm.t401_ms`, `lapm.t403_ms`, `lapm.n400` | `t401_ms` >= 1; `t403_ms` >= 0, 0 = off; `n400` >= 1 |
+
+A value outside these ranges is `V90M_EINVAL` from create, init and reset.
 
 ### Functions
 
 | | |
 |---|---|
 | `void v90m_ec_cfg_default(v90m_ec_cfg *cfg, int originator)` | |
-| `v90m_ec_t *v90m_ec_create(const v90m_ec_cfg *cfg, int *err)` | NULL on failure, `*err` as for `v90m_create` (the configuration's values are not checked) |
+| `v90m_ec_t *v90m_ec_create(const v90m_ec_cfg *cfg, int *err)` | NULL on failure, `*err` as for `v90m_create` (`V90M_EINVAL` for a value outside the ranges above) |
 | `size_t v90m_ec_mem_size(void)` | |
 | `v90m_ec_t *v90m_ec_init(void *mem, size_t len, const v90m_ec_cfg *cfg, int *err)` | `*err` as for `v90m_init` |
-| `int v90m_ec_reset(v90m_ec_t *e, const v90m_ec_cfg *cfg)` | `V90M_OK`, or `V90M_EINVAL` for e or cfg NULL |
+| `int v90m_ec_reset(v90m_ec_t *e, const v90m_ec_cfg *cfg)` | `V90M_OK`, or `V90M_EINVAL` for e or cfg NULL or a value outside the ranges, the endpoint left as it was |
 | `void v90m_ec_destroy(v90m_ec_t *e)` | NULL is fine |
 | `int v90m_ec_tx_bit(v90m_ec_t *e)` | from the modem's getbit |
 | `void v90m_ec_rx_bit(v90m_ec_t *e, int bit)` | from the modem's putbit |
@@ -283,7 +287,7 @@ control) when the far end has no V.42 and fallback is on. How to use it:
 | `int v90m_ec_tx_busy(const v90m_ec_t *e)` | a frame is still leaving the transmitter |
 | `void v90m_ec_release(v90m_ec_t *e)` | orderly: DISC, wait for UA |
 | `void v90m_ec_abort(v90m_ec_t *e)` | the line is gone: stop without a word |
-| `int v90m_ec_send_break(v90m_ec_t *e, int opt, int len10ms)` | V.42 12.3.1; `V90M_OK` when the break is on its way; `V90M_ESTATE` when error control is not up (`V90M_EC_CONNECTED`) or a break of ours is still pending |
+| `int v90m_ec_send_break(v90m_ec_t *e, int opt, int len10ms)` | V.42 12.3.1; `V90M_OK` when the break is on its way; `V90M_EINVAL` for an `opt` other than the three `V90M_BRK_*`; `V90M_ESTATE` when error control is not up (`V90M_EC_CONNECTED`) or a break of ours is still pending |
 | `int v90m_ec_get_break(v90m_ec_t *e, int *opt, int *len10ms)` | 1 with `*opt` and `*len10ms` when a break came (in its place among the octets read), else 0 |
 | `int v90m_ec_state(const v90m_ec_t *e)` | `V90M_EC_DETECT` ... |
 | `void v90m_ec_get_status(const v90m_ec_t *e, v90m_ec_status *st)` | |
