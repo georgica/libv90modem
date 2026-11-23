@@ -12,7 +12,7 @@ a rate renegotiation begun by the digital modem
 cleardown by us
   ours 5 (error 12) after 298 ms; digital 12 (error 9)
 cleardown by the digital modem
-  ours 5 (error 11) after 245 ms
+  ours 5 (error 11) after 364 ms
   downstream: 14868 bits sent, 0 not received
 our cleardown (CPu), answered by a retrain of the digital modem's (R3)
   ours 5 (error 12) after 299 ms; Phase 2 entered 0; digital in Phase 2 1

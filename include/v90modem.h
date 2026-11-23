@@ -300,7 +300,8 @@ int      v90m_process_linear(v90m_t *m, const int16_t *rx, int16_t *tx, size_t n
 int      v90m_retrain(v90m_t *m);
 /* Hang up, telling the far modem where the modulation has a way to (V.90
  * 9.7, V.92 9.11, V.34 11.7, either role): V90M_OK when that has begun
- * (V90M_EV_ENDED follows within a fraction of a second); V90M_ESTATE when
+ * (V90M_EV_ENDED follows within a fraction of a second; V.92 answering: up
+ * to 3.5 s when the caller does not acknowledge the drn = 0); V90M_ESTATE when
  * there is nothing to send (V.21, V.22, V.22bis, V.32bis, Bell, or not in
  * data mode): just stop calling v90m_process_*. x2 and K56flex (answering,
  * in data mode or a rate change): V90M_OK, and the call ends at once with

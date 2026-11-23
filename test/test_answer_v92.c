@@ -240,9 +240,9 @@ int main(void)
     CHECK_EQ_I(A.rx_bitrate, 33333);
     data_ok("V.92 caller, ceilings 44000 / 33600", ANS_MOD_V92);
     /* ---- 3b. our cleardown when the caller no longer hears us (it goes on
-     * sending data, but our Rd never reaches it, nor its Ru us): the CPd
-     * with drn = 0 goes out all the same and the call ends as our
-     * cleardown, in the time that takes; no retrain ---- */
+     * sending data, but our Rd never reaches it, nor its Ru us): Rd,
+     * TRN2d and SUVd go out all the same, no SUVu comes, and the call ends
+     * as our cleardown at the cleardown's limit; no retrain ---- */
     deaf = 1;
     run(800);
     CHECK_EQ_I(answer_cleardown(&A), 0);

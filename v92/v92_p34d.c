@@ -18,7 +18,6 @@
 #define RENEG_TRN2D    48       /* data frames of TRN2d in a rate renegotiation */
 #define RENEG_REFINE   600
 #define RD_UNITS       64       /* Rd for 384 T */
-#define CLEAR_CPDS     4        /* CPd sequences with drn = 0 before we go silent */
 #define RU_FLOOR       24       /* linear RMS below which Ru / Su are not looked for */
 #define DOWN_RMS       5600     /* downstream data power assumed for the echo: -9 dBm0 */
 
@@ -29,7 +28,8 @@
 #define T_TRAIN_MS     8000     /* 9.5.2.1.11: CPt within 5000 ms of Su-bar */
 #define T_PHASE4_MS    20000    /* 9.6.1.2.1: B1u within 20 s (+ 6 round trips) */
 #define T_RENEG_MS     8000
-#define T_CLEAR_MS     4000     /* our cleardown: Rd, TRN2d and CLEAR_CPDS CPds take under a second */
+#define T_CLEAR_MS     3500     /* our cleardown from its start, the caller there or not (with a
+                                   caller that acknowledges: some 0.3 s in simulation) */
 #define BASE_MAX_Q4    (1024 << 4)  /* the baseline is followed this far from zero, linear units Q4 */
 #define SUVD_HOLD_MS   2500     /* SUVd at the latest so long into Phase 4, the design done or not */
 #define T_PACE_MS      2500     /* more for each sample the design waits between steps */
@@ -47,7 +47,9 @@
 
 static void fail(v92d_t *p, int err)
 {
-    p->state = V92D_FAILED; p->error = err; p->t = 0;
+    /* the host has asked to hang up: however the call ends now, it is our
+     * cleardown */
+    p->state = V92D_FAILED; p->error = p->clearing ? V92D_ERR_HANGUP : err; p->t = 0;
     p->tx_ready = p->rx_ready = 0; p->rx_on = 0; p->trn_on = 0;
     (void)v90tx_select(&p->tx, V90TX_SILENCE);
 }
@@ -389,7 +391,7 @@ static void seq_bit(v92d_t *p, int bit, int32_t m, int last_of_symbol)
                 p->m_trn2u = m + 1;
             } else if (p->want == W_PH4) {
                 p->got_e2u = 1;
-                upstream_start(p, m + 1);
+                if (!p->clearing) upstream_start(p, m + 1);     /* (drn = 0: no data follows) */
             }
             p->fn = 0; p->ones = 0;
             return;
@@ -636,7 +638,7 @@ static void reneg_begin(v92d_t *p, int ours)
     p->tx_ready = 0; if (!ours) p->rx_ready = 0;
     p->in_reneg = 1; p->reneg_ours = ours; p->revs = 0;
     p->got_suvu = p->got_cpu = p->got_ack = p->got_e2u = 0;
-    p->cpd_sent = p->cpd_repeat = 0; p->t_cpd = 0;
+    p->cpd_sent = 0; p->t_cpd = 0;
     p->dsn_state = 0;
     if (ours) (void)v90tx_select(&p->tx, V90TX_RD);     /* on the next data frame boundary */
     enter(p, V92D_RENEG);
@@ -925,7 +927,7 @@ uint8_t v92d_tick(v92d_t *p, int16_t rxs)
         if (p->got_e1u) {
             if (p->ja.dil.n > 0) (void)v90tx_select(&p->tx, V90TX_RI_BAR);          /* 9.5.1.1.12 */
             p->got_suvu = p->got_cpu = p->got_ack = p->got_e2u = 0;
-            p->cpd_sent = p->cpd_repeat = 0; p->t_cpd = 0; p->dsn_state = 0;
+            p->cpd_sent = 0; p->t_cpd = 0; p->dsn_state = 0;
             enter(p, V92D_PH4);
         } else if ((int64_t)p->t > MS(T_TRAIN_MS) + p->cfg.rtd) {
             fail(p, V92D_ERR_CPT);
@@ -968,7 +970,11 @@ uint8_t v92d_tick(v92d_t *p, int16_t rxs)
                 if (v90tx_units(&p->tx) >= (uint32_t)(p->in_reneg ? RENEG_TRN2D : TRN2D_FRAMES)) sel(p, suvd);
             } else if ((sig == V90TX_SUVD_ACK || sig == V90TX_CPD_ACK) && v90tx_units(&p->tx) >= 1
                        && (p->got_ack || p->got_e2u) && v90tx_pending(&p->tx) == V90TX_NONE) {
-                /* 9.6.1.1.4: Ed, then B1d and data by themselves */
+                /* 9.6.1.1.4: Ed, then B1d and data by themselves. In our
+                 * cleardown this is where it is done: the caller has
+                 * acknowledged our CPd with drn = 0 and has our SUVd', and
+                 * no data mode follows drn = 0 (9.11): silence, not Ed */
+                if (p->clearing) { fail(p, V92D_ERR_HANGUP); break; }
                 v90tx_set_getbit(&p->tx, p->cfg.getbit, p->cfg.user);
                 (void)v90tx_select(&p->tx, V90TX_ED);
                 enter(p, V92D_ED);
@@ -980,17 +986,20 @@ uint8_t v92d_tick(v92d_t *p, int16_t rxs)
                  * with silence, seven calls of seven, and a plain one never. */
                 if (p->got_suvu && !p->cpd_sent) sel(p, V90TX_CPD);
                 else if (p->cpd_sent == 2 && !p->got_ack
-                         && clk_diff(p->now, p->t_cpd) > MS(100) + p->cfg.rtd + 1200) { p->cpd_repeat = 1; sel(p, cpd); }   /* 9.6.1.1.3 */
+                         && clk_diff(p->now, p->t_cpd) > MS(100) + p->cfg.rtd + 1200) sel(p, cpd);     /* 9.6.1.1.3 */
                 else if (sig != suvd) sel(p, suvd);                                 /* the acknowledge bit */
             } else if (is_cpd) {
                 /* one CPd at a time, then SUVd: a repeat of 9.6.1.1.3 too,
-                 * with SUVd between the copies until it is answered (Figure
-                 * 14 draws CPd, then SUVd until CPu'; an Agere engine cleared
-                 * down on CPds sent back to back) */
+                 * with SUVd between the copies until it is answered. That is
+                 * 9.6.1.1.2's single CPd followed by SUVd, once per copy
+                 * (9.6.1.1.3 says only "repeated CPd sequences", and Figures
+                 * 12 to 14 draw no repeat); an Agere engine cleared down on
+                 * CPds sent back to back */
                 p->cpd_sent = 1;
                 sel(p, suvd);
             }
         }
+        if (p->state == V92D_PH4 && p->clearing && clk_diff(p->now, p->t_clear) > MS(T_CLEAR_MS)) fail(p, V92D_ERR_HANGUP);
         if (p->state == V92D_PH4 && (int64_t)p->t > MS(p->in_reneg ? T_RENEG_MS + pace_ms(p) : T_PHASE4_MS) + 6 * p->cfg.rtd) {
             if (p->in_reneg) retrain(p, 1); else fail(p, V92D_ERR_CPU);
         }
@@ -1030,26 +1039,29 @@ uint8_t v92d_tick(v92d_t *p, int16_t rxs)
     case V92D_RENEG:
         /* until Ru-bar the caller sends data or Ru: a signal that dies away
          * can look like the start of Ru to the detector (in our cleardown
-         * the CPds end it in time, the caller there or not) */
+         * T_CLEAR_MS ends it in time, the caller there or not) */
         if (!p->revs && !p->clearing && carrier_lost(p, rxs, x)) { fail(p, V92D_ERR_CARRIER); break; }
         r = v92_p6_tick(&p->p6, x, RU_FLOOR);
         if (line_idle(p, rxs)) r = 0;           /* our own Rd, Rd-bar on a dead line */
         if (r && p->rx_ready) ru_heard(p);     /* Ru: no more data (what came before it, whole) */
         if ((r & V92_P6_REV) && !p->revs) {
             p->revs = 1;
-            if (!p->clearing) reneg_resume(p);
+            reneg_resume(p);
             if (!p->reneg_ours) (void)v90tx_select(&p->tx, V90TX_RD);   /* 9.8.1.2.2 */
         }
         /* Rd for 384 T, then Rd-bar; TRN2d follows by itself */
         if (sig == V90TX_RD && v90tx_units(&p->tx) >= RD_UNITS && v90tx_pending(&p->tx) == V90TX_NONE)
             (void)v90tx_select(&p->tx, V90TX_RD_BAR);
         if (p->clearing) {
-            /* 9.11: TRN2d, the CPd in use with drn = 0, then silence; whether
-             * the caller's Ru-bar came or not (a caller that no longer hears
-             * us sends none), and no design: no data mode follows */
-            if (sig == V90TX_TRN2D && v90tx_units(&p->tx) >= RENEG_TRN2D) sel(p, V90TX_CPD);
-            else if (sig == V90TX_CPD && v90tx_units(&p->tx) >= CLEAR_CPDS) fail(p, V92D_ERR_HANGUP);
-            else if (p->t > MS(T_CLEAR_MS)) fail(p, V92D_ERR_HANGUP);
+            /* 9.11: a rate renegotiation to send drn = 0. 9.8.1.1.2: TRN2d,
+             * then SUVd, whether the caller's Ru-bar came or not (a caller
+             * that no longer hears us sends none). With Ru-bar the receiver
+             * is on TRN2u and Phase 4 does the rest: on SUVu the CPd in use
+             * with drn = 0 (9.6.1.1.2), no design. Without, SUVd until
+             * T_CLEAR_MS. */
+            if (sig == V90TX_TRN2D && v90tx_units(&p->tx) >= RENEG_TRN2D) sel(p, V90TX_SUVD);
+            if (p->revs && sig != V90TX_RD) enter(p, V92D_PH4);
+            else if (clk_diff(p->now, p->t_clear) > MS(T_CLEAR_MS)) fail(p, V92D_ERR_HANGUP);
         } else if (p->revs && (sig == V90TX_RD_BAR || sig == V90TX_TRN2D)) enter(p, V92D_PH4);
         else if (p->t > MS(T_RENEG_MS)) retrain(p, 1);
         break;
@@ -1071,9 +1083,11 @@ int v92d_cleardown(v92d_t *p)
 {
     if (p->state != V92D_DATA) return -1;
     reneg_begin(p, 1);
-    /* the CPd in use, drn = 0 (9.11): CPd and CPd' with the bit, SUVd */
-    p->clearing = 1;
+    /* the CPd in use, drn = 0 (9.11): CPd and CPd' with the bit, SUVd; no
+     * design (dsn_state 2: the CPd is ready) */
+    p->clearing = 1; p->t_clear = p->now;
     p->cpd.drn = 0;
+    p->dsn_state = 2;
     build_seqs(p);
     return 0;
 }

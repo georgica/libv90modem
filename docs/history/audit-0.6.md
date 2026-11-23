@@ -130,9 +130,9 @@ us), plus direct drivers of `v92_dsn_*`, `v92_trn_*` and `v92_p6_tick`.
    could even be trained back into data mode. (T21.1)
 2. **Repeated CPds go out back to back** (Important, medium-high,
    reproduced). Once the repeat of 9.6.1.1.3 starts, CPd' follows CPd'
-   with no SUVd between, until an acknowledge comes; Figure 14 draws SUVd
-   between copies and a real Agere engine cleared down on back-to-back
-   CPds (BinModem). (T21.2)
+   with no SUVd between, until an acknowledge comes; 9.6.1.1.2 has a
+   single CPd followed by SUVd (Figures 12 to 14 draw no repeat) and a
+   real Agere engine cleared down on back-to-back CPds (BinModem). (T21.2)
 3. **Signed overflow on received samples near full scale, and in the CPd
    design on a hostile channel estimate** (Important, high, reproduced
    under UBSan). `v92_p6_tick` multiplies int16 samples in int arithmetic
@@ -158,7 +158,8 @@ Counts: Bugs 3 Important (T21.1, T21.2, T21.5), 4 Minor; Robustness 4
 Important (T21.3, T21.4, T21.6, T21.7), 2 Minor (R-7 lists what holds);
 Refactor 4 Minor; Performance 2 Minor; plus the BinModem leads (two Minor
 items, the class offset and the epsilon sign) and the test gaps. Found
-later, in Task 21: T21.8 (fixed) and T21.10 (deferred).
+later, in Task 21: T21.8 (fixed), T21.10 (deferred) and T21.11 (fixed:
+the cleardown's signals, from the review of T21.1).
 
 ### Bugs / correctness
 
@@ -202,6 +203,14 @@ later, in Task 21: T21.8 (fixed) and T21.10 (deferred).
   use, then `V92D_ERR_HANGUP`, whether Ru-bar came or not (limit
   `T_CLEAR_MS`, also HANGUP); nothing in a cleardown retrains. Some 0.8 s
   with or without the caller. `test_answer_v92` 3b, `test_v92call` 18b.
+- T21.11 (from the review of T21.1): those signals were not 9.11's. 9.11
+  makes a cleardown a rate renegotiation; 9.8.1.1.2 then has TRN2d, SUVd,
+  and on the caller's SUVu a single CPd followed by SUVd (9.6.1.1.2), not
+  four CPds right after TRN2d. Now: Rd, Rd-bar, TRN2d, SUVd until SUVu, one
+  CPd with drn = 0, SUVd (SUVd' once CPu is in); over at 9.6.1.1.4's point
+  (our SUVd' out, the caller's acknowledge or E2u in), else at
+  `T_CLEAR_MS` (3.5 s from the request); every end is `V92D_ERR_HANGUP`.
+  `test_v92call` 18 (the signals in order), 18c (no SUVu: 3.5 s, no CPd).
 
 **T21.2 Repeated CPd (9.6.1.1.3) is sent back to back** (Important,
 medium-high).
@@ -212,8 +221,9 @@ medium-high).
   transmit signal traced): n = 2: SUVd, CPd, SUVd' 256 ms, then 2 CPd' in
   a row; n = 4: 4 CPd' in a row, then Ed. The simulated caller takes them;
   BinModem's bench says an Agere engine left its SUVd flag at zero and
-  cleared down on back-to-back CPds (134 to 200 sent), Figure 14 draws CPd
-  then SUVd until CPu', and the Agere needs 2 to 4 s of SUVd to acquire.
+  cleared down on back-to-back CPds (134 to 200 sent), 9.6.1.1.2 has a
+  single CPd followed by SUVd (Figures 12 to 14 draw no repeat), and the
+  Agere needs 2 to 4 s of SUVd to acquire.
   The real modems we met acknowledged the first CPd (USR 5686 9 of 9), so
   the path has not run on a real line.
 - Fix shape: after each repeated CPd, SUVd (with the acknowledge bit when
@@ -227,6 +237,10 @@ medium-high).
   when 100 ms + rtd + 150 ms have passed with no acknowledge. `sim/v92a`
   has the knob (`drop_cpd`); `test_v92call` 25e (2 and 4 CPds missed:
   data mode, never two CPds in a row; before the fix 3 and 5 in a row).
+  The fix shape's "no replay recording reaches it" was wrong: the repeat
+  runs in 13 replayed recordings (x the three V.92 sets), after our
+  transmit has already left the recording; the manifest was re-recorded
+  for it (5aca43d).
 
 **T21.5 The rate drop of data mode double-counts earlier drops**
 (Important, high by reading).

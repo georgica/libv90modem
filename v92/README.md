@@ -613,15 +613,25 @@ sample; both include the transmitter and the echo canceller).
     that is, G v(n) = 1 means the level LU of the training symbols.
 36. E1u and E2u are looked for only after a complete CPt, or CPu / SUVu
     with the acknowledge, has been received.
-37. 9.6.1.1.3 gives no time for repeating CPd. It is sent again when no CPu
-    has come 100 ms + a round trip + 150 ms after the last one ended, one
-    copy at a time with SUVd between (Figure 14 draws CPd, then SUVd until
-    CPu'; an Agere engine cleared down on CPds sent back to back).
-38. 9.11: we clear down with a rate renegotiation of ours that sends Rd,
-    Rd-bar, 48 data frames of TRN2d and four CPd carrying drn = 0 (the CPd
-    in use, no new design), then silence, whether the caller's Ru-bar came
-    or not: a caller that no longer hears us gets no retrain (some 0.8 s in
-    all). A CPu or SUVu with drn = 0 is the caller's cleardown.
+37. 9.6.1.1.3 gives no time for repeating CPd, and says only "repeated CPd
+    sequences". It is sent again when no CPu has come 100 ms + a round trip
+    + 150 ms after the last one ended, one copy at a time with SUVd between:
+    9.6.1.1.2's single CPd followed by SUVd, once per copy (Figures 12 to 14
+    draw no repeat; an Agere engine cleared down on CPds sent back to back).
+38. 9.11: we clear down with a rate renegotiation of ours that sends a CPd
+    with drn = 0 (9.11 names SUVd, which has no rate field; the rate
+    sequence the digital modem sends is CPd). As 9.8.1.1.2 gives it: Rd,
+    Rd-bar, 48 data frames of TRN2d, then SUVd; on the caller's SUVu a
+    single CPd (the CPd in use with drn = 0, no new design) followed by
+    more SUVd, with the acknowledge bit once the caller's CPu is in
+    (9.6.1.1.2). It is over where 9.6.1.1.4 would send Ed: our SUVd' out and
+    the caller's acknowledge (CPu' / SUVu') or E2u in; silence then, not
+    Ed, since no data mode follows drn = 0. With the simulated caller some
+    0.3 s. A caller that sends no SUVu (or no longer hears us, or hangs up
+    on our CPd without acknowledging it, as this library's own caller does)
+    gets SUVd, and our CPd (repeated as in reading 37) if its SUVu came, until 3.5 s from the request;
+    nothing in the cleardown retrains. A CPu or SUVu with drn = 0 is the
+    caller's cleardown.
 39. SUVu's "wait for CPu" hint is ignored: CPd is sent once after the first
     SUVu in any case (9.6.1.1.2).
 40. 9.8: Ru in data mode is recognised about 13 ms after it began; the

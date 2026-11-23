@@ -5,7 +5,7 @@
   after the caller's retrain                   V.92: 50666 bit/s down, 38666 bit/s up; 152000 / 116000 bits, 0 / 0 bad; SNR 51.6 dB, rtd 3
   V.92 caller, A-law, DIL, long line           V.92: 50666 bit/s down, 36000 bit/s up; 152000 / 108000 bits, 0 / 0 bad; SNR 54.2 dB, rtd 2
   V.92 caller, ceilings 44000 / 33600          V.92: 50666 bit/s down, 33333 bit/s up; 152000 / 100000 bits, 0 / 0 bad; SNR 55.4 dB, rtd 3
-  our cleardown, the caller deaf to us: over after 789 ms, end 4, retrain 0
+  our cleardown, the caller deaf to us: over after 3500 ms, end 4, retrain 0
   V.92 start-up without the caller's Ru: V.90 data mode at 15.98 s, 1 retrain(s)
   V.90 after the failed V.92 start-up          V.90: 50666 bit/s down, 28800 bit/s up; 152000 / 86400 bits, 0 / 0 bad; SNR 35.6 dB, rtd 2
   and after a retrain of that call             V.90: 50666 bit/s down, 28800 bit/s up; 152000 / 86400 bits, 0 / 0 bad; SNR 36.4 dB, rtd 2

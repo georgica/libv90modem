@@ -226,7 +226,8 @@ void    answer_v90_line(answer_t *a, int echo_delay, int max_down, int max_up);
 int16_t answer_tick(answer_t *a, int16_t rx);
 /* Tell the calling modem that we are hanging up, where the modulation has a
  * way to say so (V.90 9.7, V.92 9.11). Returns 0 when that has begun: the phase goes to
- * ANS_FAILED by itself within a fraction of a second, ending ANS_END_CLEARDOWN_OURS.
+ * ANS_FAILED by itself within a fraction of a second (V.92: up to 3.5 s when the
+ * caller does not acknowledge the drn = 0), ending ANS_END_CLEARDOWN_OURS.
  * Returns -1 when there is nothing to send: just stop. */
 int     answer_cleardown(answer_t *a);
 /* What the receiver makes of the caller's signal in data mode: signal to

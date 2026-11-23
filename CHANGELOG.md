@@ -191,16 +191,28 @@ Changed (V.92, both roles):
 
 Fixed:
 - V.92, answering role: our cleardown (`v90m_cleardown`) ends with
-  `V90M_END_CLEARDOWN_OURS` in under a second whatever the caller does. It
+  `V90M_END_CLEARDOWN_OURS` within 3.5 s whatever the caller does. It
   waited for the caller's Ru-bar and a new CPd design: a caller that no
   longer heard us (or a design refused) turned the hang-up into a retrain
-  8 s later and the call ended some 18 s after the request. Now Rd, TRN2d
-  and four CPds with drn = 0 (built from the CPd in use) go out without
-  waiting, then silence; nothing in the cleardown retrains. A caller that
-  hears us sees the same signals, sooner.
+  8 s later and the call ended some 18 s after the request. Now no design
+  is made (the CPd in use, with drn = 0) and nothing in the cleardown
+  retrains; any end of it is ours.
+- V.92, answering role: our cleardown sends what V.92 9.11 asks, a rate
+  renegotiation (9.8.1.1) that carries drn = 0: Rd, Rd-bar, TRN2d, then
+  SUVd until the caller's SUVu, then a single CPd with drn = 0 followed by
+  SUVd, with the acknowledge bit once the caller's CPu is in (9.8.1.1.2,
+  9.6.1.1.2). It is over once the caller has acknowledged the CPd and has
+  our SUVd' (where 9.6.1.1.4 would send Ed): some 0.3 s with the simulated
+  caller. Before, four CPds went out back to back right after TRN2d, with
+  no SUVd and no wait for the caller's SUVu; only this library's own
+  caller and the simulator took that. Against this library's own caller,
+  which hangs up on the CPd without acknowledging it, the answering side
+  now ends at its 3.5 s limit (the caller itself ends as before, some
+  0.1 s later than it did).
 - V.92, answering role: a CPd the caller does not answer (9.6.1.1.3) is
-  repeated one copy at a time, with SUVd between the copies, as Figure 14
-  of V.92 draws. The repeats went out back to back until the answer came;
+  repeated one copy at a time, with SUVd between the copies: 9.6.1.1.2's
+  single CPd followed by SUVd, once per copy (V.92's Figures 12 to 14 draw
+  no repeat). The repeats went out back to back until the answer came;
   a real Agere engine is reported to clear down on that. A caller that
   answers the first CPd (every real call recorded) sees no change.
 - V.92, answering role: the rate drop the answering modem starts itself

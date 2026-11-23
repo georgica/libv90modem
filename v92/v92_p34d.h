@@ -156,7 +156,8 @@ typedef struct {
     v92_ja_t   ja;
     v92_cpu_t  cpx;                 /* CPt, later CPu */
     int        got_ja, got_cpt, got_e1u, got_suvu, got_cpu, got_ack, got_e2u;
-    int        ri_sent, cpd_sent, cpd_repeat; uint32_t t_cpd;
+    int        ri_sent, cpd_sent; uint32_t t_cpd;
+    uint32_t   t_clear;             /* sample our cleardown began */
     /* design */
     v92_dsn_t  dsn;
     int        dsn_state;           /* 0 idle, 1 running, 2 done */
@@ -201,8 +202,10 @@ uint8_t v92d_tick(v92d_t *p, int16_t rx);
  * V92D_DATA and comes back to it when both directions carry data again.
  * Returns 0, or -1 when not in data mode. */
 int     v92d_renegotiate(v92d_t *p);
-/* From data mode: clear down (9.11): a rate renegotiation whose CPd carries
- * drn = 0, then silence. Ends in V92D_FAILED with V92D_ERR_HANGUP. Returns
+/* From data mode: clear down (9.11): a rate renegotiation (9.8.1.1) whose
+ * CPd, sent on the caller's SUVu, carries drn = 0; over once the caller has
+ * acknowledged it (where 9.6.1.1.4 would send Ed), else after 3.5 s; then
+ * silence. Ends in V92D_FAILED with V92D_ERR_HANGUP whatever happens. Returns
  * 0, or -1 when not in data mode. */
 int     v92d_cleardown(v92d_t *p);
 /* From data mode or a rate renegotiation: retrain (9.7.1.1). The state goes

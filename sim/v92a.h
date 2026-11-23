@@ -47,6 +47,7 @@ typedef struct {
                                0 = none (the CX93001: 64) */
     int drop_cpd;           /* the first so many CPds of the call are missed (read as
                                nothing): the repeat of 9.6.1.1.3 is needed */
+    int reneg_no_suvu;      /* in a rate renegotiation TRN2u goes on and no SUVu follows */
     int  (*getbit)(void *user);
     void (*putbit)(void *user, int bit);
     void *user;

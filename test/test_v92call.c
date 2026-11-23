@@ -44,6 +44,7 @@ typedef struct {
     int first_cpd_plain;        /* the caller answers a first CPd with the acknowledge bit by silence */
     int b1u_lead, z2_dead, conv_start, ja_no_ones, ntrn1, jd_wait;      /* the caller's ways, see ../sim/v92a.h */
     int drop_cpd;               /* the caller misses its first so many CPds */
+    int no_suvu;                /* in a rate renegotiation the caller sends no SUVu */
     int burst_ms[2]; double burst;          /* the line's noise rises to burst at burst_ms, and is
                                            back to noise when a rate drop of ours begins */
 } scen_t;
@@ -53,6 +54,10 @@ typedef struct {
     int reneg_at;               /* the first sample in V92D_RENEG (-1: never) */
     int retrain_at;             /* the first sample in V92D_RETRAIN (-1: never) */
     int cpd_copies, cpd_run;    /* CPds we sent; the most of them in a row with no SUVd between */
+    int reneg_cpds;             /* ... of them from the first renegotiation on */
+    int cpd_on_suvu;            /* the first of those began after the caller's SUVu was in (-1: none) */
+    char seq[40];               /* what we sent from the first renegotiation on, a letter a signal
+                                   (D data, R Rd, r Rd-bar, T TRN2d, S SUVd, s SUVd', C CPd, c CPd', E Ed) */
     int drops;                  /* rate drops of ours (bad frames in data mode) */
     int drop_rate[4], drop_ceil[4];     /* each: the upstream rate then, the design's ceiling */
     long up_bits, up_bad, down_bits, down_bad;
@@ -74,7 +79,8 @@ static void run(const scen_t *s, out_t *o)
     uint8_t oct = v90_pcm_octet(s->alaw, 0, 1), idle = oct;
     int16_t rx = 0;
     int i, k, a_starts = 0, d_rx = 0, cpd_run = 0, cpd_more = 0;
-    v90tx_sig_t psig = V90TX_SILENCE;
+    v90tx_sig_t psig = V90TX_SILENCE, qsig = V90TX_NONE;
+    int nseq = 0;
     uint32_t punits = 0;
     long sink0_n = 0, sink0_bad = 0;
 
@@ -103,12 +109,12 @@ static void run(const scen_t *s, out_t *o)
     ac.b1u_lead = s->b1u_lead; ac.conv_start = s->conv_start; ac.ja_no_ones = s->ja_no_ones;
     if (s->ntrn1) ac.ntrn1 = s->ntrn1;
     if (s->jd_wait) ac.jd_wait = s->jd_wait;
-    ac.z2_dead = s->z2_dead; ac.drop_cpd = s->drop_cpd;
+    ac.z2_dead = s->z2_dead; ac.drop_cpd = s->drop_cpd; ac.reneg_no_suvu = s->no_suvu;
     ac.getbit = src_bit; ac.putbit = sink_bit; ac.user = &aio;
     v92a_init(&a, &ac);
     a.phase = s->phase0;
 
-    memset(o, 0, sizeof *o); o->d_data_at = -1; o->reneg_at = -1; o->retrain_at = -1;
+    memset(o, 0, sizeof *o); o->d_data_at = -1; o->reneg_at = -1; o->retrain_at = -1; o->cpd_on_suvu = -1;
     for (i = 0; i < s->seconds * 8000; i++) {
         double amp, frac;
         int valid, ms = i / 8, ev = (i % 8) == 0;
@@ -125,11 +131,20 @@ static void run(const scen_t *s, out_t *o)
             int is_cpd = sg == V90TX_CPD || sg == V90TX_CPD_ACK;
             if (is_cpd && (sg != psig || (cpd_more && sg == psig))) {
                 o->cpd_copies++;
+                if (o->reneg_at >= 0 && o->reneg_cpds++ == 0) o->cpd_on_suvu = d.got_suvu;
                 if (++cpd_run > o->cpd_run) o->cpd_run = cpd_run;
             } else if ((sg == V90TX_SUVD || sg == V90TX_SUVD_ACK) && sg != psig) {
                 cpd_run = 0;
             }
             cpd_more = is_cpd && sg == psig && u != punits;
+            if (o->reneg_at >= 0 && sg != qsig && nseq + 1 < (int)sizeof o->seq) {
+                static const char letter[V90TX_NSIG] = {
+                    [V90TX_DATA] = 'D', [V90TX_RD] = 'R', [V90TX_RD_BAR] = 'r', [V90TX_TRN2D] = 'T',
+                    [V90TX_SUVD] = 'S', [V90TX_SUVD_ACK] = 's', [V90TX_CPD] = 'C', [V90TX_CPD_ACK] = 'c',
+                    [V90TX_ED] = 'E', [V90TX_SILENCE] = '0' };
+                o->seq[nseq++] = sg >= 0 && letter[sg] ? letter[sg] : '?';
+                qsig = sg;
+            }
             psig = sg; punits = u;
         }
         dl_o[i % MAXD] = oct;
@@ -208,6 +223,21 @@ static void check_good(const scen_t *s, const out_t *o)
     CHECK(o->down_bits > 3 * 8000 * 38 / 6); CHECK_EQ_I(o->down_bad, 0);
     CHECK(o->up_bits > 3 * 24000); CHECK_EQ_I(o->up_bad, 0);
     CHECK_EQ_I(d.dec.bad_frames, 0);
+}
+
+/* our cleardown's signals as 9.8.1.1.2 and 9.6.1.1.2 give them: data, Rd,
+ * Rd-bar, TRN2d, SUVd; with cpd, then one CPd (no acknowledge bit) and
+ * after it SUVd only, the last of them SUVd'; without, nothing after SUVd */
+static int clear_seq_ok(const char *q, int cpd)
+{
+    const char *c;
+    size_t n = strlen(q);
+    if (strncmp(q, "DRrTS", 5) != 0) return 0;
+    if (!cpd) return n == 5;
+    c = strchr(q, 'C');
+    if (!c || strchr(q, 'c') || strchr(c + 1, 'C')) return 0;
+    if (c[1] == 0 || strspn(c + 1, "Ss") != strlen(c + 1)) return 0;
+    return q[n - 1] == 's';
 }
 
 static void base(scen_t *s, const char *name, int alaw, int shape, double noise, int dil_n)
@@ -381,14 +411,26 @@ int main(int argc, char **argv)
         run(&s, &o); report(&s, &o);
         CHECK_EQ_I(o.req_rc, 0); CHECK_EQ_I(o.state, V92D_FAILED); CHECK_EQ_I(o.error, V92D_ERR_CLEARDOWN);
         CHECK_EQ_I(o.up_bad, 0); CHECK_EQ_I(o.down_bad, 0);
+        /* 9.11: a rate renegotiation that sends drn = 0. 9.8.1.1.2: Rd,
+         * Rd-bar, TRN2d, then SUVd; on the caller's SUVu a single CPd (the
+         * one in use, drn = 0) and more SUVd (9.6.1.1.2), with the
+         * acknowledge bit once the caller's CPu is in; over where 9.6.1.1.4
+         * would send Ed: our SUVd' out, the caller's acknowledge in */
         base(&s, "18 we clear down", 0, 0, 3, 0);
         s.d_clear_ms = 5500; s.seconds = 9;
         run(&s, &o); report(&s, &o);
+        printf("    sent %s; CPds %d, the first after SUVu %d; over after %d ms\n", o.seq, o.reneg_cpds, o.cpd_on_suvu,
+               (o.d_end_at - 5500 * 8) / 8);
         CHECK_EQ_I(o.req_rc, 0); CHECK_EQ_I(o.state, V92D_FAILED); CHECK_EQ_I(o.error, V92D_ERR_HANGUP);
         CHECK(a.clear_seen); CHECK_EQ_I(o.up_bad, 0); CHECK_EQ_I(o.down_bad, 0);
         CHECK(o.d_end_at < 5500 * 8 + 4 * 8000);
-        /* the caller no longer hears us: Rd, TRN2d and the CPds with drn = 0
-         * go out all the same, and that is our cleardown, not a retrain */
+        CHECK_EQ_I(o.retrain_at, -1);
+        CHECK(clear_seq_ok(o.seq, 1));
+        CHECK_EQ_I(o.reneg_cpds, 1); CHECK_EQ_I(o.cpd_on_suvu, 1);
+        CHECK(a.suvd_ack);                          /* the caller heard our SUVd' */
+        /* the caller no longer hears us: Rd, TRN2d and SUVd go out all the
+         * same, no SUVu comes, and at our limit that is our cleardown, not
+         * a retrain */
         base(&s, "18b we clear down, the caller deaf to us", 0, 0, 3, 0);
         s.d_clear_ms = 5500; s.deaf_ms = 5400; s.seconds = 16;
         run(&s, &o);
@@ -396,6 +438,18 @@ int main(int argc, char **argv)
         CHECK_EQ_I(o.req_rc, 0); CHECK_EQ_I(o.state, V92D_FAILED); CHECK_EQ_I(o.error, V92D_ERR_HANGUP);
         CHECK_EQ_I(o.retrain_at, -1);
         CHECK(o.d_end_at > 5500 * 8 && o.d_end_at < 5500 * 8 + 4 * 8000);
+        CHECK_EQ_I(o.reneg_cpds, 0);
+        /* the caller hears us and answers Rd with Ru, but sends no SUVu:
+         * SUVd until our limit, no CPd, our cleardown all the same */
+        base(&s, "18c we clear down, the caller sends no SUVu", 0, 0, 3, 0);
+        s.d_clear_ms = 5500; s.no_suvu = 1; s.seconds = 16;
+        run(&s, &o);
+        printf("  %-34s state %d err %d after %d ms; sent %s\n", s.name, o.state, o.error, (o.d_end_at - 5500 * 8) / 8, o.seq);
+        CHECK_EQ_I(o.req_rc, 0); CHECK_EQ_I(o.state, V92D_FAILED); CHECK_EQ_I(o.error, V92D_ERR_HANGUP);
+        CHECK_EQ_I(o.retrain_at, -1);
+        CHECK(o.d_end_at > 5500 * 8 && o.d_end_at < 5500 * 8 + 4 * 8000);
+        CHECK(clear_seq_ok(o.seq, 0)); CHECK_EQ_I(o.reneg_cpds, 0);
+        CHECK(a.rd_units >= 60); CHECK(a.suvd_n > 0);
         base(&s, "19 the caller's Tone A", 0, 0, 3, 0);
         s.tone_a_ms = 5500;
         run(&s, &o); report(&s, &o);
@@ -505,8 +559,9 @@ int main(int argc, char **argv)
         CHECK_EQ_I(o.cpd_copies, 1); CHECK_EQ_I(o.cpd_run, 1);
 
         /* a caller that misses its first CPds (9.6.1.1.3): CPd again, each
-         * copy with SUVd before it, as Figure 14 draws; a real Agere
-         * engine cleared down on CPds sent back to back */
+         * copy with SUVd before it, 9.6.1.1.2's single CPd followed by
+         * SUVd once per copy (Figures 12 to 14 draw no repeat); a real
+         * Agere engine cleared down on CPds sent back to back */
         {
             static const int drop[] = { 2, 4 };
             static char name[48];
