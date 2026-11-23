@@ -314,7 +314,7 @@ enum { W_JA, W_CPT, W_PH4 };
 
 static void seq_reset(v92d_t *p, int want)
 {
-    p->fn = 0; p->ones = 0; p->zeros = 0; p->want = want; p->after_seq = -1;
+    p->fn = 0; p->sh.ones = 0; p->zeros = 0; p->want = want; p->after_seq = -1;
 }
 
 static void on_cpt(v92d_t *p)
@@ -386,21 +386,19 @@ static void seq_bit(v92d_t *p, int bit, int32_t m, int last_of_symbol)
                 p->got_e2u = 1;
                 if (!p->clearing) upstream_start(p, m + 1);     /* (drn = 0: no data follows) */
             }
-            p->fn = 0; p->ones = 0;
+            p->fn = 0; p->sh.ones = 0;
             return;
         }
     }
     if (p->fn == 0) {
-        if (bit) { p->ones++; return; }
-        if (p->ones >= 17) { memset(p->fbuf, 1, 17); p->fbuf[17] = 0; p->fn = 18; }
-        p->ones = 0;
+        if (seqhunt_bit(&p->sh, bit)) { memset(p->fbuf, 1, 17); p->fbuf[17] = 0; p->fn = 18; }
         return;
     }
     p->fbuf[p->fn++] = (uint8_t)bit;
     {
         int r = seq_try(p);
-        if (r > 0) { p->fn = 0; p->ones = 0; p->after_seq = 0; }
-        else if (r < 0 || p->fn >= V92D_FBUF) { p->fn = 0; p->ones = 0; }
+        if (r > 0) { p->fn = 0; p->sh.ones = 0; p->after_seq = 0; }
+        else if (r < 0 || p->fn >= V92D_FBUF) { p->fn = 0; p->sh.ones = 0; }
     }
 }
 

@@ -23,6 +23,7 @@
 #ifndef V90D_MODEM_V34DX_H
 #define V90D_MODEM_V34DX_H
 #include <stdint.h>
+#include "seqhunt.h"
 #include "qamrx.h"
 #include "ec.h"
 #include "ecdly.h"
@@ -144,7 +145,7 @@ typedef struct {
     uint16_t    jsr; int32_t jbits, j_at; int j_type;
     int         seq_j, seq_mp;
     int         got_j, got_jp, far_16pt; uint32_t t_jp;
-    uint8_t     fbuf[DX_FBUF]; int fn, ones;
+    uint8_t     fbuf[DX_FBUF]; int fn; seqhunt_t sh;
     v34_mp_t    far_mp, cand; int cand_ok;
     int         got_far_mp, got_far_mpa, got_e, far_clear;
     int32_t     snr_db10;           /* receiver SNR when our MP was made, 0.1 dB */

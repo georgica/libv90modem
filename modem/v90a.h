@@ -52,6 +52,7 @@
 #ifndef V90D_MODEM_V90A_H
 #define V90D_MODEM_V90A_H
 #include <stdint.h>
+#include "seqhunt.h"
 #include "p2call.h"
 #include "v90arx.h"
 #include "v90adec.h"
@@ -143,7 +144,7 @@ typedef struct {
     int        alaw;                /* the downstream's law (INFO0d bit 39) */
     /* Jd, Jd' */
     v90_scr_t  jscr; uint8_t jprev;
-    uint8_t    jb[V90_JD_BITS + 16]; int jbn, jones;
+    uint8_t    jb[V90_JD_BITS + 16]; int jbn; seqhunt_t jsh;
     v90_jd_t   jd; int jd_ok;
     int32_t    jdp_m; int jdp_zeros;
     /* DIL */
@@ -170,7 +171,7 @@ typedef struct {
     v90_map_t  tmap, dmap;
     v90adec_t  dec; v90_scr_t dscr;
     uint8_t    fu[6], fp[6];
-    uint8_t    mb[V90_MP_MAX_BITS + 8]; int mbn, mones;
+    uint8_t    mb[V90_MP_MAX_BITS + 8]; int mbn; seqhunt_t msh;
     v90_mp_t   mp; int got_mp, got_mpa, after_mpa, got_ed;
     int        b1d_frames, b1d_bad, trn2d_frames, trn2d_bad, rd_frames, rd_pol, rd_units;
     int        rx_ready;

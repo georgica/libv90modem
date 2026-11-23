@@ -19,6 +19,7 @@
 #ifndef V90D_MODEM_P34D_H
 #define V90D_MODEM_P34D_H
 #include <stdint.h>
+#include "seqhunt.h"
 #include "qamrx.h"
 #include "ec.h"
 #include "ecdly.h"
@@ -115,7 +116,7 @@ typedef struct {
     /* sequence framing (Ja, CPt, CP) */
     uint8_t    fbuf[P34_FBUF];
     int        fn;                  /* bits collected, 0 = hunting for a frame sync */
-    int        ones;                /* run of ones */
+    seqhunt_t  sh;                  /* run of ones */
     int        want_cp;             /* 0: DIL descriptor, 1: CP sequences */
     int        got_cpt, got_cp, got_cp_ack, got_e;
     int        got_cps, got_cps_ack;    /* CP with the request for silence (bit 30) */

@@ -30,7 +30,7 @@ int v92aseq_cpd_complete(const v92aseq_t *s)
 
 static void hunt(v92aseq_t *s)
 {
-    s->in = 0; s->ones = 0;
+    s->in = 0; s->sh.ones = 0;
 }
 
 static void bad(v92aseq_t *s)
@@ -169,17 +169,15 @@ static void done(v92aseq_t *s, unsigned v, v92_suvd_t *suvd, v92_cpd_t *cpd)
 static void bit_in(v92aseq_t *s, int bit, v92_suvd_t *suvd, v92_cpd_t *cpd)
 {
     if (!s->in) {
-        if (bit) { s->ones++; return; }
-        if (s->ones >= 17) {
+        if (seqhunt_bit(&s->sh, bit)) {
             /* the frame sync and the start bit of the header word */
             s->in = 1; s->nb = 1; s->cur = 0; s->nw = 0;
             s->crc = 0xFFFF; s->crc_at = NONE_YET;
         }
-        s->ones = 0;
         return;
     }
     if (s->nb == 0) {               /* a start bit */
-        if (bit) { bad(s); s->ones = 1; return; }
+        if (bit) { bad(s); s->sh.ones = 1; return; }
         if (s->nw == s->crc_at) s->crc_want = s->crc;
         s->nb = 1; s->cur = 0;
         return;

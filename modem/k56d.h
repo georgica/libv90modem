@@ -47,6 +47,7 @@
 #ifndef V90D_MODEM_K56D_H
 #define V90D_MODEM_K56D_H
 #include <stdint.h>
+#include "seqhunt.h"
 #include "qamrx.h"
 #include "ec.h"
 #include "ecdly.h"
@@ -140,7 +141,7 @@ typedef struct {
     uint32_t   jsr; int32_t jbits, j_at; int j_seen;
     int        got_j, got_jp;
     uint8_t    j_octet;
-    uint8_t    fbuf[K56D_FBUF]; int fn, ones;
+    uint8_t    fbuf[K56D_FBUF]; int fn; seqhunt_t sh;
     v34_mp_t   far_mp, cand; int cand_ok;
     int        got_mp, got_e;
     int        pad;                 /* from the J24: 0..2 */

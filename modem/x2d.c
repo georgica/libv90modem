@@ -208,19 +208,19 @@ static void seq_bit(x2d_t *d, int bit)
             if (d->state == X2D_ENDED) return;
         }
     }
+    int sync = seqhunt_bit(&d->sh, bit);
     if (bit) {
         /* inside a record a zero breaks every run at 16 */
-        if (++d->ones == E_ONES && d->got_mp && !d->got_e) {
+        if (d->sh.ones == E_ONES && d->got_mp && !d->got_e) {
             d->got_e = 1;
             TR("X2D %.3f E\n", d->now / 8000.0);
             rx_begin_data(d);
         }
         return;
     }
-    if (d->ones >= 17) {
+    if (sync) {
         memset(d->fbuf, 1, 17); d->fbuf[17] = 0; d->fn = 18;
     }
-    d->ones = 0;
 }
 
 /* The client's S in data mode: its rate change ("Rate change"). Its S,
@@ -244,7 +244,7 @@ static void reneg_begin(x2d_t *d)
     if (d->state == X2D_START) x2tx_data(&d->tx, d->tx.index, d->tx.pad_mode, NULL, NULL);
     d->rx_ready = d->tx_ready = 0;
     d->got_mp = d->got_e = 0; d->cand_ok = 0;
-    d->fn = d->ones = 0;
+    d->fn = d->sh.ones = 0;
     sres_resume(&d->sres);
     d->rxmode = RX_SRES;
     TR("X2D %.3f S in data mode\n", d->now / 8000.0);
@@ -286,7 +286,7 @@ static void rx_symbol(x2d_t *d)
 
     case RX_SRES:
         if (!sres_symbol(&d->sres, r)) break;
-        d->fn = d->ones = 0;
+        d->fn = d->sh.ones = 0;
         if (d->state == X2D_RENEG) {
             /* a rate change: its TRN, MP, MP' and E on 4 points (the
              * Courier's: x2-facts.md "Rate change") */

@@ -109,7 +109,7 @@ int p34d_init(p34d_t *p, const p34d_cfg *cfg)
 
 static void seq_reset(p34d_t *p, int want_cp)
 {
-    p->fn = 0; p->ones = 0; p->want_cp = want_cp;
+    p->fn = 0; p->sh.ones = 0; p->want_cp = want_cp;
 }
 
 /* highest upstream rate both sides enable, not above drn * 2400; 0 if none */
@@ -181,17 +181,17 @@ static void seq_bit(p34d_t *p, int bit)
     p34d_trace_bit(p, bit);
 #endif
     if (p->fn > 0 && p->fn < P34_FBUF) p->fbuf[p->fn++] = (uint8_t)bit;
+    int sync = seqhunt_bit(&p->sh, bit);
     if (bit) {
-        p->ones++;
         /* E: 20 ones. Inside a sequence a start bit breaks every run at 17;
          * SCR (all ones) only comes before the first CP (9.4.2.2). */
-        if (p->want_cp && p->got_cp && p->ones == 20 && !p->got_e) {
+        if (p->want_cp && p->got_cp && p->sh.ones == 20 && !p->got_e) {
             p->got_e = 1;
             upstream_start(p);
         }
         return;
     }
-    if (p->ones >= 17) {
+    if (sync) {
         /* frame sync and its start bit. What was collected before may be a
          * complete sequence that was not tried yet. */
         if (p->fn > 18) { p->fn -= 18; seq_try(p); if (p->state == P34_FAILED || p->rxmode != RX_SEQ) return; }
@@ -199,7 +199,6 @@ static void seq_bit(p34d_t *p, int bit)
     } else if (p->fn > 0 && (p->fn & 15) == 0) {
         seq_try(p);
     }
-    p->ones = 0;
     if (p->fn >= P34_FBUF) p->fn = 0;
 }
 

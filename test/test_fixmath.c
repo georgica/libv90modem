@@ -1,11 +1,12 @@
 /* modem/fixmath.h against the integer square roots it replaced (audit Task
- * 23b).  Each old_* function is the code as it was in its file, kept here
+ * 23b) and modem/seqhunt.h against the sync hunters it replaced (23c).  Each old_* function is the code as it was in its file, kept here
  * verbatim; the shared one must agree with it on every input the old one
  * accepted (below 2^20, 10^6 random 64-bit values, and the edges). */
 #include <stdio.h>
 #include <stdint.h>
 #include "test.h"
 #include "../modem/fixmath.h"
+#include "../modem/seqhunt.h"
 
 /* anstone.c, v22rx.c, v32_code.c (v32_isqrt64), v92_design.c, v92_p34d.c */
 static uint32_t old_u64(uint64_t v)
@@ -60,7 +61,8 @@ static int32_t old_u32(uint32_t v)
     return (int32_t)r;
 }
 
-/* dpsk.c keeps its own (a start at 2^40): it differs from the root at 2^42 */
+/* dpsk.c's old copy (a start at 2^40): it differs from the root at 2^42, which
+ * its pw / 2 (<= 2^32, see dpskrx_level) never reaches */
 static int old_dpsk(int64_t v)
 {
     int64_t r = 0, b = (int64_t)1 << 40;
@@ -93,6 +95,45 @@ static long compare(uint64_t v)
         if (old_probe(sv) <= INT32_MAX) bad += rs != old_s32(sv) || rs != (int32_t)old_probe(sv);
     }
     if (v <= 0xffffffffu) bad += (int32_t)isqrt_u64(v) != old_u32((uint32_t)v);
+    return bad;
+}
+
+/* The sync hunter as it was in each file, kept here.  All were the same few
+ * lines: ones counted, and on a zero a run of 17 or more starts a frame.
+ *   v90a.c (jones, mones x2), v92aseq.c, v92_p34d.c: hunting on a zero:
+ *     if (bit) { ones++; return; }  if (ones >= 17) { start } ones = 0;
+ *   p34d.c, x2d.c, k56d.c, v34dx.c: ones counted first and tested for E,
+ *     on a zero:  if (ones >= 17) { start } ... ones = 0;
+ * (the later copies run `ones++` / `++ones` before the same test, so one
+ * model per form covers them). */
+typedef struct { int ones; } old_t;
+static int old_a(old_t *o, int bit)      /* v90a, v92aseq, v92_p34d */
+{
+    if (bit) { o->ones++; return 0; }
+    if (o->ones >= 17) { o->ones = 0; return 1; }
+    o->ones = 0;
+    return 0;
+}
+static int old_b(old_t *o, int bit)      /* p34d, x2d, k56d, v34dx */
+{
+    int start = 0;
+    if (bit) { ++o->ones; return 0; }
+    if (o->ones >= 17) start = 1;
+    o->ones = 0;
+    return start;
+}
+
+static long hunt_seq(uint64_t bits, int len)
+{
+    seqhunt_t h; old_t a, b;
+    long bad = 0;
+    int i;
+    h.ones = a.ones = b.ones = 0;
+    for (i = 0; i < len; i++) {
+        int bit = (int)((bits >> i) & 1);
+        int r = seqhunt_bit(&h, bit), ra = old_a(&a, bit), rb = old_b(&b, bit);
+        bad += r != ra || r != rb || h.ones != a.ones || h.ones != b.ones;
+    }
     return bad;
 }
 
@@ -129,7 +170,7 @@ int main(void)
     CHECK_EQ_I(old_s32(INT64_MIN), 0);
     CHECK_EQ_I(isqrt_s64(INT64_MAX), INT32_MAX);        /* clamped, the root is 3037000499 */
     CHECK_EQ_I(isqrt_u64(UINT64_MAX), 0xffffffffu);
-    /* dpsk.c's own copy agrees below 2^42, which its callers' pw / 2 stays under in use */
+    /* dpsk.c's old copy agrees below 2^42, above its pw / 2 bound of 2^32 */
     bad = 0;
     for (i = 0; i < 1000000; i++) {
         v = rnd64() >> (22 + (rnd64() & 31));
@@ -139,5 +180,23 @@ int main(void)
     printf("  dpsk.c's copy below 2^42: %ld differ\n", bad);
     CHECK_EQ_I(bad, 0);
     CHECK(old_dpsk((int64_t)1 << 62) != (int)isqrt_u64((uint64_t)1 << 62));
+    /* the sync hunter: every sequence of up to 24 bits, then 10^6 random
+     * long ones (runs of ones are what matter, so half are biased to ones) */
+    bad = 0;
+    {
+        int len;
+        for (len = 1; len <= 24; len++)
+            for (v = 0; v < ((uint64_t)1 << len); v++) bad += hunt_seq(v, len);
+        printf("  every bit sequence up to 24 bits: %ld differ\n", bad);
+        CHECK_EQ_I(bad, 0);
+        bad = 0;
+        for (i = 0; i < 1000000; i++) {
+            uint64_t x = rnd64();
+            if (i & 1) x |= rnd64() | rnd64();
+            bad += hunt_seq(x, 64);
+        }
+        printf("  10^6 random 64-bit sequences: %ld differ\n", bad);
+        CHECK_EQ_I(bad, 0);
+    }
     T_REPORT("test_fixmath");
 }

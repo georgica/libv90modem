@@ -338,22 +338,21 @@ static void seq_bit(v34dx_t *p, int bit)
     }
     if (!p->seq_mp) return;
     if (p->fn > 0 && p->fn < DX_FBUF) p->fbuf[p->fn++] = (uint8_t)bit;
+    int sync = seqhunt_bit(&p->sh, bit);
     if (bit) {
-        p->ones++;
         /* E: 20 ones; inside MP a start bit breaks every run at 17 */
-        if (p->got_far_mp && !p->far_clear && p->ones == 20 && !p->got_e) {
+        if (p->got_far_mp && !p->far_clear && p->sh.ones == 20 && !p->got_e) {
             p->got_e = 1;
             rx_begin_data(p);
         }
         return;
     }
-    if (p->ones >= 17) {
+    if (sync) {
         if (p->fn > 18) { p->fn -= 18; seq_try(p); if (p->state == DX_FAILED) return; }
         memset(p->fbuf, 1, 17); p->fbuf[17] = 0; p->fn = 18;
     } else if (p->fn > 0 && (p->fn % 17) == 0) {
         seq_try(p);
     }
-    p->ones = 0;
     if (p->fn >= DX_FBUF) p->fn = 0;
 }
 
@@ -512,7 +511,7 @@ static void rx_symbol(v34dx_t *p)
         if (n >= V34_PP_LEN + TRN_KNOWN - 1) {
             v34_tdem_init(&p->tdem, far_poly(p), 4);
             p->rx16 = 0; p->seq_j = 1; p->seq_mp = 0; p->got_j = p->got_jp = 0; p->j_type = 0;
-            p->fn = p->ones = 0;
+            p->fn = p->sh.ones = 0;
             p->rxmode = RX_SEQ;
         }
         break;
@@ -543,7 +542,7 @@ static void rx_symbol(v34dx_t *p)
             int pts = (!p->in_reneg && p->cfg.ask_16pt) ? 16 : 4;
             v34_tdem_init(&p->tdem, far_poly(p), pts);
             p->rx16 = pts == 16;
-            p->seq_j = 0; p->seq_mp = 1; p->fn = p->ones = 0;
+            p->seq_j = 0; p->seq_mp = 1; p->fn = p->sh.ones = 0;
             p->rxmode = RX_SEQ;
         }
         break;
@@ -677,7 +676,7 @@ int16_t v34dx_tick(v34dx_t *p, int16_t rxs)
                 p->phase4 = 1;
                 p->tx_pts = p->far_16pt ? 16 : 4;
                 p->tx_g = p->far_16pt ? (int32_t)v34_gain_q14(V34_ENERGY_16PT_Q8) : 16384;
-                p->seq_mp = 1; p->fn = p->ones = 0;
+                p->seq_mp = 1; p->fn = p->sh.ones = 0;
                 tx_go(p, DXS_S);
                 p->t_neg = p->now; enter(p, DX_P4_TRN);
             } else {

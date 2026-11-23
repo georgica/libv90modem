@@ -402,13 +402,11 @@ static void jd_bit(v90a_t *a, const v90arx_dec_t *d)
                     a->jd_ok = 1; a->t_jd = a->now; a->jdp_zeros = 0; a->jbn = 0;
                     if (a->us == U_QUIET) ugo(a, U_SJ);         /* 9.3.2.7: S */
                 } else a->jbn = 0;
-                a->jones = 0;
+                a->jsh.ones = 0;
             }
             return;
         }
-        if (bit) { a->jones++; return; }
-        if (a->jones >= 17) { memset(a->jb, 1, 17); a->jb[17] = 0; a->jbn = 18; }
-        a->jones = 0;
+        if (seqhunt_bit(&a->jsh, bit)) { memset(a->jb, 1, 17); a->jb[17] = 0; a->jbn = 18; }
         return;
     }
     /* after a good Jd: another Jd (it begins with ones), or Jd' (12 zeros) */
@@ -572,7 +570,7 @@ static void ri_dec(v90a_t *a, const v90arx_dec_t *d)
         v90arx_timing_hold(&a->rx, 0);
         v90adec_init(&a->dec, &a->tmap);
         v90_scr_init(&a->dscr);
-        a->mbn = a->mones = 0; a->got_mp = a->got_mpa = a->after_mpa = a->got_ed = 0;
+        a->mbn = a->msh.ones = 0; a->got_mp = a->got_mpa = a->after_mpa = a->got_ed = 0;
         a->trn2d_syms = 0;
         if (a->pcm) {
             /* a Phase 4: its first CPd must carry all three parts */
@@ -623,17 +621,15 @@ static void mp_bit(v90a_t *a, int bit)
                 a->mp = mp;
                 if (mp.ack) { a->got_mpa = 1; a->after_mpa = 1; } else a->got_mp = 1;
                 if (a->t_mp == CLK_NONE) a->t_mp = a->now;
-                a->mbn = 0; a->mones = 0;
+                a->mbn = 0; a->msh.ones = 0;
                 if (mp.max_rate == 0) end(a, a->clearing ? V90A_ERR_HANGUP : V90A_ERR_CLEARDOWN);   /* 9.7 */
             } else if (r != V90_ERR_SHORT || a->mbn >= V90_MP1_BITS) {
-                a->mbn = 0; a->mones = 0;
+                a->mbn = 0; a->msh.ones = 0;
             }
         }
         return;
     }
-    if (bit) { a->mones++; return; }
-    if (a->mones >= 17) { memset(a->mb, 1, 17); a->mb[17] = 0; a->mbn = 18; }
-    a->mones = 0;
+    if (seqhunt_bit(&a->msh, bit)) { memset(a->mb, 1, 17); a->mb[17] = 0; a->mbn = 18; }
 }
 
 /* a whole data frame of the downstream */
@@ -828,7 +824,7 @@ static void rd_dec(v90a_t *a, const v90arx_dec_t *d)
         set_cons(a, &a->cpt, a->m_trn2d);
         v90adec_init(&a->dec, &a->tmap);
         v90_scr_init(&a->dscr);
-        a->mbn = a->mones = 0; a->got_mp = a->got_mpa = a->after_mpa = a->got_ed = 0;
+        a->mbn = a->msh.ones = 0; a->got_mp = a->got_mpa = a->after_mpa = a->got_ed = 0;
         a->trn2d_syms = TRN2D_MEAS;     /* CP stays as it was */
         if (a->reneg_ours) { a->trn2d_syms = 0; a->cp_ready = 0; }   /* ours: designed on TRN2d's noise */
         if (a->pcm) {
@@ -875,7 +871,7 @@ static void watch(v90a_t *a)
             a->t_sd = a->now;
             if (a->us == U_JA) { ugo(a, U_QUIET); a->t_ja_end = a->now; }
             if (a->us == P_JA) a->ja_stop = 1;          /* V.92 9.5.2.1.3: at the next 12 bit boundary */
-            v90_scr_init(&a->jscr); a->jprev = 0; a->jbn = 0; a->jones = 0;
+            v90_scr_init(&a->jscr); a->jprev = 0; a->jbn = 0; a->jsh.ones = 0;
             a->ds = D_JD;
         } else if (a->t_ja != CLK_NONE && clk_diff(a->now, a->t_ja) > MS(T_SD_MS)) { end(a, V90A_ERR_SD); return; }
     }
@@ -968,13 +964,11 @@ static void jd92_bit(v90a_t *a, const v90arx_dec_t *d)
                     a->jd.rates = a->jd92.rates;
                     if (a->us == P_QUIET) { ugo(a, P_SU1); a->t_su = a->now; }    /* 9.5.2.1.6 */
                 }
-                a->jbn = 0; a->jones = 0;
+                a->jbn = 0; a->jsh.ones = 0;
             }
             return;
         }
-        if (bit) { a->jones++; return; }
-        if (a->jones >= 17) { memset(a->jb, 1, 17); a->jb[17] = 0; a->jbn = 18; }
-        a->jones = 0;
+        if (seqhunt_bit(&a->jsh, bit)) { memset(a->jb, 1, 17); a->jb[17] = 0; a->jbn = 18; }
         return;
     }
     /* in step with the sequences: more Jd, Jp, and after a Jp maybe Jp' */

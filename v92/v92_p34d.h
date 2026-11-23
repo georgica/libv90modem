@@ -31,6 +31,7 @@
 #ifndef V90D_V92_P34D_H
 #define V90D_V92_P34D_H
 #include <stdint.h>
+#include "../modem/seqhunt.h"
 #include "../modem/ec.h"
 #include "../modem/ecdly.h"
 #include "../modem/tonedet.h"
@@ -150,7 +151,7 @@ typedef struct {
     int        four;                /* the caller is sending 4-level symbols */
     int32_t    m_trn2u;             /* number of the first TRN2u symbol */
     uint8_t    fbuf[V92D_FBUF];
-    int        fn, ones, zeros;     /* bits collected (0 = hunting), runs */
+    int        fn, zeros; seqhunt_t sh;    /* bits collected (0 = hunting), runs */
     int        want;                /* which sequences: 0 Ja, 1 CPt, 2 SUVu / CPu */
     int        after_seq;           /* bits since a sequence was completed, -1 = none yet */
     v92_ja_t   ja;

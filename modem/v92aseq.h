@@ -19,6 +19,7 @@
 #ifndef V90D_MODEM_V92ASEQ_H
 #define V90D_MODEM_V92ASEQ_H
 #include <stdint.h>
+#include "seqhunt.h"
 #include "../v92/v92_seq.h"
 
 /* words in the longest CPd: header, gain, M, lengths, 384 coefficients,
@@ -33,7 +34,7 @@ enum {
 };
 
 typedef struct {
-    int      ones;              /* hunting: ones in a row */
+    seqhunt_t sh;               /* hunting: ones in a row */
     int      in;                /* 1: inside a sequence */
     int      nb;                /* bits of the current word: 0 = the start bit is next */
     uint32_t cur;               /* the word being collected */

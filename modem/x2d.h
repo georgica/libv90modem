@@ -38,6 +38,7 @@
 #ifndef V90D_MODEM_X2D_H
 #define V90D_MODEM_X2D_H
 #include <stdint.h>
+#include "seqhunt.h"
 #include "qamrx.h"
 #include "ec.h"
 #include "ecdly.h"
@@ -119,7 +120,7 @@ typedef struct {
     int32_t    quiet;               /* symbols without signal in data mode */
     /* J and records */
     uint16_t   jsr; int32_t jbits, j_at; int j_type;
-    uint8_t    fbuf[X2D_FBUF]; int fn, ones;
+    uint8_t    fbuf[X2D_FBUF]; int fn; seqhunt_t sh;
     uint16_t   mp[4], cand[4]; int cand_ok;
     int        got_mp, got_e, e_sent;
     int        index, pad_mode;     /* from the MP */

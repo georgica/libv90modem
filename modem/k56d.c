@@ -208,7 +208,7 @@ static void j_bit(k56d_t *d, int bit)
             TR("K56D %.3f J'\n", d->now / 8000.0);
             d->got_jp = 1;
             v34_tdem_set_points(&d->tdem, 16);
-            d->fn = d->ones = 0;
+            d->fn = d->sh.ones = 0;
             d->rxmode = RX_P4;
         }
         return;
@@ -234,23 +234,23 @@ static void seq_try(k56d_t *d)
 static void seq_bit(k56d_t *d, int bit)
 {
     if (d->fn > 0 && d->fn < K56D_FBUF) d->fbuf[d->fn++] = (uint8_t)bit;
+    int sync = seqhunt_bit(&d->sh, bit);
     if (bit) {
         /* inside an MP a start bit breaks every run at 17 */
-        if (++d->ones == E_ONES && d->got_mp && !d->got_e) {
+        if (d->sh.ones == E_ONES && d->got_mp && !d->got_e) {
             d->got_e = 1;
             TR("K56D %.3f E\n", d->now / 8000.0);
             rx_begin_data(d);
         }
         return;
     }
-    if (d->ones >= 17) {
+    if (sync) {
         if (d->fn > 18) { d->fn -= 18; seq_try(d); if (d->state == K56D_ENDED) return; }
         memset(d->fbuf, 1, 17); d->fbuf[17] = 0; d->fn = 18;
     } else if (d->fn > 0 && (d->fn % 17) == 0) {
         seq_try(d);
         if (d->state == K56D_ENDED) return;
     }
-    d->ones = 0;
     if (d->fn >= K56D_FBUF) d->fn = 0;
 }
 
@@ -281,7 +281,7 @@ static void reneg_begin(k56d_t *d)
     d->tx_ready = 0;
     tonedet_init(&d->tone_b, TONEDET_1200);                     /* its tone B here too: a retrain */
     d->got_mp = d->got_e = 0; d->cand_ok = 0;
-    d->fn = d->ones = 0;
+    d->fn = d->sh.ones = 0;
     sres_resume(&d->sres);
     d->rxmode = RX_SRES;
     k56tx_reneg(&d->tx);
@@ -438,7 +438,7 @@ static void rx_symbol(k56d_t *d)
         /* its TRN, MP, MP' and E on 4 points; the descrambler finds its way
          * within 23 bits */
         v34_tdem_init(&d->tdem, V34_GPC, 4);
-        d->fn = d->ones = 0;
+        d->fn = d->sh.ones = 0;
         TR("K56D %.3f S-bar ended (renegotiation)\n", d->now / 8000.0);
         d->rxmode = RX_RN;
         break;
