@@ -375,9 +375,19 @@ is fragile, low how many callers it hits).
   decision-directed estimate does not move, the G.711 points being nearly
   the same set at any nearby scale). Off the designed level, the decoder
   starts B1u again from the training receiver's ring, two samples a tick
-  until it is back. `test_v92call` 32-34. Cost (ARMv5, counted): 14 k
-  instructions once per B1u at the designed level; off it, some 175 k in
-  the tick that measures, then a multiply and a 32-bit division a sample.
+  until it is back. `test_v92call` 32-35. Cost (ARMv5, counted): 14 k
+  instructions once per B1u where 7/8 of the symbols sit on the points at
+  scale 1 (simulated calls at the designed level: 131 to 144 of 144);
+  otherwise some 175 k in the tick that measures, and that is most real
+  calls: of the 26 recorded calls that reach B1u, 21 score under 126 at
+  scale 1 (cxe 110 and h4 122, both working at 1) and take the search
+  without taking a scale. A scale taken costs a multiply and a 32-bit
+  division a sample from then on. For Phase 3: the 175 k tick (spread
+  the search over ticks, or cut the coarse pass).
+  The scale is only ever taken in the window 3/4 .. 4/3 of the power's
+  start (G.711's octaves fit at twice and half the scale: cxe 128 of 144
+  at 2 against 110 at 1); `test_v92call` 35 checks that with symbols that
+  sit on the points at 2 only.
   A scale is taken only where at least 3/4 of the symbols sit on the
   points at it and 1/8 more than at scale 1: without the first rule the
   replay proof's usr3 (a call that fails its B1u at the designed level,

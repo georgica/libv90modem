@@ -105,6 +105,8 @@ enum {
 #define V92D_MAX_ECHO_DELAY 1919 /* the longest echo delay that can be given */
 #define V92D_FBUF  2752     /* longest received sequence (Ja) plus a next frame sync */
 #define V92D_B1U_LEAD 2     /* data frames of Ki = 0 passed over before B1u at most (reading 57) */
+#define V92D_UP_EST 144     /* B1u symbols the caller's gain is measured on (within the
+                               255 samples the training receiver keeps) */
 #define V92D_SBUF  (324 + 17 * (V92_DSN_LZ2 + V92_DSN_LP1 + V92_MAX_LC) + 72)  /* our CPd, bits */
 
 typedef struct {
@@ -204,6 +206,14 @@ int     v92d_cleardown(v92d_t *p);
 /* From data mode or a rate renegotiation: retrain (9.7.1.1). The state goes
  * to V92D_RETRAIN. Returns 0, or -1 when the call is not that far. */
 int     v92d_retrain(v92d_t *p);
+
+/* The caller's gain in data mode (v92_p34d.c, "the caller's gain"): from
+ * the V92D_UP_EST samples of t from k0 on (the first symbols of B1u, data
+ * frame interval 0 at k0), sliced on m, with eu2 the mean square of u(n)
+ * the design expects (linear^2), what the samples are to be multiplied by
+ * before the decoder, Q14: 16384 when they are taken as they are. Used by
+ * v92d_tick; open for the tests. */
+int32_t v92d_up_scale(const v92_map_t *m, const v92_trn_t *t, int32_t k0, uint32_t eu2);
 
 #ifdef P34D_TRACE
 /* Debug hook for a replay tool (../live/replay.c), called once per sample:

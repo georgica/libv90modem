@@ -33,8 +33,6 @@
 #define SUVD_HOLD_MS   2500     /* SUVd at the latest so long into Phase 4, the design done or not */
 #define T_PACE_MS      2500     /* more for each sample the design waits between steps */
 
-#define UP_EST         144      /* B1u symbols the caller's gain is measured on (within the
-                                   255 samples the training receiver keeps) */
 #define UP_UNITY       16384    /* up_scale of a caller at the level designed for */
 
 #define CD_BLOCK       80       /* carrier watch: 10 ms */
@@ -179,17 +177,38 @@ static void b1u_lead(v92d_t *p, int16_t y)
  * Implementations differ on that reference: a caller whose data signal
  * arrives some percent louder or weaker than designed is decided wrong at
  * the larger points, and B1u fails. So the gain is measured on the first
- * UP_EST symbols of B1u. The points are G.711 levels, nearly the same set
- * at any scale near the right one, so a decision-directed estimate stays
- * where it starts; what tells the right scale is that nearly every symbol
- * then sits on a point. The power of the symbols against what the design's
- * trial of the encoder gave (dsn.usum) puts the gain within some 15 %; the
- * scale at which most symbols lie within a quarter of the spacing of a
- * point, searched in steps of 4 % and then 1 % about that, is taken if
- * most symbols do sit on the points there. A caller at the designed level
- * (nearly all symbols on a point at scale 1) is left exactly as it was.
- * Else the decoder starts again on B1u from its first symbol, which the
- * training receiver still holds. */
+ * V92D_UP_EST symbols of B1u (v92d_up_scale). The points are G.711 levels,
+ * nearly the same set at any scale near the right one, so a
+ * decision-directed estimate stays where it starts; what tells the right
+ * scale is that nearly every symbol then sits on a point (within a quarter
+ * of the spacing).
+ *
+ *   1. At scale 1: if 7/8 of the symbols sit on a point, the scale is 1.
+ *      Simulated calls at the designed level score 131 to 144 of 144 and
+ *      stop here (one fit, some 14 k ARM instructions). Real ones need not:
+ *      of 26 recorded calls that reach B1u, 21 score under 126 (cxe 110,
+ *      h4 122, both calls that work at 1) and go on to 2 and 3, some 175 k
+ *      instructions in one tick.
+ *   2. The power of the symbols against what the design's trial of the
+ *      encoder gave (dsn.usum) puts the gain within some 15 %. The search
+ *      stays in the window 3/4 .. 4/3 of that start: G.711 is built in
+ *      octaves, and at twice or half the right scale many symbols sit on
+ *      points too (cxe: 128 at 2 against 110 at 1), so a scale is never
+ *      taken that the power does not allow.
+ *   3. In that window, 4 % apart on a third of the symbols, then 1 % apart
+ *      about the best on all of them, the scale where most symbols sit on
+ *      a point.
+ *   4. It is taken only if at least 3/4 of the symbols sit on a point there
+ *      (a caller off the level: 126 to 144 in simulation) and 1/8 more than
+ *      at scale 1 (usr3, a recorded call that fails its B1u at the designed
+ *      level: 67 at 1, the best 86). These rules, not step 1, are what keep
+ *      a real call at the designed level as it was: no recorded call takes
+ *      a scale.
+ *
+ * A scale of 1 changes nothing at all (up_in, base_step). Otherwise the
+ * decoder starts again on B1u from its first symbol, which the training
+ * receiver still holds. The fits slice the samples as received, without
+ * the baseline (base_q4), which has had only the first symbols to move. */
 
 /* the decoder's input for received sample s */
 static int32_t up_in(const v92d_t *p, int32_t s)
@@ -198,16 +217,15 @@ static int32_t up_in(const v92d_t *p, int32_t s)
     return (s * p->up_scale + 8192) >> 14;
 }
 
-/* of every step-th of the UP_EST samples from k (data frame interval 0),
- * the number within a quarter of the spacing of the nearest point once
- * multiplied by c (Q14) */
-static int up_fit(const v92d_t *p, int32_t k, int32_t c, int step)
+/* of every step-th of the V92D_UP_EST samples from k (data frame interval
+ * 0), the number within a quarter of the spacing of the nearest point once
+ * multiplied by c (Q14, at most 65535) */
+static int up_fit(const v92_map_t *m, const v92_trn_t *t, int32_t k, int32_t c, int step)
 {
-    const v92_map_t *m = &p->cpd.map;
     int j, n = 0;
-    for (j = 0; j < UP_EST; j += step) {
+    for (j = 0; j < V92D_UP_EST; j += step) {
         int i = j % V92_DFRAME, lc = v92_lc(m, i), eta;
-        int32_t r = ((int32_t)v92_trn_sample(&p->trn, k + j) * c + 8192) >> 14, a, e, h;
+        int32_t r = ((int32_t)v92_trn_sample(t, k + j) * c + 8192) >> 14, a, e, h;
         eta = v92_slice(m, i, r);
         a = v92_point(m, i, eta); e = r - a;
         /* the spacing on the side of r; past an end point, the one inside */
@@ -218,51 +236,65 @@ static int up_fit(const v92d_t *p, int32_t k, int32_t c, int step)
     return n;
 }
 
-/* best of the scales c, c + c * inc / 1024, ... (n of them), on every
- * step-th sample */
-static int32_t up_search(const v92d_t *p, int32_t k, int32_t c, int n, int32_t inc, int step, int *fit)
+/* best of the scales c, c + c * inc / 1024, ... (n of them) that lie in
+ * lo .. hi, on every step-th sample; *fit = -1 if none does */
+static int32_t up_search(const v92_map_t *m, const v92_trn_t *t, int32_t k, int32_t c, int n,
+                         int32_t inc, int step, int32_t lo, int32_t hi, int *fit)
 {
-    int32_t best = c;
+    int32_t best = UP_UNITY;
     int q;
     *fit = -1;
-    for (q = 0; q < n; q++, c += (int32_t)((int64_t)c * inc / 1024)) {
+    for (q = 0; q < n && c <= hi; q++, c += c * inc / 1024) {
         int f;
-        if (c < 4096 || c > 65535) continue;        /* a gain of 4 .. 1/4 */
-        f = up_fit(p, k, c, step);
+        if (c < lo) continue;
+        f = up_fit(m, t, k, c, step);
         if (f > *fit) { *fit = f; best = c; }
     }
     return best;
 }
 
-/* UP_EST symbols of B1u are in from sample k0 on: measure, and if the caller
- * is off the designed level start the decoder again from k0 */
-static void up_measure(v92d_t *p, int32_t k0)
+int32_t v92d_up_scale(const v92_map_t *m, const v92_trn_t *t, int32_t k0, uint32_t eu2)
 {
     uint64_t pw = 0, ex;
-    int32_t c, j;
+    int32_t c, lo, hi, j;
     int f1, fc, ff;
+
+    f1 = up_fit(m, t, k0, UP_UNITY, 1);
+    if (f1 >= V92D_UP_EST - V92D_UP_EST / 8) return UP_UNITY;
+    for (j = 0; j < V92D_UP_EST; j++) {
+        int32_t s = v92_trn_sample(t, k0 + j);
+        pw += (uint64_t)((int64_t)s * s);
+    }
+    ex = (uint64_t)eu2 * V92D_UP_EST;
+    while (ex >= ((uint64_t)1 << 34) || pw >= ((uint64_t)1 << 34)) { ex >>= 1; pw >>= 1; }
+    if (pw == 0 || ex == 0) return UP_UNITY;
+    c = (int32_t)isqrt64((ex << 28) / pw);                /* 1 / gain from the power, Q14 */
+    /* the window: 3/4 .. 4/3 of it, and a gain of 4 .. 1/4 */
+    if (c > 65535 + 65535 / 3 || c < 4096 - 4096 / 4) return UP_UNITY;
+    lo = c - c / 4; hi = c + c / 3;
+    if (lo < 4096) lo = 4096;
+    if (hi > 65535) hi = 65535;
+    /* 4 % apart on a third of the symbols; then 1 % apart about the best,
+     * on all */
+    c = up_search(m, t, k0, c - c / 4, 15, 41, 3, lo, hi, &fc);
+    if (fc < 0) return UP_UNITY;
+    c = up_search(m, t, k0, c - c * 3 / 100, 7, 10, 1, lo, hi, &ff);
+    if (ff < V92D_UP_EST * 3 / 4 || ff <= f1 + V92D_UP_EST / 8) return UP_UNITY;
+    return c;
+}
+
+/* V92D_UP_EST symbols of B1u are in from sample k0 on: measure, and if the
+ * caller is off the designed level start the decoder again from k0 */
+static void up_measure(v92d_t *p, int32_t k0)
+{
+    int32_t c;
 
     p->up_scale = UP_UNITY;
     if (p->trn.k - k0 > 255 || p->dsn.i <= 0) return;     /* (cannot happen) */
-    f1 = up_fit(p, k0, UP_UNITY, 1);
-    if (f1 >= UP_EST - UP_EST / 8) return;
-    for (j = 0; j < UP_EST; j++) {
-        int32_t s = v92_trn_sample(&p->trn, k0 + j);
-        pw += (uint64_t)((int64_t)s * s);
-    }
-    ex = ((uint64_t)p->dsn.usum * UP_EST / (uint32_t)p->dsn.i) << 14;
-    while (ex >= ((uint64_t)1 << 34) || pw >= ((uint64_t)1 << 34)) { ex >>= 1; pw >>= 1; }
-    if (pw == 0 || ex == 0) return;
-    c = (int32_t)isqrt64((ex << 28) / pw);                /* 1 / gain from the power, Q14 */
-    /* 0.75 .. 1.33 of it, 4 % apart, on a third of the symbols; then 1 %
-     * apart about the best, on all */
-    c = up_search(p, k0, c - c / 4, 15, 41, 3, &fc);
-    c = up_search(p, k0, c - c * 3 / 100, 7, 10, 1, &ff);
-    /* taken only where the symbols do sit on the points at that scale
-     * (a caller off the level: 126 to 144 of them in simulation) and
-     * clearly better than at 1 (a recorded call that failed its B1u at
-     * the designed level, usr3: 67 at 1, the best 86) */
-    if (ff < UP_EST * 3 / 4 || ff <= f1 + UP_EST / 8) return;
+    /* E[u^2] of the design's trial, linear^2 */
+    c = v92d_up_scale(&p->cpd.map, &p->trn, k0,
+                      (uint32_t)(((uint64_t)p->dsn.usum << 14) / (uint32_t)p->dsn.i));
+    if (c == UP_UNITY) return;
     /* the caller is off the designed level: B1u again from its first symbol
      * (and its leading data frames of Ki = 0 looked for again) */
     if (p->trn.k - (k0 - V92_DFRAME * p->b1_leads) > 255) return;
@@ -743,7 +775,9 @@ uint8_t v92d_tick(v92d_t *p, int16_t rxs)
         if (p->b1_left > 0) { p->cd_acc += (int32_t)x * x; p->cd_n++; }
         while (p->rx_on && p->data_k < p->trn.k) {
             /* the decoder started over on B1u (up_measure): two samples a
-             * tick until it is back, so no tick carries the lot */
+             * tick until it is back, so no tick carries the lot. (Some
+             * 150 ticks, inside B1u: no Ru can come then, so ru_heard
+             * never reads behind a decoder that is catching up) */
             if (p->up_scale && p->up_scale != UP_UNITY && n++ == 2) break;
 #ifdef P34D_TRACE
             v92d_trace_data(p, v92_trn_sample(&p->trn, p->data_k));
@@ -768,7 +802,7 @@ uint8_t v92d_tick(v92d_t *p, int16_t rxs)
                 if (p->base_q4 > BASE_MAX_Q4) p->base_q4 = BASE_MAX_Q4;
                 if (p->base_q4 < -BASE_MAX_Q4) p->base_q4 = -BASE_MAX_Q4;
                 if (p->b1_sym >= 0) b1u_lead(p, (int16_t)(y > 32767 ? 32767 : y < -32767 ? -32767 : y));
-                if (!p->up_scale && p->b1_left > 0 && p->data_k - (p->m_b1u + p->dsn.dly) == UP_EST)
+                if (!p->up_scale && p->b1_left > 0 && p->data_k - (p->m_b1u + p->dsn.dly) == V92D_UP_EST)
                     up_measure(p, p->m_b1u + p->dsn.dly);
             }
         }

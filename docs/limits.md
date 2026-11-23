@@ -287,6 +287,11 @@ which makes it about 123 M counted instructions a second.
 - The heaviest single tick of a calling V.90 / V.92 call is some 98 k
   instructions (8 % of a 10 ms block of the box), after the heavy designs
   were spread over many samples.
+- The answering V.92 modem measures the caller's gain once per B1u. In
+  any call whose B1u does not sit well on the designed points at scale 1
+  (21 of the 26 recorded calls that reach B1u, working ones among them)
+  that is one tick of some 175 k instructions (14 % of a 10 ms block);
+  14 k otherwise. Not yet spread over ticks.
 - **x2 data mode costs about twice V.90's: one x2 call per box.** 81.9 M
   instructions a second at 32000 and 83.7 M at 56000, against V.90
   answering's 38.9 M measured the same way (`make cost-x2`, second 15 to

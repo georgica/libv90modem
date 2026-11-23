@@ -545,5 +545,35 @@ int main(int argc, char **argv)
         CHECK_EQ_I(o.state, V92D_DATA); CHECK_EQ_I(d.b1_bad, 0);
         CHECK(o.up_bits > 3 * 24000); CHECK(o.up_bad * 500 < o.up_bits);
     }
+    /* ---- the gain measurement on its own: never a scale the power does
+     * not allow ---- */
+    if (WANT(10)) {
+        /* Points at the odd multiples of 64; the received samples at the
+         * odd multiples of 32. At scale 1 none is on a point; at scale 2
+         * (G.711's octaves) every one is. With the power at what the design
+         * expects, the scale stays 1; with it 6 dB under, it is 2. (The
+         * symbols are small: these points do not widen as G.711 levels do,
+         * so larger ones would want a finer search.) */
+        static v92_map_t m;
+        static v92_trn_t t;
+        uint64_t ms = 0;
+        int32_t k0 = 1000, c1, c2;
+        int n;
+        memset(&m, 0, sizeof m); memset(&t, 0, sizeof t);
+        m.lc[0] = 40;
+        for (n = 0; n < 40; n++) m.pt[0][n] = (uint16_t)(64 * (2 * n + 1));
+        for (n = 0; n < V92D_UP_EST; n++) {
+            int16_t v = (int16_t)(32 * (2 * (n * 3 % 8) + 1) * (n % 3 ? 1 : -1));
+            t.rb[(k0 + n) & 255] = v;
+            ms += (uint64_t)((int32_t)v * v);
+        }
+        ms /= V92D_UP_EST;
+        c1 = v92d_up_scale(&m, &t, k0, (uint32_t)ms);
+        c2 = v92d_up_scale(&m, &t, k0, (uint32_t)(4 * ms));
+        printf("  35 symbols on the points at scale 2 only: scale %.3f with the power as designed, %.3f with it 6 dB under\n",
+               c1 / 16384.0, c2 / 16384.0);
+        CHECK_EQ_I(c1, 16384);
+        CHECK(c2 > 32768 - 32768 / 20 && c2 < 32768 + 32768 / 20);
+    }
     T_REPORT("v92call");
 }

@@ -138,8 +138,13 @@ Fixed:
   it is off, decodes B1u again from its start with the samples scaled.
   Simulated, 0.4 to 3.0 of the design are measured within 1 %; data flows
   without error from 0.4 to 1.5 on every line tried, and above that on a
-  short line (docs/limits.md for the limits). A caller at the designed
-  level is decoded exactly as before.
+  short line (docs/limits.md for the limits). A scale is taken only within
+  3/4 to 4/3 of what the power says, and only where at least 3/4 of the
+  symbols sit on the points and clearly more than at the designed level;
+  where none is taken (every recorded call) the call is decoded exactly as
+  before. The measurement costs one tick of some 175 k ARM instructions in
+  any call whose B1u does not sit well on the points at the designed level
+  (21 of the 26 recorded calls that reach B1u), 14 k in the others.
 - V.90 and V.92, calling role: the last data frame before every Rd of
   the digital modem's (its rate renegotiation or cleardown, or its answer
   to a renegotiation or cleardown of ours) is delivered. It was dropped,
