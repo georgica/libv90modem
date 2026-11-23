@@ -46,7 +46,7 @@ typedef struct {
     uint32_t theta; int32_t freq;
     /* results */
     int32_t  zr, zi;            /* derotated point of the newest symbol */
-    int32_t  nsym;
+    int32_t  nsym;              /* symbols out, modulo 2^31 */
     int32_t  mse;               /* smoothed |e|^2 / |d|^2, Q16 (65536 = 0 dB) */
     int64_t  mse_acc;           /* the same with 8 more fractional bits */
 } qamrx_t;

@@ -121,7 +121,10 @@ Fixed:
   receiver and the V.92 answerer's upstream decoder after 74.6 hours, each
   with the call left in data mode and no data moving. The clocks now wrap
   or stop at their limit as defined C, and the receivers' sample and
-  symbol numbers are brought back every 2^30 in data mode. A host that
+  symbol numbers are brought back every 2^30 in data mode; the V.34
+  receiver's symbol count goes on from 0 past 2^31 - 1, so that its
+  timing nudge every 1024 symbols keeps running (held at the limit it
+  would have stopped after 174 hours at 3429 baud). A host that
   keeps calling `v90m_process_*` after `V90M_EV_ENDED` no longer overflows
   them either. Shorter calls are unchanged.
 

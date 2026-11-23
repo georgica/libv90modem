@@ -90,7 +90,13 @@ static void pcm_call(int v92)
     CHECK(clk_diff(l->org.v90.rx.n, l->org.v90.rx.n0) < CLK_REBASE_AT);
     CHECK_EQ_I(l->org.t, INT32_MAX); CHECK_EQ_I(l->ans.t, INT32_MAX);
     if (v92) { CHECK(l->ans.u.v92.now > 0x80000000u); CHECK(l->ans.u.v92.trn.k < 0x40000000); }
-    else CHECK(l->ans.p34.now > 0x80000000u);
+    else {
+        CHECK(l->ans.p34.now > 0x80000000u);
+        /* the symbol count went on past 2^31 - 1 from 0: its low bits keep
+         * cycling (the centroid nudge every 1024 symbols, qamrx.c) */
+        printf("  V.90: the answerer's symbol count %d\n", (int)l->ans.p34.rx.nsym);
+        CHECK(l->ans.p34.rx.nsym >= 0 && l->ans.p34.rx.nsym < RUN_S * 3429 - 8000);
+    }
     /* a rate renegotiation of ours on the symbol numbers brought back (V.90:
      * Rd, TRN2d on m_b1d's frames; V.92 also the digital modem's Ru and its
      * receiver's resume on trn.k): data again both ways, nothing wrong */

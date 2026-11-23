@@ -127,7 +127,10 @@ static int produce(qamrx_t *r)
                 c = sintab[((r->theta >> 22) + SIN_N / 4) & SIN_MASK];
                 r->zr = (int32_t)(((int64_t)r->yr * c + (int64_t)r->yi * s) >> 15);
                 r->zi = (int32_t)(((int64_t)r->yi * c - (int64_t)r->yr * s) >> 15);
-                r->nsym = clk_sat_inc(r->nsym);
+                /* on past 2^31 - 1 from 0 (defined: unsigned), so that
+                 * the low bits keep cycling for qamrx_update's nudge; the
+                 * training readers (nsym - 1) are long done by then */
+                r->nsym = (int32_t)(((uint32_t)r->nsym + 1u) & 0x7fffffffu);
                 got = 1;
             } else if (r->timing_on) {
                 /* a third late: timing gradient Re{e conj(z+ - z-)} / |d|^2, with
