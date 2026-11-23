@@ -55,7 +55,8 @@ to qemu-m68k at ports-2. The audit found GCC 12.3.0 for m68k at fault
 (with the frame pointer omitted it reads an incoming argument 8 bytes off
 around a 64-bit division libcall), in two places: `qamrx_init`'s `dcar`
 (the twelve failures) and `v90arx_clock`'s `ppm_q8` (the answering V.90
-clock always at its lower limit on m68k, which no test saw). Both
+clock a value that depends on the binary's link layout on m68k, which no
+test saw). Both
 expressions are rewritten to forms gcc compiles right, with the same value
 on every input (checked for all 2^32); an asm scan of the whole tree at
 -O1/-O2/-Os/-O3 finds no other site. The matrix builds m68k with

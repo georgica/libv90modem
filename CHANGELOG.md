@@ -13,10 +13,12 @@ this library's own answering modem, never against a real modem or server.
 Added (tools):
 - `v90m-replay -s SAMPLE` starts the modem at that sample of the recording
   (0-based) with no search for the answer tone and no silence assumed before
-  it, for recordings that begin at the answer tone; times in the report then
-  count from SAMPLE. `-l` takes a decimal level such as `-14.4` (to 0.01 dB;
-  whole numbers give the level they always did). A bad `-l` or `-s` value
-  prints the usage and exits 2. Without `-s` the run is unchanged.
+  it, for recordings that begin at the answer tone; the times in the report
+  stay the recording's. With `-k`, `-s` skips the alignment after V.8bis.
+  `-l` takes a decimal level such as `-14.4` (to 0.01 dB; whole numbers give
+  the level they always did). A bad `-l` or `-s` value prints the usage and
+  exits 2: values the old `-l` read through `atoi` as something (`abc` as 0,
+  `1e3` as 1) are now rejected. Without `-s` the run is unchanged.
   `test/fixtures/replay-opts.sh` tests both (part of `make test-fixtures`).
 
 Fixed:
@@ -24,10 +26,10 @@ Fixed:
   up, the V.34 receiver's carrier (`qamrx_init`) and the answering V.90
   receiver's clock (`v90arx_clock`) were computed from the wrong stack
   slot (a compiler wrong-code bug), so V.34 did not train and the V.90
-  clock was garbage (a value that depends on the binary's link layout). Both are now written in a form that
-  compiler gets right; the result on every other target is the same as
-  before. Building for m68k with `-fno-omit-frame-pointer` avoids the bug
-  wherever else it might strike.
+  clock was garbage (a value that depends on the binary's link layout).
+  Both are now written in a form that compiler gets right; the result on
+  every other target is the same as before. The port matrix builds m68k
+  with `-fno-omit-frame-pointer`, with which the suite passes under GCC 12.3.
 
 ## 0.5.0 (2026-11-21)
 

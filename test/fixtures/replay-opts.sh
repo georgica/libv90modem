@@ -2,13 +2,13 @@
 # replay-opts.sh REPLAY: v90m-replay's -s (start sample) and -l (level, also
 # decimal) on the public recordings of fixtures.txt. Exit 1 on any failure.
 #
-#   -s: the default run starts the modem a little before the answer tone, and
-#       its times are those of the recording. -s S starts at sample S and
-#       counts times from S. So a default run and "-s S" for the S where it
-#       starts give the same trace but for the times: compared here with the
-#       times taken out. And a recording with N samples of its start cut off
-#       (N a multiple of 80, the block) with "-s S" gives, to the byte, what
-#       the whole recording gives with "-s S+N".
+#   -s: the default run starts the modem a little before the answer tone; -s S
+#       starts it at sample S, and the times are the recording's either way.
+#       So a default run and "-s S" for the S where it starts give the same
+#       trace, to the byte, but for the two lines at the top. And a recording
+#       with N samples of its start cut off (N a multiple of 80, the block)
+#       with "-s S-N" gives what the whole recording gives with "-s S", with
+#       the times (all N/8000 s later in the whole one) taken out.
 #   -l: whole numbers give what they always did, "-14.0" and "-14.00" are
 #       "-14"; "-14.4" differs from "-14" only in how many samples differ
 #       from the recording (the recording's modem sent at -12); bad values
@@ -36,27 +36,27 @@ norm() {
 "$R" v34a.raw > def.txt || bad "default run"
 ans=$(sed -n 's/^answer tone at \([0-9.]*\) s.*/\1/p' def.txt)
 lo=$(awk -v a="$ans" 'BEGIN { printf "%d", a * 8000 - 1600 - 5 }')
-norm def.txt > def.n
+tail -n +3 def.txt > def.n
 found=
 s=$lo
 while [ "$s" -le $((lo + 10)) ]; do
     "$R" -s "$s" v34a.raw > s.txt || bad "-s $s exit"
-    norm s.txt > s.n
+    tail -n +3 s.txt > s.n
     if cmp -s def.n s.n; then found=$s; break; fi
     s=$((s + 1))
 done
 if [ -z "$found" ]; then bad "no -s near the default start (about sample $lo) gives the default trace"
-else echo "  -s $found: the default trace, times apart"; fi
+else echo "  -s $found: the default trace"; fi
 
 # -s on a recording with its start cut off
 if [ -n "$found" ]; then
     cut=100                                             # blocks = 8000 samples
     dd if=v34a.raw of=short.raw bs=160 skip=$cut 2>/dev/null
     "$R" -s "$found" v34a.raw > a.txt; "$R" -s $((found - cut * 80)) short.raw > b.txt
-    # the first two lines have the recording's length and the start sample
+    # the first two lines have the recording's length and the start sample (norm drops them)
     if cmp -s a.txt b.txt; then bad "cut and uncut have the same header (the test is empty)"
-    elif [ "$(tail -n +3 a.txt)" = "$(tail -n +3 b.txt)" ]; then
-        echo "  -s $found, and -s $((found - cut * 80)) on the recording cut by $((cut * 80)): same trace"
+    elif [ "$(norm a.txt)" = "$(norm b.txt)" ]; then
+        echo "  -s $found, and -s $((found - cut * 80)) on the recording cut by $((cut * 80)): same trace, times apart"
     else bad "-s on the cut recording gives another trace"; diff a.txt b.txt | head -5; fi
 fi
 

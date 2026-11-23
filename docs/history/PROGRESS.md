@@ -3890,8 +3890,8 @@ argument or the return address. In the tree:
   differently with `-one-insn-per-tb`" was two differently linked binaries,
   not the emulator).
 - `modem/v90arx.c`, `v90arx_clock`: `ppm_q8` was the return address, so
-  the answering V.90 receiver's clock was always clamped to its lower
-  limit (no test looked at it; a check program printed 4290672329 for
+  the answering V.90 receiver's clock read a value that depends on the
+  binary's link layout (no test looked at it; a check program printed 4290672329 for
   every ppm against the host's 4294967296 + ppm * 2^32 / 256e6).
 
 Fix: `qamrx_init` takes `(uint64_t)(uint32_t)car_num << 32` (only the low
@@ -3904,8 +3904,8 @@ of every tracked C file (all but the two spandsp peers, which need
 spandsp) at -O1, -O2, -Os and -O3, for `subq.l #N,%sp; move.l %sp,%aK`
 followed by an sp-relative source, found these two sites and no others
 before the change, and none after. The port matrix also builds m68k with
-`-fno-omit-frame-pointer`, with which the suite passed under GCC 12.3, against new
-sites; m68k gates in `make verify-phase` like every other target.
+`-fno-omit-frame-pointer`, with which the suite passed under GCC 12.3,
+against new sites; m68k gates in `make verify-phase` like every other target.
 
 qemu-m68k was cleared: 300,000 random operand sets through `mulu.l`,
 `muls.l`, `divu.l`, `divs.l` (64-bit forms, results and flags) matched a

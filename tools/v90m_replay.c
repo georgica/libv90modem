@@ -20,7 +20,9 @@
  *   -s SAMPLE   start the modem at this sample of the recording (0-based),
  *               with no search for the answer tone and no silence assumed
  *               before it, for a recording that begins at the answer tone.
- *               Times in the report then count from SAMPLE.
+ *               Times in the report are the recording's, as without -s.
+ *               With -k, the alignment
+ *               after V.8bis is not made: the modem starts cold at SAMPLE.
  * The modem must be set up as the recording modem was: what it hears holds
  * the echo of what that modem sent. "our transmit differs from the
  * recording in 0" at the end says it was.
@@ -186,7 +188,7 @@ int main(int argc, char **argv)
     rec_t r; v90m_cfg c; v90m_ec_cfg ecc; v90m_t *m; answer_t *a;
     long len, ans, k0, i, diff = 0, first = -1;
     int arg, err, lv = -1, lr = -1;
-    long start = -1, base = 0;
+    long start = -1;
     int bad = 0;
     const char *bits_path = "bits.txt";
     FILE *f;
@@ -229,8 +231,8 @@ int main(int argc, char **argv)
     a = v90m__answer(m);
     if (start >= 0) {
         if (start >= r.n) { fprintf(stderr, "-s %ld: the recording has %ld samples\n", start, r.n); return 2; }
-        base = start; k0 = 0; ans = start;
-        printf("the modem starts at sample %ld of the recording; times count from there\n", start);
+        k0 = 0; ans = start;
+        printf("the modem starts at sample %ld of the recording (%.3f s); times are the recording's\n", start, start / 8000.0);
     } else {
     /* where this modem starts its answer tone: run it on silence until it
      * sends its first sound, which is what recorded_answer() finds (with
@@ -250,11 +252,10 @@ int main(int argc, char **argv)
     v90m_reset(m, &c);
     trace_reset();
     tr_on = 1;
-    /* i counts from the modem's start (from 0 with -s); base + i is the sample of the recording */
-    for (i = start >= 0 ? 0 : ans - k0; i < r.n - base; i++) {
+    for (i = start >= 0 ? start : ans - k0; i < r.n; i++) {
         uint8_t want = 0xFF, tx; v90m_state st;
         if (i < 0) { uint8_t s = opt_alaw ? 0xD5 : 0xFF; v90m_process_g711(m, &s, &tx, 1); continue; }
-        want = rec_sent(&r, base + i);
+        want = rec_sent(&r, i);
         /* the echo cancellers take what was really sent as their reference
          * once data moves (V.34, V.92): this modem's data are not the
          * recording's */
@@ -262,8 +263,8 @@ int main(int argc, char **argv)
         rec_tx_on = (a->phase == ANS_V34 && a->connected)
                     || (a->phase == ANS_X2 && (a->u.x2.state == X2D_START || a->u.x2.state == X2D_DATA || a->u.x2.state == X2D_RENEG));
         if (rec_tx92 && (a->phase == ANS_V92 || a->phase == ANS_P3X)) { a->u.v92.cfg.getbit = rp_ones; a->u.v92.cfg.putbit = rp_drop; }
-        if (r.lin) { int16_t x = rec_heard_lin(&r, base + i); v90m_process_lin_rx(m, &x, &tx, 1); }
-        else { uint8_t x = rec_heard(&r, base + i); v90m_process_g711(m, &x, &tx, 1); }
+        if (r.lin) { int16_t x = rec_heard_lin(&r, i); v90m_process_lin_rx(m, &x, &tx, 1); }
+        else { uint8_t x = rec_heard(&r, i); v90m_process_g711(m, &x, &tx, 1); }
         if (tx != want) { if (first < 0) first = i; diff++; dsec[(i / 8000) % 120]++; }
         if (txbits && a->phase == ANS_X2) x2_down(&a->u.x2.tx, txown ? tx : want);
 
@@ -309,7 +310,7 @@ int main(int argc, char **argv)
                (int)sx.modulation, sx.tx_bps, sx.rx_bps, sx.snr_db10 / 10.0, sx.rtd, sx.echo_delay, sx.retrains, sx.renegotiations, bits_rx);
     }
     for (i = 0; i < 120; i++) if (dsec[i]) printf("  second %ld: %ld samples differ\n", i, dsec[i]);
-    printf("%ld samples; after the answer our transmit differs from the recording in %ld (first at %.3f s)\n", r.n - base, diff, first / 8000.0);
+    printf("%ld samples; after the answer our transmit differs from the recording in %ld (first at %.3f s)\n", r.n, diff, first / 8000.0);
     if (txbits) printf("downstream frames decoded %ld, not levels %ld\n", tx_frames, tx_bad);
     if (rxbits) fclose(rxbits);
     if (txbits) fclose(txbits);
