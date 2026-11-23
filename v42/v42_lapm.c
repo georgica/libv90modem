@@ -144,7 +144,7 @@ static void data_reset(v42lapm_t *l)
     l->hold_len = l->hold_pos = 0;
     l->peer_busy = 0; l->rej_exc = 0; l->timer_rec = 0; l->busy_discard = 0;
     l->data_seen = 0;
-    l->rc = 0; l->no_progress = 0;
+    l->rc = 0;                /* no_progress kept: no data moved (D9) */
     l->own_busy &= OWN_BUSY_USER;
     l->pend &= ~(P_RESP_F1 | P_POLL | P_REJ | P_ACK | P_STATUS);
     if (l->own_busy) l->pend |= P_STATUS;
@@ -155,6 +155,7 @@ static void enter_connected(v42lapm_t *l)
     l->state = V42LAPM_CONNECTED;
     l->pend &= P_UA;
     data_reset(l);
+    l->no_progress = 0;
     l->brk_tx = 0; l->brk_timer = -1;
     t401_stop(l);
     l->established++;
@@ -569,6 +570,18 @@ static int process_nr(v42lapm_t *l, uint8_t nr, int from_i)
     return d;
 }
 
+/* D9 (see enter_recovery): one more recovery with I frames outstanding and
+ * V(A) not moved since the last; 0 when that is one past N400 and the
+ * link was released */
+static int no_progress(v42lapm_t *l)
+{
+    if (!l->peer_busy && MOD(l->vh - l->va) != 0 && l->no_progress++ >= l->cfg.n400) {
+        terminate(l, V42LAPM_R_N400);
+        return 0;
+    }
+    return 1;
+}
+
 static void busy_update(v42lapm_t *l, int mask)
 {
     int old = l->own_busy;
@@ -661,7 +674,7 @@ static void rx_i(v42lapm_t *l, const uint8_t *f, int len, int is_cmd)
 static void rx_s(v42lapm_t *l, const uint8_t *f, int len, int is_cmd)
 {
     uint8_t type = f[1], nr = f[2] >> 1;
-    int pf = f[2] & 1, final = !is_cmd && pf, was_rec;
+    int pf = f[2] & 1, final = !is_cmd && pf, was_rec, d;
 
     if (!data_state(l)) return;
     /* SREJ is never agreed (8.4.5.1); anything else is undefined; an
@@ -689,8 +702,11 @@ static void rx_s(v42lapm_t *l, const uint8_t *f, int len, int is_cmd)
         break;
     default:                                        /* REJ, 8.4.4 */
         l->rx_rej++;
-        if (process_nr(l, nr, 0) < 0) return;
+        if ((d = process_nr(l, nr, 0)) < 0) return;
         l->peer_busy = 0;
+        /* a go-back that acknowledges nothing is a recovery without
+         * progress too (D9; a poll's answer was counted at the poll) */
+        if (d == 0 && !was_rec && !no_progress(l)) return;
         if (!was_rec || final) {
             l->timer_rec = 0;
             l->vs = nr;
@@ -1032,16 +1048,13 @@ int v42lapm_get_break(v42lapm_t *l, int *opt, int *len10ms)
 /* Timer recovery begins (8.4.8, 8.12.3.3). V.42 starts the retransmission
  * count again at each recovery, so a peer that answers every poll and
  * never acknowledges an I frame keeps the link up for ever. Ruled
- * otherwise here (every wait bounded): N400 recoveries in a row, with I
- * frames sent and unacknowledged and V(A) never moving, release the link
- * (V42LAPM_R_N400). Not while the peer says it is busy (RNR): 8.4.7 lets
- * that last. Returns 0 when it released. */
+ * otherwise here (every wait bounded): after N400 whole recoveries with I
+ * frames sent and unacknowledged and V(A) never moving, the next one
+ * releases the link (V42LAPM_R_N400) instead. Not while the peer says it
+ * is busy (RNR): 8.4.7 lets that last. Returns 0 when it released. */
 static int enter_recovery(v42lapm_t *l)
 {
-    if (!l->peer_busy && MOD(l->vh - l->va) != 0 && ++l->no_progress >= l->cfg.n400) {
-        terminate(l, V42LAPM_R_N400);
-        return 0;
-    }
+    if (!no_progress(l)) return 0;
     l->timer_rec = 1; l->rc = 0;
     return 1;
 }

@@ -175,10 +175,13 @@ Changed (error control, V.42 / LAPM):
   sending direction is taken at its word (it was raised to our value or
   the default, more frames than it said it could take).
 - Bounded waits (a ruling that departs from V.42, which starts the count
-  again at each recovery): `n400` timer recoveries in a row with I frames
-  unacknowledged and none acknowledged in between release the link with
-  `V90M_EC_R_N400`. A peer answering every poll but never acknowledging
-  kept the link up for ever. A busy peer (RNR) is not counted.
+  again at each recovery): after `n400` recoveries (timer recoveries, and
+  go-backs on a REJ that acknowledges nothing) with I frames
+  unacknowledged and none acknowledged in between, the next one releases
+  the link with `V90M_EC_R_N400`. A peer answering every poll, or every I
+  frame with such a REJ, but never acknowledging kept the link up for
+  ever. A busy peer (RNR) is not counted; a destructive break does not
+  start the count again.
 - V.42bis P1 is proposed at most at `V42COMP_MAX_CODEWORDS` (2048), and a
   compression direction agreed but not runnable releases the link with
   `V90M_EC_R_COMPRESSION`. (Through the API, `v42bis_p1` above 2048 is
@@ -200,6 +203,9 @@ Changed (build and install):
   `v90m__ec` (internal accessors that looked like API): renamed
   `v90m__i_*` like every other internal. `make check-symbols` rejects
   them; `make check-soname` (part of `make check`) checks the SONAME.
+- `make uninstall` also removes a `libv90modem.so.0` link left by 0.5.0 or
+  earlier once it points at nothing. Packagers: the `.so.0` link is no
+  longer installed.
 
 ## 0.5.0 (2026-11-21)
 

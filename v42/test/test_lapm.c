@@ -951,6 +951,17 @@ static void test_n400(void)
  * acknowledges an I frame: N400 recoveries without progress release the
  * link (V.42 restarts the count at each recovery; ours does not) */
 static int drop_i_from_a(int from_a, const uint8_t *f, int len) { return !(from_a && is_i(f, len)); }
+/* B never sees A's I frames and answers each with REJ, N(R) = A's V(A) */
+static int rej_every_i(int from_a, const uint8_t *f, int len)
+{
+    if (from_a && is_i(f, len)) {
+        uint8_t rej[3] = { 0x03, 0x09, 0 };
+        rej[2] = (uint8_t)(A.va << 1);
+        v42lapm_rx_frame(&A, rej, 3, 0);
+        return 0;
+    }
+    return 1;
+}
 static int drop_i_some(int from_a, const uint8_t *f, int len) { return !(from_a && is_i(f, len) && now_ms % 400 < 150); }
 
 static void test_no_progress(void)
@@ -963,9 +974,60 @@ static void test_no_progress(void)
     while (A.state == V42LAPM_CONNECTED && now_ms - t0 < 60000) run(1);
     CHECK_EQ_I(A.state, V42LAPM_DISCONNECTED);
     CHECK_EQ_I(A.reason, V42LAPM_R_N400);
-    CHECK(now_ms - t0 <= 5000);
-    CHECK(count_ctrl(0, 0x01) >= 2);                 /* the polls were answered */
+    /* N400 whole recoveries, each polled and answered; released as the
+     * next one begins */
+    CHECK_EQ_I(A.t401_expiries, (unsigned long)ca.n400 + 1);
+    CHECK_EQ_I(A.tx_polls, (unsigned long)ca.n400);
+    CHECK(now_ms - t0 <= (ca.n400 + 1) * ca.t401_ms + 20);
+    CHECK_EQ_I(count_ctrl(0, 0x01), ca.n400);        /* the polls were answered */
     CHECK_EQ_I(B.state, V42LAPM_CONNECTED);
+
+    /* N400 = 1: one lost I frame is still polled for and recovered */
+    setup(); ca.n400 = 1;
+    CHECK(connect_pair());
+    nlog = 0; filt = lose_i_from_a; lose_ns = 0; lose_left = 1;
+    flow_reset(&ab, 60, 100);
+    run(5000);
+    CHECK_EQ_I(A.state, V42LAPM_CONNECTED);
+    CHECK_EQ_I(A.tx_polls, 1);
+    CHECK(flows_ok());
+    /* the same with the line stopped and restored in the middle */
+    setup(); ca.n400 = 1;
+    CHECK(connect_pair());
+    filt = drop_all; flow_reset(&ab, 300, 100);
+    run(50);
+    filt = NULL;
+    v42lapm_line_restored(&A);
+    run(3000);
+    CHECK_EQ_I(A.state, V42LAPM_CONNECTED);
+    CHECK(flows_ok());
+
+    /* a peer that answers every I frame with REJ, N(R) = V(A): each such
+     * go-back is a recovery without progress (T401 never runs out) */
+    setup(); ca.t401_ms = 100; ca.n400 = 3;
+    CHECK(connect_pair());
+    filt = rej_every_i; t0 = now_ms;
+    flow_reset(&ab, 2000, 100);
+    while (A.state == V42LAPM_CONNECTED && now_ms - t0 < 60000) run(1);
+    CHECK_EQ_I(A.state, V42LAPM_DISCONNECTED);
+    CHECK_EQ_I(A.reason, V42LAPM_R_N400);
+    CHECK_EQ_I(A.t401_expiries, 0);
+    CHECK_EQ_I(A.rx_rej, (unsigned long)ca.n400 + 1);
+    CHECK(now_ms - t0 <= 50);
+
+    /* a destructive break (the data path reset) does not start the count
+     * again: no data moved */
+    setup(); ca.t401_ms = 100; ca.n400 = 3;
+    CHECK(connect_pair());
+    filt = drop_i_from_a; t0 = now_ms;
+    flow_reset(&ab, 20000, 100);
+    while (A.t401_expiries < 2 && now_ms - t0 < 5000) run(1);
+    CHECK_EQ_I(v42lapm_send_break(&A, V42_BRK_DESTRUCTIVE_EXPEDITED, 0), 0);
+    while (A.state == V42LAPM_CONNECTED && now_ms - t0 < 60000) run(1);
+    CHECK_EQ_I(A.state, V42LAPM_DISCONNECTED);
+    CHECK_EQ_I(A.reason, V42LAPM_R_N400);
+    CHECK_EQ_I(A.t401_expiries, (unsigned long)ca.n400 + 1);
+    CHECK_EQ_I(A.resets, 1);
 
     /* progress in between starts the count again: the I frames are lost
      * for 150 ms of every 400, two recoveries each time, more than N400 in

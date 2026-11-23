@@ -420,7 +420,10 @@ typedef struct {
 
 enum { V90M_EC_DETECT = 0, V90M_EC_ESTABLISH, V90M_EC_CONNECTED, V90M_EC_ASYNC,
        V90M_EC_RELEASING, V90M_EC_DISCONNECTED };
-/* why an endpoint is V90M_EC_DISCONNECTED (v90m_ec_status.reason) */
+/* why an endpoint is V90M_EC_DISCONNECTED (v90m_ec_status.reason).
+ * V90M_EC_R_N400 also ends a link that made no progress through n400
+ * recoveries (docs/error-control.md "Bounded waits"; a busy peer, RNR,
+ * is not counted). */
 enum { V90M_EC_R_NONE = 0, V90M_EC_R_LOCAL, V90M_EC_R_PEER_DISC, V90M_EC_R_PEER_DM,
        V90M_EC_R_N400, V90M_EC_R_PROTOCOL, V90M_EC_R_NEGOTIATION,
        V90M_EC_R_NO_EC = 16, V90M_EC_R_COMPRESSION, V90M_EC_R_NO_SABME };

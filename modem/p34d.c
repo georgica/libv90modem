@@ -1,4 +1,4 @@
-#ifdef V42_XID_TRACE
+#ifdef P34D_XID_TRACE
 #include <stdio.h>
 #endif
 /* V.90 Phases 3 and 4, digital modem. See p34d.h. */
@@ -65,7 +65,7 @@ static void fail(p34d_t *p, int err)
 
 static void enter(p34d_t *p, p34d_state s)
 {
-#ifdef V42_XID_TRACE
+#ifdef P34D_XID_TRACE
     if (p->in_reneg) fprintf(stderr, "P34 state %d left after %lu samples for %d\n", (int)p->state, (unsigned long)p->t, (int)s);
 #endif
     p->state = s; p->t = 0;
@@ -267,7 +267,7 @@ static void rate_down(p34d_t *p)
     int32_t snr = probe_db10(65536, p->rx.mse > 0 ? p->rx.mse : 1) - Q_MARGIN_DB10;
     int32_t b10 = (snr - Q_SNR0_DB10) * 10 / 30;
     int drn = (int)(((int64_t)p->cfg.sym_rate * b10) / 10) / 2400, now = p->up_rate / 2400;
-#ifdef V42_XID_TRACE
+#ifdef P34D_XID_TRACE
     fprintf(stderr, "P34 rate_down: snr %d, now %d, wanted %d\n", (int)snr, now, drn);
 #endif
     if (drn >= now) drn = now - 1;
@@ -280,7 +280,7 @@ static void rate_down(p34d_t *p)
 /* S in data mode (9.6.1.2.1): stop delivering data, follow S to its S-bar */
 static void s_heard(p34d_t *p)
 {
-#ifdef V42_XID_TRACE
+#ifdef P34D_XID_TRACE
     fprintf(stderr, "P34 S heard in data mode (state %d), mse %d\n", (int)p->state, (int)p->rx.mse);
 #endif
     p->rx_ready = 0;
@@ -567,7 +567,7 @@ uint8_t p34d_tick(p34d_t *p, int16_t rxs)
     case P34_ED:
         if (sig == V90TX_DATA) p->tx_ready = 1;
         if (p->tx_ready && p->rx_ready) {
-#ifdef V42_XID_TRACE
+#ifdef P34D_XID_TRACE
             fprintf(stderr, "P34 data again (reneg %d), state %d lasted %lu samples, up %d\n", p->in_reneg, (int)p->state, (unsigned long)p->t, (int)p->up_rate);
 #endif
             p->in_reneg = 0; enter(p, P34_DATA); }
@@ -601,7 +601,7 @@ uint8_t p34d_tick(p34d_t *p, int16_t rxs)
         /* 9.6.1.2.2: after the S-to-S-bar transition, Rd. If the S-bar is
          * missed the caller is waiting for Rd all the same. */
         if (p->rxmode == RX_SEQ || p->t > MS(T_RENEG_S_MS)) {
-#ifdef V42_XID_TRACE
+#ifdef P34D_XID_TRACE
             fprintf(stderr, "P34 reneg: %s after %lu samples, Rd\n", p->rxmode == RX_SEQ ? "S-bar found" : "no S-bar", (unsigned long)p->t);
 #endif
             start_rd(p);

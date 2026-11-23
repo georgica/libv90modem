@@ -214,6 +214,8 @@ uninstall:
 	rm -f $(DESTDIR)$(INCDIR)/v90modem.h $(DESTDIR)$(LIBDIR)/$(NAME).a $(DESTDIR)$(LIBDIR)/$(NAME).so \
 	      $(DESTDIR)$(LIBDIR)/$(NAME).so.$(SOVER) $(DESTDIR)$(LIBDIR)/$(NAME).so.$(VERSION) \
 	      $(DESTDIR)$(PCDIR)/$(NAME).pc $(DESTDIR)$(BINDIR)/v90m-replay
+	@# the .so.0 link of 0.5.0 and earlier, when it now points at nothing
+	@l=$(DESTDIR)$(LIBDIR)/$(NAME).so.0; if [ -L "$$l" ] && [ ! -e "$$l" ]; then rm -f "$$l"; echo "removed $$l"; fi
 
 # ---- tests: T_SRC compiled once (T_CFLAGS) into $(BUILD)/libtest.a, and
 # for ARM_CC into $(BUILD)/arm/libtest.a; each test_X links test/test_X.c

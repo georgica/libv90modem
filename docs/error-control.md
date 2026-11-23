@@ -100,11 +100,15 @@ direction is taken at its word.
 **Bounded waits** (a ruling that departs from V.42). V.42, like HDLC,
 starts the retransmission count again at each timer recovery (8.4.8): a
 peer that answers every poll (RR with F=1) but never acknowledges an I
-frame keeps the link up for ever with nothing moving. Here every wait is
-bounded: `n400` timer recoveries in a row with I frames unacknowledged and
-V(A) not moving release the link with `V90M_EC_R_N400` (about `n400` x
-`t401_ms`: 10 s with the defaults). Acknowledged data starts the count
-again. A peer that says it is busy (RNR) is not counted: V.42 8.4.7 lets
+frame keeps the link up for ever with nothing moving, and so does one that
+answers every I frame with a REJ that acknowledges nothing. Here every
+wait is bounded: after `n400` recoveries (timer recoveries, and go-backs
+on a REJ that acknowledges nothing) with I frames unacknowledged and V(A)
+not moving, the next one releases the link with `V90M_EC_R_N400` (about
+(`n400` + 1) x `t401_ms`: 11 s with the defaults). With `n400` 1 one
+recovery is still made. Acknowledged data starts the count again; a
+destructive break, which resets the data path but moves no data, does
+not. A peer that says it is busy (RNR) is not counted: V.42 8.4.7 lets
 that last, and the program, which stops being able to write, decides.
 T403 is off by default (`t403_ms` 0): with nothing unacknowledged a peer
 that has gone silently is not noticed by V.42 itself; the modem's loss of
