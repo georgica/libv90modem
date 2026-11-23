@@ -31,10 +31,10 @@
 #ifndef V90D_V92_P34D_H
 #define V90D_V92_P34D_H
 #include <stdint.h>
-#include "ec.h"
-#include "ecdly.h"
-#include "tonedet.h"
-#include "v90_tx.h"
+#include "../modem/ec.h"
+#include "../modem/ecdly.h"
+#include "../modem/tonedet.h"
+#include "../v90/v90_tx.h"
 #include "v92_rx.h"
 #include "v92_design.h"
 #include "v92_dec.h"

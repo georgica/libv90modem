@@ -6,7 +6,7 @@
  * specification 10, 11) describe them. Facts only; no code of either. */
 #include "x2map.h"
 #include "x2tab.h"
-#include "v90_pcm.h"
+#include "../v90/v90_pcm.h"
 
 #define MD   5              /* signs per frame */
 

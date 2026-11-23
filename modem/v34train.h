@@ -6,7 +6,7 @@
 #define V90D_MODEM_V34TRAIN_H
 #include <stdint.h>
 #include "qamrx.h"
-#include "v34.h"
+#include "../v34/v34.h"
 
 #define V34_S_LEN 128
 #define V34_SBAR_LEN 16

@@ -9,7 +9,8 @@ BUILD   := build
 ARM_CC  ?= $(wildcard $(CURDIR)/../toolchain/*/bin/arm-linux-gcc)
 QEMU    ?= qemu-arm-static
 
-INC     := -I. -I../test
+# V34_TEST_API: the diagnostics only the tests use (v34_rx_set_hard, v34_rx_flush)
+INC     := -I. -I../test -DV34_TEST_API
 LIB_SRC := v34_constel.c v34_core.c v34_params.c v34_shell.c v34_train.c \
            v34_tx.c v34_rx.c v34_nl.c
 LIB_HDR := v34.h v34_priv.h

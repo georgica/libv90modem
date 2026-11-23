@@ -19,6 +19,9 @@ The host suite:
 - the real-modem fixtures through `v90m-replay` (below);
 - `check-symbols`: the static library defines only `v90m_*` (its
   internals renamed `v90m__i_*`) and the compiler's helpers;
+- `check-headers`: every header under `modem/`, `v34/`, `v90/`, `v92/`,
+  `v32/`, `v42/` and `include/` compiles alone with only `-I. -Iinclude`
+  (each includes what it uses, by a path relative to itself);
 - the tests of the subdirectories `v34`, `v90`, `v92`, `v42` and `v32`.
 
 It ends with `ALL HOST CHECKS PASS`. The simulated peers and channels are

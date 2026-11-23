@@ -14,6 +14,8 @@
 #                        test/golden/bench.txt (tools/bench-hashes.sh)
 #   make check-fixed     the library compiled for armv5 (FIXED_CC): no soft-float helper,
 #                        no allocation outside api/v90modem.o
+#   make check-headers   every header compiles alone with -I. -Iinclude (its includes
+#                        relative to itself); make check runs it
 #   make verify          per commit (tools/verify.sh): host check and golden outputs,
 #                        replay proof, bench hashes, UBSan, the armv7hf short suite
 #                        and an aarch64be (big-endian) one against the host short set
@@ -109,7 +111,7 @@ SIM_SRC  := sim/g711.c sim/noise.c sim/filt.c sim/resamp.c sim/channel.c sim/v8c
 SIM_OBJ  := $(patsubst %.c,$(BUILD)/obj/%.o,$(SIM_SRC))
 MODEM_SRC := modem/sintab.c modem/v34_tabs.c modem/v21.c modem/ansam.c modem/v8msg.c modem/async.c modem/v8rx.c modem/v8ans.c \
              modem/scramble.c modem/v22tx.c modem/v22rx.c modem/v22bis.c modem/v14.c modem/answer.c \
-             modem/info.c modem/dpsk.c modem/probe.c modem/p2d.c modem/qamrx.c modem/ec.c modem/ecdly.c modem/tonedet.c modem/v34train.c modem/p34d.c modem/pcmenc.c \
+             modem/info.c modem/dpsk.c modem/probe.c modem/p2d.c modem/p2common.c modem/qamrx.c modem/ec.c modem/ecdly.c modem/tonedet.c modem/v34train.c modem/p34d.c modem/pcmenc.c \
              modem/v34mp.c modem/p2ans.c modem/v34mod.c modem/v34dx.c modem/v34ans.c modem/anstone.c modem/v8orig.c modem/orig.c modem/p2call.c modem/v34orig.c modem/v90arx.c modem/v90adec.c modem/v90dil.c modem/v90a.c modem/pcmtx.c modem/v92aseq.c modem/belltone.c \
              modem/x2rec.c modem/x2map.c modem/x2tab.c modem/x2bank.c modem/x2tx.c modem/x2d.c modem/k56tab.c modem/k56enc.c modem/k56tx.c modem/k56d.c modem/v8bismsg.c modem/v8bis.c \
              $(wildcard v90/*.c) $(wildcard v34/*.c) $(wildcard v32/*.c) $(wildcard v92/*.c)
@@ -171,6 +173,18 @@ check-soname: $(SHARED)
 	 got=$$($(READELF) -d $(SHARED) | sed -n 's/.*(SONAME).*\[\(.*\)\].*/\1/p'); \
 	 if [ "$$got" != "$(NAME).so.$$want" ]; then echo "soname: SONAME [$$got], want $(NAME).so.$$want"; exit 1; fi; \
 	 echo "soname: $$got"
+# every header of the library, its subdirectories' tests and include/
+# compiled alone with only -I. -Iinclude: each includes what it uses, by a
+# path relative to itself
+HDR_ALONE := $(sort $(shell find modem v34 v90 v92 v32 v42 include -name '*.h'))
+.PHONY: check-headers
+check-headers:
+	@mkdir -p $(BUILD)/hdr; fail=0; \
+	 for h in $(HDR_ALONE); do \
+	   printf '#include "%s"\n' "$$h" > $(BUILD)/hdr/alone.c; \
+	   $(CC) $(CFLAGS) -I. -Iinclude -c -o $(BUILD)/hdr/alone.o $(BUILD)/hdr/alone.c || { echo "headers: $$h does not compile alone"; fail=1; }; \
+	 done; \
+	 [ $$fail = 0 ] && echo "headers: $(words $(HDR_ALONE)) compile alone"
 # Fixed point and no allocation after create, checked on the box's compiler
 # (FIXED_CC, the armv5 soft-float one): every library object compiled alone,
 # its undefined symbols against an allowlist (tools/check-fixed.sh): no
@@ -319,7 +333,7 @@ endif
 test-times:
 	@tools/par-run.sh --merge $(BUILD)/test-times.txt tools/test-times.txt && echo "tools/test-times.txt: from $(BUILD)/test-times.txt"
 
-check: test-all test-api test-examples test-fixtures check-symbols check-soname
+check: test-all test-api test-examples test-fixtures check-symbols check-soname check-headers
 	@echo "ALL HOST CHECKS PASS"
 # Golden outputs (tools/golden.sh): every program of make check, its output
 # (less host timing) against test/golden/out/<dir>/<prog>.txt. golden runs

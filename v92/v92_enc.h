@@ -24,7 +24,7 @@
 #define V90D_V92_ENC_H
 #include "v92.h"
 #include "v92_mod.h"
-#include "v90_scr.h"
+#include "../v90/v90_scr.h"
 
 #define V92_XQ 8                /* fractional bits of x(n) and v(n) */
 

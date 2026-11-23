@@ -283,7 +283,8 @@ typedef struct {
     int16_t   xd[V34_XD_LEN][2]; /* inputs delayed to the decision point */
     uint8_t   xmode;         /* 1: fed through v34_rx_put (x domain) */
     uint8_t   k;             /* 0/1: position inside the 4D symbol */
-    uint8_t   hard;          /* 1: trellis decoder bypassed (diagnostic) */
+    uint8_t   hard;          /* 1: trellis decoder bypassed (diagnostic, V34_TEST_API;
+                                kept in every build: one layout, one memory size) */
     int16_t   hard_y[2];     /* first point of the 4D symbol in that mode */
     uint16_t  xd_w, xd_r;    /* write / read positions in xd */
     uint32_t  m1[8];         /* subset metrics of the first 2D symbol */
@@ -349,15 +350,17 @@ void v34_rx_put(v34_rx_t *rx, v34_pt_t xhat, v34_pt_t *tent);
  * estimate of y(n) directly. tent receives the nearest valid y point. */
 void v34_rx_put_y(v34_rx_t *rx, v34_pt_t yhat, v34_pt_t *tent);
 
+#ifdef V34_TEST_API     /* v34/test only (v34/Makefile defines it) */
 /* Diagnostic: on != 0 bypasses the trellis decoder, every symbol is decided
  * on its own (nearest valid point) with no delay. This is the
  * "symbol-by-symbol slicing" reference the BER test compares against. Call
  * right after v34_rx_init(). */
 void v34_rx_set_hard(v34_rx_t *rx, int on);
 
-/* Force out the decisions still inside the Viterbi decoder (end of test or
- * before a cleardown). Only whole mapping frames are delivered. */
+/* Force out the decisions still inside the Viterbi decoder (end of a test).
+ * Only whole mapping frames are delivered. */
 void v34_rx_flush(v34_rx_t *rx);
+#endif
 
 /* S in data mode (a rate renegotiation, a cleardown): how many of the newest
  * inputs to v34_rx_put() are S, two points 90 degrees apart sent

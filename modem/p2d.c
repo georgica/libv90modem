@@ -1,11 +1,6 @@
 /* V.90 Phase 2, digital modem. See p2d.h and V.90 9.2.1. */
 #include "p2d.h"
-
-#define MS(x) ((x) * 8)
-#define TONE_SEEN 160           /* 20 ms of steady carrier = tone detected */
-#define TURN 320                /* the 40 ms turn-round */
-#define TAIL 80                 /* 10 ms of tone after a reversal */
-#define PROBE_BLOCKS 23         /* 460 ms of L2 analysed (not to exceed 500 ms) */
+#include "p2common.h"
 
 int p2_level(int dbm0)
 {
@@ -90,11 +85,6 @@ void p2d_retrain_v92(p2d_t *p, int pcm_up)
     p->v92 = 1; p->pcm_up = pcm_up != 0; p->peer_v92 = 1;
 }
 
-/* V.34 Table 1: symbol rates and their low / high carriers */
-static const int16_t SR[6] = { 2400, 2743, 2800, 3000, 3200, 3429 };
-static const int16_t FC[6][2] = { {1600, 1800}, {1646, 1829}, {1680, 1867},
-                                  {1800, 2000}, {1829, 1920}, {1959, 1959} };
-
 /* turn the probing measurements into INFO1d */
 static void probe_result(p2d_t *p)
 {
@@ -108,7 +98,7 @@ static void probe_result(p2d_t *p)
     p->info1d.md_len = 0;
     for (k = 0; k < 6; k++) {
         int hi = (p->cfg.up_hi_carrier >> k) & 1;
-        int lo_f = FC[k][hi] - SR[k] / 2, hi_f = FC[k][hi] + SR[k] / 2;
+        int fc = p2_carrier_hz(k, hi), lo_f = fc - p2_sr[k] / 2, hi_f = fc + p2_sr[k] / 2;
         int32_t sum = 0, n = 0, rate;
         p->info1d.sr[k].hi_carrier = (uint8_t)hi;
         p->info1d.sr[k].preemph = 0;
@@ -121,7 +111,7 @@ static void probe_result(p2d_t *p)
         if (!n) continue;
         /* bits per symbol = (mean SNR - 9 dB gap) / 3.01 dB; rate in 2400 bit/s units.
          * 12 is the ceiling without 1664-point constellations (Table 9 note 1). */
-        rate = ((sum / n - 90) * SR[k]) / (30 * 2400);
+        rate = ((sum / n - 90) * p2_sr[k]) / (30 * 2400);
         if (rate > 12) rate = 12;
         if (rate < 0) rate = 0;
         p->info1d.sr[k].max_rate = (uint8_t)rate;
@@ -138,18 +128,6 @@ static void send_info1d(p2d_t *p)
     if (p->v92 && p->peer_v92) n = info1d_build_v92(&p->info1d, p->pcm_up, bits);
     else n = info1d_build(&p->info1d, bits);
     dpsktx_send(&p->tx, bits, n);
-}
-
-/* a tone (bin m) standing out of our own probing echo for two blocks running */
-static int tone_under_probe(p2d_t *p, int16_t x, int m)
-{
-    proberx_tick(&p->prx, x);
-    if (p->prx.n != 0) return p->tone_blocks >= 2;
-    {
-        int lvl = proberx_last(&p->prx, m), ref = proberx_last(&p->prx, 6);
-        if (lvl > 30 && lvl > 4 * ref) p->tone_blocks++; else p->tone_blocks = 0;
-    }
-    return p->tone_blocks >= 2;
 }
 
 int16_t p2d_tick(p2d_t *p, int16_t x)
@@ -263,12 +241,13 @@ int16_t p2d_tick(p2d_t *p, int16_t x)
         break;
 
     case P2D_L1:
-        (void)tone_under_probe(p, x, 16);
+        (void)tone_under_probe(&p->prx, &p->tone_blocks, x, 16);
+        /* one sample short of P2N_L1's: kept (p2common.h) */
         if (p->t >= MS(160) - 1) { p->probing = 2; p->tone_blocks = 0; go(p, P2D_L2); }
         break;
 
     case P2D_L2:
-        if (tone_under_probe(p, x, 16)) {
+        if (tone_under_probe(&p->prx, &p->tone_blocks, x, 16)) {
             p->probing = 0;
             dpskrx_expect(&p->rx, INFO_PAYLOAD(INFO1A_BITS));
             send_info1d(p);

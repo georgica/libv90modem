@@ -1,21 +1,8 @@
 /* V.34 Phase 2, call modem. See p2call.h and V.34 11.2.1.1. */
 #include <string.h>
 #include "p2call.h"
+#include "p2common.h"
 
-#define MS(x) ((x) * 8)
-#define TONE_SEEN 160           /* 20 ms of steady carrier = tone detected */
-#define TURN 320                /* the 40 ms turn-round */
-#define TAIL 80                 /* 10 ms of tone after a reversal */
-/* L2 read from 10 ms in for 280 ms: our tone 290 ms after L2 began. V.34
- * 11.2.1.1.5 and V.90 9.2.2.1.8 allow up to 500 ms; the far end waits for
- * our tone 600 ms (V.34 11.2.2.2.3; V.90's digital modem 650 ms, 9.2.1.2.5)
- * plus a round trip from the start of its L2, and so has 300 ms or more to
- * hear it over the echo of its own L2, where 500 ms left 100. A real
- * answering modem used nearly all of the 100 ms that 500 ms leave (its tone
- * A came 92 to 103 ms after ours arrived) and ignored the reversal that
- * followed (live calls reported by an independent softmodem, which reads
- * 300 ms). 14 blocks of 20 ms still average one or two jitter-buffer slips. */
-#define PROBE_BLOCKS 14
 #define TX_FLUSH 60             /* samples from the start of the last bit to its end on the line */
 /* time limits: the Recommendation's where it gives one */
 #define T_INFO0_MS   8000       /* INFO0a and Tone A (none given) */
@@ -32,10 +19,6 @@
                                    codec's, and what our own receiver leaves */
 #define HI_DB10        10       /* the high carrier must be better by 1 dB to be asked for */
 #define PRE_DB10        2       /* a pre-emphasis filter must gain 0.2 dB over none */
-
-/* V.34 Tables 1 and 8 */
-static const int16_t SR[6] = { 2400, 2743, 2800, 3000, 3200, 3429 };
-static const int8_t TOP[6] = { 9, 10, 10, 12, 13, 14 };
 
 static void go(p2call_t *p, p2call_state s) { p->state = s; p->t = 0; }
 
@@ -111,84 +94,6 @@ static void self_retrain(p2call_t *p, int why)
 
 /* ---- the INFO1c decision ---- */
 
-/* 10^(d/100) for d in 0.1 dB, 0..600: 2^(d * 0.0332193), as p2ans */
-static uint32_t db10_lin(int d)
-{
-    static const uint16_t frac[9] = { 32768, 35734, 38968, 42495, 46341, 50535, 55109, 60097, 65535 };
-    int32_t e = d * 2177;                   /* log2 in Q16: 0.0332193 * 65536 */
-    int n = e >> 16, i = (e >> 13) & 7, f = e & 0x1fff;
-    uint32_t m;
-    if (d <= 0) return 1;
-    m = (uint32_t)frac[i] + (uint32_t)(((int32_t)(frac[i + 1] - frac[i]) * f) >> 13);    /* 2^frac, Q15 */
-    return n >= 15 ? m << (n - 15) : m >> (15 - n);
-}
-
-/* 10^(d/100) in Q16, d in 0.1 dB, -300..300 */
-static uint32_t lin_q16(int d)
-{
-    static const uint16_t frac[9] = { 32768, 35734, 38968, 42495, 46341, 50535, 55109, 60097, 65535 };
-    int32_t e = (int32_t)d * 2177 + ((int32_t)32 << 16);    /* log2 in Q16, offset by 32 */
-    int n = (int)(e >> 16), i = (int)((e >> 13) & 7), f = (int)(e & 0x1fff), sh;
-    uint32_t m = (uint32_t)frac[i] + (uint32_t)(((int32_t)(frac[i + 1] - frac[i]) * f) >> 13);
-    sh = n - 32 + 16 - 15;
-    return sh >= 0 ? m << sh : m >> -sh;
-}
-
-/* the pre-emphasis templates of Figures 1 and 2 (Tables 3, 4) at f Hz for
- * symbol rate s, 0.1 dB: indices 1..5 rise in a straight line to 2, 4 ...
- * 10 dB at f = s; 6..10 are flat to 0.4 s, rise by beta to 0.8 s and by
- * gamma more to 1.2 s */
-static int template_db10(int idx, int f, int s)
-{
-    int x = (int)((int32_t)f * 1000 / s);   /* f / s, thousandths */
-    int beta = 5 * (idx - 5), gamma = 10 * (idx - 5);
-    if (idx <= 0) return 0;
-    if (idx <= 5) return 20 * idx * x / 1000;
-    if (x <= 400) return 0;
-    if (x <= 800) return beta * (x - 400) / 400;
-    return beta + gamma * (x - 800) / 400;
-}
-
-/* What a linear equaliser makes of symbol rate k on carrier c, the
- * answerer sending with pre-emphasis filter idx and r dB less power, from
- * the per-tone SNRs: 1 / mean(1 / (1 + SNR)) over the tones of the band, as
- * p2ans. Each tone's SNR is its noise-limited one (r dB less) or the floor
- * of the noise that follows the signal (f_db10 below the whole signal,
- * spread over 4 kHz), the lower; the filter tilts both alike, the transmit
- * power staying the same. 0.1 dB. */
-static int band(const p2call_t *p, int k, int c, int idx, int r, int f_db10, const int *share)
-{
-    int num, den, fc, s = SR[k], m, n = 0, tbar = 0, t[PROBE_NBIN + 1];
-    int64_t sum = 0, tsum = 0;
-    v34_carrier(k, c, &num, &den);
-    fc = s * num / den;
-    for (m = 1; m <= PROBE_NBIN; m++) {
-        t[m] = 0;
-        if (!probe_has_tone(m) || 150 * m < fc - s / 2 - 75 || 150 * m > fc + s / 2 + 75) continue;
-        t[m] = template_db10(idx, 150 * m, s);
-        tsum += lin_q16(t[m]);
-        n++;
-    }
-    if (!n) return 0;
-    tbar = probe_db10(tsum, (int64_t)n << 16);
-    for (m = 1; m <= PROBE_NBIN; m++) {
-        int v, lim;
-        if (!probe_has_tone(m) || 150 * m < fc - s / 2 - 75 || 150 * m > fc + s / 2 + 75) continue;
-        v = p->snr[m] - 10 * r;
-        lim = p->rx_level[m] > 0 ? share[m] + f_db10 : 0;
-        if (v > lim) v = lim;
-        v += t[m] - tbar;
-        if (v < 0) v = 0;
-        if (v > 600) v = 600;
-        sum += ((int64_t)1 << 40) / (1 + db10_lin(v));
-    }
-    if (sum < 1) return 0;
-    /* the probing tones stand 150 Hz apart, the analyser's noise band is
-     * 50 Hz: a signal that fills s Hz with the same power has 21 * 50 / s
-     * of the per-tone SNR */
-    return probe_db10((int64_t)n << 40, sum) + probe_db10(1050, s);
-}
-
 /* The floor after r dB of power reduction. What the empty bins show beyond
  * FLOOR_DB10 is taken as overload of the third order: against the signal it
  * falls 2 dB for each dB less power. */
@@ -229,10 +134,10 @@ static int choose(const p2call_t *p, int k, int r, const int *share, int filters
     for (c = 0; c < 2; c++) {
         int none;
         if (!ok[c]) continue;
-        cs[c] = none = band(p, k, c, 0, r, f, share);
+        cs[c] = none = band(p->snr, p->rx_level, k, c, 0, r, f, share);
         /* the filter that gives most, if it gives something over none */
         for (idx = 1; filters && idx <= 10; idx++) {
-            int v = band(p, k, c, idx, r, f, share);
+            int v = band(p->snr, p->rx_level, k, c, idx, r, f, share);
             if (v > cs[c]) { cs[c] = v; cp[c] = idx; }
         }
         if (cs[c] <= none + PRE_DB10) { cs[c] = none; cp[c] = 0; }
@@ -248,8 +153,8 @@ static int choose(const p2call_t *p, int k, int r, const int *share, int filters
  * do 1664 points (Table 15 NOTE); our ceiling; 2400 at least */
 static int fine_rate(const p2call_t *p, int k, int snr)
 {
-    int fine = (int)((int64_t)(snr - 90) * SR[k] * 16 / (30 * 2400));
-    int top = TOP[k], cap = p->info0a.c1664 ? 14 : 12;
+    int fine = (int)((int64_t)(snr - 90) * p2_sr[k] * 16 / (30 * 2400));
+    int top = p2_top[k], cap = p->info0a.c1664 ? 14 : 12;
     if (top > cap) top = cap;
     if (p->cfg.max_rate && top > p->cfg.max_rate / 2400) top = p->cfg.max_rate / 2400;
     if (top < 1) top = 1;
@@ -291,7 +196,7 @@ void p2call_decide(p2call_t *p)
         int same = 1;
         for (k = 0; k < 6 && same; k++) {
             if (!o.sr[k].max_rate) continue;
-            same = fine_rate(p, k, band(p, k, o.sr[k].hi_carrier, o.sr[k].preemph, best_r + a + 1,
+            same = fine_rate(p, k, band(p->snr, p->rx_level, k, o.sr[k].hi_carrier, o.sr[k].preemph, best_r + a + 1,
                                         floor_db10(p, best_r + a + 1), share)) >> 4 == o.sr[k].max_rate;
         }
         if (!same) break;
@@ -337,25 +242,13 @@ static int take_info1a(p2call_t *p)
     int k = i->down_sr;                     /* bits 37:39: call -> answer */
     if (i->v90 || i->up_sr != i->down_sr || (k != 0 && k != 3 && k != 4)
         || !((p->cfg.sr_mask >> k) & 1) || p->info1c.sr[k].max_rate == 0) return -1;
-    p->sym_idx = k; p->sym_rate = SR[k];
+    p->sym_idx = k; p->sym_rate = p2_sr[k];
     p->tx_hi_carrier = i->hi_carrier;
     p->tx_preemph = i->preemph > 10 ? 0 : i->preemph;
     p->tx_pwr_red = i->min_pwr_red;
     p->rx_hi_carrier = p->info1c.sr[k].hi_carrier;
     p->md_len = i->md_len;
     return 0;
-}
-
-/* a tone (bin m) standing out of our own probing echo for two blocks running */
-static int tone_under_probe(p2call_t *p, int16_t x, int m)
-{
-    proberx_tick(&p->prx, x);
-    if (p->prx.n != 0) return p->tone_blocks >= 2;
-    {
-        int lvl = proberx_last(&p->prx, m), ref = proberx_last(&p->prx, 6);
-        if (lvl > 30 && lvl > 4 * ref) p->tone_blocks++; else p->tone_blocks = 0;
-    }
-    return p->tone_blocks >= 2;
 }
 
 /* the reversal heard at the line at `line`: ours goes out so that it is at
@@ -452,7 +345,7 @@ int16_t p2call_tick(p2call_t *p, int16_t x)
     case P2L_PROBE_RX:
         if (p->now >= p->probe_from) {
             proberx_tick(&p->prx, x);
-            if (p->prx.nblk >= PROBE_BLOCKS) {
+            if (p->prx.nblk >= PROBE_BLOCKS_CALL) {
                 analyse(p);
                 p2call_decide(p);
                 dpsktx_on(&p->tx);                  /* 11.2.1.1.5: Tone B */
@@ -487,12 +380,12 @@ int16_t p2call_tick(p2call_t *p, int16_t x)
         break;
 
     case P2L_L1:
-        (void)tone_under_probe(p, x, 16);
+        (void)tone_under_probe(&p->prx, &p->tone_blocks, x, 16);
         if (p->t >= MS(160) - 1) { p->probing = 2; p->tone_blocks = 0; p->l2_at = p->now; go(p, P2L_L2); }
         break;
 
     case P2L_L2:
-        if (tone_under_probe(p, x, 16)) {           /* 11.2.1.1.7 */
+        if (tone_under_probe(&p->prx, &p->tone_blocks, x, 16)) {           /* 11.2.1.1.7 */
             uint8_t bits[INFO_MAX_BITS];
             int n;
             p->probing = 0;
@@ -635,7 +528,7 @@ static int take_info1d(p2call_t *p)
         return 0;
     }
     if (best < 0) return -1;
-    p->sym_idx = best; p->sym_rate = SR[best];
+    p->sym_idx = best; p->sym_rate = p2_sr[best];
     p->tx_hi_carrier = d->sr[best].hi_carrier;
     p->tx_preemph = d->sr[best].preemph > 10 ? 0 : d->sr[best].preemph;
     p->tx_pwr_red = d->min_pwr_red;
@@ -742,12 +635,12 @@ static int16_t p2call_tick_v90(p2call_t *p, int16_t x)
         break;
 
     case P2L_A_L1:
-        (void)tone_under_probe(p, x, TONE_B_BIN);
+        (void)tone_under_probe(&p->prx, &p->tone_blocks, x, TONE_B_BIN);
         if (p->t >= MS(160) - 1) { p->probing = 2; p->tone_blocks = 0; p->l2_from = p->now; go(p, P2L_A_L2); }
         break;
 
     case P2L_A_L2:
-        if (tone_under_probe(p, x, TONE_B_BIN)) {
+        if (tone_under_probe(&p->prx, &p->tone_blocks, x, TONE_B_BIN)) {
             /* 9.2.2.1.6: Tone A 50 ms, its reversal, 10 ms more */
             p->probing = 0;
             dpsktx_on(&p->tx);
@@ -784,7 +677,7 @@ static int16_t p2call_tick_v90(p2call_t *p, int16_t x)
     case P2L_A_PROBE_RX:
         if (p->now >= p->probe_from) {
             proberx_tick(&p->prx, x);
-            if (p->prx.nblk >= PROBE_BLOCKS) {
+            if (p->prx.nblk >= PROBE_BLOCKS_CALL) {
                 analyse(p);                             /* levels, SNRs, frequency offset */
                 p->clk_ppm_q8 = p2call_clock_q8(&p->prx); /* (V.92's transmitter needs it, 6.2/V.92) */
                 dpskrx_expect(&p->rx, INFO_PAYLOAD(INFO1D_BITS));

@@ -25,7 +25,7 @@
 #define V90D_V92_DEC_H
 #include "v92.h"
 #include "v92_mod.h"
-#include "v90_scr.h"
+#include "../v90/v90_scr.h"
 
 #ifndef V92_VIT_DEPTH
 #define V92_VIT_DEPTH 24        /* decision delay in trellis frames; a multiple

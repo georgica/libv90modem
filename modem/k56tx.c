@@ -10,7 +10,7 @@
 #include "k56tx.h"
 #include "clock.h"
 #include "k56tab.h"
-#include "v90_pcm.h"
+#include "../v90/v90_pcm.h"
 
 #define R_MAG       0x54
 #define R_BAR_FROM  264     /* R's last 24 symbols are R-bar */

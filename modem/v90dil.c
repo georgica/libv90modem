@@ -399,14 +399,13 @@ static uint64_t pmean(const dsn_t *g, int s, int m)
 static int feasible(dsn_t *g, int K, int z_q4)
 {
     uint64_t prod = 1, need = (uint64_t)1 << K;
-    int s, j, m0 = 1;
+    int s, j, m0;
     for (s = 0; s < 6; s++) {
         int32_t d = (int32_t)(((int64_t)z_q4 * g->sig[s] + 8) >> 4);
         g->n[s] = (uint8_t)pick(g, s, d, g->pts[s]);
         if (g->n[s] == 0) return 0;
     }
     /* the least moduli with prod >= 2^K: start even, then where it costs least */
-    while ((uint64_t)1 << (6 * m0) < need && m0 < 128) m0++;     /* only a first guess, refined below */
     for (m0 = 1; m0 < 128; m0++) {
         uint64_t p = 1; int t;
         for (t = 0; t < 6; t++) p *= (uint64_t)(m0 + 1);

@@ -560,6 +560,7 @@ static void rx_symbol(v34_rx_t *rx, int re, int im)
     uint32_t m2[8];
     unsigned s;
 
+#ifdef V34_TEST_API
     if (rx->hard) {                     /* no trellis decoding */
         int x, y;
         int16_t y2[2];
@@ -575,6 +576,7 @@ static void rx_symbol(v34_rx_t *rx, int re, int im)
         rx_decided(rx, rx->hard_y, y2);
         return;
     }
+#endif
     {
         uint32_t *m = rx->k ? m2 : rx->m1;
         int16_t (*pt)[2] = st->pt[rx->k];
@@ -675,6 +677,7 @@ void v34_rx_put_y(v34_rx_t *rx, v34_pt_t yhat, v34_pt_t *tent)
     rx_symbol(rx, yhat.re, yhat.im);
 }
 
+#ifdef V34_TEST_API
 void v34_rx_set_hard(v34_rx_t *rx, int on)
 {
     rx->hard = (uint8_t)(on != 0);
@@ -685,6 +688,7 @@ void v34_rx_flush(v34_rx_t *rx)
     while (rx->nout < rx->nsteps)
         rx_traceback(rx);
 }
+#endif
 
 /* the input i symbols before the newest (i = 0: the newest) */
 static const int16_t *xd_back(const v34_rx_t *rx, unsigned i)

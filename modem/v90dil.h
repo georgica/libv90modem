@@ -59,7 +59,7 @@
 #ifndef V90D_MODEM_V90DIL_H
 #define V90D_MODEM_V90DIL_H
 #include <stdint.h>
-#include "v90_seq.h"
+#include "../v90/v90_seq.h"
 
 #define V90DIL_NU   101             /* Ucodes measured: 0 .. V90DIL_NU - 1 (a third of full scale) */
 #define V90DIL_PASS (V90DIL_NU * 18) /* symbols in one pass of the DIL of v90dil_design */

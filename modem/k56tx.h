@@ -24,7 +24,7 @@
 #include <stdint.h>
 #include "k56enc.h"
 #include "v34mp.h"
-#include "v90_scr.h"
+#include "../v90/v90_scr.h"
 
 typedef enum {
     K56TX_SIL1, K56TX_R1, K56TX_TRN1A, K56TX_TRN1B, K56TX_TRN1C, K56TX_JS,

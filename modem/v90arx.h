@@ -58,8 +58,8 @@
 #define V90D_MODEM_V90ARX_H
 #include <stdint.h>
 #include "ec.h"
-#include "v90_scr.h"
-#include "v92_rx.h"         /* v92_p6_t: the period-6 detector, for Sd */
+#include "../v90/v90_scr.h"
+#include "../v92/v92_rx.h"         /* v92_p6_t: the period-6 detector, for Sd */
 
 #define V90ARX_NF    48         /* forward taps (6 ms) */
 #define V90ARX_DFF   32         /* ... of which this many look ahead of the cursor */
