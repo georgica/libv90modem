@@ -21,7 +21,7 @@
 /* V.90 retrains in a row: the fourth due ends the call (checked before it
  * is counted); one is forgotten per minute of data mode. V.92's and V.34's
  * after a V.90 Phase 2 are these. */
-const rt_policy_t ans_rt_v90 = { 3, 60000, 0 };
+const rt_policy_t ans_rt_v90 = { 3, 60000 };
 
 /* Jd (V.90 Table 13, V.92 Table 21): the downstream rates the ceiling allows; 0 = all */
 static uint32_t jd_rates(const answer_t *a)
@@ -101,7 +101,7 @@ static void start_v92(answer_t *a)
  * V.92 9.7.1). A line that needs too many in a row is no line (ans_rt_v90). */
 void ans_v90_retrain(answer_t *a)
 {
-    rt_begin(a, &ans_rt_v90);
+    ans_rt_begin(a, &ans_rt_v90);
     if (a->phase == ANS_FAILED) return;
     ans_enter(a, ANS_RETRAIN); a->t = 0;
 }
@@ -175,7 +175,7 @@ static int16_t tick_v90(answer_t *a, int16_t rx)
         a->connected = 1; a->modulation = ANS_MOD_V90;
         a->bitrate = a->p34.down_rate; a->rx_bitrate = a->p34.up_rate;
         a->phase = ANS_V90; a->retraining = 0;
-        (void)rt_data_tick(a, &ans_rt_v90);
+        ans_rt_data_tick(a, &ans_rt_v90);
     }
     return tx;
 }
@@ -227,7 +227,7 @@ static int16_t tick_v92(answer_t *a, int16_t rx)
         a->connected = 1; a->modulation = ANS_MOD_V92;
         a->bitrate = m->down_rate; a->rx_bitrate = m->up_rate;
         a->phase = ANS_V92; a->retraining = 0; a->v92_data = 1;
-        (void)rt_data_tick(a, &ans_rt_v90);
+        ans_rt_data_tick(a, &ans_rt_v90);
     }
     return tx;
 }

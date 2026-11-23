@@ -38,6 +38,8 @@ static const ans_scheme_t *const phase_scheme[] = {
     [ANS_K56] = &ans_k56, [ANS_K56RT] = &ans_k56rt,
     [ANS_FAILED] = &ans_ended
 };
+/* one row per phase (ANS_K56RT is the last) */
+typedef char phase_scheme_rows[sizeof phase_scheme / sizeof phase_scheme[0] == ANS_K56RT + 1 ? 1 : -1];
 
 void ans_enter(answer_t *a, ans_phase p) { a->phase = p; a->s = phase_scheme[p]; }
 
@@ -45,19 +47,17 @@ void ans_fail(answer_t *a, int why) { a->end = why; ans_enter(a, ANS_FAILED); a-
 int ans_lost_or(const answer_t *a, int why) { return a->connected ? ANS_END_LOST : why; }
 int ans_retrain_or(const answer_t *a, int why) { return a->connected && a->retraining ? ANS_END_RETRAIN_FAILED : ans_lost_or(a, why); }
 
-void rt_begin(answer_t *a, const rt_policy_t *p)
+void ans_rt_begin(answer_t *a, const rt_policy_t *p)
 {
-    if (!p->count_after && a->rt_recent >= p->limit) { ans_fail(a, ANS_END_RETRAIN_FAILED); return; }
+    if (a->rt_recent >= p->limit) { ans_fail(a, ANS_END_RETRAIN_FAILED); return; }
     a->retrains++; a->rt_recent++; a->retraining = 1;
-    if (p->count_after && a->rt_recent >= p->limit) ans_fail(a, ANS_END_RETRAIN_FAILED);
 }
 
-int rt_data_tick(answer_t *a, const rt_policy_t *p)
+void ans_rt_data_tick(answer_t *a, const rt_policy_t *p)
 {
-    if (++a->rt_clock < MS(p->forget_ms)) return 0;
+    if (++a->rt_clock < MS(p->forget_ms)) return;
     a->rt_clock = 0;
     if (a->rt_recent > 0) a->rt_recent--;
-    return 1;
 }
 
 /* the scheme whose figures (signal to noise, round trip, echo delay between

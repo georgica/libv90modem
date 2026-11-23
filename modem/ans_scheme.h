@@ -39,17 +39,16 @@ void ans_enter(answer_t *a, ans_phase p);
 
 /* The retrain bookkeeping of a scheme (answer_t.retrains, rt_recent,
  * rt_clock): a line that needs limit retrains in a row is no line, and data
- * mode makes them not "in a row" again. count_after 0: the retrain due with
- * limit already in a row ends the call (>=), else it is counted; 1: it is
- * counted, and the one that reaches limit ends the call (++ >=). Either way
- * the end is ANS_END_RETRAIN_FAILED. forget_ms: one is forgotten per this
- * much data mode (a clock that runs through every data mode sample of the
- * call). K56flex's counting is not this one (modem/ans_k56.c). */
-typedef struct { int limit; int32_t forget_ms; uint8_t count_after; } rt_policy_t;
+ * mode makes them not "in a row" again. The retrain due with limit already
+ * in a row ends the call (ANS_END_RETRAIN_FAILED), else it is counted.
+ * forget_ms: one is forgotten per this much data mode (a clock that runs
+ * through every data mode sample of the call). K56flex's counting is not
+ * this one (modem/ans_k56.c). */
+typedef struct { int limit; int32_t forget_ms; } rt_policy_t;
 /* a retrain is due: counted, or the call ends (phase ANS_FAILED) */
-void rt_begin(answer_t *, const rt_policy_t *);
-/* a sample of data mode; 1 when a retrain was forgotten on it */
-int  rt_data_tick(answer_t *, const rt_policy_t *);
+void ans_rt_begin(answer_t *, const rt_policy_t *);
+/* a sample of data mode */
+void ans_rt_data_tick(answer_t *, const rt_policy_t *);
 /* V.90's: also V.92's, and V.34's after a V.90 Phase 2 (their retrains are
  * V.90's: ANS_RETRAIN) */
 extern const rt_policy_t ans_rt_v90;

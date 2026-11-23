@@ -35,7 +35,7 @@ static int16_t tick(answer_t *a, int16_t rx)
          * again, whoever began it (V.90 9.2.1.1.8), with the silence and
          * the limit of the V.90 retrain */
         if (a->v34.state == V34A_RETRAIN) { ans_v90_retrain(a); return 0; }
-        if (a->v34.state == V34A_DATA) (void)rt_data_tick(a, &ans_rt_v90);
+        if (a->v34.state == V34A_DATA) ans_rt_data_tick(a, &ans_rt_v90);
     }
     if (a->v34.state == V34A_X2) {           /* the client's x2 marker */
         ans_start_x2(a);
