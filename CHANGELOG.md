@@ -189,6 +189,18 @@ Changed (error control, V.42 / LAPM):
   overflow).
 - `v90m_ec_mem_size()` unchanged (49792 on x86-64).
 
+Changed (build and install):
+- The shared library's SONAME is `libv90modem.so.MAJOR.MINOR` while MAJOR
+  is 0 (`libv90modem.so.0.5` now, `.so.0.6` at this release; it was
+  `.so.0` for every 0.x, so a program built against 0.4 loaded 0.5 and
+  passed it structs of the old layout), `.so.MAJOR` from 1.0. The links
+  installed are `libv90modem.so` and `libv90modem.so.0.5`. Programs linked
+  against the shared library must be linked again.
+- The static library no longer defines `v90m__answer`, `v90m__orig` and
+  `v90m__ec` (internal accessors that looked like API): renamed
+  `v90m__i_*` like every other internal. `make check-symbols` rejects
+  them; `make check-soname` (part of `make check`) checks the SONAME.
+
 ## 0.5.0 (2026-11-21)
 
 K56flex, Rockwell's and Lucent's 56k scheme of 1997, on the answering
