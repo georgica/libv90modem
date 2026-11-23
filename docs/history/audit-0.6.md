@@ -525,8 +525,10 @@ clean run unchanged in every case):
 
 **The fix (c): impulse blanking in data mode.** In data mode x2d, k56d,
 p34d and v34dx pass the receiver's input through `qamrx_blank()`
-(qamrx.h): a sample more than 18 dB above the level the AGC set (8 times
-its RMS target of 2048) goes in as 0. No field was added (F27). With it
+(qamrx.h): a sample more than 18 dB above the input RMS measured at S (8 times
+it; the AGC gain is set once there and frozen in data mode, so the
+threshold does not follow later level changes; a full-scale click of 32124
+is blanked only if that RMS was under 4015, about -12 dBm0) goes in as 0. No field was added (F27). With it
 the click costs 74 bits in x2, and 0 bits are wrong from 2 s after it; the
 same holds for K56flex, V.90 and V.34 (test_answer_x2, _k56, _v90, _v34).
 On the live x2 line, 63 bits differ around the click and none after it.

@@ -86,8 +86,10 @@ Changed (V.34, both roles):
 Changed (the upstream QAM receiver in data mode: V.34 both roles, V.90
 answering, x2 and K56flex):
 - A click on the line in data mode no longer leaves the upstream deaf for
-  the rest of the call. A sample more than 18 dB above the level the
-  receiver's AGC set now enters the equaliser as silence. A full-scale
+  the rest of the call. A sample more than 18 dB above the input RMS
+  measured at S (the AGC gain is set then and stays fixed in data mode) now
+  enters the equaliser as silence; a full-scale click is only caught when
+  the line was below about -12 dBm0 at S (see docs/limits.md). A full-scale
   click of 0.75 ms used to move every equaliser tap as it passed, and at
   the band edges the tracking never took that back: x2 decoded garbage for
   the rest of the call with no end code; V.90 and V.34 went into a rate

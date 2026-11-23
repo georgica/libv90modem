@@ -68,7 +68,10 @@ void qamrx_update(qamrx_t *r, int32_t dr, int32_t di, int flags, int mu_shift);
 /* centre of gravity of the equaliser taps, in T/3 taps x 256 */
 int  qamrx_centroid(const qamrx_t *r);
 /* For data mode: x, or 0 when it is an impulse, more than 18 dB above the
- * level the AGC set (8 times the RMS of 2048 it aims for). A click let in
+ * input RMS measured at S (8 times it: gain is set once in qamrx_sync and
+ * is not changed in data mode, so this threshold does not follow later
+ * level changes, and a full-scale click needs an RMS at S under about
+ * 4015, -12 dBm0, to be caught). A click let in
  * passes along the whole equaliser line, and each update on the way moves
  * every tap by the error times the click; where the signal has little
  * energy (the band edges) the tracking step never takes that back, and
