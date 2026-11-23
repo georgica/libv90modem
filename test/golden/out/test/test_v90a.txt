@@ -5,14 +5,14 @@ a call, 2 km, +30 ppm, echo -10 dB, noise -75 dBm0 (downstream) / -70 dBm0 (upst
   CPt: K 16 (29333 bit/s), z 62.1; CP: K 33, z 12.0; TRN2d frames 1200 (0 wrong); B1d wrong bits 0
   4 s of data: down 207987 bits, 0 check failures; up 115200 bits, 0 failures
 a rate renegotiation begun by the digital modem
-  the stream's break: 12 check failures (the 23-bit check across the gap)
+  the stream's break: 0 check failures (the 23-bit check across the gap)
   state 3, renegotiations 1, digital 11; then 2 s: 104013 bits down, 0 new failures
 cleardown by us
-  ours 5 (error 12) after 723 ms; digital 17 (error 10)
+  ours 5 (error 12) after 726 ms; digital 17 (error 10)
 cleardown by the digital modem
   ours 5 (error 11) after 99 ms
 our cleardown, answered by a retrain of the digital modem's (R3)
-  ours 5 (error 12) after 652 ms; Phase 2 entered 0; digital in Phase 2 1
+  ours 5 (error 12) after 653 ms; Phase 2 entered 0; digital in Phase 2 1
 a retrain's Phase 2 bounded: 30000 ms (spec D5)
   ours 5 (error 16)
 time-outs: the digital modem silent from

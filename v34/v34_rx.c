@@ -462,13 +462,11 @@ static void rx_decided(v34_rx_t *rx, const int16_t y1[2], const int16_t y2[2])
 
 /* ---- Viterbi decoder -------------------------------------------------- */
 
-/* decide the oldest undecided 4D symbol by tracing back from the best
- * state */
-static void rx_traceback(v34_rx_t *rx)
+/* decide the oldest undecided 4D symbol by tracing back from state s of
+ * the step in hist slot idx, depth steps after it (1: that step itself) */
+static void rx_decide(v34_rx_t *rx, unsigned s, unsigned idx, unsigned depth)
 {
-    unsigned depth = (unsigned)(rx->nsteps - rx->nout);    /* 1 .. DEPTH */
-    unsigned idx = rx->head ? rx->head - 1u : V34_VIT_DEPTH - 1u;
-    unsigned s = rx->best, pair;
+    unsigned pair;
     const v34_vstep_t *st;
 
     while (--depth) {
@@ -478,6 +476,14 @@ static void rx_traceback(v34_rx_t *rx)
     st = &rx->hist[idx];
     pair = st->pair[s];
     rx_decided(rx, st->pt[0][pair >> 3], st->pt[1][pair & 7]);
+}
+
+/* decide the oldest undecided 4D symbol by tracing back from the best
+ * state */
+static void rx_traceback(v34_rx_t *rx)
+{
+    rx_decide(rx, rx->best, rx->head ? rx->head - 1u : V34_VIT_DEPTH - 1u,
+              (unsigned)(rx->nsteps - rx->nout));    /* 1 .. DEPTH */
 }
 
 static void rx_trellis_step(v34_rx_t *rx, const uint32_t *m2)
@@ -678,6 +684,121 @@ void v34_rx_flush(v34_rx_t *rx)
 {
     while (rx->nout < rx->nsteps)
         rx_traceback(rx);
+}
+
+/* the input i symbols before the newest (i = 0: the newest) */
+static const int16_t *xd_back(const v34_rx_t *rx, unsigned i)
+{
+    return rx->xd[(rx->xd_w + 2u * V34_XD_LEN - 1u - i) % V34_XD_LEN];
+}
+
+unsigned v34_rx_s_run(const v34_rx_t *rx)
+{
+    unsigned pend = 2u * (unsigned)(rx->nsteps - rx->nout) + rx->k, i, run = 0;
+    int32_t a[2], b[2];
+    int64_t aa, bb, ab, t, sum = 0, best = 0;
+    int odd;
+    if (!rx->xmode || pend < 4)
+        return 0;
+    for (i = 0; i < 2; i++) {
+        a[i] = (xd_back(rx, 0)[i] + xd_back(rx, 2)[i]) / 2;
+        b[i] = (xd_back(rx, 1)[i] + xd_back(rx, 3)[i]) / 2;
+    }
+    aa = (int64_t)a[0] * a[0] + (int64_t)a[1] * a[1];
+    bb = (int64_t)b[0] * b[0] + (int64_t)b[1] * b[1];
+    ab = (int64_t)a[0] * b[0] + (int64_t)a[1] * b[1];
+    /* two points of one size (within about 12 %), 90 degrees apart (within
+     * about 14 degrees), not nothing */
+    if (aa < (int64_t)V34_ONE * V34_ONE || 4 * (aa > bb ? aa - bb : bb - aa) > aa ||
+        4 * (ab < 0 ? -ab : ab) > aa)
+        return 0;
+    /* S begins on point 0, the next symbol is it turned 90 degrees
+     * anticlockwise (v34_s(): 128 symbols, the last turned): the oldest of
+     * the run is the one of a pair the other is turned anticlockwise from.
+     * b x a > 0: a is b turned anticlockwise, so the run is even. */
+    odd = (int64_t)b[0] * a[1] - (int64_t)b[1] * a[0] < 0;
+    /* a match: within a quarter of the points' size. The run grows only on
+     * a clear gain, so that a data point that happens to lie near the S
+     * point of its turn moves the start back only when it is close */
+    t = aa / 16;
+    for (i = 0; i < pend; i++) {
+        const int16_t *x = xd_back(rx, i);
+        const int32_t *r = (i & 1) ? b : a;
+        int64_t dr = x[0] - r[0], di = x[1] - r[1];
+        sum += t - (dr * dr + di * di);
+        if ((int)((i + 1) & 1) == odd && sum > best + (i > 1 ? t / 4 : 0)) {
+            best = sum;
+            run = i + 1;
+        }
+    }
+    return run;
+}
+
+/* the 2D metrics of the input i symbols before the newest, as rx_symbol()
+ * had them (v34_rx_put()'s whitening done again from the inputs kept) */
+static void metrics_back(const v34_rx_t *rx, unsigned i, uint32_t m[8])
+{
+    const v34_params_t *p = rx->p;
+    const int16_t *x = xd_back(rx, i);
+    int16_t pt[8][2];
+    int32_t re = x[0], im = x[1];
+    unsigned k;
+
+    if (p->precode) {
+        int64_t ar = 0, ai = 0;
+        for (k = 0; k < 3; k++) {
+            const int16_t *xp = xd_back(rx, i + 1 + k);
+            int32_t hr = p->cfg.h[k][0], hi = p->cfg.h[k][1];
+            ar += (int64_t)xp[0] * hr - (int64_t)xp[1] * hi;
+            ai += (int64_t)xp[0] * hi + (int64_t)xp[1] * hr;
+        }
+        re += (int32_t)((ar + (1 << 13)) >> 14);
+        im += (int32_t)((ai + (1 << 13)) >> 14);
+    }
+    if (rx->nsub == 4)
+        v34_slice_classes(p, re, im, m, pt);
+    else
+        for (k = 0; k < 8; k++)
+            m[k] = v34_slice_subset(p, re, im, k, pt[k]);
+}
+
+void v34_rx_flush_before(v34_rx_t *rx, unsigned n)
+{
+    unsigned pend = 2u * (unsigned)(rx->nsteps - rx->nout) + rx->k;
+    unsigned d = (unsigned)(rx->nsteps - rx->nout), c, t, s, idx, bs = 0;
+    uint32_t m[2 * V34_VIT_DEPTH][8];
+    uint64_t best = UINT64_MAX;
+
+    if (rx->hard || !rx->xmode || pend <= n)
+        return;
+    c = (pend - n) / 2;                     /* 4D symbols wholly before them */
+    c = ((rx->j + c) / 4) * 4;              /* ... to the end of the last whole frame */
+    if (c <= rx->j)
+        return;
+    c -= rx->j;
+    /* The best state now is the best through what came after them (S):
+     * the path through them is the survivor, of the states at the last of
+     * them, that costs least over the steps still undecided, their metrics
+     * taken again from the inputs kept. */
+    idx = (rx->head + 2u * V34_VIT_DEPTH - 1u - (d - c)) % V34_VIT_DEPTH;
+    for (t = 0; t < 2 * c; t++)
+        metrics_back(rx, pend - 1 - t, m[t]);
+    for (s = 0; s < rx->p->nstates; s++) {
+        uint64_t cost = 0;
+        unsigned st = s, ix = idx;
+        for (t = c; t-- > 0;) {
+            unsigned pr = rx->hist[ix].pair[st];
+            cost += (uint64_t)m[2 * t][pr >> 3] + m[2 * t + 1][pr & 7];
+            st = rx->hist[ix].prev[st];
+            ix = ix ? ix - 1 : V34_VIT_DEPTH - 1u;
+        }
+        if (cost < best) {
+            best = cost;
+            bs = s;
+        }
+    }
+    for (; c > 0; c--)
+        rx_decide(rx, bs, idx, c);
 }
 
 uint32_t v34_rx_quality(const v34_rx_t *rx)

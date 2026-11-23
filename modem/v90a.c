@@ -42,7 +42,7 @@
 #define T_SCR_MS     2000           /* 9.6.2.1.2: SCR for no more than 2000 ms */
 
 enum { U_SIL, U_S1, U_SB1, U_MD, U_S2, U_SB2, U_PP, U_TRN, U_JA, U_QUIET, U_SJ, U_SBJ, U_DILQ, U_S4, U_SB4,
-       U_CPT, U_SCR, U_CP, U_E, U_DATA, U_RS, U_RSB, U_OFF };
+       U_CPT, U_SCR, U_CP, U_E, U_DATA, U_DATA_END, U_RS, U_RSB, U_OFF };
 enum { D_SD, D_JD, D_DIL, D_DILEND, D_RI, D_TRAIN, D_B1D, D_DATA, D_RD };
 /* the V.92 upstream (the same `us`) */
 enum { P_SIL = 64, P_RU, P_RUB, P_TRN1, P_JA, P_QUIET, P_SU1, P_SUB1, P_SU2, P_SUB2, P_TRN1B, P_CPT, P_E1U,
@@ -62,6 +62,9 @@ static void end(v90a_t *a, int err)
 }
 
 static void ugo(v90a_t *a, int s) { a->us = s; a->un = 0; }
+/* S (a renegotiation, a cleardown): in data mode once the mapping frame
+ * under way is out, so that every bit taken from getbit is sent whole */
+static void go_s(v90a_t *a) { ugo(a, a->us == U_DATA ? U_DATA_END : U_RS); }
 
 /* jobs (below): the DIL's analysis, CPt's design, CP's design */
 enum { JOB_NONE, JOB_DIL, JOB_CPT, JOB_CP };
@@ -362,8 +365,9 @@ static void up_symbol(v90a_t *a, int32_t *re, int32_t *im)
         pt = v34_tmod_put(&a->tmod, 3);         /* 20 ones */
         if (++a->un >= 10) start_data(a);
         break;
-    case U_DATA:
-        if (!v34_tx_in_b1(&a->vtx)) a->tx_ready = 1;
+    case U_DATA: case U_DATA_END:
+        if (a->us == U_DATA_END && a->vtx.pos >= 8) { ugo(a, U_RS); up_symbol(a, re, im); return; }
+        if (a->us == U_DATA && !v34_tx_in_b1(&a->vtx)) a->tx_ready = 1;
         v34_tx_symbol(&a->vtx, &pt, NULL);
         g = a->tx_dg;
         break;
@@ -699,7 +703,7 @@ static void frame(v90a_t *a, int32_t m0)
             a->rx_ready = 0; a->tx_ready = 0;
             a->rd_units = 2;
             if (!a->pcm && a->reneg_ours) { if (a->state != V90A_RENEG) { a->state = V90A_RENEG; a->t = 0; } }
-            else if (!a->pcm) { a->state = V90A_RENEG; a->t = 0; ugo(a, U_RS); }
+            else if (!a->pcm) { a->state = V90A_RENEG; a->t = 0; go_s(a); }
             else if (a->state != V90A_RENEG) { a->state = V90A_RENEG; a->t = 0; }
             a->ds = D_RD;
             return;
@@ -730,7 +734,7 @@ static int renegotiate(v90a_t *a, int kind)
          * (SUVd, CPd, their acknowledge bits, Ed) is not this one's */
         v92aseq_init(&a->aseq); a->got_suvd = a->got_cpd = a->got_ack = a->got_ed = 0;
         a->ru_due = 1;
-    } else ugo(a, U_RS);                /* 9.6.2.1.1: S, S-bar */
+    } else go_s(a);                     /* 9.6.2.1.1: S, S-bar */
     return 0;
 }
 
@@ -1393,7 +1397,7 @@ int v90a_cleardown(v90a_t *a)
     a->rx_ready = a->tx_ready = 0;
     a->state = V90A_RENEG; a->t = 0;
     if (a->pcm) { a->ru_due = 1; a->cpus_left = CLEAR_CPS; }    /* 9.11: a renegotiation, CPu with drn = 0 */
-    else ugo(a, U_RS);
+    else go_s(a);
     return 0;
 }
 

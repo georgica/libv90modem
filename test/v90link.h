@@ -64,8 +64,16 @@ static void bert_put(bert_t *b, int bit)
 /* ---- or 16-bit counter words, MSB first (vl_t.words): a gap shows as words
  * lost. The sink locks on three words in a row, n, n + 1, n + 2, at any bit
  * position; a word that is not the next one unlocks it, and the next lock
- * counts the words between as lost (a damaged word among them) ---- */
-typedef struct { uint16_t gen; int gbit; uint64_t sr; int nb, locked, ph, had; uint16_t want; int64_t words, lost; } wctr_t;
+ * counts the words between as lost (a damaged word among them). From where
+ * the new lock falls it also counts the bits missing from the stream (net;
+ * fewer than none: bits inserted): a relock with any is a break, where a
+ * damaged word with nothing missing is none ---- */
+typedef struct {
+    uint16_t gen; int gbit; uint64_t sr; int nb, locked, ph, had; uint16_t want;
+    int64_t words, lost;
+    int64_t nbits, at;              /* bits in; the count at which the word wanted ends */
+    int64_t breaks, gap_bits;       /* relocks with bits missing or inserted; the bits missing, net */
+} wctr_t;
 static int wctr_get(wctr_t *w)
 {
     int bit = (w->gen >> (15 - w->gbit)) & 1;
@@ -76,19 +84,25 @@ static void wctr_put(wctr_t *w, int bit)
 {
     uint16_t a, b, c;
     w->sr = (w->sr << 1) | (uint64_t)(bit & 1);
+    w->nbits++;
     if (w->nb < 48) w->nb++;
     if (w->locked) {
         if (++w->ph < 16) return;
         w->ph = 0;
-        if ((uint16_t)(w->sr & 0xffff) == w->want) { w->words++; w->want++; return; }
+        if ((uint16_t)(w->sr & 0xffff) == w->want) { w->words++; w->want++; w->at += 16; return; }
         w->locked = 0;
         return;
     }
     if (w->nb < 48) return;
     a = (uint16_t)(w->sr >> 32); b = (uint16_t)(w->sr >> 16); c = (uint16_t)w->sr;
     if ((uint16_t)(a + 1) != b || (uint16_t)(b + 1) != c) return;
-    if (w->had) w->lost += (uint16_t)(a - w->want);
-    w->had = w->locked = 1; w->ph = 0; w->want = (uint16_t)(c + 1); w->words += 3;
+    if (w->had) {
+        uint16_t gap = (uint16_t)(a - w->want);
+        int64_t miss = 16 * (int64_t)gap - ((w->nbits - 32) - w->at);
+        w->lost += gap;
+        if (miss) { w->breaks++; w->gap_bits += miss; }
+    }
+    w->had = w->locked = 1; w->ph = 0; w->want = (uint16_t)(c + 1); w->at = w->nbits + 16; w->words += 3;
 }
 
 /* ---- the line ---- */
@@ -141,8 +155,8 @@ typedef struct {
     int64_t k;                      /* our samples */
     int64_t n;                      /* network samples */
     bert_t down, up;
-    int words;                      /* the downstream's data: counter words (wctr_t), not 2^23 - 1 */
-    wctr_t wdown;
+    int words;                      /* the data both ways: counter words (wctr_t), not 2^23 - 1 */
+    wctr_t wdown, wup;
     double up_gain, up_nrms;
 } vl_t;
 
@@ -151,13 +165,21 @@ static void vl_put_down(void *u, int bit)
     vl_t *l = (vl_t *)u;
     if (l->words) wctr_put(&l->wdown, bit); else bert_put(&l->down, bit);
 }
-static int  vl_get_up(void *u) { return bert_get(&((vl_t *)u)->up); }
+static int  vl_get_up(void *u)
+{
+    vl_t *l = (vl_t *)u;
+    return l->words ? wctr_get(&l->wup) : bert_get(&l->up);
+}
 static int  vl_get_down(void *u)
 {
     vl_t *l = (vl_t *)u;
     return l->words ? wctr_get(&l->wdown) : bert_get(&l->down);
 }
-static void vl_put_up(void *u, int bit) { bert_put(&((vl_t *)u)->up, bit); }
+static void vl_put_up(void *u, int bit)
+{
+    vl_t *l = (vl_t *)u;
+    if (l->words) wctr_put(&l->wup, bit); else bert_put(&l->up, bit);
+}
 
 /* the digital modem's V.90 parts alone: p2d, then p34d as answer.c's start_p34 */
 static void vl_start_p34(vl_t *l)

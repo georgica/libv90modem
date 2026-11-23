@@ -277,12 +277,19 @@ static void rate_down(p34d_t *p)
     start_rd(p);
 }
 
-/* S in data mode (9.6.1.2.1): stop delivering data, follow S to its S-bar */
+/* S in data mode (9.6.1.2.1): stop delivering data, follow S to its S-bar.
+ * What the caller sent before S is data, every whole mapping frame of it:
+ * the decoder's decision delay still holds some (V34_VIT_DEPTH 4D symbols,
+ * S among the newest), and they go on now. */
 static void s_heard(p34d_t *p)
 {
 #ifdef V42_XID_TRACE
     fprintf(stderr, "P34 S heard in data mode (state %d), mse %d\n", (int)p->state, (int)p->rx.mse);
 #endif
+    if (p->rx_ready) {
+        unsigned n = v34_rx_s_run(&p->vrx);
+        if (n > 0) v34_rx_flush_before(&p->vrx, n);
+    }
     p->rx_ready = 0;
     p->in_reneg = 1;
     sres_resume(&p->sres);

@@ -2,11 +2,11 @@ V.90: case, ms back, down/up before, after (the modulation if it changed), retra
   answerer's), renegotiations; 5 s: bits down, fail, bits up, fail
   the answerer retrains           7370  52000/28800  48000/28800      1 0 1 0    239976    0    144000    0
   we retrain                      7360  52000/28800  50666/28800      1 1 1 0    253346    0    144072    0
-  noise +15 dB                    2043  46666/28800  37333/28800      0 0 0 2    186648    0    144000    0  then 6057 ms 49333, fail 0
+  noise +15 dB                    2045  46666/28800  37333/28800      0 0 0 2    186676    0    144072    0  then 6060 ms 49333, fail 0
   level -10 dB                    7620  48000/28800  38666/28800      1 1 1 0    193314    0    144000    0
   a 6 dB pad put in               7670  52000/28800  45333/28800      1 1 1 0    226644    0    144000    0
-  we renegotiate, ceiling 40000    998  50666/28800  40000/28800      0 0 0 2    199980    0    144000    0  then 999 ms 52000, fail 0
-  the answerer renegotiates        432  50666/28800  50666/28800      0 0 0 1    253346    0    144000    0
+  we renegotiate, ceiling 40000    999  50666/28800  40000/28800      0 0 0 2    199980    0    144000    0  then 999 ms 52000, fail 0
+  the answerer renegotiates        434  50666/28800  50666/28800      0 0 0 1    253308    0    144000    0
   receiver wiped                  7630  49333/28800  52000/28800      1 1 1 0    260013    0    144000    0
   noise burst 300 ms              7620  49333/28800  50666/28800      1 1 1 0    253346    0    144000    0
   the answerer's own retrain      7369  50666/28800  49333/28800      1 0 1 0    246642    0    144000    0
@@ -24,13 +24,15 @@ V.92: case, ms back, down/up before, after (the modulation if it changed), retra
   noise burst 300 ms              8611  46666/34666  48000/36000      1 1 1 0    240012    0    179982    0
   the answerer's own retrain      9097  48000/36000  52000/36000      1 0 1 0    260013    0    179982    0
   answerer retrains with INFO0d   9623  49333/36000  49333/34666      1 0 1 0    246679    0    173316    0
-V.90: the answerer renegotiates, counter words: back 432 ms, words before 6517, after 6555, lost 0
-V.92: the answerer renegotiates, counter words: back 4093 ms, words before 6479, after 6519, lost 0
+V.90: the answerer renegotiates, counter words: back 434 ms, words before 6517, after 6552, lost 0
+  upstream: words before 3600, after 3676, lost 0; breaks down 0, up 0 (0 bits missing)
+V.92: the answerer renegotiates, counter words: back 2594 ms, words before 6479, after 6519, lost 0
+  upstream: words before 3999, after 4678, lost 42; breaks down 0, up 1 (672 bits missing)
 V.90: limits
   retrain 1: 7360 ms, down 48000
   retrain 2: 7339 ms, down 48000
   retrain 3: 7359 ms, down 52000
-  lost past the limit: end 8 after 920 ms, answerer cleared 1, retrains 3
+  lost past the limit: end 8 after 921 ms, answerer cleared 1, retrains 3
   never answered: phase 4, end 8 after 8070 ms, retrains 1
 V.92: limits
   retrain 1: 9852 ms, down 46666
@@ -38,4 +40,4 @@ V.92: limits
   retrain 3: 10602 ms, down 49333
   lost past the limit: end 8 after 936 ms, answerer cleared 1, retrains 3
   never answered: phase 4, end 8 after 8070 ms, retrains 1
-orig_retrain: 290 checks, 0 failures
+orig_retrain: 300 checks, 0 failures

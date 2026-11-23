@@ -335,6 +335,23 @@ void v34_rx_set_hard(v34_rx_t *rx, int on);
  * before a cleardown). Only whole mapping frames are delivered. */
 void v34_rx_flush(v34_rx_t *rx);
 
+/* S in data mode (a rate renegotiation, a cleardown): how many of the newest
+ * inputs to v34_rx_put() are S, two points 90 degrees apart sent
+ * alternately (10.1.3.2); 0 when the newest four are not S, or the inputs
+ * came through v34_rx_put_y(). At most the inputs not yet decided: a run
+ * that reaches back that far leaves no data to flush. The two points are
+ * taken from the newest four, the run's start is where the cumulative
+ * match against them is best, on a point 0 (S begins there: 128 symbols
+ * ending on point 0 turned 90 degrees anticlockwise). */
+unsigned v34_rx_s_run(const v34_rx_t *rx);
+
+/* Force out the whole mapping frames that lie before the n newest inputs
+ * (n = v34_rx_s_run(): the data the far end sent before S; a frame that S
+ * cut short is not delivered). The path through them is the survivor that
+ * costs least over them, not the one through what followed. Inputs through
+ * v34_rx_put() only; with v34_rx_put_y(), or hard decisions, nothing. */
+void v34_rx_flush_before(v34_rx_t *rx, unsigned n);
+
 /* Smoothed squared distance between the received points and the decoded
  * path, per 2D symbol, in units^2 * 256 (so it estimates the noise variance
  * per 2D symbol; divide energy_q8 by it for an SNR estimate). It rises to

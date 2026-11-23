@@ -10,22 +10,22 @@
   no echo, measured: state 11 err 0, data at 3.20 s, down 50666 bit/s (344850 bits, 0 bad), up 31200 bit/s (212004 bits, 0 bad), up SNR 45.1 dB
   echo at once, measured: state 11 err 0, data at 3.20 s, down 50666 bit/s (344850 bits, 0 bad), up 31200 bit/s (212004 bits, 0 bad), up SNR 45.1 dB
   weak smeared echo 34 ms late: found on 12 of 12 lines
-  caller renegotiates, K 32 -> 30: state 11 err 0, data at 2.95 s, down 48000 bit/s (276614 bits, 0 bad), up 31200 bit/s (175890 bits, 0 bad), up SNR 45.1 dB
+  caller renegotiates, K 32 -> 30: state 11 err 0, data at 2.95 s, down 48000 bit/s (276614 bits, 0 bad), up 31200 bit/s (176202 bits, 0 bad), up SNR 45.1 dB
     back in data mode 382 ms after the request; peer saw Rd 64 + 4 units (0 bad); up after: 144066 bits, 0 bad
-  caller renegotiates, SCR first: state 11 err 0, data at 2.95 s, down 50666 bit/s (288762 bits, 0 bad), up 31200 bit/s (175656 bits, 0 bad), up SNR 45.1 dB
-  caller clears down: state 17 err 10, data at 2.95 s, down 50666 bit/s (54530 bits, 0 bad), up 31200 bit/s (31824 bits, 0 bad), up SNR 45.1 dB
+  caller renegotiates, SCR first: state 11 err 0, data at 2.95 s, down 50666 bit/s (288762 bits, 0 bad), up 31200 bit/s (175968 bits, 0 bad), up SNR 45.1 dB
+  caller clears down: state 17 err 10, data at 2.95 s, down 50666 bit/s (54530 bits, 0 bad), up 31200 bit/s (32136 bits, 0 bad), up SNR 45.1 dB
     peer: up state 14, down state 6; sdbar 1 jd 9 jd' 1 ri 1 ribar 1 mp 0 mp' 0 ed 0
     digital: rxmode 2, s_events 2, cpt 1 cp 0 cp' 0 e 0, tx signal 0, mse 2
     call ended 152 ms after the request
-  we renegotiate: state 11 err 0, data at 2.95 s, down 50666 bit/s (297882 bits, 0 bad), up 31200 bit/s (178620 bits, 0 bad), up SNR 45.1 dB
+  we renegotiate: state 11 err 0, data at 2.95 s, down 50666 bit/s (297882 bits, 0 bad), up 31200 bit/s (178932 bits, 0 bad), up SNR 45.1 dB
     back in data mode 347 ms after the request
-  we clear down: state 17 err 12, data at 2.95 s, down 50666 bit/s (51452 bits, 0 bad), up 31200 bit/s (33462 bits, 0 bad), up SNR 45.1 dB
+  we clear down: state 17 err 12, data at 2.95 s, down 50666 bit/s (51452 bits, 0 bad), up 31200 bit/s (33774 bits, 0 bad), up SNR 45.1 dB
     peer: up state 14, down state 6; sdbar 1 jd 9 jd' 1 ri 1 ribar 1 mp 1 mp' 0 ed 0
     digital: rxmode 4, s_events 2, cpt 1 cp 1 cp' 0 e 1, tx signal 0, mse 2
     call ended 102 ms after the request
-  caller renegotiates with silence: state 11 err 0, data at 2.95 s, down 49333 bit/s (262359 bits, 0 bad), up 31200 bit/s (162942 bits, 0 bad), up SNR 45.1 dB
+  caller renegotiates with silence: state 11 err 0, data at 2.95 s, down 49333 bit/s (262359 bits, 0 bad), up 31200 bit/s (163254 bits, 0 bad), up SNR 45.1 dB
     back in data mode 797 ms after the request; silence 1902 octets (0 not silent), Rt 64 + 4 units
-  line drops to 28 dB in mid-call: state 11 err 0, data at 2.95 s, down 50666 bit/s (551190 bits, 0 bad), up 19200 bit/s (230952 bits, 15515 bad), up SNR 45.1 dB
+  line drops to 28 dB in mid-call: state 11 err 0, data at 2.95 s, down 50666 bit/s (551190 bits, 0 bad), up 19200 bit/s (231342 bits, 15713 bad), up SNR 45.1 dB
     rate lowered 1 time(s); after the last: 165744 bits, 0 bad
   line drops to 3 dB in mid-call: state 16 err 0, data at 2.95 s, down 50666 bit/s (404586 bits, 0 bad), up 31200 bit/s (65676 bits, 16986 bad), up SNR 45.1 dB
     peer: up state 16, down state 8; sdbar 1 jd 9 jd' 1 ri 1 ribar 1 mp 1 mp' 1 ed 1
@@ -36,7 +36,7 @@
     digital: rxmode 2, s_events 2, cpt 1 cp 1 cp' 0 e 0, tx signal 15, mse 16055
     retrain taken up 66 ms after the tone began
   a caller that needs 0.8 s of TRN2d: state 11 err 0, data at 2.95 s, down 50666 bit/s (307306 bits, 0 bad), up 31200 bit/s (188838 bits, 0 bad), up SNR 45.1 dB
-  renegotiation stalls: state 16 err 0, data at 2.95 s, down 50666 bit/s (29184 bits, 0 bad), up 31200 bit/s (16224 bits, 0 bad), up SNR 45.1 dB
+  renegotiation stalls: state 16 err 0, data at 2.95 s, down 50666 bit/s (29184 bits, 0 bad), up 31200 bit/s (16536 bits, 0 bad), up SNR 45.1 dB
     peer: up state 13, down state 6; sdbar 1 jd 9 jd' 1 ri 1 ribar 1 mp 1 mp' 0 ed 0
     digital: rxmode 2, s_events 2, cpt 1 cp 0 cp' 0 e 0, tx signal 14, mse 1
 p34: 372 checks, 0 failures

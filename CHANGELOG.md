@@ -88,6 +88,18 @@ Fixed:
   modem's Rd (its rate renegotiation or cleardown) is delivered. It was
   dropped, 21 to 42 bits once per renegotiation or cleardown begun by the
   answerer: V.42 sent it again, without error control it was lost.
+- V.90, answering role: the upstream data the caller sent before its S (a
+  rate renegotiation or cleardown, the caller's, or its answer to ours) is
+  delivered. The decoder's decision delay still held some 13 ms of it (24
+  4D symbols, up to 5 mapping frames) when S was heard, and it was dropped;
+  V.42 sent it again, without error control it was lost. Now every whole
+  mapping frame before S goes on (where S begins is found from S's two
+  points among the last symbols); a frame S cut short is still dropped.
+  Calls without S in data mode are unchanged.
+- V.90, calling role: S (a renegotiation or cleardown) begins once the
+  mapping frame under way is sent, up to 7 symbols later. It began at
+  once, and the rest of the frame, its bits already taken from the host,
+  was not sent.
 - V.92, calling role: the clock offset measured on the digital modem's L2
   can no longer overflow (undefined behaviour in C) when the line turns
   its tones far beyond 1000 ppm per block; it gives the +-1000 ppm limit,

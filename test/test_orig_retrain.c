@@ -116,7 +116,7 @@ static int connect_w(vl_t *l, int v92, uint32_t seed, int words)
     vl_cfg c;
     line(&c, v92, seed);
     vl_init(l, &c);
-    if (words) { l->words = 1; l->wdown.gen = (uint16_t)(0x5a00 + 77 * seed); }
+    if (words) { l->words = 1; l->wdown.gen = (uint16_t)(0x5a00 + 77 * seed); l->wup.gen = (uint16_t)(0x2c00 + 59 * seed); }
     while (l->k < MS(40000) && !both(l) && l->org.phase != ORIG_FAILED) vl_tick(l);
     if (!both(l)) return 0;
     run_ms(l, 2000);
@@ -258,16 +258,22 @@ static void cases(int v92)
     }
 }
 
-/* the answerer's rate renegotiation, no V.42: the downstream's data is
- * counter words, and none is lost at its Rd (9.6.1.1 / 9.8.1.1: the frames
- * before Rd are data, every one of them) */
+/* the answerer's rate renegotiation, no V.42: the data both ways is counter
+ * words. Downstream none is lost or repeated, and no bit, at its Rd
+ * (9.6.1.1 / 9.8.1.1: the frames before Rd are data, every one of them).
+ * Upstream the same across V.90's S: we send the mapping frame under way
+ * whole, the answerer delivers the frames its decoder still held. V.92's
+ * Ru (on a data frame boundary, 9.8.2.1.1) cuts off what the caller's
+ * prefilter still held: those frames never reach the far end, and the
+ * answerer drops its decoder's (printed, not checked) */
 static void words_reneg(int v92)
 {
     vl_t *l = &L;
-    int64_t t0, w0, lost0;
+    int64_t t0, w0, lost0, brk0, u0, ulost0, ubrk0;
     int32_t ms;
     CHECK(connect_w(l, v92, 80 + v92, 1));
-    w0 = l->wdown.words; lost0 = l->wdown.lost;
+    w0 = l->wdown.words; lost0 = l->wdown.lost; brk0 = l->wdown.breaks;
+    u0 = l->wup.words; ulost0 = l->wup.lost; ubrk0 = l->wup.breaks;
     t0 = l->k;
     if (v92) CHECK_EQ_I(v92d_renegotiate(&l->ans.u.v92), 0);
     else CHECK_EQ_I(p34d_renegotiate(&l->ans.p34), 0);
@@ -275,11 +281,21 @@ static void words_reneg(int v92)
     run_ms(l, 2000);
     printf("%s: the answerer renegotiates, counter words: back %d ms, words before %" PRId64 ", after %" PRId64 ", lost %" PRId64 "\n",
            v92 ? "V.92" : "V.90", (int)ms, w0, l->wdown.words - w0, l->wdown.lost - lost0);
+    printf("  upstream: words before %" PRId64 ", after %" PRId64 ", lost %" PRId64 "; breaks down %" PRId64 ", up %" PRId64 " (%" PRId64 " bits missing)\n",
+           u0, l->wup.words - u0, l->wup.lost - ulost0, l->wdown.breaks - brk0, l->wup.breaks - ubrk0, l->wup.gap_bits);
     CHECK(ms > 0);
     CHECK(w0 > 1000);
     CHECK(l->wdown.words - w0 > 1000);
     CHECK_EQ_I(l->wdown.lost - lost0, 0);              /* (one frame, 21..42 bits, was) */
+    CHECK_EQ_I(l->wdown.breaks - brk0, 0);
     CHECK_EQ_I(l->wdown.locked, 1);
+    CHECK(u0 > 1000);
+    CHECK(l->wup.words - u0 > 1000);
+    if (!v92) {
+        CHECK_EQ_I(l->wup.lost - ulost0, 0);            /* (27 words, 432 bits, were) */
+        CHECK_EQ_I(l->wup.breaks - ubrk0, 0);
+    }
+    CHECK_EQ_I(l->wup.locked, 1);
 }
 
 /* three retrains in a minute, the fourth refused; one never answered */
