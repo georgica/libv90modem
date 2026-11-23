@@ -84,6 +84,15 @@ Changed (V.34, both roles):
   whatever end the retrain found).
 
 Fixed:
+- V.90 and V.92, calling role: the last data frame before the digital
+  modem's Rd (its rate renegotiation or cleardown) is delivered. It was
+  dropped, 21 to 42 bits once per renegotiation or cleardown begun by the
+  answerer: V.42 sent it again, without error control it was lost.
+- V.92, calling role: the clock offset measured on the digital modem's L2
+  can no longer overflow (undefined behaviour in C) when the line turns
+  its tones far beyond 1000 ppm per block; it gives the +-1000 ppm limit,
+  as it did whenever the computation did not overflow. Every other result
+  is unchanged.
 - m68k: built with GCC 12.3 for m68k (and maybe other versions) at -O1 and
   up, the V.34 receiver's carrier (`qamrx_init`) and the answering V.90
   receiver's clock (`v90arx_clock`) were computed from the wrong stack

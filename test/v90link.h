@@ -61,6 +61,36 @@ static void bert_put(bert_t *b, int bit)
     if (++b->got > 23 && b->armed && want != (bit & 1)) b->fails++;
 }
 
+/* ---- or 16-bit counter words, MSB first (vl_t.words): a gap shows as words
+ * lost. The sink locks on three words in a row, n, n + 1, n + 2, at any bit
+ * position; a word that is not the next one unlocks it, and the next lock
+ * counts the words between as lost (a damaged word among them) ---- */
+typedef struct { uint16_t gen; int gbit; uint64_t sr; int nb, locked, ph, had; uint16_t want; int64_t words, lost; } wctr_t;
+static int wctr_get(wctr_t *w)
+{
+    int bit = (w->gen >> (15 - w->gbit)) & 1;
+    if (++w->gbit == 16) { w->gbit = 0; w->gen++; }
+    return bit;
+}
+static void wctr_put(wctr_t *w, int bit)
+{
+    uint16_t a, b, c;
+    w->sr = (w->sr << 1) | (uint64_t)(bit & 1);
+    if (w->nb < 48) w->nb++;
+    if (w->locked) {
+        if (++w->ph < 16) return;
+        w->ph = 0;
+        if ((uint16_t)(w->sr & 0xffff) == w->want) { w->words++; w->want++; return; }
+        w->locked = 0;
+        return;
+    }
+    if (w->nb < 48) return;
+    a = (uint16_t)(w->sr >> 32); b = (uint16_t)(w->sr >> 16); c = (uint16_t)w->sr;
+    if ((uint16_t)(a + 1) != b || (uint16_t)(b + 1) != c) return;
+    if (w->had) w->lost += (uint16_t)(a - w->want);
+    w->had = w->locked = 1; w->ph = 0; w->want = (uint16_t)(c + 1); w->words += 3;
+}
+
 /* ---- the line ---- */
 typedef struct {
     /* downstream (dschan) */
@@ -111,12 +141,22 @@ typedef struct {
     int64_t k;                      /* our samples */
     int64_t n;                      /* network samples */
     bert_t down, up;
+    int words;                      /* the downstream's data: counter words (wctr_t), not 2^23 - 1 */
+    wctr_t wdown;
     double up_gain, up_nrms;
 } vl_t;
 
-static void vl_put_down(void *u, int bit) { bert_put(&((vl_t *)u)->down, bit); }
+static void vl_put_down(void *u, int bit)
+{
+    vl_t *l = (vl_t *)u;
+    if (l->words) wctr_put(&l->wdown, bit); else bert_put(&l->down, bit);
+}
 static int  vl_get_up(void *u) { return bert_get(&((vl_t *)u)->up); }
-static int  vl_get_down(void *u) { return bert_get(&((vl_t *)u)->down); }
+static int  vl_get_down(void *u)
+{
+    vl_t *l = (vl_t *)u;
+    return l->words ? wctr_get(&l->wdown) : bert_get(&l->down);
+}
 static void vl_put_up(void *u, int bit) { bert_put(&((vl_t *)u)->up, bit); }
 
 /* the digital modem's V.90 parts alone: p2d, then p34d as answer.c's start_p34 */

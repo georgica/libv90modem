@@ -509,5 +509,33 @@ int main(void)
     CHECK_EQ_I(r.c.state, P2L_FAILED); CHECK_EQ_I(r.c.error, P2L_ERR_REV);
     CHECK(r.n < 8000 * 25);
 
+    /* ---- the clock from L2 (calling B6): a strong L2 whose tones turn
+     * about a quarter turn per 20 ms block (far beyond 1000 ppm), so that
+     * ci is huge against cr: the clamp, not a 64-bit overflow ---- */
+    {
+        static proberx_t pr;
+        int m, sgn;
+        for (sgn = 1; sgn >= -1; sgn -= 2) {
+            memset(&pr, 0, sizeof pr);
+            pr.nblk = 50;
+            for (m = 1; m <= PROBE_NBIN; m++) {
+                if (!probe_has_tone(m)) continue;
+                pr.cr[m] = (int64_t)1 << 20;
+                pr.ci[m] = sgn * ((int64_t)1 << 41);
+                pr.pw[m] = ((int64_t)1 << 41) + ((int64_t)1 << 20);
+            }
+            CHECK(proberx_snr(&pr, 7) >= 200);
+            printf("  clock from a hostile L2 (ci %c2^41, cr 2^20): %d/256 ppm\n", sgn > 0 ? '+' : '-',
+                   (int)p2call_clock_q8(&pr));
+            CHECK_EQ_I(p2call_clock_q8(&pr), -sgn * 256000);    /* the +-1000 ppm clamp */
+        }
+        /* within the clamp, as before: one tone (1050 Hz) turning 1/476 rad per block, about 16 ppm */
+        memset(&pr, 0, sizeof pr);
+        pr.nblk = 50;
+        pr.cr[7] = (int64_t)1 << 30; pr.ci[7] = -((int64_t)1 << 30) / 476; pr.pw[7] = (int64_t)1 << 30;
+        printf("  clock from a tone at 1050 Hz, ci/cr -1/476: %d/256 ppm\n", (int)p2call_clock_q8(&pr));
+        CHECK(p2call_clock_q8(&pr) > 0 && p2call_clock_q8(&pr) < 256000);
+    }
+
     T_REPORT("p2call");
 }

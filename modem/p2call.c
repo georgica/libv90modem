@@ -644,7 +644,7 @@ static int take_info1d(p2call_t *p)
  * least squares slope over m is e = -sum m ci / (6 pi sum m^2 cr). Tones with
  * an SNR under 20 dB are left out. 1/256 ppm, within +-1000 ppm; 0 when
  * there is nothing to go on. */
-static int32_t clock_q8(const proberx_t *r)
+int32_t p2call_clock_q8(const proberx_t *r)
 {
     int64_t num = 0, den = 0, q;
     int m;
@@ -656,6 +656,10 @@ static int32_t clock_q8(const proberx_t *r)
     if (den <= 0) return 0;
     while (den > 0x7fffffff) { den >>= 1; num /= 2; }
     if (den == 0) return 0;
+    /* past 20 times den the clamp holds whatever the product (20 * 13581342
+     * > 256000), and below it the product fits 64 bits: |num| <= 20 * 2^31 */
+    if (num > den * 20) return -256000;
+    if (num < -den * 20) return 256000;
     /* 256e6 / (6 pi) = 13581342 */
     q = -(num * 13581342) / den;
     return (int32_t)(q > 256000 ? 256000 : q < -256000 ? -256000 : q);
@@ -773,7 +777,7 @@ static int16_t p2call_tick_v90(p2call_t *p, int16_t x)
             proberx_tick(&p->prx, x);
             if (p->prx.nblk >= PROBE_BLOCKS) {
                 analyse(p);                             /* levels, SNRs, frequency offset */
-                p->clk_ppm_q8 = clock_q8(&p->prx);      /* (V.92's transmitter needs it, 6.2/V.92) */
+                p->clk_ppm_q8 = p2call_clock_q8(&p->prx); /* (V.92's transmitter needs it, 6.2/V.92) */
                 dpskrx_expect(&p->rx, INFO_PAYLOAD(INFO1D_BITS));
                 dpsktx_on(&p->tx);                      /* Tone A; INFO1d comes */
                 go(p, P2L_A_WAIT_INFO1D);

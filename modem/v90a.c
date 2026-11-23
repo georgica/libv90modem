@@ -687,7 +687,14 @@ static void frame(v90a_t *a, int32_t m0)
         else a->rd_frames = 0;
         if (a->rd_frames >= 2 && !a->col_frames) {      /* (a lost receiver decides anything) */
             /* 9.6.2.2: the digital modem renegotiates; S, S-bar, CP from us.
-             * V.92 (9.8.2.2): our Ru waits for its Rd-bar */
+             * V.92 (9.8.2.2): our Ru waits for its Rd-bar. Of the two frames
+             * held back the newer is the first Rd; the older is data (unless
+             * Rd ran on while the receiver was lost, rd_frames > 2) and goes
+             * on now, as B1d starts the delay afresh */
+            if (a->rd_frames == 2 && a->dly_cnt >= 2) {
+                k = a->dly_pos & 1;
+                deliver(a, a->dly[k], a->dly_n[k]);
+            }
             a->rx_ready = 0; a->tx_ready = 0;
             a->rd_units = 2;
             if (!a->pcm && a->reneg_ours) { if (a->state != V90A_RENEG) { a->state = V90A_RENEG; a->t = 0; } }

@@ -111,16 +111,18 @@ static void count(vl_t *l, int64_t *bd, int64_t *fd, int64_t *bu, int64_t *fu)
     *bd = l->down.got - d0; *bu = l->up.got - u0; *fd = l->down.fails - f0d; *fu = l->up.fails - f0u;
 }
 
-static int connect(vl_t *l, int v92, uint32_t seed)
+static int connect_w(vl_t *l, int v92, uint32_t seed, int words)
 {
     vl_cfg c;
     line(&c, v92, seed);
     vl_init(l, &c);
+    if (words) { l->words = 1; l->wdown.gen = (uint16_t)(0x5a00 + 77 * seed); }
     while (l->k < MS(40000) && !both(l) && l->org.phase != ORIG_FAILED) vl_tick(l);
     if (!both(l)) return 0;
     run_ms(l, 2000);
     return both(l);
 }
+static int connect(vl_t *l, int v92, uint32_t seed) { return connect_w(l, v92, seed, 0); }
 
 static void run(int v92, int kind, uint32_t seed, res_t *o)
 {
@@ -256,6 +258,30 @@ static void cases(int v92)
     }
 }
 
+/* the answerer's rate renegotiation, no V.42: the downstream's data is
+ * counter words, and none is lost at its Rd (9.6.1.1 / 9.8.1.1: the frames
+ * before Rd are data, every one of them) */
+static void words_reneg(int v92)
+{
+    vl_t *l = &L;
+    int64_t t0, w0, lost0;
+    int32_t ms;
+    CHECK(connect_w(l, v92, 80 + v92, 1));
+    w0 = l->wdown.words; lost0 = l->wdown.lost;
+    t0 = l->k;
+    if (v92) CHECK_EQ_I(v92d_renegotiate(&l->ans.u.v92), 0);
+    else CHECK_EQ_I(p34d_renegotiate(&l->ans.p34), 0);
+    ms = back(l, t0, 30000);
+    run_ms(l, 2000);
+    printf("%s: the answerer renegotiates, counter words: back %d ms, words before %" PRId64 ", after %" PRId64 ", lost %" PRId64 "\n",
+           v92 ? "V.92" : "V.90", (int)ms, w0, l->wdown.words - w0, l->wdown.lost - lost0);
+    CHECK(ms > 0);
+    CHECK(w0 > 1000);
+    CHECK(l->wdown.words - w0 > 1000);
+    CHECK_EQ_I(l->wdown.lost - lost0, 0);              /* (one frame, 21..42 bits, was) */
+    CHECK_EQ_I(l->wdown.locked, 1);
+}
+
 /* three retrains in a minute, the fourth refused; one never answered */
 static void limits(int v92)
 {
@@ -309,6 +335,10 @@ int main(void)
     cases(0);
 #ifndef TEST_SHORT
     cases(1);
+#endif
+    words_reneg(0);
+#ifndef TEST_SHORT
+    words_reneg(1);
 #endif
     limits(0);
 #ifndef TEST_SHORT
