@@ -45,6 +45,17 @@
 #define V21_CD_AMP         110   /* about -46 dBm0, as in v8ans */
 #define BELL103_MARK_BLOCKS 20   /* 200 ms of the caller's 1270 Hz and little else */
 #define BELL103_1270 ((uint32_t)(((uint64_t)BELL103_O_MARK << 32) / 8000))
+/* A V.21 caller without V.8 answers the answer tone with its mark, 980 Hz
+ * on channel No. 1 (V.25 5, V.21 7 a)), and waits for ours. Heard as the
+ * Bell 103 mark is: 200 ms in a row of 10 ms blocks with more than half of
+ * their power within the tone's 100 Hz bin. Nothing else a caller without
+ * V.8 sends in our V.22 wait is that: a V.22 or Bell 212A caller's
+ * scrambled ones spread over 900 to 1500 Hz around their 1200 Hz carrier
+ * (600 baud), a V.22bis caller's S1 is 900 and 1500 Hz for 100 ms, a
+ * Bell 103 caller's mark 1270 Hz; a V.8 caller's CM has no more than ten
+ * marks (33 ms) in a row. The band-pass in front passes 980 Hz (-0.1 dB). */
+#define V21_MARK_BLOCKS 20
+#define V21L_980 ((uint32_t)(((uint64_t)V21L_MARK << 32) / 8000))
 #if V21_BPF_N != BELL103_BPF_N
 #error "the two receive band-passes share one loop"
 #endif
@@ -60,6 +71,7 @@ static void start_v22(answer_t *a)
     v22m_init(&a->v22, V22_ANSWERER, 1, a->cfg.level, a->cfg.getbit, a->cfg.putbit, a->cfg.user);
     bpf_reset(a, bell103_bpf);
     tonedet_init(&a->bell, BELL103_1270);
+    tonedet_init(&a->v21mark, V21L_980);
     v21mod_init(&a->fmod, BELL103_A_MARK, BELL103_A_SPACE, 8000, 300, (int16_t)(a->cfg.level * 181 / 128));
     a->via_bell = 0;
     a->phase = ANS_V22; a->t = 0;
@@ -456,10 +468,22 @@ int16_t answer_tick(answer_t *a, int16_t rx)
          * steady 1270 Hz. Listened for behind the band-pass that keeps our
          * own signal out: its echo may be the louder of the two. A V.22
          * caller's scrambled signal is spread over the band and a V.22bis
-         * caller's S1 is 900 and 1500 Hz: neither is one tone at 1270 Hz. */
-        if (!a->connected && !a->used_v8 && (a->cfg.modes & ANS_MODE_BELL103) && a->v22.state == V22S_WAIT) {
-            (void)tonedet_tick(&a->bell, v21_bandpass(a, rx));
-            if (a->bell.blocks >= BELL103_MARK_BLOCKS) { start_fsk(a, 1); break; }
+         * caller's S1 is 900 and 1500 Hz: neither is one tone at 1270 Hz.
+         * A V.21 caller's mark, 980 Hz, is heard the same way behind the
+         * same band-pass, and we answer it in V.21 (V.8 8.2.2: no CM, then
+         * "other appropriate Recommendation"; V.21 7 a): our mark, 1650 Hz
+         * on channel No. 2). Before, it held V.22's carrier detect on and
+         * the fall-back to V.21 on silence never came. */
+        if (!a->connected && !a->used_v8 && (a->cfg.modes & (ANS_MODE_BELL103 | V8_MOD_V21)) && a->v22.state == V22S_WAIT) {
+            int16_t x = v21_bandpass(a, rx);
+            if (a->cfg.modes & ANS_MODE_BELL103) {
+                (void)tonedet_tick(&a->bell, x);
+                if (a->bell.blocks >= BELL103_MARK_BLOCKS) { start_fsk(a, 1); break; }
+            }
+            if (a->cfg.modes & V8_MOD_V21) {
+                (void)tonedet_tick(&a->v21mark, x);
+                if (a->v21mark.blocks >= V21_MARK_BLOCKS) { start_v21(a); break; }
+            }
         }
         {
             /* Nobody has answered our unscrambled ones: a Bell 212A (or a

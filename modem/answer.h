@@ -174,6 +174,7 @@ typedef struct {
     int16_t    bpf[128]; int bpos;   /* V.21 / Bell 103 receive band-pass history */
     const int16_t *bpf_taps;         /* v21_bpf or bell103_bpf */
     tonedet_t  bell;                 /* the Bell 103 caller's mark while we wait in ANS_V22 */
+    tonedet_t  v21mark;              /* the V.21 caller's mark (980 Hz) while we wait in ANS_V22 */
     int        connected, modulation, bitrate;
     int        rx_bitrate;   /* receive direction, where it differs (V.90 upstream) */
     int        end;          /* ANS_END_*: why the call ended (ANS_FAILED) */

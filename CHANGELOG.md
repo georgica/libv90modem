@@ -211,6 +211,16 @@ Changed (V.92, both roles):
   before, down to the same level.
 
 Fixed:
+- Answering role, a V.21 caller without V.8 (three ISP calls,
+  2026-11-23): it answers ANSam with its mark, a steady 980 Hz, sends no
+  CM and waits for our 1650 Hz. We went on to V.22 and fell back to V.21
+  only after 8 s of silence, which its mark never gave (V.22's carrier
+  detect took it), and sent V.22 and the 2225 Hz Bell tone until the
+  caller hung up. Now, with V.21 offered, 200 ms of 980 Hz in the V.22
+  wait (heard as Bell 103's 1270 Hz is, behind the same band-pass) starts
+  V.21 answering at once: connected about 0.35 s after the mark is heard.
+  V.22, V.22bis, Bell 212A and Bell 103 callers, V.8 callers and a silent
+  or noisy line are answered as before; no recorded call changes.
 - Answering role, a caller behind a packet network (an ATA's or a VoIP
   gateway's jitter buffers): the echo of the far hybrid comes back about a
   round trip late, 300 ms on a Cisco IOS FXS port, past the 160 ms the echo
