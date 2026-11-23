@@ -353,7 +353,21 @@ static void start_v32(answer_t *a)
     a->phase = ANS_V32; a->t = 0;
 }
 
-void answer_v90_cfg(answer_t *a, const p2d_cfg *cfg) { a->p2cfg = *cfg; x2_offer(a); k56_offer(a); }
+/* before the first sample: in ANS_V8BIS (only answer_init enters it) or in
+ * ANS_V8 without K56flex on offer (V.8 after V.8bis has it on offer), with
+ * the clock at 0 */
+static int before_first_tick(const answer_t *a)
+{
+    return a->t == 0 && (a->phase == ANS_V8BIS || (a->phase == ANS_V8 && !a->k56_offered));
+}
+
+/* the offers depend on the law: settled before the first sample, and a
+ * later call changes nothing */
+void answer_v90_cfg(answer_t *a, const p2d_cfg *cfg)
+{
+    if (!before_first_tick(a)) return;
+    a->p2cfg = *cfg; x2_offer(a); k56_offer(a);
+}
 
 static int16_t tick_v21(answer_t *a, int16_t rx)
 {

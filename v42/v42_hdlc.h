@@ -75,6 +75,9 @@ enum {
 #define V42HDLC_RX_LONG    (-4)
 #define V42HDLC_RX_ALIGN   (-5)
 
+/* v42hdlc_rx_t.flag_run saturates here: only small counts are ever asked */
+#define V42HDLC_FLAG_RUN_MAX 65535
+
 typedef struct {
     uint8_t  buf[V42HDLC_MAX_FRAME];
     int      len;            /* complete octets collected */
@@ -86,7 +89,8 @@ typedef struct {
     int      ones;           /* run of ones on the line */
     int      fcs_mode;
     int      last_fcs32;     /* FCS type of the frame last returned */
-    int      flag_run;       /* consecutive flags with nothing between */
+    int      flag_run;       /* consecutive flags with nothing between, up
+                                to V42HDLC_FLAG_RUN_MAX (an idle link) */
     int      tent;           /* collecting what follows a run of ones, no flag
                                 before it: a frame only if its FCS holds */
     unsigned long good, bad_fcs, runts, aborts, too_long, misaligned;

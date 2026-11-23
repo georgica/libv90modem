@@ -51,7 +51,9 @@
 
 NAME     := libv90modem
 VERSION  := 0.5.0
-SOVER    := 0
+# the SONAME's version: MAJOR.MINOR while MAJOR is 0 (every 0.x changes the
+# ABI), MAJOR from 1.0
+SOVER    := $(shell echo '$(VERSION)' | awk -F. '{ print ($$1 == 0 ? $$1 "." $$2 : $$1) }')
 
 CC       ?= cc
 CFLAGS   ?= -std=c99 -O2 -Wall -Wextra -Werror
@@ -69,6 +71,7 @@ AR       := $(CROSS)ar
 LD       := $(CROSS)ld
 OBJCOPY  := $(CROSS)objcopy
 NM       := $(CROSS)nm
+READELF  := $(CROSS)readelf
 
 PREFIX   ?= /usr/local
 LIBDIR   ?= $(PREFIX)/lib
@@ -155,7 +158,18 @@ check-symbols: $(STATIC)
 	@bad=$$($(NM) -g --defined-only $(STATIC) | awk 'NF >= 3 { print $$3 }' | sed 's/^_v90m_/v90m_/' \
 	      | grep -vE '^(v90m_|__|\.)' || true); \
 	 if [ -n "$$bad" ]; then echo "$(STATIC) defines symbols outside v90m_*:"; echo "$$bad" | head; exit 1; fi; \
+	 bad=$$($(NM) -g --defined-only $(STATIC) | awk 'NF >= 3 { print $$3 }' | sed 's/^_v90m_/v90m_/' \
+	      | grep -E '^v90m__' | grep -vE '^v90m__i_' || true); \
+	 if [ -n "$$bad" ]; then echo "$(STATIC) defines internal v90m__* names not renamed v90m__i_*:"; echo "$$bad" | head; exit 1; fi; \
 	 echo "symbols: $(STATIC) defines only v90m_* ($$($(NM) -g --defined-only $(STATIC) | grep -c ' _*v90m__i_') internal)"
+# the shared library's SONAME: libv90modem.so.MAJOR.MINOR while MAJOR is 0
+# (each 0.x has its own ABI), .so.MAJOR from 1.0 (DESIGN: spec D10)
+.PHONY: check-soname
+check-soname: $(SHARED)
+	@want=$$(echo '$(VERSION)' | awk -F. '{ print ($$1 == 0 ? $$1 "." $$2 : $$1) }'); \
+	 got=$$($(READELF) -d $(SHARED) | sed -n 's/.*(SONAME).*\[\(.*\)\].*/\1/p'); \
+	 if [ "$$got" != "$(NAME).so.$$want" ]; then echo "soname: SONAME [$$got], want $(NAME).so.$$want"; exit 1; fi; \
+	 echo "soname: $$got"
 # Fixed point and no allocation after create, checked on the box's compiler
 # (FIXED_CC, the armv5 soft-float one): every library object compiled alone,
 # its undefined symbols against an allowlist (tools/check-fixed.sh): no
@@ -200,6 +214,8 @@ uninstall:
 	rm -f $(DESTDIR)$(INCDIR)/v90modem.h $(DESTDIR)$(LIBDIR)/$(NAME).a $(DESTDIR)$(LIBDIR)/$(NAME).so \
 	      $(DESTDIR)$(LIBDIR)/$(NAME).so.$(SOVER) $(DESTDIR)$(LIBDIR)/$(NAME).so.$(VERSION) \
 	      $(DESTDIR)$(PCDIR)/$(NAME).pc $(DESTDIR)$(BINDIR)/v90m-replay
+	@# the .so.0 link of 0.5.0 and earlier, when it now points at nothing
+	@l=$(DESTDIR)$(LIBDIR)/$(NAME).so.0; if [ -L "$$l" ] && [ ! -e "$$l" ]; then rm -f "$$l"; echo "removed $$l"; fi
 
 # ---- tests: T_SRC compiled once (T_CFLAGS) into $(BUILD)/libtest.a, and
 # for ARM_CC into $(BUILD)/arm/libtest.a; each test_X links test/test_X.c
@@ -302,7 +318,7 @@ endif
 test-times:
 	@tools/par-run.sh --merge $(BUILD)/test-times.txt tools/test-times.txt && echo "tools/test-times.txt: from $(BUILD)/test-times.txt"
 
-check: test-all test-api test-examples test-fixtures check-symbols
+check: test-all test-api test-examples test-fixtures check-symbols check-soname
 	@echo "ALL HOST CHECKS PASS"
 # Golden outputs (tools/golden.sh): every program of make check, its output
 # (less host timing) against test/golden/out/<dir>/<prog>.txt. golden runs

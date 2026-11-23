@@ -138,6 +138,101 @@ Fixed:
   keeps calling `v90m_process_*` after `V90M_EV_ENDED` no longer overflows
   them either. Shorter calls are unchanged.
 
+Changed (API: callbacks, NULL, configuration checks):
+- From a callback (`getbit`, `putbit`, `on_event`), `v90m_reset` on the
+  modem that calls it returns `V90M_ESTATE` and changes nothing (it reset
+  the modem under the block being processed: undefined behaviour), and
+  `v90m_destroy` takes effect at the end of the sample under way: no event
+  after it, the rest of the block is silence (linear 0, mu-law 0xFF, A-law
+  0xD5), the modem is freed when owned, and `v90m_process_*` returns
+  `V90M_OK` (it freed the modem under the block: a use after free).
+  `v90m_init` on the modem's own memory from a callback is documented as
+  not allowed.
+- NULL: every function checks its object (and the struct that
+  `v90m_get_state`, `v90m_get_stats`, `v90m_ec_get_status` fill): an `int`
+  function returns `V90M_EINVAL` (`v90m_ec_state`, `v90m_ec_tx_idle`,
+  `v90m_ec_tx_busy`, `v90m_ec_get_break` included), a `size_t` or
+  `unsigned long` one 0, a `void` one does nothing; `v90m_retrain`,
+  `v90m_cleardown`, `v90m_ec_reset` and most `v90m_ec_*` and
+  `v90m_async_*` functions crashed. The four per-bit functions
+  (`v90m_ec_tx_bit`, `v90m_ec_rx_bit`, `v90m_async_getbit`,
+  `v90m_async_putbit`) are not checked: their object must not be NULL.
+- `tx_level` above `V90M_TX_LEVEL_MAX` (16384, new) is `V90M_EINVAL`: a
+  larger one overflowed (`INT_MAX`: undefined behaviour) or wrapped the
+  16-bit tone amplitude (from 23171 up: a sign-flipped, clipped answer
+  tone).
+- Answering with x2 or K56flex, `max_up_bps` 1..2399 is `V90M_EINVAL`: it
+  left the client no upstream rate after the point of no return, and the
+  call ended `V90M_END_X2_FAILED` / `V90M_END_K56_FAILED`.
+- Answering, `V90M_MOD_BELL212A` without `V90M_MOD_V22` is `V90M_ENOTSUP`
+  (it was accepted and Bell 212A never offered).
+- `v90m_ec_create`, `v90m_ec_init`, `v90m_ec_reset` check the
+  configuration: a value outside the ranges now written next to each field
+  of `v90m_ec_cfg` is `V90M_EINVAL` (it was clamped or taken as something
+  else: `comp_policy` 3 as AUTO, `establish_ms` < 0 as never, `t403_ms` < 0
+  as off, `v42bis_p1` above 2048 agreed but not run, and so on).
+- `v90m_ec_send_break` with an `opt` other than the three `V90M_BRK_*` is
+  `V90M_EINVAL` (0x80 went out as a combination V.42 does not define).
+- `v90m_ec_tick` with `ms` above `INT_MAX` expires the timers (it extended
+  them).
+
+Fixed (error control):
+- `v90m_ec_abort` stops the endpoint in every state, and
+  `v90m_ec_state` says `V90M_EC_DISCONNECTED` (reason `V90M_EC_R_LOCAL`)
+  on return. In the detection phase it did nothing (the endpoint went on
+  to start-stop mode at T400 and delivered what the line carried); in
+  start-stop mode it did nothing (data kept moving, writes were taken);
+  in error-corrected mode the state showed it only after the next call.
+- An originator with the detection phase takes the answerer's HDLC flags
+  as the sign of an error-correcting answerer, as the answerer takes the
+  originator's: against an answerer without the detection phase (V.42
+  7.2.1) it went to start-stop mode at T400 and read the flags as
+  characters, while the answerer waited for a SABME.
+- Documented: after a `v90m_destroy` from `getbit` or `putbit`, the rest of
+  that sample still calls `getbit` and `putbit` with the host's `user`
+  pointer; free the user object only after `v90m_process_*` returns.
+
+Changed (error control, V.42 / LAPM):
+- Our XID command gives the HDLC optional functions in three octets (bit 16
+  set; it gave four): the form real modems send, and some (an Agere
+  SV92PP) drop everything after a mask of another length, our V.42bis and
+  V.44 offer with it. Answers still have the form of the command.
+- A responder that answers a smaller `k` or `N401` than we proposed for our
+  sending direction is taken at its word (it was raised to our value or
+  the default, more frames than it said it could take).
+- Bounded waits (a ruling that departs from V.42, which starts the count
+  again at each recovery): after `n400` recoveries (timer recoveries, and
+  go-backs on a REJ that acknowledges nothing) with I frames
+  unacknowledged and none acknowledged in between, the next one releases
+  the link with `V90M_EC_R_N400`. A peer answering every poll, or every I
+  frame with such a REJ, but never acknowledging kept the link up for
+  ever. A busy peer (RNR) is not counted; a destructive break does not
+  start the count again.
+- V.42bis P1 is proposed at most at `V42COMP_MAX_CODEWORDS` (2048), and a
+  compression direction agreed but not runnable releases the link with
+  `V90M_EC_R_COMPRESSION`. (Through the API, `v42bis_p1` above 2048 is
+  already `V90M_EINVAL`; the endpoint underneath agreed 4096 and then ran
+  uncompressed while the far end compressed.)
+- The HDLC receiver's count of consecutive flags saturates (at 65535): on
+  an idle link with T403 off it overflowed after about 85 hours (signed
+  overflow).
+- `v90m_ec_mem_size()` unchanged (49792 on x86-64).
+
+Changed (build and install):
+- The shared library's SONAME is `libv90modem.so.MAJOR.MINOR` while MAJOR
+  is 0 (`libv90modem.so.0.5` now, `.so.0.6` at this release; it was
+  `.so.0` for every 0.x, so a program built against 0.4 loaded 0.5 and
+  passed it structs of the old layout), `.so.MAJOR` from 1.0. The links
+  installed are `libv90modem.so` and `libv90modem.so.0.5`. Programs linked
+  against the shared library must be linked again.
+- The static library no longer defines `v90m__answer`, `v90m__orig` and
+  `v90m__ec` (internal accessors that looked like API): renamed
+  `v90m__i_*` like every other internal. `make check-symbols` rejects
+  them; `make check-soname` (part of `make check`) checks the SONAME.
+- `make uninstall` also removes a `libv90modem.so.0` link left by 0.5.0 or
+  earlier once it points at nothing. Packagers: the `.so.0` link is no
+  longer installed.
+
 ## 0.5.0 (2026-11-21)
 
 K56flex, Rockwell's and Lucent's 56k scheme of 1997, on the answering

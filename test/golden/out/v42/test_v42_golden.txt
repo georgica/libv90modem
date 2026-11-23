@@ -30,6 +30,6 @@ v44    zeros P1 1024 P2 255 P3 3072:    45 octets, hash add81f50
 v44    zeros P1 2048 P2 255 P3 4096:    42 octets, hash e6a3ed62
 v44    sym16 P1 1024 P2 255 P3 3072:  5524 octets, hash b68ff35c
 v44    sym16 P1 2048 P2 255 P3 4096:  5416 octets, hash c72bdf62
-v42ec  A to B: 282560 octets written, 278464 read, line hash 2157944f
-v42ec  B to A: 282560 octets written, 278464 read, line hash 5a4d7686
+v42ec  A to B: 282560 octets written, 278464 read, line hash 92ea3b64
+v42ec  B to A: 282560 octets written, 278464 read, line hash 95c9f1c0
 test_v42_golden: 232 checks, 0 failures

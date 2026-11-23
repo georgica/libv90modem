@@ -22,7 +22,27 @@
  * inside v90m_process_*(), at the moment the bit is needed or decided. V.42
  * (below) or a start-stop framer sits on that pump. Callbacks (getbit,
  * putbit, on_event) are only ever made from inside v90m_process_*() on the
- * calling thread. */
+ * calling thread.
+ *
+ * What a callback may do to the modem that calls it: v90m_retrain,
+ * v90m_cleardown, v90m_get_state, v90m_get_stats (and anything on another
+ * object: every v90m_ec_* and v90m_async_* function). v90m_reset returns
+ * V90M_ESTATE and changes nothing. v90m_destroy takes effect at the end of
+ * the sample under way: no event after it, the rest of the block is
+ * silence (linear 0, mu-law 0xFF, A-law 0xD5), the modem is freed (when it
+ * came from v90m_create) and v90m_process_* returns V90M_OK. After a
+ * v90m_destroy from getbit or putbit the rest of that sample still calls
+ * getbit and putbit with the host's user pointer: free the user object
+ * (a v90m_ec_t, a v90m_async_t) only after v90m_process_* returns, and
+ * never from a callback of a modem that goes on. v90m_init on the modem's
+ * own memory is not allowed.
+ *
+ * NULL: every function checks the object it is given (and the struct that
+ * v90m_get_state, v90m_get_stats and v90m_ec_get_status fill): with NULL a
+ * function returning int returns V90M_EINVAL, one returning size_t or
+ * unsigned long 0, a void one does nothing. Except the four called for
+ * every bit, v90m_ec_tx_bit, v90m_ec_rx_bit, v90m_async_getbit and
+ * v90m_async_putbit: their object must not be NULL. */
 #ifndef V90MODEM_H
 #define V90MODEM_H
 
@@ -42,7 +62,8 @@ const char *v90m_version(void);
 /* error codes (negative returns) */
 #define V90M_OK        0
 #define V90M_EINVAL   -1    /* a NULL or misaligned argument, or a configuration value out of range */
-#define V90M_ENOTSUP  -2    /* a combination not implemented in this version (see v90m_role) */
+#define V90M_ENOTSUP  -2    /* a combination not implemented in this version (see v90m_role and
+                               the V90M_MOD_* rules) */
 #define V90M_ENOMEM   -3    /* create could not allocate, or init was given too little memory */
 #define V90M_ESTATE   -4    /* not possible in the present state of the call */
 
@@ -88,7 +109,8 @@ typedef enum {
 #define V90M_MOD_V92     0x0020u     /* with V90M_MOD_V90 (alone: V90M_ENOTSUP): PCM upstream on
                                         offer (answering), or asked for (calling); not in the
                                         defaults */
-/* Not in the defaults, either role. Answering: Bell 103: a caller without V.8
+/* Not in the defaults, either role. Answering: Bell 212A only with V90M_MOD_V22
+ * (without: V90M_ENOTSUP). Bell 103: a caller without V.8
  * that sends 1270 Hz (the Bell 103 mark) gets 300 bit/s FSK on 2225 / 2025
  * Hz, start-stop and no error control as in V.21. Bell 212A, with
  * V90M_MOD_V22: when the V.22bis answer sequence has gone unanswered for 4 s
@@ -179,6 +201,8 @@ typedef enum {
 } v90m_event;
 typedef void (*v90m_event_fn)(void *user, v90m_event ev);
 
+#define V90M_TX_LEVEL_MAX 16384     /* v90m_cfg.tx_level: x 181/128 (the tones' peak) fits 16 bits */
+
 typedef struct {
     v90m_role      role;
     unsigned       modulations;     /* V90M_MOD_*; default all but V.92 and Bell. Either role:
@@ -190,8 +214,11 @@ typedef struct {
                                        upstream constellation without its share of the noise);
                                        0 = the received samples went through G.711, also when
                                        they are handed over as linear values. Calling: unused */
-    int            tx_level;        /* transmit RMS outside PCM modes, 16-bit units, >= 0; default
-                                       3000 */
+    int            tx_level;        /* transmit RMS outside PCM modes, 16-bit units, 0 ..
+                                       V90M_TX_LEVEL_MAX (else V90M_EINVAL); default 3000. Near
+                                       the top the peaks of V.34-family signals clip: a calling
+                                       V.90 modem at 16384 does not get through its training
+                                       back to back, at 15360 it does */
     int            max_tx_code;     /* answering, V.90 / V.92: the most downstream power the caller
                                        may ask for, -0.5 dBm0 less 0.5 dB per step, 1..31;
                                        0 = 23 (-12 dBm0). Calling: unused (0..31 accepted) */
@@ -200,7 +227,9 @@ typedef struct {
                                        side), in V.34, V.90 and V.92, either role: V.92's PCM upstream
                                        (up to 48000) under max_up answering, max_down calling; 33600
                                        holds it at 33333. V.32bis (either role): one rate both ways,
-                                       under the lower of the two. V.21, V.22, V.22bis, Bell: unused */
+                                       under the lower of the two. V.21, V.22, V.22bis, Bell: unused.
+                                       With x2 or K56flex, max_up 1..2399 is V90M_EINVAL (their
+                                       V.34 upstream starts at 2400) */
     int            echo_delay;      /* samples from a sample leaving to its echo starting back (the
                                        driver's buffering), >= 0; -1 = measure it in every start-up.
                                        Calling V.90 / V.92: never measured, used as given, 0 .. 511
@@ -237,9 +266,10 @@ size_t   v90m_mem_size(void);
 v90m_t  *v90m_init(void *mem, size_t len, const v90m_cfg *cfg, int *err);
 /* Back to the start of a new call (the line went off-hook), same memory, the
  * role and everything else from cfg. V90M_OK; or V90M_EINVAL (m or cfg NULL,
- * a value out of range) or V90M_ENOTSUP, the modem left as it was. */
+ * a value out of range), V90M_ENOTSUP, or V90M_ESTATE (from a callback of
+ * m's), the modem left as it was. */
 int      v90m_reset(v90m_t *m, const v90m_cfg *cfg);
-void     v90m_destroy(v90m_t *m);           /* NULL is fine */
+void     v90m_destroy(v90m_t *m);           /* NULL is fine; from a callback: see the top */
 
 /* The line: n received samples in, n samples to send out. Any n, 1
  * included: the result does not depend on how the samples are cut into
@@ -250,7 +280,8 @@ void     v90m_destroy(v90m_t *m);           /* NULL is fine */
  *             v90m_g711_decode gives), codewords out; V.90 / V.92 work too
  *   _linear   linear both ways (a PCM modulation then sends the linear value
  *             of its codewords)
- * Return V90M_OK, or V90M_EINVAL (m NULL, or rx or tx NULL with n > 0). */
+ * Return V90M_OK, or V90M_EINVAL (m NULL, or rx or tx NULL with n > 0).
+ * A v90m_destroy from a callback ends the block early (see the top). */
 int      v90m_process_g711(v90m_t *m, const uint8_t *rx, uint8_t *tx, size_t n);
 int      v90m_process_lin_rx(v90m_t *m, const int16_t *rx, uint8_t *tx, size_t n);
 int      v90m_process_linear(v90m_t *m, const int16_t *rx, int16_t *tx, size_t n);
@@ -359,23 +390,28 @@ unsigned long v90m_async_frame_errors(const v90m_async_t *a);
  * control) when the far end has no V.42 and fallback is on. */
 typedef struct v90m_ec v90m_ec_t;
 
+/* The ranges: a value outside them is V90M_EINVAL from create, init and
+ * reset. Flags are 0 or 1. */
 typedef struct {
     int originator;         /* 1 = the calling end, 0 = the answering end */
-    int detect;             /* run the detection phase (V.42 7.2.1) */
+    int detect;             /* run the detection phase (V.42 7.2.1), 0..1 */
     int fallback;           /* when detection fails: 1 = start-stop, 0 = disconnect */
-    int t400_ms;            /* detection phase timer, default 750 */
-    int establish_ms;       /* answerer: give up when no SABME comes this long after detection; 0 = never */
-    int comp_policy;        /* V90M_COMP_AUTO / ALWAYS / NEVER for our encoder */
+    int t400_ms;            /* detection phase timer, >= 0; 0 = the default, 750 */
+    int establish_ms;       /* answerer: give up when no SABME comes this long after detection,
+                               >= 0; 0 = never */
+    int comp_policy;        /* V90M_COMP_AUTO / ALWAYS / NEVER (0..2) for our encoder */
     struct {
-        int use_xid;            /* originator: negotiate with XID before SABME */
-        int k_tx, k_rx;         /* window */
-        int n401_tx, n401_rx;   /* information field, octets */
-        int fcs32;
-        int v42bis_tx, v42bis_rx;   /* V.42bis wanted, our send / receive direction */
-        int v42bis_p1, v42bis_p2;   /* codewords (512..), string length (6..250) */
-        int v44_tx, v44_rx;         /* V.44 wanted (preferred over V.42bis) */
-        int v44_p1_tx, v44_p1_rx, v44_p2_tx, v44_p2_rx, v44_p3_tx, v44_p3_rx;
-        int t401_ms, t403_ms, n400;
+        int use_xid;            /* originator: negotiate with XID before SABME, 0..1 */
+        int k_tx, k_rx;         /* window, 1..32 (k_tx), 1..127 (k_rx) */
+        int n401_tx, n401_rx;   /* information field, octets, 1..256 */
+        int fcs32;              /* 0..1 */
+        int v42bis_tx, v42bis_rx;   /* V.42bis wanted, our send / receive direction, 0..1 */
+        int v42bis_p1, v42bis_p2;   /* codewords 512..2048, string length 6..250 */
+        int v44_tx, v44_rx;         /* V.44 wanted (preferred over V.42bis), 0..1 */
+        int v44_p1_tx, v44_p1_rx;   /* codewords 256..2048 */
+        int v44_p2_tx, v44_p2_rx;   /* string length 32..255 */
+        int v44_p3_tx, v44_p3_rx;   /* history, octets 512..4096 */
+        int t401_ms, t403_ms, n400; /* t401_ms >= 1; t403_ms >= 0, 0 = off; n400 >= 1 */
     } lapm;
 } v90m_ec_cfg;
 #define V90M_COMP_AUTO   0
@@ -384,7 +420,10 @@ typedef struct {
 
 enum { V90M_EC_DETECT = 0, V90M_EC_ESTABLISH, V90M_EC_CONNECTED, V90M_EC_ASYNC,
        V90M_EC_RELEASING, V90M_EC_DISCONNECTED };
-/* why an endpoint is V90M_EC_DISCONNECTED (v90m_ec_status.reason) */
+/* why an endpoint is V90M_EC_DISCONNECTED (v90m_ec_status.reason).
+ * V90M_EC_R_N400 also ends a link that made no progress through n400
+ * recoveries (docs/error-control.md "Bounded waits"; a busy peer, RNR,
+ * is not counted). */
 enum { V90M_EC_R_NONE = 0, V90M_EC_R_LOCAL, V90M_EC_R_PEER_DISC, V90M_EC_R_PEER_DM,
        V90M_EC_R_N400, V90M_EC_R_PROTOCOL, V90M_EC_R_NEGOTIATION,
        V90M_EC_R_NO_EC = 16, V90M_EC_R_COMPRESSION, V90M_EC_R_NO_SABME };
@@ -410,9 +449,10 @@ typedef struct {
 } v90m_ec_status;
 
 void        v90m_ec_cfg_default(v90m_ec_cfg *cfg, int originator);
-/* create / init: NULL on failure, *err as for v90m_create / v90m_init (the
- * configuration's values are not checked); reset: V90M_OK, or V90M_EINVAL
- * for cfg NULL */
+/* create / init: NULL on failure, *err as for v90m_create / v90m_init
+ * (V90M_EINVAL for a value outside the ranges above); reset: V90M_OK, or
+ * V90M_EINVAL for e or cfg NULL or a value outside them, the endpoint left
+ * as it was */
 v90m_ec_t  *v90m_ec_create(const v90m_ec_cfg *cfg, int *err);
 size_t      v90m_ec_mem_size(void);
 v90m_ec_t  *v90m_ec_init(void *mem, size_t len, const v90m_ec_cfg *cfg, int *err);
@@ -433,11 +473,12 @@ int         v90m_ec_tx_idle(const v90m_ec_t *e);        /* everything written wa
 int         v90m_ec_tx_busy(const v90m_ec_t *e);        /* a frame is still leaving the transmitter */
 
 void        v90m_ec_release(v90m_ec_t *e);              /* orderly: DISC, wait for UA */
-void        v90m_ec_abort(v90m_ec_t *e);                /* the line is gone: stop without a word */
+void        v90m_ec_abort(v90m_ec_t *e);                /* the line is gone: stop without a word, in
+                                                           every state: V90M_EC_DISCONNECTED on return */
 /* break signals (V.42 12.3.1): opt is one of these, len10ms the length in
  * 10 ms units. send_break: V90M_OK when the break is on its way;
- * V90M_ESTATE when error control is not up (V90M_EC_CONNECTED) or a break of
- * ours is still pending. get_break: 1 with *opt and *len10ms when a break came
+ * V90M_EINVAL for any other opt; V90M_ESTATE when error control is not up
+ * (V90M_EC_CONNECTED) or a break of ours is still pending. get_break: 1 with *opt and *len10ms when a break came
  * (in its place among the octets read), else 0. */
 #define V90M_BRK_NONDESTRUCTIVE_INSEQ      0x00
 #define V90M_BRK_NONDESTRUCTIVE_EXPEDITED  0x40

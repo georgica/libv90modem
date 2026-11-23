@@ -79,30 +79,47 @@ void v42ec_cfg_default(v42ec_cfg_t *cfg, int originator)
 }
 
 /* C-INIT of whichever procedure the XID exchange settled on (V.42 bis 5.2,
- * 5.3; V.44 7.5). LAPM never leaves both agreed. */
+ * 5.3; V.44 7.5). LAPM never leaves both agreed. A direction agreed but
+ * refused here (values past this build's arrays: v42ec_init keeps our
+ * proposals within them, so only a bug gets here) releases the link: the
+ * far end would compress, or expect compressed data, while we did not. */
 static void comp_init(v42ec_t *e)
 {
     const v42lapm_t *l = &e->lapm;
+    int bad = 0;
 
     e->comp_tx = e->comp_rx = 0;
     e->comp_alg = V42EC_COMP_NONE;
     e->enc_dirty = 0;
     if (l->v44_tx || l->v44_rx) {
         e->comp_alg = V42EC_COMP_V44;
-        if (l->v44_tx && v44comp_enc_init(&e->enc.v44, l->v44_n2_tx, l->v44_n7_tx, l->v44_n8_tx) == 0) {
-            v44comp_enc_policy(&e->enc.v44, e->cfg.comp_policy);
-            e->comp_tx = 1;
+        if (l->v44_tx) {
+            if (v44comp_enc_init(&e->enc.v44, l->v44_n2_tx, l->v44_n7_tx, l->v44_n8_tx) == 0) {
+                v44comp_enc_policy(&e->enc.v44, e->cfg.comp_policy);
+                e->comp_tx = 1;
+            } else bad = 1;
         }
-        if (l->v44_rx && v44comp_dec_init(&e->dec.v44, l->v44_n2_rx, l->v44_n7_rx, l->v44_n8_rx) == 0)
-            e->comp_rx = 1;
+        if (l->v44_rx) {
+            if (v44comp_dec_init(&e->dec.v44, l->v44_n2_rx, l->v44_n7_rx, l->v44_n8_rx) == 0) e->comp_rx = 1;
+            else bad = 1;
+        }
     } else if (l->comp_tx || l->comp_rx) {
         e->comp_alg = V42EC_COMP_V42BIS;
-        if (l->comp_tx && v42comp_enc_init(&e->enc.bis, l->comp_n2, l->comp_n7) == 0) {
-            v42comp_enc_policy(&e->enc.bis, e->cfg.comp_policy);
-            e->comp_tx = 1;
+        if (l->comp_tx) {
+            if (v42comp_enc_init(&e->enc.bis, l->comp_n2, l->comp_n7) == 0) {
+                v42comp_enc_policy(&e->enc.bis, e->cfg.comp_policy);
+                e->comp_tx = 1;
+            } else bad = 1;
         }
-        if (l->comp_rx && v42comp_dec_init(&e->dec.bis, l->comp_n2, l->comp_n7) == 0)
-            e->comp_rx = 1;
+        if (l->comp_rx) {
+            if (v42comp_dec_init(&e->dec.bis, l->comp_n2, l->comp_n7) == 0) e->comp_rx = 1;
+            else bad = 1;
+        }
+    }
+    if (bad) {
+        e->comp_tx = e->comp_rx = 0;
+        e->reason_override = V42EC_R_COMPRESSION;
+        v42lapm_release(&e->lapm);
     }
 }
 
@@ -169,7 +186,8 @@ void v42ec_init(v42ec_t *e, const v42ec_cfg_t *cfg)
     memset(e, 0, sizeof *e);
     e->cfg = *cfg;
     e->cfg.originator = cfg->originator ? 1 : 0;
-    /* never propose more than the arrays of v44_comp.h hold */
+    /* never propose more than the arrays of v42_comp.h and v44_comp.h hold */
+    if (e->cfg.lapm.comp_p1 > V42COMP_MAX_CODEWORDS) e->cfg.lapm.comp_p1 = V42COMP_MAX_CODEWORDS;
     if (e->cfg.lapm.v44_p1_tx > V44COMP_MAX_CODEWORDS) e->cfg.lapm.v44_p1_tx = V44COMP_MAX_CODEWORDS;
     if (e->cfg.lapm.v44_p1_rx > V44COMP_MAX_CODEWORDS) e->cfg.lapm.v44_p1_rx = V44COMP_MAX_CODEWORDS;
     if (e->cfg.lapm.v44_p3_tx > V44COMP_MAX_HISTORY) e->cfg.lapm.v44_p3_tx = V44COMP_MAX_HISTORY;
@@ -430,7 +448,10 @@ void v42ec_rx_bit(v42ec_t *e, int bit)
         if (e->det_rx.last_char >= 0) async_char(e, e->det_rx.last_char);
         if (e->cfg.originator) {
             if (e->want_hdlc || e->want_async) return;
-            if (r == V42DET_ADP_V42) e->want_hdlc = 1;
+            /* an answerer without the detection phase (7.2.1) sends flags
+             * instead of the ADP: they too say it does LAPM */
+            v42hdlc_rx_bit(&e->hrx, bit);
+            if (r == V42DET_ADP_V42 || e->hrx.flag_run >= FLAGS_SEEN) e->want_hdlc = 1;
             else if (r == V42DET_ADP_NOEC) {
                 e->want_async = 1;
                 ring_reset(&e->rxr);
@@ -505,6 +526,7 @@ void v42ec_line_restored(v42ec_t *e)
 void v42ec_tick(v42ec_t *e, unsigned ms)
 {
     if (e->state == V42EC_DISCONNECTED || e->state == V42EC_ASYNC) return;
+    if (ms > 1000000u) ms = 1000000u;       /* as v42lapm_tick: past every timer, and an int */
 
     if (e->t400 >= 0) {
         e->t400 -= (int)ms;
@@ -583,6 +605,14 @@ void v42ec_release(v42ec_t *e)
     default:
         break;
     }
+}
+
+void v42ec_abort(v42ec_t *e)
+{
+    if (e->state == V42EC_DISCONNECTED) return;
+    v42lapm_abort(&e->lapm, V42LAPM_R_LOCAL);   /* only a UA or DM owed still goes */
+    e->orig_wait = 0;
+    finish(e, V42LAPM_R_LOCAL);
 }
 
 int v42ec_send_break(v42ec_t *e, int opt, int len10ms)
