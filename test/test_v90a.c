@@ -78,6 +78,16 @@ int main(void)
     CHECK(l->va.trn2d_frames > 1000);
     CHECK_EQ_I(l->va.trn2d_bad, 0);
     CHECK_EQ_I(l->va.b1d_bad, 0);
+    /* 8.5.2 allows a CP to name fewer constellations than intervals and
+     * share them; a real server froze in data mode on such a CP (reported
+     * by an independent softmodem's live calls). Ours name one per interval
+     * (six), CPt's too. */
+    {
+        int s, six = v90_cp_nconst(&l->va.cpt) == 6 && v90_cp_nconst(&l->va.cp) == 6;
+        for (s = 0; s < 6; s++) six = six && l->va.cpt.idx[s] == s && l->va.cp.idx[s] == s;
+        printf("  constellations in CPt / CP as sent: %d / %d\n", v90_cp_nconst(&l->va.cpt), v90_cp_nconst(&l->va.cp));
+        CHECK(six);
+    }
     {
         int64_t d0 = l->down.got, u0 = l->up.got;
         run_for(l, MS(4000));
@@ -187,6 +197,40 @@ int main(void)
     printf("  ours %d (error %d)\n", l->va.state, l->va.error);
     CHECK_EQ_I(l->va.state, V90A_ENDED);
     CHECK_EQ_I(l->va.error, V90A_ERR_RETRAINS);
+
+    /* A live server's habit (reported by an independent softmodem's calls):
+     * TRN1d for about 4 s, Jd at the last moment 9.3.1.4 allows, and S
+     * wanted within 9.3.1.5's 5100 ms of the start of TRN1d. Jd is within
+     * 9.3.2.7's 4500 ms of the end of Ja, S follows it at once. Jd in 4100 ms
+     * (past 9.3.1.4) is still taken; in 4600 ms, past 9.3.2.7's limit, it is
+     * a retrain's (V90A_ERR_JD). */
+    printf("a server's long TRN1d, Jd at its end\n");
+    {
+        static const int TJ[] = { 4000, 4100, 4600 };
+        int i;
+        for (i = 0; i < 3; i++) {
+            int32_t jd_at = -1;
+            c = base(); c.seed = (uint32_t)(30 + i); c.trn1d_ms = TJ[i];
+            vl_init(l, &c);
+            while (l->k < MS(30000) && l->va.state != V90A_DATA && l->va.state != V90A_ENDED) {
+                vl_tick(l);
+                if (jd_at < 0 && l->p34.state == P34_JD) jd_at = (int32_t)(l->p34.now - l->p34.t_trn1d);
+            }
+            printf("  TRN1d %d ms: Jd %d ms into it; ours %d (error %d), Jd read %d ms after the end of Ja, Jd' %d ms after that; digital %d\n",
+                   TJ[i], jd_at < 0 ? -1 : (int)ms(jd_at), l->va.state, l->va.error,
+                   l->va.t_jd != CLK_NONE ? (int)ms(clk_diff(l->va.t_jd, l->va.t_ja_end)) : -1,
+                   l->va.t_jdp != CLK_NONE ? (int)ms(clk_diff(l->va.t_jdp, l->va.t_jd)) : -1, l->p34.state);
+            if (TJ[i] <= 4100) {
+                CHECK(ms(jd_at) >= TJ[i] && ms(jd_at) < TJ[i] + 50);
+                CHECK_EQ_I(l->va.state, V90A_DATA);
+                CHECK(l->p34.state != P34_FAILED);
+                CHECK(clk_diff(l->va.t_jdp, l->va.t_jd) < MS(200));
+            } else {
+                CHECK_EQ_I(l->va.state, V90A_ENDED);
+                CHECK_EQ_I(l->va.error, V90A_ERR_JD);
+            }
+        }
+    }
 
     printf("time-outs: the digital modem silent from\n");
     {

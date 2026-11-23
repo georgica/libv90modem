@@ -125,6 +125,8 @@ typedef struct {
                                        modem as answer.c does (70 ms of silence, Phase 2 again) */
     /* an impulse added to one A/D sample of ours (a click): at imp_ms, imp_amp */
     int imp_ms, imp_amp;
+    int trn1d_ms;                   /* p2d + p34d: its TRN1d lasts this long, Jd at its end (9.3.1.4
+                                       allows 4000 ms: a live server's habit); 0: p34d's own */
     /* the analogue modem */
     int caller_orig;                /* 1: orig_t, 0: v90a_t */
     int caller_level;
@@ -268,6 +270,14 @@ static uint8_t vl_src(void *ctx)
             else if (l->p2.state == P2D_FAILED) l->dstate = 2;
         } else if (l->dstate == 1) {
             out = p34d_tick(&l->p34, x);
+            if (l->cfg.trn1d_ms && l->p34.state == P34_SD && v90tx_signal(&l->p34.tx) == V90TX_TRN1D) {
+                /* p34d moves on to Jd when its count of TRN1d symbols is
+                 * up: held short of that (past its canceller's training)
+                 * until trn1d_ms, then run out */
+                if ((int32_t)(l->p34.now - l->p34.t_trn1d) < l->cfg.trn1d_ms * 8) {
+                    if (l->p34.tx.nsym >= 6000) l->p34.tx.nsym = 5999;
+                } else l->p34.tx.nsym = 1u << 24;
+            }
             if (l->cfg.d_retrain && l->p34.state == P34_RETRAIN) { l->dstate = 4; l->d_rt_wait = 0; l->d_retrains++; }
         } else if (l->dstate == 3) {
             out = v92d_tick(&l->v92d, x);
