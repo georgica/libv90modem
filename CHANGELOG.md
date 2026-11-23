@@ -8,6 +8,18 @@ change is listed here. Rebuild against the new header with every version;
 "Simulation and own answerer only" means: tried against simulated lines and
 this library's own answering modem, never against a real modem or server.
 
+## 0.6.0 (unreleased)
+
+Fixed:
+- m68k: built with GCC 12.3 for m68k (and maybe other versions) at -O1 and
+  up, the V.34 receiver's carrier (`qamrx_init`) and the answering V.90
+  receiver's clock (`v90arx_clock`) were computed from the wrong stack
+  slot (a compiler wrong-code bug), so V.34 did not train and the V.90
+  clock was always at its lower limit. Both are now written in a form that
+  compiler gets right; the result on every other target is the same as
+  before. Building for m68k with `-fno-omit-frame-pointer` avoids the bug
+  wherever else it might strike.
+
 ## 0.5.0 (2026-11-21)
 
 K56flex, Rockwell's and Lucent's 56k scheme of 1997, on the answering

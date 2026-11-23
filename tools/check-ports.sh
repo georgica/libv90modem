@@ -89,10 +89,16 @@ if [ "${1:-}" = --one ]; then
     # 32-bit x86 the test harness's doubles (the simulated line, sim/) are
     # computed in SSE2, not in the x87's 80 bits, which round differently
     # and so feed the modem a different line; the modem itself is integer
-    # code that these flags do not change (see docs/history/PROGRESS.md, "ports-2")
+    # code that these flags do not change (see docs/history/PROGRESS.md, "ports-2").
+    # On m68k the frame pointer is kept: GCC 12.3 for m68k, with it omitted
+    # (-O1 and up), reads an incoming argument 8 bytes off around a 64-bit
+    # division (a DImode push from an sp-relative source after a subq). The
+    # two sites in the tree are written so that it compiles them right
+    # anyway; the flag guards against new ones (docs/history/PROGRESS.md, "m68k")
     extra="-DTEST_FULL"
     case "$cc" in *mingw*) extra="$extra -D__USE_MINGW_ANSI_STDIO=1" ;; esac
     case "$name" in i686-*|win32-*) extra="$extra -msse2 -mfpmath=sse" ;; esac
+    case "$name" in m68k-*) extra="$extra -fno-omit-frame-pointer" ;; esac
     case "$run" in qemu-*) extra="$extra -DTEST_EMULATED=1" ;; esac
     rm -rf "$B/out"; mkdir -p "$B/out"
     Q="$ROOT/tools/portrun $B $B/out $skip $run"

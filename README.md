@@ -219,8 +219,11 @@ said so. `OUT` must not be under /tmp. `QUICK="target ..."` skips the slow
 programs of `tools/ports-slow.txt` there, `SKIP="prog ..."` skips programs
 on every target but the reference. Last full run
 (`docs/history/PROGRESS.md`, ports-2): every target but m68k identical to
-host gcc; m68k fails in the V.34 receiver under qemu-m68k only, which looks
-like the emulator (no hardware to settle it).
+host gcc. m68k's failures were not qemu's: GCC 12.3 for m68k miscompiles
+two 64-bit divisions in the library (`docs/history/PROGRESS.md`, "m68k").
+They are now written so that it compiles them right, the matrix builds m68k
+with `-fno-omit-frame-pointer` as well, and m68k gates like every other
+target. On m68k with a gcc of your own, build with `-fno-omit-frame-pointer`.
 
 `make test-interop SPANDSP=PREFIX` runs V.8 and V.22bis (both roles)
 against spandsp (host only). `make bench-v90` replays a simulated V.90 call

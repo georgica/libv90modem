@@ -84,7 +84,8 @@ little-endian, 32- and 64-bit. The cross compilers are Bootlin's
 "stable-2023.08-1" toolchains under `TOOLCHAINS` (default `../toolchains`);
 a target whose compiler or runner is missing is reported and skipped. The
 matrix builds every target with `-DTEST_FULL`, so the whole tests run
-everywhere; 32-bit x86 (i686, win32) builds with `-msse2 -mfpmath=sse`.
+everywhere; 32-bit x86 (i686, win32) builds with `-msse2 -mfpmath=sse`,
+m68k with `-fno-omit-frame-pointer` (below).
 
 **"Identical output"** means each program's output byte for byte, but for
 the lines that measure the host and not the modem: CPU and wall time, and
@@ -107,15 +108,16 @@ Settings (environment):
 | `COMPARE_ONLY=1` | compare what an earlier run left in `OUT`, run nothing |
 | `TOOLCHAINS` | where the cross compilers are |
 
-**m68k.** On m68k-uclibc under qemu-m68k twelve programs fail, every one
-built on the V.34 receiver core (`modem/qamrx`). The evidence points at the
-emulator, not the code: the same binary fails differently when qemu is
-told to translate one instruction per block; `qamrx.c` alone at `-O1`
-passes, and so does the same code built and run for the 68060; clang's
-UBSan and MSan report nothing there; and the fifteen other targets print
-what the host prints.
-There is no m68k hardware here to settle it
-(`docs/history/PROGRESS.md`, ports-2).
+**m68k.** m68k-uclibc is a target like the others: its programs must print
+what the host prints. Until 0.6.0 twelve programs built on the V.34
+receiver core (`modem/qamrx`) failed there, which was put down to
+qemu-m68k. It was the compiler: GCC 12.3 for m68k, with the frame pointer
+omitted (-O1 and up), reads an incoming argument 8 bytes off around a
+64-bit division (`docs/history/PROGRESS.md`, "m68k"). The two places in
+the tree are written so that it compiles them right, and the matrix
+builds m68k with `-fno-omit-frame-pointer` in case new code meets it.
+qemu-m68k's 64-bit multiply and divide were checked against the 68040
+manual and are right.
 
 ## Other checks
 

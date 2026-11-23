@@ -44,9 +44,30 @@ not the hour the spec estimated): ports 14360 s, costs 6588 s, armv5
 then (Task 4 fix round 1) the costs run beside the other stages without
 the per-tick counts (`COST_TICKS=0`), and the port matrix runs the whole
 suites on host gcc, armv5, s390x and riscv64 and QUICK on the rest (m68k
-reported only), slowest targets first, 2 targets at once with 8 programs
+reported only until Task 5b; since then gating, below), slowest targets first, 2 targets at once with 8 programs
 each. That configuration's time is to be measured at the release proof
 and recorded here.
+
+### m68k: a GCC wrong-code bug; gating again (Task 5b)
+
+m68k-uclibc's twelve failing programs (all on `modem/qamrx`) were put down
+to qemu-m68k at ports-2. The audit found GCC 12.3.0 for m68k at fault
+(with the frame pointer omitted it reads an incoming argument 8 bytes off
+around a 64-bit division libcall), in two places: `qamrx_init`'s `dcar`
+(the twelve failures) and `v90arx_clock`'s `ppm_q8` (the answering V.90
+clock always at its lower limit on m68k, which no test saw). Both
+expressions are rewritten to forms gcc compiles right, with the same value
+on every input (checked for all 2^32); an asm scan of the whole tree at
+-O1/-O2/-Os/-O3 finds no other site. The matrix builds m68k with
+`-fno-omit-frame-pointer` too, and `make verify-phase` gates on m68k like
+the other targets (a target that did not run fails the gate). Details:
+`docs/history/PROGRESS.md`, "m68k: a GCC wrong-code bug, not qemu".
+
+| check | before | after |
+|---|---|---|
+| test_qamrx, m68k, no extra flag | 17 of 18 checks fail | 0 failures, output identical to host gcc |
+| v90arx_clock(ppm_q8), m68k | 4290672329 for every ppm | the host's values |
+| m68k QUICK suite (check-ports.sh) | 12 programs differ | exit 0, 203 of 211 programs identical to host gcc, 8 skipped (QUICK), 8 lines with uClibc's printf rounding |
 
 ## Baseline (v0.5.0 code)
 

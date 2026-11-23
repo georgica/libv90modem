@@ -9,7 +9,10 @@ void qamrx_init(qamrx_t *r, int sym_rate, int car_num, int car_den)
 {
     int i;
     r->step = (int32_t)(((int64_t)8000 << 24) / (3 * sym_rate));
-    r->dcar = (uint32_t)((((uint64_t)car_num) << 32) / (uint32_t)car_den);
+    /* (uint32_t) before the widening: the same value (only the low 32 bits
+     * survive the shift), but GCC 12.3 for m68k miscompiles the sign-extended
+     * form (docs/history/PROGRESS.md, "m68k") */
+    r->dcar = (uint32_t)(((uint64_t)(uint32_t)car_num << 32) / (uint32_t)car_den);
     for (i = 0; i < 64; i++) r->ring[i] = 0;
     r->rpos = 0; r->pw = 0; r->gain = 256; r->running = 0;
     r->tnext = 0; r->t_integ = 0; r->m = 0;

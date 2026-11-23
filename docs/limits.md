@@ -284,11 +284,14 @@ which makes it about 123 M counted instructions a second.
 
 ## Ports
 
-- **m68k fails under qemu.** On m68k-uclibc, under qemu-m68k, twelve
-  programs built on the V.34 receiver core (`modem/qamrx`) fail; every
-  other target of the port matrix prints what the host prints. The
-  evidence points at the emulator (the result changes with how qemu cuts
-  the program into blocks); there is no m68k hardware to settle it.
-  ([testing.md](testing.md); `docs/history/PROGRESS.md`, ports-2.)
+- **m68k: build with `-fno-omit-frame-pointer`.** GCC 12.3 for m68k (Bootlin
+  stable-2023.08-1), with the frame pointer omitted (-O1 and up), reads an
+  incoming argument from the wrong stack slot around a 64-bit division.
+  The two places in the library where it did are written so that it
+  compiles them right (an assembly scan of the tree finds no other), and
+  the port matrix builds m68k with the flag as well; other versions of gcc,
+  or new code, may meet it elsewhere.
+  Only qemu-m68k has run it; there is no m68k hardware here.
+  ([testing.md](testing.md); `docs/history/PROGRESS.md`, "m68k".)
 
 The API itself is not stable before 1.0 (`CHANGELOG.md`).

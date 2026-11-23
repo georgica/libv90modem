@@ -888,7 +888,11 @@ static void produce(v90arx_t *r)
 
 void v90arx_clock(v90arx_t *r, int32_t ppm_q8)
 {
-    r->step = clamp64(ONE32 + (int64_t)ppm_q8 * ONE32 / 256000000, ONE32 - STEP_MAX, ONE32 + STEP_MAX);
+    /* ppm_q8 * 2^32 / 256000000, as ppm_q8 * 2^21 / 125000: the same quotient
+     * (the same fraction, truncated the same way), but GCC 12.3 for m68k
+     * miscompiles the shift of a sign-extended argument by 32
+     * (docs/history/PROGRESS.md, "m68k") */
+    r->step = clamp64(ONE32 + (int64_t)ppm_q8 * 2097152 / 125000, ONE32 - STEP_MAX, ONE32 + STEP_MAX);
     r->clk_set = 1;
 }
 

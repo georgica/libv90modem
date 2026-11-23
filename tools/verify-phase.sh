@@ -6,9 +6,8 @@
 #   armv5     make check-arm with the armv5 uClibc compiler (the box's ABI),
 #             PAR=16, the whole short set
 #   ports     tools/check-ports.sh build/ports: the whole suites on host gcc,
-#             armv5, s390x and riscv64, QUICK on the rest; every target but
-#             m68k-uclibc must be identical to host gcc (m68k reported only,
-#             README "Ports")
+#             armv5, s390x and riscv64, QUICK on the rest; every target
+#             must be identical to host gcc
 #   armv7hf   make check-arm with the armv7hf musl compiler, the whole short
 #             set, compared with the host short set (tools/short-cmp.sh)
 #   benches   bench-v90 bench-x2 bench-k56 bench-v34 bench-v90a bench-v90c
@@ -84,9 +83,11 @@ run armv5 "make -s -j16 check-arm PAR=16 ARM_CC='$A5' BUILD=build/a5"
 # every target: the whole suite (-DTEST_FULL) on host gcc (the reference),
 # armv5 (the box's ABI), s390x (big-endian, glibc) and riscv64 (64-bit
 # little-endian); QUICK on the others (the slow programs of SLOW left out:
-# tools/ports-slow.txt and the two longest everywhere, which the four run);
-# m68k reported only (README "Ports"). Slowest targets first, PORTS_PAR
-# targets at once, each running PAR/PORTS_PAR programs at once.
+# tools/ports-slow.txt and the two longest everywhere, which the four run).
+# Every target gates; a target that did not run (no compiler, no runner:
+# SKIPPED) is a failure, so that a pass means all of them ran. Slowest
+# targets first, PORTS_PAR targets at once, each running PAR/PORTS_PAR
+# programs at once.
 FULL="armv5-uclibc s390x-glibc riscv64-musl"
 ORDER="armv5-uclibc s390x-glibc riscv64-musl i686-musl mips-musl mipsel-musl ppc64-musl ppc-musl m68k-uclibc
 aarch64be-musl aarch64-musl x86_64-musl armv7hf-musl win32-mingw host-clang host-gcc"
@@ -101,11 +102,10 @@ ports() {
     rc=$?
     cat "$V/ports.out"
     [ $rc -le 1 ] || { echo "ports: check-ports.sh exited $rc" > "$V/ports.sum"; return 1; }
-    # the gate: every target but m68k, compared again, must pass whole
-    gate=$(for t in $ORDER; do [ "$t" = m68k-uclibc ] || echo "$t"; done)
+    # the gate: every target, compared again, must pass whole
     # shellcheck disable=SC2086
-    COMPARE_ONLY=1 tools/check-ports.sh build/ports $gate > "$V/ports.gate" 2>&1; grc=$?
-    want=$(echo "$gate" | grep -vc '^host-gcc$')
+    COMPARE_ONLY=1 tools/check-ports.sh build/ports $ORDER > "$V/ports.gate" 2>&1; grc=$?
+    want=$(printf '%s\n' $ORDER | grep -vc '^host-gcc$')
     # a target passes whole when its identical and skipped (quick) programs make up all of them
     got=$(awk '/FAILED|DIFFER|NOT RUN/ { next }
         match($0, /^[a-z0-9_-]+: exit 0, [0-9]+ of [0-9]+ programs identical/) {
@@ -113,10 +113,9 @@ ports() {
             if (match($0, /, [0-9]+ skipped \(quick\)/)) { split(substr($0, RSTART + 2), x, " "); k = x[1] }
             if (w[4] + k == w[6]) n++ }
         END { print n + 0 }' "$V/ports.gate")
-    COMPARE_ONLY=1 tools/check-ports.sh build/ports m68k-uclibc > "$V/ports.m68k" 2>&1
-    m68k=$(grep '^m68k-uclibc:' "$V/ports.m68k" | awk -F'; ' '{ d = 0; for (i = 2; i <= NF; i++) if ($i ~ /^DIFFER:/) d = split($i, x, " ") - 1
-        print $1 (d ? ", " d " differ" : "") }')
-    echo "$got of $want targets identical to host-gcc (full: $FULL); m68k (report only): ${m68k#m68k-uclibc: }" > "$V/ports.sum"
+    # m68k (the last to be made gating, Task 5b): its line, and that it ran
+    m68k=$(grep '^m68k-uclibc: exit 0, ' "$V/ports.gate")
+    echo "$got of $want targets identical to host-gcc (full: $FULL); ${m68k:-m68k-uclibc: did not run}" > "$V/ports.sum"
     cat "$V/ports.gate"
     [ $grc -eq 0 ] && grep -q '^ALL PORTS PASS' "$V/ports.gate" && [ "$got" -eq "$want" ] && [ -n "$m68k" ] || {
         echo "FAILED: $(cat "$V/ports.sum")" > "$V/ports.sum"; return 1; }
