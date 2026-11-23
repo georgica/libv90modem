@@ -437,7 +437,7 @@ static void s_heard(v34dx_t *p)
 {
     if (p->rx_ready) {
         unsigned n = v34_rx_s_run(&p->vrx);
-        if (n == 0 && p->sdet.present < SDET_PRESENT + SDET_RUN_WAIT) return;
+        if (n == 0 && v34_rx_s_begins(&p->vrx) && p->sdet.present < SDET_PRESENT + SDET_RUN_WAIT) return;
         if (n > 0) v34_rx_flush_before(&p->vrx, n);
     }
     p->rx_ready = 0;

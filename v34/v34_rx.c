@@ -692,6 +692,25 @@ static const int16_t *xd_back(const v34_rx_t *rx, unsigned i)
     return rx->xd[(rx->xd_w + 2u * V34_XD_LEN - 1u - i) % V34_XD_LEN];
 }
 
+/* two points of one size (within about 12 %), 90 degrees apart (within
+ * about 14 degrees), not nothing: |a|^2, |b|^2 and a.b */
+static int s_pair(int64_t aa, int64_t bb, int64_t ab)
+{
+    return aa >= (int64_t)V34_ONE * V34_ONE && 4 * (aa > bb ? aa - bb : bb - aa) <= aa &&
+           4 * (ab < 0 ? -ab : ab) <= aa;
+}
+
+int v34_rx_s_begins(const v34_rx_t *rx)
+{
+    unsigned pend = 2u * (unsigned)(rx->nsteps - rx->nout) + rx->k;
+    const int16_t *a, *b;
+    if (!rx->xmode || pend < 2)
+        return 0;
+    a = xd_back(rx, 0); b = xd_back(rx, 1);
+    return s_pair((int64_t)a[0] * a[0] + (int64_t)a[1] * a[1], (int64_t)b[0] * b[0] + (int64_t)b[1] * b[1],
+                  (int64_t)a[0] * b[0] + (int64_t)a[1] * b[1]);
+}
+
 unsigned v34_rx_s_run(const v34_rx_t *rx)
 {
     unsigned pend = 2u * (unsigned)(rx->nsteps - rx->nout) + rx->k, i, run = 0;
@@ -707,10 +726,7 @@ unsigned v34_rx_s_run(const v34_rx_t *rx)
     aa = (int64_t)a[0] * a[0] + (int64_t)a[1] * a[1];
     bb = (int64_t)b[0] * b[0] + (int64_t)b[1] * b[1];
     ab = (int64_t)a[0] * b[0] + (int64_t)a[1] * b[1];
-    /* two points of one size (within about 12 %), 90 degrees apart (within
-     * about 14 degrees), not nothing */
-    if (aa < (int64_t)V34_ONE * V34_ONE || 4 * (aa > bb ? aa - bb : bb - aa) > aa ||
-        4 * (ab < 0 ? -ab : ab) > aa)
+    if (!s_pair(aa, bb, ab))
         return 0;
     /* S begins on point 0, the next symbol is it turned 90 degrees
      * anticlockwise (v34_s(): 128 symbols, the last turned): the oldest of

@@ -8,13 +8,17 @@
  * delivered must be right, and no more than the frame S cut and one more
  * may be missing. With no S at the end (data, two points that are not 90
  * degrees apart, or not of one size) nothing is found, so nothing is
- * flushed: what the decoder held is dropped, as before. */
+ * flushed: what the decoder held is dropped, as before. S just reaching
+ * the decoder (2 or 3 symbols of it, too few for the run) is seen coming
+ * (v34_rx_s_begins: its owner waits a little); data, or those two kinds of
+ * points, are not. */
 #include "test.h"
 #include "testutil.h"
 
 static v34_params_t p;
 static v34_tx_t tx;
 static v34_rx_t rx;
+static int begins;          /* v34_rx_s_begins() at the end of the last run / no_s */
 
 /* point 0 of S and its turn, near the data's mean power */
 static void s_point(int n, int distort, int32_t a, v34_pt_t *o)
@@ -62,6 +66,7 @@ static unsigned run(unsigned S, unsigned R, int trellis, unsigned mf, unsigned o
         v34_rx_put(&rx, tu_add_noise(x, 0.05), NULL);
     }
     run = v34_rx_s_run(&rx);
+    begins = v34_rx_s_begins(&rx);
     if (run > 0) v34_rx_flush_before(&rx, run);
     *lost = src.n - sink.n;
     *errs = sink.errs;
@@ -98,6 +103,7 @@ static unsigned no_s(int kind)
         }
         v34_rx_put(&rx, x, NULL);
     }
+    begins = v34_rx_s_begins(&rx);
     return v34_rx_s_run(&rx);
 }
 
@@ -132,9 +138,19 @@ int main(void)
         }
     }
     {
-        unsigned r0 = no_s(0), r1 = no_s(1), r2 = no_s(2);
-        printf("  no S at the end: data %u, 45 degrees %u, unequal sizes %u (0: nothing flushed)\n", r0, r1, r2);
+        unsigned r0, r1, r2; int b0, b1, b2;
+        r0 = no_s(0); b0 = begins; r1 = no_s(1); b1 = begins; r2 = no_s(2); b2 = begins;
+        printf("  no S at the end: data %u, 45 degrees %u, unequal sizes %u (0: nothing flushed);"
+               " S coming %d %d %d\n", r0, r1, r2, b0, b1, b2);
         CHECK_EQ_I(r0, 0); CHECK_EQ_I(r1, 0); CHECK_EQ_I(r2, 0);
+        CHECK_EQ_I(b0, 0); CHECK_EQ_I(b1, 0); CHECK_EQ_I(b2, 0);
+    }
+    for (k = 2; k <= 3; k++) {
+        /* S's first k symbols in: no run yet, but S is seen coming */
+        unsigned long lost, errs;
+        unsigned r = run(3200, 28800, V34_TRELLIS_16, 40, 3, k, 0, &lost, &errs);
+        printf("  S %u symbols in: run %u, S coming %d\n", k, r, begins);
+        CHECK_EQ_I(r, 0); CHECK_EQ_I(begins, 1);
     }
     T_REPORT("test_sflush");
 }

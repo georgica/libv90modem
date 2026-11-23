@@ -23,13 +23,13 @@
   x2 client silent in data mode: the call ended 0.53 s later, error 10, x2_failed 0
   x2 rate changes to 8 and 14, no pad: data 46666 then 54666 / 28800 bit/s; x2d saw the client's last S 0.020 s after it began, data again 0.92 s after it
      client saw: markers 16 + 1 (0 bad, 0 before its MP), records 20 733C then 66 F33C (0 bad), ones 2 + 1362 (0 bad), data frames 36150 (0 lost)
-     down 1084273 bits 0 bad (76442 after the last change); up 748056 bits 0 bad (50040 after), the client's S: 384 bits lost, 0 extra
+     down 1084273 bits 0 bad (76442 after the last change); up 748056 bits 0 bad (50040 after), the client's S: 264 bits lost, 0 extra
   x2 rate changes to 8 and 14, 3 dB pad: data 46666 then 54666 / 28800 bit/s; x2d saw the client's last S 0.020 s after it began, data again 0.92 s after it
      client saw: markers 16 + 1 (0 bad, 0 before its MP), records 20 733C then 66 F33C (0 bad), ones 2 + 1362 (0 bad), data frames 36150 (0 lost)
-     down 1084273 bits 0 bad (76442 after the last change); up 748056 bits 0 bad (50040 after), the client's S: 384 bits lost, 0 extra
+     down 1084273 bits 0 bad (76442 after the last change); up 748056 bits 0 bad (50040 after), the client's S: 264 bits lost, 0 extra
   x2 rate changes to 8 and 14, 6 dB pad: data 46666 then 54666 / 28800 bit/s; x2d saw the client's last S 0.020 s after it began, data again 0.92 s after it
      client saw: markers 16 + 1 (0 bad, 0 before its MP), records 20 733C then 66 F33C (0 bad), ones 2 + 1362 (0 bad), data frames 36150 (0 lost)
-     down 1084273 bits 0 bad (76442 after the last change); up 748056 bits 0 bad (50040 after), the client's S: 384 bits lost, 0 extra
+     down 1084273 bits 0 bad (76442 after the last change); up 748056 bits 0 bad (50040 after), the client's S: 264 bits lost, 0 extra
   x2 rate change to 8, the client's S after its mapping frame, counter words up: 6820 words, lost 5, again 0; breaks 1 (60 bits missing, the mapping frame 60)
   x2 rate change to 8, the client's S where it falls, counter words up: 6821 words, lost 8, again 0; breaks 1 (120 bits missing, the mapping frame 60)
   x2 rate change asks for index 0: ended 0.27 s after the client's S, error 5, x2_failed 1, cleared 0, marker frames 0 + 0

@@ -235,7 +235,7 @@ static void reneg_begin(x2d_t *d)
      * for (SDET_RUN_WAIT) */
     if (d->rx_ready) {
         unsigned n = v34_rx_s_run(&d->vrx);
-        if (n == 0 && d->sdet.present < SDET_PRESENT + SDET_RUN_WAIT) return;
+        if (n == 0 && v34_rx_s_begins(&d->vrx) && d->sdet.present < SDET_PRESENT + SDET_RUN_WAIT) return;
         if (n > 0) v34_rx_flush_before(&d->vrx, n);
     }
     d->rx_ready = d->tx_ready = 0;

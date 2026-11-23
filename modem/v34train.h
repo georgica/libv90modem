@@ -59,9 +59,11 @@ int  sdet_tick(sdet_t *d, int16_t x);
 #define SDET_DELAY(d) (((d)->len * 3) / 4)
 #define SDET_PRESENT 80             /* samples of tone = "S detected" */
 /* S heard in data mode before the V.34 decoder holds four symbols of it (its
- * carrier line can build up early): data decoding goes on for up to this
- * many samples more (9 symbols or more), until v34_rx_s_run() finds S. The
- * decoder delivers what it decided 48 symbols back, data still */
+ * carrier line can build up early; the newest two inputs look like S's
+ * points, v34_rx_s_begins): data decoding goes on for up to this many
+ * samples more (9 symbols or more), until v34_rx_s_run() finds S. The
+ * decoder delivers what it decided 48 symbols back, data still. Anything
+ * else heard as S (noise) is taken at once, as before */
 #define SDET_RUN_WAIT 32
 
 /* ---- re-acquisition on a later S, equaliser kept ----

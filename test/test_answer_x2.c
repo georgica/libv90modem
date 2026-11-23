@@ -238,12 +238,12 @@ static struct { int ms, index, index2, md, md0, hangup, whole, words; uint16_t m
  * after its mapping frame (RN.whole) or where it falls */
 static wctr_t WU;
 /* the upstream across the client's rate change: its V.34 stops where it
- * is (its last bits, still in our receiver's decision delay, do not come,
- * or its S comes out as bits before we have seen it). The bits it took
- * from its source up to its S (at, st the generator after them) are
- * checked as they come; those past them before its E are counted (extra);
- * from its new data on, the check goes on from at (lost: those of the
- * first that never came). */
+ * is (the frame it cut, and the frame our receiver keeps back as a margin
+ * before S, do not come; or its S comes out as bits before we have seen
+ * it). The bits it took from its source up to its S (at, st the generator
+ * after them) are checked as they come; those past them before its E are
+ * counted (extra); from its new data on, the check goes on from at (lost:
+ * those taken that never came, over every S so far). */
 static struct { int armed, done; uint32_t st; long at, lost, extra; } UG;
 /* the client's retrain in data mode, for the next x2_call (which clears
  * it): ms into data mode it falls silent, and 70 ms later sends Tone A with
@@ -270,7 +270,7 @@ static void s_put(void *u, int bit)
     if (UG.armed) {
         if (x2call_state(&X) != X2C_RENEG) {
             UG.armed = 0; UG.done = 1;
-            UG.lost += UG.at - UP.n; UP.rx = UG.st;
+            UG.lost = UG.at - UP.n; UP.rx = UG.st;     /* taken less received: every S so far */
         } else if (UP.n >= UG.at) {
             UG.extra++;
             return;

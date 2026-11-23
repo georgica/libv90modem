@@ -345,6 +345,11 @@ void v34_rx_flush(v34_rx_t *rx);
  * ending on point 0 turned 90 degrees anticlockwise). */
 unsigned v34_rx_s_run(const v34_rx_t *rx);
 
+/* 1 when the newest two inputs to v34_rx_put() could be S's two points (one
+ * size within about 12 %, 90 degrees apart within about 14 degrees): S may
+ * have just reached the decoder, too new for v34_rx_s_run() */
+int v34_rx_s_begins(const v34_rx_t *rx);
+
 /* Force out the whole mapping frames that end at least one mapping frame
  * (8 symbols) before the n newest inputs (n = v34_rx_s_run(): the data the
  * far end sent before S). The margin covers a start of S found late (its

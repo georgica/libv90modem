@@ -161,8 +161,10 @@ Fixed:
   mapping frame, as V.90's above. The decoder's decision delay held up to
   5 mapping frames when S was heard, and they were dropped. An S heard
   before the decoder holds four symbols of it (its carrier line can build
-  up early) is waited for, up to 32 samples, so that its start can be
-  found; one that is not found still drops them, as before.
+  up early; the newest two decoder inputs already look like S's points) is
+  waited for, up to 32 samples, so that its start can be found; this
+  applies to V.90 answering too. One that is not found still drops them,
+  as before, and what is heard as S on noise is taken at once, as before.
 - V.34, both roles: our S (a rate renegotiation or cleardown, ours or our
   answer to the far end's) begins once the mapping frame under way is
   sent, up to 7 symbols later. It began at once, and the rest of the
