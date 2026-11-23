@@ -238,6 +238,10 @@ static void reneg_begin(x2d_t *d)
         if (n == 0 && v34_rx_s_begins(&d->vrx) && d->sdet.present < SDET_PRESENT + SDET_RUN_WAIT) return;
         if (n > 0) v34_rx_flush_before(&d->vrx, n);
     }
+    /* its S before our data ever moved (our start segment going out): no
+     * bit of the host's goes down until our answer's start segment is out
+     * (ones in its place, should the start end before its MP is in) */
+    if (d->state == X2D_START) x2tx_data(&d->tx, d->tx.index, d->tx.pad_mode, NULL, NULL);
     d->rx_ready = d->tx_ready = 0;
     d->got_mp = d->got_e = 0; d->cand_ok = 0;
     d->fn = d->ones = 0;
@@ -421,8 +425,9 @@ uint8_t x2d_tick(x2d_t *d, int16_t rxs)
         if (d->state == X2D_ENDED) return 0x7f;
         if (d->rxmode == RX_DATA && (d->state == X2D_DATA || d->state == X2D_START || d->state == X2D_RENEG)) {
             /* the client's S in data mode: its rate change (facts "Rate
-             * change"); from its B1 on, ours not yet out too (else its S
-             * would be decoded as data until heard: Task 10d) */
+             * change"); from our start segment on (its B1; its E is a record
+             * before it), ours not yet out too (else its S would be decoded
+             * as data until heard: Task 10d) */
             (void)sdet_tick(&d->sdet, x);
             if (d->sdet.present >= SDET_PRESENT) reneg_begin(d);
         }

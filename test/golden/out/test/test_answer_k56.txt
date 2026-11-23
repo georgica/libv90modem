@@ -85,6 +85,7 @@
   K56flex client ignoring our MP, its S 70 ms into its data, counter words up: 6307 words, lost 6, again 0; breaks 1 (78 bits missing), 0 bits before the first
   K56flex client ignoring our MP, its S 100 ms into its data, counter words up: 6366 words, lost 5, again 0; breaks 1 (78 bits missing), 0 bits before the first
   K56flex client ignoring our MP, its S 150 ms into its data, counter words up: 6463 words, lost 6, again 0; breaks 1 (78 bits missing), 0 bits before the first
+  K56flex client ignoring our MP, its S 45 ms into its data: 6243 words, 11 damaged, again 0, 0 bits missing
   client ignoring our MP throughout, a renegotiation 13 -> 10: K56flex 50000 / 31200 bit/s (client 50000 / 31200), data 160186 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 24 MP' 24 (0 wrong), E 1, B1 bad 0, frames 8142 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
      upstream hypothesis 1 after it, retried 0
   client ignoring our MP until its renegotiation, a renegotiation 13 -> 10: K56flex 50000 / 31200 bit/s (client 50000 / 31200), data 158586 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 24 MP' 24 (0 wrong), E 1, B1 bad 0, frames 8142 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
@@ -114,4 +115,4 @@
   our calling modem in V.90, K56flex offered: mod 4, 52000 / 28800 bit/s, 180570 / 100008 bits, 0 / 0 fail (without: mod 4, 52000 / 28800)
   our calling modem in V.92, K56flex offered: mod 7, 52000 / 36000 bit/s, 144456 / 100008 bits, 0 / 0 fail (without: mod 7, 52000 / 36000)
   x2 client, x2 and K56flex offered: x2 32000 / 24000 bit/s, down 118512 bits 0 bad, up 100020 bits 0 bad (without K56flex: 32000 / 24000)
-answer_k56: 1723 checks, 0 failures
+answer_k56: 1739 checks, 0 failures

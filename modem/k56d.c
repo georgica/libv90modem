@@ -315,14 +315,27 @@ static void ring_put(k56d_t *d, v34_pt_t p)
     d->ring_fill++;
 }
 
-/* B1 is in (vrx.b1_bits): 1/8 of its bits wrong at most (all ones). Else the
+/* B1 is in (vrx.b1_bits): 1/8 of its bits wrong at most (all ones) */
+static int b1_ok(const k56d_t *d) { return d->vrx.b1_errors * 8 <= d->vrx.b1_bits; }
+
+/* the oldest stored point into the receiver */
+static void ring_pop_put(k56d_t *d)
+{
+    v34_pt_t x;
+    x.re = d->ring[d->ring_r][0]; x.im = d->ring[d->ring_r][1];
+    if (++d->ring_r == K56D_RING) d->ring_r = 0;
+    d->ring_fill--;
+    v34_rx_put(&d->vrx, v34_nl_decode(&d->vpar, x), NULL);
+}
+
+/* B1 is in: it passes (as b1_ok). Else the
  * other hypothesis once, on what the ring holds. -1: ended */
 static int b1_check(k56d_t *d)
 {
     int32_t g0 = d->vgain, g1;
     uint16_t i, k;
     TR("K56D %.3f B1 %d of %d bits wrong\n", d->now / 8000.0, (int)d->vrx.b1_errors, (int)d->vrx.b1_bits);
-    if (d->vrx.b1_errors * 8 <= d->vrx.b1_bits) { d->rx_ready = 1; return 0; }
+    if (b1_ok(d)) { d->rx_ready = 1; return 0; }
     /* (the ring keeps one place for the next symbol) */
     if (d->up_retried || d->ring_full || d->ring_fill >= K56D_RING) { end(d, K56D_ERR_B1); return -1; }
     d->up_retried = 1;
@@ -352,11 +365,7 @@ static int catch_up(k56d_t *d)
     int k, n = d->catch_odd ? 2 : 1;
     d->catch_odd ^= 1;
     for (k = 0; k < n && d->ring_fill; k++) {
-        v34_pt_t x;
-        x.re = d->ring[d->ring_r][0]; x.im = d->ring[d->ring_r][1];
-        if (++d->ring_r == K56D_RING) d->ring_r = 0;
-        d->ring_fill--;
-        v34_rx_put(&d->vrx, v34_nl_decode(&d->vpar, x), NULL);
+        ring_pop_put(d);
         if (!d->rx_ready && d->vrx.b1_bits >= d->vpar.map.N && b1_check(d) != 0) return -1;
     }
     if (!d->ring_fill) d->catchup = 0;
@@ -376,14 +385,10 @@ static void s_drain(k56d_t *d)
     int k, n = d->catch_odd ? 2 : 1;
     d->catch_odd ^= 1;
     for (k = 0; k < n && d->ring_fill; k++) {
-        v34_pt_t x;
-        x.re = d->ring[d->ring_r][0]; x.im = d->ring[d->ring_r][1];
-        if (++d->ring_r == K56D_RING) d->ring_r = 0;
-        d->ring_fill--;
-        v34_rx_put(&d->vrx, v34_nl_decode(&d->vpar, x), NULL);
+        ring_pop_put(d);
         if (!d->rx_ready && d->vrx.b1_bits >= d->vpar.map.N) {
             TR("K56D %.3f B1 %d of %d bits wrong (to its S)\n", d->now / 8000.0, (int)d->vrx.b1_errors, (int)d->vrx.b1_bits);
-            if (d->vrx.b1_errors * 8 > d->vrx.b1_bits) break;
+            if (!b1_ok(d)) break;
             d->rx_ready = 1;
         }
         if (!d->rx_ready) continue;

@@ -32,12 +32,12 @@
      down 1084273 bits 0 bad (76442 after the last change); up 748056 bits 0 bad (50040 after), the client's S: 264 bits lost, 0 extra
   x2 rate change to 8, the client's S after its mapping frame, counter words up: 6820 words, lost 5, again 0; breaks 1 (60 bits missing, the mapping frame 60)
   x2 rate change to 8, the client's S where it falls, counter words up: 6821 words, lost 8, again 0; breaks 1 (120 bits missing, the mapping frame 60)
-  x2 rate change, the client's S 40 ms into its upstream data, counter words up: 3127 words, lost 0, again 0; breaks 0 (0 bits missing), 0 bits before the first
-  x2 rate change, the client's S 50 ms into its upstream data, counter words up: 3125 words, lost 4, again 0; breaks 1 (60 bits missing), 0 bits before the first
-  x2 rate change, the client's S 60 ms into its upstream data, counter words up: 3126 words, lost 4, again 0; breaks 1 (60 bits missing), 0 bits before the first
-  x2 rate change, the client's S 70 ms into its upstream data, counter words up: 3128 words, lost 4, again 0; breaks 1 (60 bits missing), 0 bits before the first
-  x2 rate change, the client's S 150 ms into its upstream data, counter words up: 3243 words, lost 4, again 0; breaks 1 (60 bits missing), 0 bits before the first
-  x2 rate change, the client's S 450 ms into its upstream data, counter words up: 3693 words, lost 4, again 0; breaks 1 (60 bits missing), 0 bits before the first
+  x2 rate change, the client's S 40 ms into its upstream data, counter words up: 3127 words, lost 0, again 0; breaks 0 (0 bits missing), 0 bits before the first; our marker 1, data again in segment 9
+  x2 rate change, the client's S 50 ms into its upstream data, counter words up: 3125 words, lost 4, again 0; breaks 1 (60 bits missing), 0 bits before the first; our marker 1, data again in segment 9
+  x2 rate change, the client's S 60 ms into its upstream data, counter words up: 3126 words, lost 4, again 0; breaks 1 (60 bits missing), 0 bits before the first; our marker 1, data again in segment 9
+  x2 rate change, the client's S 70 ms into its upstream data, counter words up: 3128 words, lost 4, again 0; breaks 1 (60 bits missing), 0 bits before the first; our marker 1, data again in segment 9
+  x2 rate change, the client's S 150 ms into its upstream data, counter words up: 3243 words, lost 4, again 0; breaks 1 (60 bits missing), 0 bits before the first; our marker 1, data again in segment 9
+  x2 rate change, the client's S 450 ms into its upstream data, counter words up: 3693 words, lost 4, again 0; breaks 1 (60 bits missing), 0 bits before the first; our marker 1, data again in segment 9
   x2 rate change asks for index 0: ended 0.27 s after the client's S, error 5, x2_failed 1, cleared 0, marker frames 0 + 0
   x2 rate change has MD 6: ended 0.27 s after the client's S, error 5, x2_failed 1, cleared 0, marker frames 0 + 0
   x2 rate change and our cleardown in it: ended 0.02 s after the client's S, error 12, x2_failed 0, cleared 2, marker frames 0 + 0
@@ -45,4 +45,4 @@
   x2 client's Tone A in data mode (x0.25, +0 Hz): ended 0.070 s after the tone began, error 13, x2_failed 2
   x2 client's Tone A in data mode (x1.00, -8 Hz): ended 0.070 s after the tone began, error 13, x2_failed 2
   x2 client's Tone A in data mode (x0.25, +8 Hz): ended 0.070 s after the tone began, error 13, x2_failed 2
-answer_x2: 465 checks, 0 failures
+answer_x2: 488 checks, 0 failures

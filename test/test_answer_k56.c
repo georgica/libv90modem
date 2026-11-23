@@ -915,7 +915,7 @@ static void k56_reneg_tests(void)
             CHECK_EQ_I(A.phase, ANS_K56); CHECK_EQ_I(A.u.k56.state, K56D_DATA); CHECK_EQ_I(o.error, 0);
             CHECK(KWU.words > DBITS / 16);
             CHECK_EQ_I(KWU.again, 0);
-            CHECK(KWU.lead >= 0 && KWU.lead < 16);
+            CHECK(KWU.lead >= 0 && KWU.lead < 16); CHECK_EQ_I(KWU.lead_tail, 1);
             CHECK_EQ_I(KWU.locked, 1);
             if (st[j].kept) {
                 CHECK_EQ_I(KWU.breaks, 1);
@@ -925,6 +925,22 @@ static void k56_reneg_tests(void)
                 CHECK_EQ_I(KWU.breaks, 0); CHECK_EQ_I(KWU.lost, 0);
             }
         }
+    }
+
+    /* the limit (docs/limits.md): the client ignoring our MP, its S 45 ms
+     * into its data, before its B1 under our MP's configuration is decided:
+     * followed, nothing before it is data, nothing inserted or repeated; the
+     * first frames after it may have errors (the equaliser pulled by B1
+     * under the wrong configuration): words damaged, printed */
+    {
+        kd_default(&ko); ko.reneg_ms = 45; ko.reneg_rate = 10; ko.heavy_up = K56C_HEAVY_ALWAYS;
+        KW = 1; memset(&KWU, 0, sizeof KWU); KWU.gen = 0x2c00;
+        kd_call(&ko, 60, &o);
+        KW = 0;
+        printf("  K56flex client ignoring our MP, its S 45 ms into its data: %ld words, %" PRId64 " damaged, again %" PRId64
+               ", %" PRId64 " bits missing\n", (long)KWU.words, KWU.lost, KWU.again, KWU.gap_bits);
+        CHECK_EQ_I(K.renegs, 1); CHECK_EQ_I(A.u.k56.state, K56D_DATA); CHECK_EQ_I(o.error, 0);
+        CHECK_EQ_I(KWU.again, 0); CHECK_EQ_I(KWU.gap_bits, 0); CHECK_EQ_I(KWU.lead_tail, 1);
     }
 
     /* a client that ignores our MP renegotiates (13 -> 10): its data after

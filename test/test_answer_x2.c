@@ -289,6 +289,7 @@ typedef struct {
     long dn0, up0;              /* bits checked each way at the client's last S */
     int renegs, downs[2];       /* rate changes back in X2D_DATA, our rate after each */
     int cd_ret;                 /* answer_cleardown in the rate change */
+    int marked, back_seg;       /* our marker out in the last rate change; x2tx's segment as data moved again */
 } x2_outcome;
 
 /* One x2 call: the client with pad (0, 1, 2; 3 reported only), the index it
@@ -360,15 +361,16 @@ static void x2_call(int pad, int index, uint16_t up_mask, int silent, int echo_d
             UG.armed = 1; UG.done = 0; UG.st = UP.tx; UG.at = up_taken;
         }
         if (A.phase == ANS_X2 && A.u.x2.state == X2D_RENEG && o->rn_at >= 0 && o->rn_seen < 0) {
-            o->rn_seen = n;
+            o->rn_seen = n; o->marked = 0;
             if (RN.hangup) o->cd_ret = answer_cleardown(&A);
         }
+        if (o->rn_seen >= 0 && o->rn_back < 0 && A.phase == ANS_X2 && A.u.x2.tx.seg == X2TX_MARK) o->marked = 1;
         if (o->rn_seen >= 0 && o->rn_back < 0 && dn_mark < 0 && A.phase == ANS_X2 && A.u.x2.tx.seg != X2TX_DATA)
             dn_mark = dn_taken;
         if (o->rn_seen >= 0 && o->rn_back < 0 && A.phase == ANS_X2 && A.u.x2.state == X2D_DATA) {
             if (dn_mark >= 0) dn_early += dn_taken - dn_mark;
             dn_mark = -1;
-            o->rn_back = n;
+            o->rn_back = n; o->back_seg = A.u.x2.tx.seg;
             if (o->renegs < 2) o->downs[o->renegs] = x2d_down_rate(&A.u.x2);
             o->renegs++;
         }
@@ -551,28 +553,39 @@ static void x2_tests(void)
      *    ms after its B1's first symbol, before our start segment is out
      *    (x2d in X2D_START until some 510 ms after its E): followed as a
      *    rate change, no bit delivered that it did not send as data (nothing
-     *    inserted, the first lock within a word of the start), nothing
-     *    repeated, at most the margin frame lost (its S before its B1 is
-     *    decided, some 55 ms after its E: nothing before it is data) */
+     *    inserted; before the first lock only the tail of the word before
+     *    it), nothing repeated; its S before its B1 is decided (40 ms; some
+     *    55 ms after its E) drops what came before it (nothing of it is
+     *    known to be data), later ones lose the margin frame. Data moves
+     *    again only once our marker, records and start segment at the new
+     *    rate are out (none of our data before) */
     {
-        static const int st[] = { 40, 50, 60, 70, 150, 450 };
+        static const struct { int ms, kept; } st[] = { { 40, 0 }, { 50, 1 }, { 60, 1 }, { 70, 1 }, { 150, 1 }, { 450, 1 } };
         int k;
         for (k = 0; k < (int)(sizeof st / sizeof st[0]); k++) {
             int64_t frame = 24000 * 8 / 3200, gap;
-            RN.ms = st[k]; RN.index = 8; RN.mask = 0x1FFE; RN.whole = 1; RN.words = 1; RN.up = 1;
+            RN.ms = st[k].ms; RN.index = 8; RN.mask = 0x1FFE; RN.whole = 1; RN.words = 1; RN.up = 1;
             x2_call(0, 1, 0x03FE, X2C_SIL_NONE, 0, 40, 50000, &o);
             gap = WU.gap_bits;
             printf("  x2 rate change, the client's S %d ms into its upstream data, counter words up: %ld words, lost %" PRId64
-                   ", again %" PRId64 "; breaks %" PRId64 " (%" PRId64 " bits missing), %" PRId64 " bits before the first\n",
-                   st[k], (long)WU.words, WU.lost, WU.again, WU.breaks, gap, WU.lead);
+                   ", again %" PRId64 "; breaks %" PRId64 " (%" PRId64 " bits missing), %" PRId64 " bits before the first;"
+                   " our marker %d, data again in segment %d\n",
+                   st[k].ms, (long)WU.words, WU.lost, WU.again, WU.breaks, gap, WU.lead, o.marked, o.back_seg);
             CHECK(o.ok); CHECK_EQ_I(X.renegs, 1); CHECK_EQ_I(o.renegs, 1);
             CHECK(UP.n - o.up0 >= 50000);
+            CHECK_EQ_I(o.marked, 1);
+            CHECK(o.back_seg == X2TX_START || o.back_seg == X2TX_DATA);
+            CHECK_EQ_I(dn_early, 0);
             CHECK_EQ_I(WU.again, 0);
-            CHECK(WU.lead >= 0 && WU.lead < 16);
-            CHECK(WU.breaks <= 1);
-            CHECK(gap >= 0 && gap <= frame);
-            CHECK(16 * WU.lost >= gap && 16 * WU.lost < gap + 32);
+            CHECK(WU.lead >= 0 && WU.lead < 16); CHECK_EQ_I(WU.lead_tail, 1);
             CHECK_EQ_I(WU.locked, 1);
+            if (st[k].kept) {
+                CHECK_EQ_I(WU.breaks, 1);
+                CHECK(gap >= frame - 1 && gap <= frame);
+                CHECK(16 * WU.lost >= gap && 16 * WU.lost < gap + 32);
+            } else {
+                CHECK_EQ_I(WU.breaks, 0); CHECK_EQ_I(WU.lost, 0);
+            }
         }
     }
 

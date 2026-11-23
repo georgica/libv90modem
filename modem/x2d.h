@@ -27,7 +27,7 @@
  * up ("Unable to Retrain").
  *
  * A client's rate change in data mode (x2-facts.md "Rate change"; its S
- * is watched for from its B1 on, our start segment not yet out too): its S
+ * is watched for from our start segment on, its B1's): its S
  * (X2D_RENEG; the data stops up, goes on down), S-bar, a short TRN and its
  * MP, on 4 points (not 16 as at the start-up), checked as at the start-up;
  * after the data frame being sent, our marker, our records in levels B, the start segment at the new rate

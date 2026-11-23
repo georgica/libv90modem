@@ -281,7 +281,10 @@ Fixed:
   were delivered, or (x2) the rate change was never seen and the rest of
   the call was garbage. Now such an S is followed as any renegotiation:
   the frames before it go on but for the margin frame once B1 has passed,
-  nothing before it is data if B1 has not been decided. K56flex: our R2
+  nothing before it is data if B1 has not been decided. x2: data moves
+  again only once our answer's start segment is out (`x2tx` no longer
+  reports data next at the end of a start segment with the client's rate
+  change pending), and none of the host's bits go down before it. K56flex: our R2
   then waits for our first data frame (with our MP, MP' or E still going
   out it began at once, which the client does not look for). An S within
   about 40 ms (60 ms for a client that ignores our MP) of its data ended

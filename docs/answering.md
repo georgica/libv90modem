@@ -119,8 +119,10 @@ a mu-law line: never with `alaw` set. Robbed-bit lines are not handled.
   the pad (none, 3 dB, 6 dB) its request names: `V90M_EV_DATA_STOPPED`,
   then `V90M_EV_RATES` and `V90M_EV_DATA_MOVING`, about 0.75 s later;
   `retraining` stays 0 and `v90m_stats.renegotiations` counts it. Its S
-  is watched for from its B1 on: one before our start segment is out is
-  followed the same way (data had not moved: no `V90M_EV_DATA_STOPPED`,
+  is watched for from our start segment on (its B1, its E a record before
+  it): one before our start segment is out is followed the same way, data
+  moving only once our answer's start segment is out, none of the host's
+  bits going down before (data had not moved: no `V90M_EV_DATA_STOPPED`,
   and it is not counted).
 - **No way back to V.34.** Once the marker has come, a start-up or rate
   change that does not complete, or a request we cannot serve, ends the
@@ -197,7 +199,9 @@ answering, on a mu-law line: never with `alaw` set.
   `V90M_END_CLEARDOWN_FAR`. We never start one. Its S is watched for from
   its B1 on: one before our data has begun is followed the same way, our
   R2 after our first data frame (data had not moved: no
-  `V90M_EV_DATA_STOPPED`, and it is not counted).
+  `V90M_EV_DATA_STOPPED`, and it is not counted). Not while its E has come
+  before our MP is out (an early E: our MP, MP' and E still to go); an S
+  there is decoded as data until our MP has begun.
 - **Retrain.** The client's (its tone B in data mode) is followed: V.34's
   retrain Phase 2 with INFO1a flagged again, then the whole training:
   `V90M_EV_DATA_STOPPED` with `retraining` set, then

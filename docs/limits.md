@@ -124,7 +124,11 @@ delivered).
   K56flex), so only the simulated client has done it. A K56flex client
   that ignores our MP and sends S that early may see errors in the first
   few frames after the renegotiation (in the simulator: 11 words at 45 ms,
-  the equaliser pulled by B1 under the wrong configuration).
+  the equaliser pulled by B1 under the wrong configuration). A K56flex
+  client whose E comes before our MP is out (an early E) has its S
+  watched for only once our MP has begun: an S before that is decoded as
+  data until then (our R2 cannot be begun while our training waits for
+  its MP).
 - **V.92 upstream: what the caller's prefilter held when Ru began.** V.92
   begins Ru on a data frame boundary (9.8.2.1.1). The symbols reach the
   digital modem through the prefilter `dsn.dly` samples later (some 116
