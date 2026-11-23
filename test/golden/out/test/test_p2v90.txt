@@ -9,4 +9,6 @@ recovery
 time-outs
   no digital modem: analogue 14, error 1 at 8000 ms
   digital modem gone after INFO0: analogue 14, error 2 at 9038 ms
-p2v90: 69 checks, 0 failures
+a retrain's Phase 2 bounded (spec D5)
+  INFO0d for ever: analogue 14, error 2 at 1807 ms, restarts 4, INFO0a sent 10, digital started 5 times
+p2v90: 72 checks, 0 failures

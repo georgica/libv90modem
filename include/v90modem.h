@@ -284,7 +284,7 @@ typedef enum {
     V90M_END_NO_ANSWER_TONE,    /* calling only: no answer tone came */
     V90M_END_NO_JM,             /* calling only: ANSam came, but no JM in answer to CM (V.8) */
     V90M_END_NO_COMMON,         /* V.8 found no modulation in common with the far modem */
-    V90M_END_RETRAIN_FAILED,    /* (appended) V.90 / V.92 (either role), V.34 (answering):
+    V90M_END_RETRAIN_FAILED,    /* (appended) V.90 / V.92, V.34 (either role):
                                    a retrain failed, or one more was due past the limit
                                    (see v90m_retrain); answering x2: the client asked for
                                    a retrain in data mode or in its rate change (its

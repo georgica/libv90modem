@@ -134,6 +134,54 @@ int main(void)
         CHECK_EQ_I(l->va.error, V90A_ERR_CLEARDOWN);
     }
 
+    printf("our cleardown, answered by a retrain of the digital modem's (R3)\n");
+    c = base(); c.seed = 3;
+    vl_init(l, &c);
+    run_to(l, MS(30000), V90A_DATA);
+    run_for(l, MS(300));
+    CHECK_EQ_I(l->va.state, V90A_DATA);
+    {
+        int64_t t0 = l->k, n0;
+        int entered_p2 = 0, d_p2 = 0;
+        CHECK_EQ_I(v90a_cleardown(&l->va), 0);
+        CHECK_EQ_I(p34d_retrain(&l->p34), 0);       /* on the next sample: silence, then Tone B */
+        n0 = l->n;
+        while (l->k < t0 + MS(3000) && l->va.state != V90A_ENDED) {
+            vl_tick(l);
+            /* the owner's part of the digital modem's retrain: 70 ms of silence, Phase 2 (9.5.1) */
+            if (!d_p2 && l->n - n0 >= MS(70)) {
+                p2d_cfg pc = l->p2.cfg;
+                p2d_init_retrain(&l->p2, &pc);
+                l->dstate = 0; d_p2 = 1;
+            }
+            if (l->va.state == V90A_RETRAIN || l->va.state == V90A_P2) entered_p2 = 1;
+        }
+        printf("  ours %d (error %d) after %d ms; Phase 2 entered %d; digital in Phase 2 %d\n", l->va.state, l->va.error,
+               (int)ms((int32_t)(l->k - t0)), entered_p2, d_p2);
+        CHECK_EQ_I(l->va.error, V90A_ERR_HANGUP);
+        CHECK(!entered_p2);
+        CHECK(l->k - t0 <= MS(2000));
+    }
+
+    printf("a retrain's Phase 2 bounded: %d ms (spec D5)\n", V90A_RT_P2_MS);
+    c = base(); c.seed = 4;
+    vl_init(l, &c);
+    run_to(l, MS(30000), V90A_DATA);
+    run_for(l, MS(300));
+    CHECK_EQ_I(l->va.state, V90A_DATA);
+    CHECK_EQ_I(v90a_retrain(&l->va), 0);
+    run_to(l, l->k + MS(1000), V90A_P2);
+    CHECK_EQ_I(l->va.state, V90A_P2);
+    /* its clock 1 sample short of the limit; two ticks of our own (the
+     * digital modem is no party to this) */
+    l->va.t = (int32_t)MS(V90A_RT_P2_MS) - 1;
+    (void)v90a_tick(&l->va, 0);
+    CHECK_EQ_I(l->va.state, V90A_P2);
+    (void)v90a_tick(&l->va, 0);
+    printf("  ours %d (error %d)\n", l->va.state, l->va.error);
+    CHECK_EQ_I(l->va.state, V90A_ENDED);
+    CHECK_EQ_I(l->va.error, V90A_ERR_RETRAINS);
+
     printf("time-outs: the digital modem silent from\n");
     {
         static const struct { const char *name; int at; int err; double lo, hi; } T[] = {

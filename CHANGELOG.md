@@ -54,6 +54,22 @@ dropped call should look at `V90M_END_LOST`):
   accordingly (renegotiations of V.34, x2 and K56flex no longer print
   retraining 1).
 
+Changed (calling role):
+- A retrain's Phase 2 is bounded whatever the answerer does. An answerer
+  that kept repeating its INFO0 (V.90 and V.92: INFO0d; V.34: INFO0a) sent
+  the calling modem back to the start of the exchange each time, for as
+  long as it went on, with `retraining` 1 and no `V90M_EV_ENDED`. Each
+  repeat now counts as one of Phase 2's 4 restarts; past them Phase 2
+  fails. Above that, a backstop ends the call when a retrain's Phase 2
+  lasts 30 s: `V90M_END_RETRAIN_FAILED`. Only a call that has reached data
+  mode is affected (before it, the 60 s start-up limit applies as before).
+- V.34: too many retrains in a row once connected, and the 30 s limit
+  above, end with `V90M_END_RETRAIN_FAILED`, as in V.90 and V.92 (too many
+  retrains gave `V90M_END_LOST`).
+- V.90 and V.92: a Tone B (the server's retrain) during our cleardown
+  (`v90m_cleardown`) no longer turns it into a retrain: the cleardown goes
+  on and ends with `V90M_END_CLEARDOWN_OURS`.
+
 Fixed:
 - m68k: built with GCC 12.3 for m68k (and maybe other versions) at -O1 and
   up, the V.34 receiver's carrier (`qamrx_init`) and the answering V.90

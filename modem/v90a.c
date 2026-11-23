@@ -1227,6 +1227,9 @@ static int16_t tick(v90a_t *a, int16_t rx)
         int16_t o = p2call_tick(&a->p2, rx);
         if (a->p2.state == P2L_DONE) { a->info0d = a->p2.info0d; start_p3(a); }
         else if (a->p2.state == P2L_FAILED) end(a, a->t_data >= 0 ? V90A_ERR_RETRAINS : V90A_ERR_PHASE2);
+        /* a retrain's Phase 2 (after data mode: orig's start-up limit is
+         * over) has V90A_RT_P2_MS, whatever p2call's own limits do (D5) */
+        else if (a->t_data >= 0 && a->t > MS(V90A_RT_P2_MS)) end(a, V90A_ERR_RETRAINS);
         return o;
     }
     if (a->pcm) {
@@ -1331,6 +1334,9 @@ int16_t v90a_tick(v90a_t *a, int16_t rx)
         return 0;
     }
     y = tick(a, rx);
+    /* our cleardown goes on to its end (V90A_ERR_HANGUP) whatever the
+     * digital modem does meanwhile: its Tone B is not a retrain then */
+    if (a->clearing) a->rt_due = 0;
     if (a->rt_due || (a->state == V90A_ENDED && a->rt_check)) {
         begin_retrain(a, a->rt_due != 2);
         return 0;

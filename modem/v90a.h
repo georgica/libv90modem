@@ -106,6 +106,8 @@ typedef enum {
 } v90a_state;
 
 #define V90A_MAX_RETRAINS 3         /* retrains without a minute of data mode between them */
+#define V90A_RT_P2_MS   30000       /* a retrain's Phase 2 once the call has carried data: past
+                                       this, V90A_ERR_RETRAINS */
 
 enum {
     V90A_OK = 0,

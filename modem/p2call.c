@@ -17,7 +17,7 @@
 #define T_L2_MS       650       /* 11.2.2.1.5, plus a round trip */
 #define T_INFO1A_MS   700       /* 11.2.2.1.6, plus a round trip */
 #define T_TONE_A_MS  2000       /* ... then this long for Tone A before we begin the retrain */
-#define MAX_RESTARTS 4
+#define MAX_RESTARTS 4          /* returns to the start of the exchange (timed out, or an INFO0 again) */
 /* the INFO1c decision */
 #define FLOOR_DB10    360       /* signal-dependent noise assumed as a floor, as p2ans: a G.711
                                    codec's, and what our own receiver leaves */
@@ -388,6 +388,10 @@ int16_t p2call_tick(p2call_t *p, int16_t x)
 
     case P2L_WAIT_REV1:
         if (ev & DPSK_EV_FRAME) {                   /* a repeated INFO0a (11.2.2.1.1; 11.5.1.1) */
+            /* back to 11.2.1.1.1, a restart: an answerer that never stops
+             * sending INFO0a must not keep us here (spec D5) */
+            if (p->restarts >= MAX_RESTARTS) { fail(p, P2L_ERR_REV); break; }
+            p->restarts++;
             info0a_parse(p->rx.frame, &p->info0a);
             p->got0a = 1;
             p->resend = !p->info0a.ack;
@@ -688,6 +692,9 @@ static int16_t p2call_tick_v90(p2call_t *p, int16_t x)
 
     case P2L_A_WAIT_REV1:
         if (ev & DPSK_EV_FRAME) {                       /* a repeated INFO0d (9.2.2.2.1) */
+            /* back to 9.2.2.1.3, a restart, as the time-out below */
+            if (p->restarts >= MAX_RESTARTS) { fail(p, P2L_ERR_REV); break; }
+            p->restarts++;
             info0d_parse(p->rx.frame, &p->info0d);
             p->resend = !p->info0d.ack;
             p->tone_since = p->now;

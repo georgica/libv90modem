@@ -220,6 +220,22 @@ int main(void)
         CHECK(t < 15000);
     }
 
+    /* ---- a retrain's Phase 2 bounded (spec D5): V34O_RT_P2_MS from its start ---- */
+    if (call_up("good line, a retrain's Phase 2 bounded", &good, 0, 0, 28800)) {
+        CHECK_EQ_I(orig_retrain(&O), 0);
+        for (t = 0; t < 2000 && O.v34.state != V34O_PHASE2; t++) run(8);
+        CHECK_EQ_I(O.v34.state, V34O_PHASE2);
+        /* its clock 1 sample short of the limit; two ticks of the caller's
+         * own (the line and the answerer are no party to this) */
+        O.v34.t = 8 * V34O_RT_P2_MS - 1;
+        (void)orig_tick(&O, 0);
+        CHECK_EQ_I(O.v34.state, V34O_PHASE2); CHECK_EQ_I(O.phase, ORIG_V34);
+        (void)orig_tick(&O, 0);
+        printf("  a retrain's Phase 2 for %d s: v34orig %d (error %d), orig end %d\n", V34O_RT_P2_MS / 1000, O.v34.state, O.v34.error, O.end);
+        CHECK_EQ_I(O.v34.state, V34O_ENDED); CHECK_EQ_I(O.v34.error, V34O_ERR_RETRAINS);
+        CHECK_EQ_I(O.phase, ORIG_FAILED); CHECK_EQ_I(O.end, ORIG_END_RETRAIN);
+    }
+
     /* ---- the answerer goes away in training: retrains (11.3.2.1), then the end ---- */
     start(&good, 0, 0, 0);
     while (L.n < 8000L * 30 && O.v34.state != V34O_TRAINING) run(8);

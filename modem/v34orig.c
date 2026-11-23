@@ -2,7 +2,8 @@
 #include <string.h>
 #include "v34orig.h"
 
-#define RETRAIN_SILENCE 560     /* 70 ms (11.5.1) */
+#define MS(x) ((x) * 8)
+#define RETRAIN_SILENCE MS(70)  /* 11.5.1 */
 
 static void end(v34orig_t *o, int err) { o->state = V34O_ENDED; o->error = err; }
 
@@ -74,6 +75,10 @@ int16_t v34orig_tick(v34orig_t *o, int16_t rx)
             else o->state = V34O_TRAINING;
         } else if (o->p2.state == P2L_FAILED) {
             end(o, V34O_ERR_PHASE2);
+        } else if (o->connects > 0 && ++o->t > MS(V34O_RT_P2_MS)) {
+            /* a retrain's Phase 2 once the call has carried data (orig's
+             * start-up limit is over): bounded whatever p2call does (D5) */
+            end(o, V34O_ERR_RETRAINS);
         }
         break;
     case V34O_TRAINING:
@@ -102,7 +107,7 @@ int16_t v34orig_tick(v34orig_t *o, int16_t rx)
             p2call_cfg c;
             p2_cfg(o, &c);
             p2call_init_retrain(&o->p2, &c, &o->info0a);
-            o->state = V34O_PHASE2;
+            o->state = V34O_PHASE2; o->t = 0;
         }
         break;
     default:

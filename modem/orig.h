@@ -120,7 +120,9 @@ typedef enum {
 #define ORIG_END_CLEARDOWN  6   /* the answerer called for a cleardown (V.32bis R3 or E; V.34 11.7) */
 #define ORIG_END_HANGUP     7   /* we cleared down (orig_cleardown, V.34 11.7) */
 #define ORIG_END_RETRAIN    8   /* V.90 / V.92: a retrain failed, or one more was due past the
-                                   limit (V90A_MAX_RETRAINS; the receiver's then cleared down) */
+                                   limit (V90A_MAX_RETRAINS; the receiver's then cleared down);
+                                   V.34, once connected: too many retrains in a row, or a
+                                   retrain's Phase 2 past V34O_RT_P2_MS */
 
 typedef struct {
     int           level;     /* transmit RMS, 16-bit sample units */

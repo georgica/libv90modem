@@ -48,12 +48,14 @@ enum {
 };
 
 #define V34O_MAX_RETRAINS 4
+#define V34O_RT_P2_MS   30000   /* a retrain's Phase 2 once the call has carried data: past
+                                   this, V34O_ERR_RETRAINS */
 
 typedef struct {
     v34orig_cfg   cfg;
     v34orig_state state;
     int           error;
-    int32_t       t;
+    int32_t       t;                /* samples in V34O_RETRAIN; in a retrain's V34O_PHASE2 */
     p2call_t      p2;
     v34dx_t       dx;
     info0_t       info0a; int have0a;

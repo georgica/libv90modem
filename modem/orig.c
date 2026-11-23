@@ -107,6 +107,7 @@ static int v34_end(const orig_t *o)
     switch (o->v34.error) {
     case V34O_ERR_CLEARDOWN: return ORIG_END_CLEARDOWN;
     case V34O_ERR_HANGUP: return ORIG_END_HANGUP;
+    case V34O_ERR_RETRAINS: return o->connected ? ORIG_END_RETRAIN : ORIG_END_NO_CARRIER;
     case V34O_ERR_PHASE2:
         /* nothing to offer in INFO1c, or an INFO1a we cannot follow */
         if (!o->connected && o->v34.p2.error == P2L_ERR_NO_RATE) return ORIG_END_NO_COMMON;

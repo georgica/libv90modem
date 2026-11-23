@@ -34,6 +34,7 @@ typedef struct {
     int retrain;            /* both ends start in the retrain entry */
     int ans_back_ms;        /* the answerer, done, comes back with a retrain of its own after this */
     int ans_answers;        /* the answerer, done, answers our Tone B as a retrain (11.5.2.2) */
+    int ans_reinit;         /* the answerer starts over each time it leaves P2N_INFO0 */
     int seconds;
 } scen_t;
 
@@ -122,6 +123,7 @@ static void run(const scen_t *s, run_t *r, const p2ans_cfg *ac, const p2call_cfg
         if (r->c.state == P2L_L1) { r->l1_samples++; r->l1_pw += (double)ctx * ctx; }
         if (r->c.state == P2L_L2) { r->l2_samples++; r->l2_pw += (double)ctx * ctx; }
         atx = p2ans_tick(&r->a, clip16(xa));
+        if (s->ans_reinit && r->a.state != P2N_INFO0) { p2ans_init(&r->a, ac); r->a_restarts++; }
         ctx = p2call_tick(&r->c, lrx[(i - s->io_rx + MAXD) % MAXD]);
         if (r->a.state == P2N_DONE && r->a_done_at < 0) r->a_done_at = i;
         if (r->c.state == P2L_DONE && r->c_done_at < 0) r->c_done_at = i;
@@ -485,6 +487,17 @@ int main(void)
     CHECK_NEAR(r.c.rtd, 44, 8); CHECK_NEAR(r.a.rtd, 44, 8);
     CHECK_EQ_I(r.c.sym_rate, 3200);
     CHECK_EQ_I(r.c.info0a.c1664, 1);        /* the first Phase 2's */
+
+    /* ---- a retrain's Phase 2 bounded (spec D5): an answerer that keeps
+     * sending INFO0a sends us back to 11.2.1.1.1 each time, counted as a
+     * restart ---- */
+    clean(&s); s.retrain = 1; s.ans_reinit = 1; s.seconds = 120;
+    run(&s, &r, &ac, &cc);
+    printf("  p2call INFO0a for ever: state %d, error %d at %.2f s, restarts %d, INFO0c sent %d, answerer started %d times\n",
+           r.c.state, r.c.error, r.n / 8000.0, r.c.restarts, r.c.n_info0c, r.a_restarts);
+    CHECK_EQ_I(r.c.state, P2L_FAILED);
+    CHECK_EQ_I(r.c.error, P2L_ERR_REV);
+    CHECK(r.n <= 8000 * (4 * 8 + 1));
 
     /* ---- dead lines: give up with a reason ---- */
     clean(&s); s.g_ac = 0.0; s.seconds = 30;
