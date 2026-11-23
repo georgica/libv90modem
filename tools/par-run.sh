@@ -16,6 +16,10 @@
 # merged into what that file held; `make test-times` copies them into
 # tools/test-times.txt, which a run never writes.
 #
+# PAR_SKIP names a file of keys (without ":ARG"), one per line, as
+# tools/ports-slow.txt lists them: those entries are left out, and a line
+# says how many.
+#
 # Afterwards, for each ENTRY in the given order: "PREFIX <key>" (when PREFIX
 # is not empty; arm_ taken off the name) and its log. Exit status 1 when any
 # ENTRY failed.
@@ -48,18 +52,25 @@ logdir=$(cd "$logdir" && pwd)
 times_out=${PAR_TIMES_OUT:-$(dirname "$logdir")/test-times.txt}
 subs=$(sed -n 's/^SUBS *:= *//p' "$root/Makefile")
 
-# ENTRY KEY, one per line, in the given order
+# ENTRY KEY, one per line, in the given order (less those PAR_SKIP lists)
 map=$logdir/entries.txt
-printf '%s\n' "$@" | awk -v subs="$subs" '
-BEGIN { n = split(subs, s, " "); for (i = 1; i <= n; i++) sub_[s[i]] = 1 }
+skipf=${PAR_SKIP:-/dev/null}
+[ -r "$skipf" ] || { echo "par-run: cannot read PAR_SKIP $skipf" >&2; exit 1; }
+nall=$#
+printf '%s\n' "$@" | awk -v subs="$subs" -v skipf="$skipf" '
+BEGIN { n = split(subs, s, " "); for (i = 1; i <= n; i++) sub_[s[i]] = 1
+        while ((getline l < skipf) > 0) if (l != "" && l !~ /^#/) skip[l] = 1 }
 {
     e = $0; p = e; a = ""
     if (match(e, /:[^\/:]*$/)) { p = substr(e, 1, RSTART - 1); a = substr(e, RSTART) }
     m = split(p, c, "/"); k = c[m]
     if (m >= 2 && (c[m - 1] in sub_)) k = c[m - 1] "/" k
     else if (m >= 3 && c[m - 1] == "build" && (c[m - 2] in sub_)) k = c[m - 2] "/" k
+    if (k in skip) next
     print e, k a
 }' > "$map" || exit 1
+nrun=$(wc -l < "$map" | tr -d ' ')
+[ "$nrun" -eq "$nall" ] || echo "par-run: $((nall - nrun)) of $nall runs skipped (${skipf#"$root"/})"
 
 while read -r e k; do
 	mkdir -p "$(dirname "$logdir/$k")"

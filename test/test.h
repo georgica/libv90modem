@@ -4,6 +4,7 @@
 #define V90D_TEST_H
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <math.h>
 
 /* TEST_SHORT: some long tests run a shorter version on 32-bit ARM, the box's
@@ -49,6 +50,30 @@ static int t_checks = 0, t_fails = 0;
     if (fabs(_g - _w) > _t) { t_fails++; \
         printf("  FAIL %s:%d: %s = %g, want %g +/- %g\n", __FILE__, __LINE__, #got, _g, _w, _t); } \
 } while (0)
+
+/* A program split into cases (the Makefile's SPLIT_TESTS): `prog --cases`
+ * prints the count and exits, `prog N` runs case N alone, no argument runs
+ * them all. t_case_arg returns the case to run alone, 0 for all of them;
+ * T_CASE(only, k) says whether case k runs. The cases run one after another
+ * print what the whole program prints (tools/split-check.sh), less the
+ * T_REPORT line, which each prints for itself. */
+static inline int t_case_arg(int argc, char **argv, int ncases)
+{
+    long n;
+    char *end;
+    if (argc < 2) return 0;
+    if (argc == 2 && strcmp(argv[1], "--cases") == 0) {
+        printf("%d\n", ncases);
+        exit(0);
+    }
+    n = strtol(argv[1], &end, 10);
+    if (argc > 2 || *end != 0 || n < 1 || n > ncases) {
+        printf("usage: %s [--cases | 1..%d]\n", argv[0], ncases);
+        exit(2);
+    }
+    return (int)n;
+}
+#define T_CASE(only, k) ((only) == 0 || (only) == (k))
 
 #define T_REPORT(name) do { \
     printf("%s: %d checks, %d failures\n", (name), t_checks, t_fails); \

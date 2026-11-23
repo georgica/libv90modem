@@ -12,6 +12,14 @@
 #                        (test/golden/out, tools/golden.sh); golden-record writes them
 #   make bench-hashes    the benches' transmit and receive hashes on the host against
 #                        test/golden/bench.txt (tools/bench-hashes.sh)
+#   make check-fixed     the library compiled for armv5 (FIXED_CC): no soft-float helper,
+#                        no allocation outside api/v90modem.o
+#   make verify          per commit (tools/verify.sh): host check and golden outputs,
+#                        replay proof, bench hashes, UBSan, the armv7hf short suite
+#                        against the host's (less tools/ports-slow.txt), check-fixed
+#   make verify-phase    per phase, about an hour (tools/verify-phase.sh): armv5, every
+#                        port, armv7hf in full, the benches on qemu, costs to
+#                        $(BUILD)/costs.txt, the CRd scan (RECS=)
 #   make install         into $(DESTDIR)$(PREFIX); make uninstall takes it out
 #   make examples        examples/answer_file (answering a recording), examples/call_loop
 #                        (calling the library's own answerer; make check runs it)
@@ -110,6 +118,10 @@ TESTS    := test_g711 test_noise test_filt test_resamp test_channel test_v21 tes
             test_v34mp test_p2ans test_v34mod test_v34dx test_v34call test_answer_v34 test_answer_v32 test_answer_v90_v34 \
             test_p2_v92 test_v92call test_answer_v92 test_v92real test_answer_lin \
             test_anstone test_v8orig test_orig test_orig_v32 test_p2call test_orig_v34 test_v90arx test_v90arx_robust test_v90adec test_v90dil test_p2v90 test_v90a test_orig_v90 test_orig_v90_te test_orig_seeds test_orig_retrain test_pcmtx test_v92aseq test_p2v92a test_v92a test_orig_v92 test_belltone test_orig_bell test_realcheck test_x2_pad test_answer_x2 test_x2rec test_x2map test_x2tx test_k56tab test_k56enc test_k56tx test_v8bismsg test_v8bis test_answer_k56
+# the slowest programs, split by case: `prog --cases` prints the count, `prog N`
+# runs case N alone, no argument all of them (tools/split-check.sh); the ARM
+# runner (check-arm) runs each case as its own job
+SPLIT_TESTS := test_p34 test_orig_v92 test_orig_seeds test_orig_bell
 # the public API, against the library as it is installed
 API_TESTS := test_api
 SUBS     := v34 v90 v92 v42 v32
@@ -143,6 +155,35 @@ check-symbols: $(STATIC)
 	      | grep -vE '^(v90m_|__|\.)' || true); \
 	 if [ -n "$$bad" ]; then echo "$(STATIC) defines symbols outside v90m_*:"; echo "$$bad" | head; exit 1; fi; \
 	 echo "symbols: $(STATIC) defines only v90m_* ($$($(NM) -g --defined-only $(STATIC) | grep -c ' _*v90m__i_') internal)"
+# Fixed point and no allocation after create, checked on the box's compiler
+# (FIXED_CC, the armv5 soft-float one): every library object compiled alone
+# must call no soft-float helper (__aeabi_f*, __aeabi_d*, __*sf*, __*df*:
+# there is no FPU, so any float or double in the code shows as one), and
+# only api/v90modem.o (which the create functions are in) may name malloc,
+# calloc, realloc or free
+FIXED_CC  ?= $(firstword $(wildcard $(CURDIR)/../toolchains/armv5-eabi--uclibc--*/bin/arm-linux-gcc))
+FIXED_NM   = $(patsubst %gcc,%nm,$(FIXED_CC))
+FIXED_OBJ := $(patsubst %.c,$(BUILD)/fixed/%.o,$(LIB_SRC))
+$(BUILD)/fixed/%.o: %.c $(LIB_HDR)
+	@mkdir -p $(dir $@)
+	$(FIXED_CC) $(CFLAGS) $(CPPFLAGS_ALL) $(INC) -c -o $@ $<
+.PHONY: check-fixed fixed-objs
+fixed-objs: $(FIXED_OBJ)
+check-fixed:
+	@if [ -z "$(FIXED_CC)" ] || [ ! -x "$(FIXED_CC)" ]; then echo "check-fixed: no armv5 compiler (FIXED_CC=$(FIXED_CC))"; exit 1; fi
+	@$(MAKE) -s $(if $(findstring jobserver,$(MAKEFLAGS)),,-j16) fixed-objs
+	@fail=0; \
+	 for o in $(FIXED_OBJ); do \
+	   u=$$($(FIXED_NM) -u $$o | awk '{ print $$NF }'); \
+	   f=$$(echo "$$u" | grep -E '^(__aeabi_[fd]|__.*sf|__.*df)' | tr '\n' ' ' | sed 's/ $$//'); \
+	   [ -z "$$f" ] || { echo "check-fixed: $${o#$(BUILD)/fixed/} calls float helpers: $$f"; fail=1; }; \
+	   case $$o in */api/v90modem.o) ;; *) \
+	     a=$$(echo "$$u" | grep -xE 'malloc|calloc|realloc|free' | tr '\n' ' ' | sed 's/ $$//'); \
+	     [ -z "$$a" ] || { echo "check-fixed: $${o#$(BUILD)/fixed/} allocates: $$a"; fail=1; } ;; \
+	   esac; \
+	 done; \
+	 [ $$fail -eq 0 ] || exit 1; \
+	 echo "fixed: $(words $(FIXED_OBJ)) objects, 0 float helpers, allocation only in api/v90modem.o"
 $(SHARED): $(PIC_OBJ)
 	$(CC) -shared -Wl,-soname,$(NAME).so.$(SOVER) -o $@ $(PIC_OBJ) $(LDLIBS)
 	ln -sf $(NAME).so.$(VERSION) $(BUILD)/$(NAME).so.$(SOVER)
@@ -221,9 +262,19 @@ test: $(addprefix $(BUILD)/,$(TESTS))
 	@echo "== running host tests =="
 	@fail=0; for t in $(TESTS); do $(abspath $(BUILD))/$$t || fail=1; done; \
 	 if [ $$fail -eq 0 ]; then echo "ALL TESTS PASS"; else echo "TESTS FAILED"; exit 1; fi
+# the ARM runs of TESTS: a SPLIT_TESTS program as one run per case
+# (arm_test_p34:N, its count from `prog --cases`), the others whole
+ARM_ENTRIES = for t in $(TESTS); do \
+	   p=$(abspath $(BUILD))/arm_$$t; \
+	   case " $(SPLIT_TESTS) " in \
+	   *" $$t "*) n=$$($(QEMU) $$p --cases) || { echo "$$p --cases failed" >&2; exit 1; }; n=$$(echo "$$n" | tr -d '\r'); \
+	      i=1; while [ $$i -le $$n ]; do echo $$p:$$i; i=$$((i + 1)); done ;; \
+	   *) echo $$p ;; \
+	   esac; done
 test-arm: $(addprefix $(BUILD)/arm_,$(TESTS))
 	@echo "== running ARM tests under $(QEMU) =="
-	@if tools/par-run.sh $(abspath $(BUILD))/arm_log "$(QEMU)" "[arm]" $(addprefix $(abspath $(BUILD))/arm_,$(TESTS)); \
+	@tops=$$($(ARM_ENTRIES)) || exit 1; \
+	 if tools/par-run.sh $(abspath $(BUILD))/arm_log "$(QEMU)" "[arm]" $$tops; \
 	 then echo "ALL ARM TESTS PASS"; else echo "ARM TESTS FAILED"; exit 1; fi
 # (its output also in $(BUILD)/log/api/, for tools/golden.sh)
 test-api: $(addprefix $(BUILD)/api_,$(API_TESTS))
@@ -282,14 +333,24 @@ print-golden:
 # the benches' tx and rx hashes against test/golden/bench.txt (host only)
 bench-hashes:
 	@BUILD=$(BUILD) tools/bench-hashes.sh check
+# per commit and per phase (docs/superpowers/specs/2026-11-22-audit-refactor-optimize-design.md 7.4)
+.PHONY: verify verify-phase
+verify:
+	@tools/verify.sh
+verify-phase:
+	@$(if $(RECS),RECS=$(RECS)) tools/verify-phase.sh
 # recordings of real calls (test/fixtures/fixtures.txt) through the replay tool
 test-fixtures: $(BUILD)/v90m-replay
 	@echo "== real-modem recordings =="; test/fixtures/check.sh $(abspath $(BUILD))/v90m-replay
-# every ARM program of every directory in one pool (logs in $(BUILD)/arm_log)
+# every ARM program of every directory in one pool (logs in $(BUILD)/arm_log);
+# each case of a SPLIT_TESTS program a run of its own (arm_test_p34:N);
+# ARM_SKIP=FILE leaves out the programs it lists (tools/ports-slow.txt)
+ARM_SKIP ?=
 check-arm: $(addprefix $(BUILD)/arm_,$(TESTS)) $(SUB_PROGS_ARM) test-api-arm
 	@echo "== running ARM tests under $(QEMU), all directories =="
 	@subs=$(call SUB_LIST,print-tests-arm) || exit 1; \
-	 if PAR=$(PAR) tools/par-run.sh $(abspath $(BUILD))/arm_log "$(QEMU)" "[arm]" $(addprefix $(abspath $(BUILD))/arm_,$(TESTS)) $$subs; \
+	 tops=$$($(ARM_ENTRIES)) || exit 1; \
+	 if PAR=$(PAR) $(if $(ARM_SKIP),PAR_SKIP=$(abspath $(ARM_SKIP))) tools/par-run.sh $(abspath $(BUILD))/arm_log "$(QEMU)" "[arm]" $$tops $$subs; \
 	 then echo "ALL ARM CHECKS PASS"; else echo "ARM CHECKS FAILED"; exit 1; fi
 # The host suite with undefined behaviour trapped (clang's -fsanitize=undefined):
 # a signed overflow or a shift of a negative number is what lets the same C
@@ -297,7 +358,7 @@ check-arm: $(addprefix $(BUILD)/arm_,$(TESTS)) $(SUB_PROGS_ARM) test-api-arm
 UBSAN_CC    ?= clang
 UBSAN_FLAGS := -std=c99 -O1 -g -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=undefined
 check-ubsan:
-	@$(MAKE) -s BUILD=$(BUILD)/ubsan CC=$(UBSAN_CC) CFLAGS="$(UBSAN_FLAGS)" test-all test-api
+	@$(MAKE) -s BUILD=$(BUILD)/ubsan CC=$(UBSAN_CC) CFLAGS="$(UBSAN_FLAGS)" test-all test-api test-fixtures
 	@echo "ALL UBSAN CHECKS PASS"
 
 INTEROP := interop_v8_spandsp interop_v22bis_spandsp interop_v8orig_spandsp interop_orig_v22bis_spandsp
