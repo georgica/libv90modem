@@ -931,6 +931,42 @@ qemu hash, unchanged from before.
 Memory: p34d_t 8 octets smaller (padding; 25416 x86-64, 25344 ARMv5),
 v34dx_t unchanged (23040 / 22976), `v90m_mem_size()` unchanged.
 
+## Task 25: x2d and k56d on v34up; the K56 B1 retry is v34up_retry
+
+x2d and k56d run on `v34up` (ans R3), byte-identical (`make verify`:
+golden 128 identical, replay 636 identical, bench hashes 17 identical;
+the K56 heavy and x2/K56 click cases unchanged). New in v34up:
+`v34up_watch` (the dead / slow / loss watches, shared by v34up_data and
+k56d's data path), `v34up_retry` (D12's retry under the other
+configuration, the same putbit), `v34up_replay_sym` (one stored point
+into the decoder), and `v34up_b1_in`. k56d's ring, catch-up and pacing
+stay in k56d_t. v34up_data skips v34_nl_decode / v34_nl_encode when
+cfg.nonlinear is 0 (they return their input then: Task 24's review,
+Minor 1). `git diff --stat` of the code: 10 files, 200 insertions, 291
+deletions (x2d.c and k56d.c: 248 lines out, 128 in; v34up: 48 in).
+
+Cost (`make cost-x2 cost-k56 ARM_CC=$A5 COST_TICKS=0`, armv5 uClibc), M
+ARM instructions per second of line in data mode, at 3f97acf (before)
+and after:
+
+| | before | after | change |
+|---|---|---|---|
+| x2 answering (second 15 to 16) | 82.69 | 82.83 | +0.13 |
+| K56flex answering (second 20 to 21) | 39.58 | 39.58 | +0.01 |
+| K56flex, a client that ignores our MP (`K56_ARGS=heavy`) | 84.40 | 84.40 | +0.00 |
+| V.90 answering (second 15 to 16) | 39.52 | 39.44 | -0.08 |
+
+All within +0.3 M of before. V.90 gets back 0.08 M of Task 24's +0.18 M
+by skipping the identity calls; the rest is the extra calls a symbol.
+x2's +0.13 M is the out-of-line v34up_data and v34up_watch calls. Bench
+host hash = qemu hash, the same as before.
+
+Memory: x2d_t 20296 -> 20312 octets on x86-64 (20264 -> 20280 on ARMv5),
+k56d_t 22848 -> 22856 (22800 -> 22808): v34up_t brings gain, mse_limit and
+q_bad. Both are in answer_t's union, which a larger member sets, so
+answer_t (106176 / 105896) and `v90m_mem_size()` are unchanged; no test_api
+pin changes.
+
 ## ISP-1: the echo search near the round trip (V.92, x2, K56flex); replay -r
 
 PR #1's `ecdly_near` (p34d) extended to v92d, x2d and k56d (a93fa17);

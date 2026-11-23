@@ -11,7 +11,7 @@
  *   x2 record of 4 words, on 16 points -> our record after the sync frames
  *   -> its MP' and E -> the start segment down, B1 up -> data both ways:
  *   x2map frames down, V.34 up (GPA, expanded shaping, 64 states, non-linear
- *   encoding), through qamrx and v34/ as in p34d.
+ *   encoding), through v34up as in p34d.
  *
  * The client's MP decides: the downstream rate index it asks for (only an
  * index we have a bank for, X2D_RATE_MASK, which our record names, with
@@ -39,13 +39,11 @@
 #define V90D_MODEM_X2D_H
 #include <stdint.h>
 #include "seqhunt.h"
-#include "qamrx.h"
 #include "ec.h"
 #include "ecdly.h"
-#include "v34train.h"
+#include "v34up.h"
 #include "x2tx.h"
 #include "tonedet.h"
-#include "../v34/v34.h"
 
 typedef int  (*x2d_getbit_fn)(void *user);
 typedef void (*x2d_putbit_fn)(void *user, int bit);
@@ -111,26 +109,17 @@ typedef struct {
     int        ec_mu;
     ecdly_t    ecd;                 /* what we sent; ecd.delay the echo delay in use */
     sdet_t     sdet;
-    qamrx_t    rx;
+    v34up_t    up;                  /* the client's V.34: its Phase 3 and 4, its data */
     int        rxmode;
-    v34trn_t   ref;
-    v34_tdem_t tdem;
     sres_t     sres;
-    int64_t    zpw;                 /* smoothed |z|^2 */
-    int32_t    quiet;               /* symbols without signal in data mode */
     /* J and records */
     uint16_t   jsr; int32_t jbits, j_at; int j_type;
     uint8_t    fbuf[X2D_FBUF]; int fn; seqhunt_t sh;
     uint16_t   mp[4], cand[4]; int cand_ok;
     int        got_mp, got_e, e_sent;
     int        index, pad_mode;     /* from the MP */
-    /* data mode, upstream */
-    v34_params_t vpar;
-    v34_rx_t   vrx;
-    int32_t    vgain;
-    int        tx_ready, rx_ready;
+    int        tx_ready;
     int        down_rate, up_rate;  /* bit/s */
-    int32_t    q_dead;
     tonedet_t  tone_a;              /* the client's Tone A (a retrain) in data mode and its rate change */
 } x2d_t;
 

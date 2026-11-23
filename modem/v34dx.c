@@ -439,7 +439,9 @@ static void ec_schedule(v34dx_t *p, int16_t rxs)
         }
         lag = p->ecd.delay + p->cfg.rtd - FAR_LEAD;
         p->far_on = p->cfg.rtd > FAR_MIN_RTD && lag + EC_NTAP < ECDLY_HIST - 8;
-        p->ec_mu = p->far_on ? 1 : 0;           /* (its first sample of the fast step) */
+        /* (its first sample of the fast step: v34up_ec_schedule's mu came
+         * from far_on as it was before this sample) */
+        p->ec_mu = p->far_on ? 1 : 0;
     }
 }
 

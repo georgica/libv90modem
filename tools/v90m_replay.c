@@ -293,8 +293,8 @@ int main(int argc, char **argv)
                 v90m_ec_status es; v90m_ec_get_status(ec, &es);
                 printf("%7.3f s      x2 data: state %d, index %d pad %d, %d down %d up, receiver mse %.1f dB, LAPM rx %lu bad %lu, rx I %lu, bits %ld down %ld, timing %+.0f ppm\n", i / 8000.0,
                        (int)a->u.x2.state, a->u.x2.index, a->u.x2.pad_mode, a->u.x2.down_rate, a->u.x2.up_rate,
-                       10 * log10(a->u.x2.rx.mse / 65536.0 + 1e-9), es.rx_frames, es.rx_frames_bad, es.rx_i, bits_rx, tx_nbits,
-                       (double)a->u.x2.rx.t_integ / (1 << 24) / (8000.0 / a->u.x2.sym_rate) * 1e6);
+                       10 * log10(a->u.x2.up.rx.mse / 65536.0 + 1e-9), es.rx_frames, es.rx_frames_bad, es.rx_i, bits_rx, tx_nbits,
+                       (double)a->u.x2.up.rx.t_integ / (1 << 24) / (8000.0 / a->u.x2.sym_rate) * 1e6);
             }
             if (ec_on && a->phase == ANS_V90 && i % 16000 == 0) {
                 v90m_ec_status es; v90m_ec_get_status(ec, &es);

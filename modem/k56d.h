@@ -14,7 +14,7 @@
  *   k56tx, and TRN2B ends on the grid of 24 ->
  *   K56D_MP: our MP, MP', E; the client's MP', E, B1 ->
  *   K56D_DATA: k56enc frames down (B1 first), V.34 up (16 states, linear,
- *   minimum shaping: what our MP asked; GPC) through qamrx and v34/, as in
+ *   minimum shaping: what our MP asked; GPC) through v34up, as in
  *   x2d and p34d. A client whose B1 fails under that is tried under x2's
  *   configuration (64 states, non-linear, expanded shaping; up_hyp 1) on
  *   its points kept from E on (ring), and goes on under it if B1 passes
@@ -48,14 +48,12 @@
 #define V90D_MODEM_K56D_H
 #include <stdint.h>
 #include "seqhunt.h"
-#include "qamrx.h"
 #include "ec.h"
 #include "ecdly.h"
 #include "tonedet.h"
-#include "v34train.h"
+#include "v34up.h"
 #include "v34mp.h"
 #include "k56tx.h"
-#include "../v34/v34.h"
 
 #define K56D_MAX_ECHO_DELAY 1919    /* the longest echo delay that can be given (as p34d) */
 #define K56D_FBUF 192               /* an MP (88 bits) and a next frame sync */
@@ -130,13 +128,8 @@ typedef struct {
     sdet_t     sdet;
     sres_t     sres;                /* its S out of data mode: a renegotiation */
     tonedet_t  tone_b;              /* its tone B in data mode or a renegotiation: a retrain */
-    qamrx_t    rx;
+    v34up_t    up;                  /* the client's V.34: its Phase 3 and 4, its data */
     int        rxmode;
-    v34trn_t   ref;
-    v34_tdem_t tdem;
-    int64_t    zpw;                 /* smoothed |z|^2 */
-    int32_t    quiet;               /* symbols without signal in data mode */
-    int32_t    q_dead;
     /* J24, J', MP, E */
     uint32_t   jsr; int32_t jbits, j_at; int j_seen;
     int        got_j, got_jp;
@@ -147,10 +140,7 @@ typedef struct {
     int        pad;                 /* from the J24: 0..2 */
     uint8_t    rbs;                 /* ... robbed symbols, bits 0-5 */
     int        rate;                /* the downstream rate code r, 1..13 */
-    /* data mode, upstream */
-    v34_params_t vpar;
-    v34_rx_t   vrx;
-    int32_t    vgain;
+    /* data mode, upstream: B1's retry */
     uint8_t    up_hyp;              /* the upstream's options: 0 ours (what our MP asked),
                                        1 x2's (64 states, non-linear, expanded shaping) */
     uint8_t    up_retried;          /* B1 failed under the first: the other one tried */
@@ -162,7 +152,7 @@ typedef struct {
     int16_t    ring[K56D_RING][2];  /* its points from E on (clipped, before v34_nl_decode),
                                        while B1 is not decided or being caught up */
     int32_t    eq_cr[QRX_NTAP], eq_ci[QRX_NTAP];  /* the equaliser at its E: back at a retry */
-    int        tx_ready, rx_ready;
+    int        tx_ready;
     int        down_rate, up_rate;  /* bit/s */
 } k56d_t;
 

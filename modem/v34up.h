@@ -1,5 +1,5 @@
-/* The V.34 upstream receiver the digital-side modems share (p34d, v34dx;
- * x2d and k56d next): the far transmitter's PP and TRN as a known
+/* The V.34 upstream receiver the digital-side modems share (p34d, v34dx,
+ * x2d, k56d): the far transmitter's PP and TRN as a known
  * reference, 4- and 16-point decisions for its sequences, and V.34 data
  * mode with its watches on the line. What to do about what it reports
  * (retrain, a lower rate, cleardown, the S of a renegotiation) is the
@@ -7,7 +7,10 @@
  *
  * Per symbol: v34up_tick on each sample, then on a symbol one of
  * v34up_known, v34up_dec4, v34up_dec16, v34up_data (or qamrx_update with
- * no flags, to keep the grid running). */
+ * no flags, to keep the grid running). k56d's data mode, which keeps the
+ * points of B1 and may decode them again (v34up_retry, v34up_replay_sym),
+ * makes its own steps of v34up_data and ends each symbol with
+ * v34up_watch. */
 #ifndef V90D_MODEM_V34UP_H
 #define V90D_MODEM_V34UP_H
 #include <stdint.h>
@@ -73,6 +76,12 @@ static inline int v34up_tick(v34up_t *u, int16_t x, int data)
     return 1;
 }
 
+/* B1 is complete in the decoder and not yet decided */
+static inline int v34up_b1_in(const v34up_t *u)
+{
+    return !u->rx_ready && u->vrx.b1_bits >= u->par.map.N;
+}
+
 /* Data mode's scaling: the equaliser's output (QRX_REF units) to the
  * constellation's (v34_pt_t), and a decision back */
 static inline v34_pt_t v34up_scale_in(const v34up_t *u)
@@ -109,6 +118,19 @@ int      v34up_data_begin(v34up_t *u, const v34_cfg_t *c, v34_putbit_fn put, voi
  * when it passes; once ready, watch_dead / watch_slow count V34UP_DEAD /
  * V34UP_SLOW. Returns V34UP_*: the first that happened */
 int      v34up_data(v34up_t *u, int watch_dead, int watch_slow);
+/* The watches of one data-mode symbol, after its qamrx_update: once B1
+ * has passed (rx_ready), watch_dead / watch_slow count V34UP_DEAD /
+ * V34UP_SLOW; the loss of the signal is counted always. Returns V34UP_*:
+ * the first that happened */
+int      v34up_watch(v34up_t *u, int watch_dead, int watch_slow);
+/* B1 failed under one configuration: data mode again from B1 under alt
+ * (the same putbit; the gain alt's). The equaliser, the watches and
+ * mse_limit are left as they are (the rate is the same). -1: alt cannot
+ * be done (v34_params_init) */
+int      v34up_retry(v34up_t *u, const v34_cfg_t *alt);
+/* One stored point (v34up_scale_in's) into the decoder, the loops not
+ * updated: 1 when B1 is then complete and not yet decided (v34up_b1_in) */
+int      v34up_replay_sym(v34up_t *u, int16_t re, int16_t im);
 /* S in data mode (v34_rx_s_run): the frames the decoder holds from before
  * S are data and go on now, but for a frame of margin
  * (v34_rx_flush_before); rx_ready ends. 0: an S too new in the decoder is

@@ -68,15 +68,23 @@ int v34up_data(v34up_t *u, int watch_dead, int watch_slow)
     qamrx_t *r = &u->rx;
     v34_pt_t in, tent, sent;
     int32_t dr, di;
-    in = v34_nl_decode(&u->par, v34up_scale_in(u));
+    /* (v34_nl_decode and v34_nl_encode are identities at nonlinear 0) */
+    in = v34up_scale_in(u);
+    if (u->par.cfg.nonlinear) in = v34_nl_decode(&u->par, in);
     v34_rx_put(&u->vrx, in, &tent);
-    sent = v34_nl_encode(&u->par, tent);
+    sent = u->par.cfg.nonlinear ? v34_nl_encode(&u->par, tent) : tent;
     v34up_scale_out(u, sent, &dr, &di);
     qamrx_update(r, dr, di, QRX_EQ | QRX_CARRIER | QRX_TIMING | QRX_DENSE, 13);
-    if (!u->rx_ready && u->vrx.b1_bits >= u->par.map.N) {
+    if (v34up_b1_in(u)) {
         if (u->vrx.b1_errors * 8 > u->vrx.b1_bits) return V34UP_B1_BAD;
         u->rx_ready = 1;
     }
+    return v34up_watch(u, watch_dead, watch_slow);
+}
+
+int v34up_watch(v34up_t *u, int watch_dead, int watch_slow)
+{
+    const qamrx_t *r = &u->rx;
     if (u->rx_ready && watch_dead) {
         if (r->mse > V34UP_DEAD_MSE) { if (++u->q_dead > V34UP_BAD_SYMS) return V34UP_DEAD; }
         else u->q_dead = 0;
@@ -92,6 +100,24 @@ int v34up_data(v34up_t *u, int watch_dead, int watch_slow)
         u->quiet = 0;
     }
     return V34UP_NONE;
+}
+
+int v34up_retry(v34up_t *u, const v34_cfg_t *alt)
+{
+    v34_putbit_fn put = u->vrx.put;
+    void *user = u->vrx.user;
+    if (v34_params_init(&u->par, alt) != 0) return -1;
+    v34_rx_init(&u->vrx, &u->par, put, user);
+    u->gain = (int32_t)v34_gain_q14(u->par.energy_tx_q8);
+    return 0;
+}
+
+int v34up_replay_sym(v34up_t *u, int16_t re, int16_t im)
+{
+    v34_pt_t x;
+    x.re = re; x.im = im;
+    v34_rx_put(&u->vrx, v34_nl_decode(&u->par, x), NULL);
+    return v34up_b1_in(u);
 }
 
 int v34up_s_flush(v34up_t *u, const sdet_t *sd)

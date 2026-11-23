@@ -777,8 +777,8 @@ int answer_snr_db10(const answer_t *a)
         break;
     }
     case ANS_MOD_V34: num = 65536; den = a->v34.dx.up.rx.mse; break;
-    case ANS_MOD_X2: num = 65536; den = a->u.x2.rx.mse; break;           /* the V.34 upstream */
-    case ANS_MOD_K56: num = 65536; den = a->u.k56.rx.mse; break;         /* the V.34 upstream */
+    case ANS_MOD_X2: num = 65536; den = a->u.x2.up.rx.mse; break;           /* the V.34 upstream */
+    case ANS_MOD_K56: num = 65536; den = a->u.k56.up.rx.mse; break;         /* the V.34 upstream */
     case ANS_MOD_V22: case ANS_MOD_V22BIS:
         /* 4096 = one unit squared; the points (1 and 3 units on each axis)
          * have a mean power of 10, and the four of 1200 bit/s have just that */

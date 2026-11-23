@@ -204,10 +204,10 @@ static void dig_call(int kind)
             jump_at = n;
             jump_answer(&A);
             if (kind) {
-                A.u.k56.now = (uint32_t)NEAR; A.u.k56.t = (uint32_t)NEAR; jump_qamrx(&A.u.k56.rx);
+                A.u.k56.now = (uint32_t)NEAR; A.u.k56.t = (uint32_t)NEAR; jump_qamrx(&A.u.k56.up.rx);
                 A.u.k56.tx.n = (int32_t)NEAR; A.u.k56.tx.alt = (int32_t)NEAR;
             } else {
-                A.u.x2.now = (uint32_t)NEAR; A.u.x2.t = (uint32_t)NEAR; jump_qamrx(&A.u.x2.rx);
+                A.u.x2.now = (uint32_t)NEAR; A.u.x2.t = (uint32_t)NEAR; jump_qamrx(&A.u.x2.up.rx);
                 A.u.x2.tx.n = (int32_t)NEAR;
             }
             dn0 = DN.n; up0 = UP.n; dbad0 = DN.bad; ubad0 = UP.bad;
