@@ -117,6 +117,14 @@ delivered).
   one mapping frame at each S** (78 bits at 31200 bit/s). Our transmitter
   sends its mapping frame under way whole before its S; a far modem that
   cuts its frame with S loses that frame too (two in all).
+  x2 and K56flex: an S before the client's B1 has been decided (some
+  55 ms after its E) loses what it sent before S (nothing of it is yet
+  known to be data); no client measuring our data can renegotiate that
+  early (our own data is not out until some 67 ms after its E for
+  K56flex), so only the simulated client has done it. A K56flex client
+  that ignores our MP and sends S that early may see errors in the first
+  few frames after the renegotiation (in the simulator: 11 words at 45 ms,
+  the equaliser pulled by B1 under the wrong configuration).
 - **V.92 upstream: what the caller's prefilter held when Ru began.** V.92
   begins Ru on a data frame boundary (9.8.2.1.1). The symbols reach the
   digital modem through the prefilter `dsn.dly` samples later (some 116

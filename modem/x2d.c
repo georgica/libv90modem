@@ -419,8 +419,10 @@ uint8_t x2d_tick(x2d_t *d, int16_t rxs)
     } else {
         if (qamrx_tick(&d->rx, x)) rx_symbol(d);
         if (d->state == X2D_ENDED) return 0x7f;
-        if (d->rxmode == RX_DATA && d->state == X2D_DATA) {
-            /* the client's S in data mode: its rate change (facts "Rate change") */
+        if (d->rxmode == RX_DATA && (d->state == X2D_DATA || d->state == X2D_START || d->state == X2D_RENEG)) {
+            /* the client's S in data mode: its rate change (facts "Rate
+             * change"); from its B1 on, ours not yet out too (else its S
+             * would be decoded as data until heard: Task 10d) */
             (void)sdet_tick(&d->sdet, x);
             if (d->sdet.present >= SDET_PRESENT) reneg_begin(d);
         }

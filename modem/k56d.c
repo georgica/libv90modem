@@ -162,6 +162,8 @@ static void put_data(void *user, int bit)
     if (d->rx_ready && d->cfg.putbit) d->cfg.putbit(d->cfg.user, bit);
 }
 
+static void s_drain(k56d_t *d);
+
 /* its E has just ended: B1 starts with the next symbol, under the
  * hypothesis that held last (a renegotiation's client is the same one);
  * its points are kept until B1 is decided */
@@ -171,6 +173,7 @@ static void rx_begin_data(k56d_t *d)
     v34_rx_init(&d->vrx, &d->vpar, put_data, d);
     d->vgain = (int32_t)v34_gain_q14(d->vpar.energy_tx_q8);
     d->up_retried = d->catchup = d->catch_odd = d->ring_full = 0;
+    d->rx_ready = 0;                                            /* (a drain to its last S given up) */
     memcpy(d->eq_cr, d->rx.cr, sizeof d->eq_cr); memcpy(d->eq_ci, d->rx.ci, sizeof d->eq_ci);
     d->ring_w = d->ring_r = d->ring_fill = 0;
     d->rxmode = RX_DATA;
@@ -261,13 +264,21 @@ static void reneg_begin(k56d_t *d)
     /* the frames its V.34 decoder still holds from before S are data: they
      * go on now, but for a frame of margin (as p34d's s_heard). Called on
      * each sample from S heard on: an S too new in the decoder is waited
-     * for (SDET_RUN_WAIT) */
-    if (d->rx_ready) {
-        unsigned n = v34_rx_s_run(&d->vrx);
-        if (n == 0 && v34_rx_s_begins(&d->vrx) && d->sdet.present < SDET_PRESENT + SDET_RUN_WAIT) return;
-        if (n > 0) v34_rx_flush_before(&d->vrx, n);
+     * for (SDET_RUN_WAIT). Catching up, the decoder is behind the line (its
+     * newest input is a stored point, S is still in the ring): the stored
+     * points go on into it at the same pace during S and S-bar, up to where
+     * S begins (s_drain). B1 not passed: nothing of it is data */
+    if (d->catchup) {
+        d->catchup = K56D_DRAIN;
+    } else {
+        if (d->rx_ready) {
+            unsigned n = v34_rx_s_run(&d->vrx);
+            if (n == 0 && v34_rx_s_begins(&d->vrx) && d->sdet.present < SDET_PRESENT + SDET_RUN_WAIT) return;
+            if (n > 0) v34_rx_flush_before(&d->vrx, n);
+        }
+        d->rx_ready = 0;
     }
-    d->rx_ready = d->tx_ready = 0;
+    d->tx_ready = 0;
     tonedet_init(&d->tone_b, TONEDET_1200);                     /* its tone B here too: a retrain */
     d->got_mp = d->got_e = 0; d->cand_ok = 0;
     d->fn = d->ones = 0;
@@ -352,6 +363,41 @@ static int catch_up(k56d_t *d)
     return 0;
 }
 
+/* Its S came while catching up (reneg_begin): one symbol period of the
+ * drain, 1 and 2 stored points in turn as catch_up, B1 checked as it
+ * completes (failed: nothing of it is data), until the decoder's newest
+ * inputs are a run of S_DRAIN_RUN of S (a run that long is not data), or
+ * the ring is empty; then the frames before S go on but for the margin
+ * (v34_rx_flush_before, as reneg_begin), the rest is dropped */
+#define S_DRAIN_RUN 8
+static void s_drain(k56d_t *d)
+{
+    unsigned run = 0;
+    int k, n = d->catch_odd ? 2 : 1;
+    d->catch_odd ^= 1;
+    for (k = 0; k < n && d->ring_fill; k++) {
+        v34_pt_t x;
+        x.re = d->ring[d->ring_r][0]; x.im = d->ring[d->ring_r][1];
+        if (++d->ring_r == K56D_RING) d->ring_r = 0;
+        d->ring_fill--;
+        v34_rx_put(&d->vrx, v34_nl_decode(&d->vpar, x), NULL);
+        if (!d->rx_ready && d->vrx.b1_bits >= d->vpar.map.N) {
+            TR("K56D %.3f B1 %d of %d bits wrong (to its S)\n", d->now / 8000.0, (int)d->vrx.b1_errors, (int)d->vrx.b1_bits);
+            if (d->vrx.b1_errors * 8 > d->vrx.b1_bits) break;
+            d->rx_ready = 1;
+        }
+        if (!d->rx_ready) continue;
+        run = v34_rx_s_run(&d->vrx);
+        if (run >= S_DRAIN_RUN) break;
+    }
+    if (k == n && d->ring_fill) return;
+    if (d->rx_ready && run > 0) v34_rx_flush_before(&d->vrx, run);
+    TR("K56D %.3f caught up to its S: run %u, %u stored points dropped\n", d->now / 8000.0, run, (unsigned)d->ring_fill);
+    d->rx_ready = 0;
+    d->catchup = 0;
+    d->ring_fill = 0;
+}
+
 static void rx_symbol(k56d_t *d)
 {
     qamrx_t *r = &d->rx;
@@ -359,6 +405,7 @@ static void rx_symbol(k56d_t *d)
     int n = r->nsym - 1, k;
 
     d->zpw += (((int64_t)r->zr * r->zr + (int64_t)r->zi * r->zi) - d->zpw) / 16;
+    if (d->catchup == K56D_DRAIN) s_drain(d);
     switch (d->rxmode) {
     case RX_KNOWN:
         if (n < V34_PP_LEN) v34_pp(n, &dr, &di); else v34trn_next(&d->ref, &dr, &di);
@@ -532,10 +579,13 @@ uint8_t k56d_tick(k56d_t *d, int16_t rxs)
     } else {
         if (qamrx_tick(&d->rx, x)) rx_symbol(d);
         if (d->state == K56D_ENDED) return 0xff;
-        if (d->rxmode == RX_DATA && d->state == K56D_DATA) {
+        if (d->rxmode == RX_DATA && d->state != K56D_TRAIN2) {
+            /* its S from its data's first symbol on (B1, and its data before
+             * ours has begun): else S would be decoded as data until heard.
+             * Not with its E early (our MP still to go) */
             (void)sdet_tick(&d->sdet, x);
             if (d->sdet.present >= SDET_PRESENT) reneg_begin(d);
-            else if (tonedet_tick(&d->tone_b, x)) return retrain(d);
+            else if ((d->state == K56D_DATA || d->state == K56D_RENEG) && tonedet_tick(&d->tone_b, x)) return retrain(d);
         } else if (d->state == K56D_RENEG && tonedet_tick(&d->tone_b, x)) {
             /* it gave up its renegotiation for a retrain (R-3) */
             return retrain(d);

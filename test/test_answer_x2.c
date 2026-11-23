@@ -233,7 +233,7 @@ static x2call_t X; static rbits_t DN, UP;
  * one's, ms after the first's data (0 none); md0 the first MP's MD;
  * hangup: our cleardown once x2d is in the rate change; whole: the
  * client's S once its mapping frame under way is out (x2call_cfg) */
-static struct { int ms, index, index2, md, md0, hangup, whole, words; uint16_t mask; } RN;
+static struct { int ms, index, index2, md, md0, hangup, whole, words, up; uint16_t mask; } RN;
 /* RN.words: the upstream is counter words (test/wctr.h), the client's S
  * after its mapping frame (RN.whole) or where it falls */
 static wctr_t WU;
@@ -325,7 +325,7 @@ static void x2_call(int pad, int index, uint16_t up_mask, int silent, int echo_d
     xc.md = RN.md0;
     xc.reneg_ms = RN.ms; xc.reneg_index = RN.index; xc.reneg_mask = RN.mask; xc.reneg_md = RN.md;
     xc.reneg_index2 = RN.index2;
-    xc.reneg_whole = RN.whole;
+    xc.reneg_whole = RN.whole; xc.reneg_up = RN.up;
     memset(&WU, 0, sizeof WU); WU.gen = 0x2c00;
     x2call_init(&X, &xc);
     for (n = 0; n < 8000L * secs; n++) {
@@ -545,6 +545,35 @@ static void x2_tests(void)
         else CHECK(gap >= frame - 1 && gap <= 2 * frame);
         CHECK(16 * WU.lost >= gap && 16 * WU.lost < gap + 32);
         CHECK_EQ_I(WU.locked, 1);
+    }
+
+    /* 4c. its S near the start of its upstream data (Task 10d): 40 .. 450
+     *    ms after its B1's first symbol, before our start segment is out
+     *    (x2d in X2D_START until some 510 ms after its E): followed as a
+     *    rate change, no bit delivered that it did not send as data (nothing
+     *    inserted, the first lock within a word of the start), nothing
+     *    repeated, at most the margin frame lost (its S before its B1 is
+     *    decided, some 55 ms after its E: nothing before it is data) */
+    {
+        static const int st[] = { 40, 50, 60, 70, 150, 450 };
+        int k;
+        for (k = 0; k < (int)(sizeof st / sizeof st[0]); k++) {
+            int64_t frame = 24000 * 8 / 3200, gap;
+            RN.ms = st[k]; RN.index = 8; RN.mask = 0x1FFE; RN.whole = 1; RN.words = 1; RN.up = 1;
+            x2_call(0, 1, 0x03FE, X2C_SIL_NONE, 0, 40, 50000, &o);
+            gap = WU.gap_bits;
+            printf("  x2 rate change, the client's S %d ms into its upstream data, counter words up: %ld words, lost %" PRId64
+                   ", again %" PRId64 "; breaks %" PRId64 " (%" PRId64 " bits missing), %" PRId64 " bits before the first\n",
+                   st[k], (long)WU.words, WU.lost, WU.again, WU.breaks, gap, WU.lead);
+            CHECK(o.ok); CHECK_EQ_I(X.renegs, 1); CHECK_EQ_I(o.renegs, 1);
+            CHECK(UP.n - o.up0 >= 50000);
+            CHECK_EQ_I(WU.again, 0);
+            CHECK(WU.lead >= 0 && WU.lead < 16);
+            CHECK(WU.breaks <= 1);
+            CHECK(gap >= 0 && gap <= frame);
+            CHECK(16 * WU.lost >= gap && 16 * WU.lost < gap + 32);
+            CHECK_EQ_I(WU.locked, 1);
+        }
     }
 
     /* 5. a rate change we cannot serve: an index without a bank (0), or

@@ -86,10 +86,13 @@ void k56tx_init(k56tx_t *t)
     enter(t, K56TX_SIL1);
 }
 
+/* the client looks for R in our data, at a frame boundary: in the middle
+ * of a frame, or with our MP out but our data not yet begun (its S in its
+ * B1: Task 10d), R2 follows that frame, or our data's first */
 void k56tx_reneg(k56tx_t *t)
 {
     t->mp_in = 0;
-    if (t->seg == K56TX_DATA && t->fpos != K56ENC_N) {
+    if ((t->seg == K56TX_DATA && t->fpos != K56ENC_N) || (t->seg >= K56TX_MP && t->seg < K56TX_DATA)) {
         t->reneg_due = 1;
         return;
     }

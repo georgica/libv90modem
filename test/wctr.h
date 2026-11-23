@@ -16,6 +16,7 @@ typedef struct {
     int64_t nbits, at;              /* bits in; the count at which the word wanted ends */
     int64_t breaks, gap_bits;       /* relocks with bits missing or inserted; the bits missing, net */
     int64_t again;                  /* words received twice (a relock behind the one wanted) */
+    int64_t lead;                   /* bits in before the first word of the first lock */
 } wctr_t;
 static int wctr_get(wctr_t *w)
 {
@@ -39,6 +40,7 @@ static void wctr_put(wctr_t *w, int bit)
     if (w->nb < 48) return;
     a = (uint16_t)(w->sr >> 32); b = (uint16_t)(w->sr >> 16); c = (uint16_t)w->sr;
     if ((uint16_t)(a + 1) != b || (uint16_t)(b + 1) != c) return;
+    if (!w->had) w->lead = w->nbits - 48;
     if (w->had) {
         /* words skipped; fewer than none: words again (a repeat) */
         int32_t gap = (int32_t)(int16_t)(uint16_t)(a - w->want);

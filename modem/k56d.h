@@ -18,8 +18,9 @@
  *   x2d and p34d. A client whose B1 fails under that is tried under x2's
  *   configuration (64 states, non-linear, expanded shaping; up_hyp 1) on
  *   its points kept from E on (ring), and goes on under it if B1 passes
- *   there (k56d.c, "a client that ignores our MP"). The client's S here is
- *   its renegotiation ->
+ *   there (k56d.c, "a client that ignores our MP"). The client's S here,
+ *   or from its B1 on (in K56D_MP: ours not yet out; then our R2 after our
+ *   first data frame), is its renegotiation ->
  *   K56D_RENEG ("Rate renegotiation"): our data stops at the frame's end,
  *   then R2, TRN2A 2048, MARK, TRN2B until its MP and the grid, MP and MP'
  *   at 1 bit a symbol, E 24 (k56tx_reneg); its S-bar, TRN, MP (4 points,
@@ -58,6 +59,7 @@
 #define K56D_MAX_ECHO_DELAY 1919    /* the longest echo delay that can be given (as p34d) */
 #define K56D_FBUF 192               /* an MP (88 bits) and a next frame sync */
 #define K56D_RING 192               /* B1 (one data frame) and the Viterbi's delay, symbols */
+#define K56D_DRAIN 2                /* catchup: its S came while catching up */
 
 /* time limits, ms (each under 10 s) */
 #define K56D_T_S    3000    /* the end of our Js to the client's S */
@@ -151,7 +153,8 @@ typedef struct {
     uint8_t    up_hyp;              /* the upstream's options: 0 ours (what our MP asked),
                                        1 x2's (64 states, non-linear, expanded shaping) */
     uint8_t    up_retried;          /* B1 failed under the first: the other one tried */
-    uint8_t    catchup;             /* decoding the stored points under the other */
+    uint8_t    catchup;             /* decoding the stored points under the other;
+                                     * K56D_DRAIN: up to its S (a renegotiation) */
     uint8_t    catch_odd;           /* catching up: 1 or 2 points this symbol period */
     uint8_t    ring_full;           /* points lost: no retry */
     uint16_t   ring_w, ring_r, ring_fill;   /* the ring's next write, next read, unread */

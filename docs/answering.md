@@ -118,7 +118,10 @@ a mu-law line: never with `alaw` set. Robbed-bit lines are not handled.
   Courier about 12 s in, and again later); we answer at the rate and for
   the pad (none, 3 dB, 6 dB) its request names: `V90M_EV_DATA_STOPPED`,
   then `V90M_EV_RATES` and `V90M_EV_DATA_MOVING`, about 0.75 s later;
-  `retraining` stays 0 and `v90m_stats.renegotiations` counts it.
+  `retraining` stays 0 and `v90m_stats.renegotiations` counts it. Its S
+  is watched for from its B1 on: one before our start segment is out is
+  followed the same way (data had not moved: no `V90M_EV_DATA_STOPPED`,
+  and it is not counted).
 - **No way back to V.34.** Once the marker has come, a start-up or rate
   change that does not complete, or a request we cannot serve, ends the
   call with `V90M_END_X2_FAILED`; the client's Tone A (a retrain it asks
@@ -182,13 +185,19 @@ answering, on a mu-law line: never with `alaw` set.
   equaliser back as it was at its E, and if B1 passes there the call goes
   on under it (a renegotiation starts from the configuration that passed,
   and tries the other if its B1 fails). Otherwise, as before,
-  `V90M_END_K56_FAILED`. Only the simulated client has done it.
+  `V90M_END_K56_FAILED`. Its S while catching up: the stored points go on
+  into the decoder at the same pace up to where S begins, and the data
+  before S goes on but for one mapping frame, as without the catch-up.
+  Only the simulated client has done it.
 - **Renegotiation.** The client's (its S in data mode) is followed: our
   data stops at a frame's end, our short training, its MP, our MP, then
   data at the new rate: `V90M_EV_DATA_STOPPED`, `V90M_EV_RATES`,
   `V90M_EV_DATA_MOVING` (`retraining` 0; `v90m_stats.renegotiations`
   counts it). An MP with rate 0 ends the call as
-  `V90M_END_CLEARDOWN_FAR`. We never start one.
+  `V90M_END_CLEARDOWN_FAR`. We never start one. Its S is watched for from
+  its B1 on: one before our data has begun is followed the same way, our
+  R2 after our first data frame (data had not moved: no
+  `V90M_EV_DATA_STOPPED`, and it is not counted).
 - **Retrain.** The client's (its tone B in data mode) is followed: V.34's
   retrain Phase 2 with INFO1a flagged again, then the whole training:
   `V90M_EV_DATA_STOPPED` with `retraining` set, then

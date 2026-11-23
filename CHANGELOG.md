@@ -272,6 +272,27 @@ Fixed:
   exactly one mapping frame is lost each way across a renegotiation
   between two of ours, where 5 or 6 were (390 to 468 bits at 31200 bit/s).
   Calls without S in data mode are unchanged.
+- x2 and K56flex, answering: the client's S is watched for from its B1's
+  first symbol on. It was watched for only once data moved both ways, so
+  an S that came while its B1 was being decided or our own data had not
+  begun (K56flex: up to some 67 ms after its E; x2: until our start
+  segment was out, some 510 ms) was decoded as data until it was heard:
+  up to 5 mapping frames of bits that were not data (390 at 31200 bit/s)
+  were delivered, or (x2) the rate change was never seen and the rest of
+  the call was garbage. Now such an S is followed as any renegotiation:
+  the frames before it go on but for the margin frame once B1 has passed,
+  nothing before it is data if B1 has not been decided. K56flex: our R2
+  then waits for our first data frame (with our MP, MP' or E still going
+  out it began at once, which the client does not look for). An S within
+  about 40 ms (60 ms for a client that ignores our MP) of its data ended
+  the call (`V90M_END_K56_FAILED`); it is now followed too.
+- K56flex, answering, a client that ignores our MP: its S while the stored
+  points are being caught up with (about 110 ms after its B1 failed under
+  what we asked) lost 6 to 18 mapping frames (the decoder was behind the
+  line: S was not found in it, and the points still stored were dropped).
+  Now the stored points go on into the decoder at the same pace during its
+  S and S-bar, up to where S begins: the margin frame is lost, as
+  otherwise. Calls without S near the start of data are unchanged.
 - V.92, calling role: the clock offset measured on the digital modem's L2
   can no longer overflow (undefined behaviour in C) when the line turns
   its tones far beyond 1000 ppm per block; it gives the +-1000 ppm limit,

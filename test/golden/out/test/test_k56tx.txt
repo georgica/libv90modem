@@ -13,4 +13,5 @@ k56tx
   TRN2A's even signs descrambled, not ones: call 0, first renegotiation 0, second 0
   J in Js: silence 2 12288, TRN2B on pad 1's magnitudes (0 off)
   renegotiation in TRN1A: R2 at once; TRN2A 2048, E 24
-k56tx: 98 checks, 0 failures
+  renegotiation in our E: data after 10 symbols, R2 after 18
+k56tx: 102 checks, 0 failures

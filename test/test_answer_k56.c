@@ -489,8 +489,10 @@ static void kd_call(const kd_opts *ko, long secs, kd_out *o)
             }
             was_mv = mv;
             /* (a retrain in a renegotiation: its S, its retrain, data again once) */
+            /* (its S before data first moved: data moves once) */
             if (rn == (ko->retrain_in_reneg ? 2 : ko->retrain_ms ? ko->retrains : ko->reneg_ms2 ? 2 : 1)
-                && o->nmove == (ko->retrain_in_reneg ? 2 : rn + 1) && DA.n >= DBITS && DC.n >= DBITS) {
+                && (o->nmove == (ko->retrain_in_reneg ? 2 : rn + 1) || (o->nmove == rn && o->move_at > o->rn_at))
+                && DA.n >= DBITS && DC.n >= DBITS) {
                 kd_seg_close(o);
                 break;
             }
@@ -879,6 +881,50 @@ static void k56_reneg_tests(void)
         else CHECK(gap >= frame - 1 && gap <= 2 * frame);
         CHECK(16 * KWU.lost >= gap && 16 * KWU.lost < gap + 32);
         CHECK_EQ_I(KWU.locked, 1);
+    }
+
+    /* its S near the start of its data (Task 10d), counter words up, its S
+     * after a mapping frame (ms * 3.2 symbols, a multiple of 8): no bit
+     * delivered that it did not send as data (nothing inserted, the first
+     * lock within a word of the start), nothing repeated, data again. The
+     * plain client 20 .. 70 ms into its data (from its B1's first symbol: B1
+     * is 30 ms; ours is not out until some 67 ms after its E): up to 50 ms
+     * its S is heard before its B1 is decided (some 54 ms after its E) and
+     * nothing before it is data; from 55 ms what it sent before S comes but
+     * for the margin frame. The client ignoring our MP 60 .. 150 ms in,
+     * while the stored points are caught up with (about 110 ms from the
+     * retry): the margin frame lost, as without the catch-up */
+    {
+        static const struct { int ms, heavy, kept; } st[] = {
+            { 20, 0, 0 }, { 40, 0, 0 }, { 50, 0, 0 }, { 55, 0, 1 }, { 60, 0, 1 }, { 70, 0, 1 },
+            { 60, 1, 1 }, { 70, 1, 1 }, { 100, 1, 1 }, { 150, 1, 1 }
+        };
+        for (j = 0; j < (int)(sizeof st / sizeof st[0]); j++) {
+            int64_t frame = 31200 * 8 / 3200, gap;
+            kd_default(&ko); ko.reneg_ms = st[j].ms; ko.reneg_rate = 10;
+            ko.heavy_up = st[j].heavy ? K56C_HEAVY_ALWAYS : K56C_HEAVY_NONE;
+            KW = 1; memset(&KWU, 0, sizeof KWU); KWU.gen = 0x2c00;
+            kd_call(&ko, 60, &o);
+            KW = 0;
+            gap = KWU.gap_bits;
+            printf("  K56flex client%s, its S %d ms into its data, counter words up: %ld words, lost %" PRId64
+                   ", again %" PRId64 "; breaks %" PRId64 " (%" PRId64 " bits missing), %" PRId64 " bits before the first\n",
+                   st[j].heavy ? " ignoring our MP" : "", st[j].ms, (long)KWU.words, KWU.lost, KWU.again,
+                   KWU.breaks, gap, KWU.lead);
+            CHECK_EQ_I(K.renegs, 1); CHECK(o.nmove >= 1); CHECK(o.move_at > o.rn_at);
+            CHECK_EQ_I(A.phase, ANS_K56); CHECK_EQ_I(A.u.k56.state, K56D_DATA); CHECK_EQ_I(o.error, 0);
+            CHECK(KWU.words > DBITS / 16);
+            CHECK_EQ_I(KWU.again, 0);
+            CHECK(KWU.lead >= 0 && KWU.lead < 16);
+            CHECK_EQ_I(KWU.locked, 1);
+            if (st[j].kept) {
+                CHECK_EQ_I(KWU.breaks, 1);
+                CHECK(gap >= frame - 1 && gap <= frame);
+                CHECK(16 * KWU.lost >= gap && 16 * KWU.lost < gap + 32);
+            } else {
+                CHECK_EQ_I(KWU.breaks, 0); CHECK_EQ_I(KWU.lost, 0);
+            }
+        }
     }
 
     /* a client that ignores our MP renegotiates (13 -> 10): its data after
