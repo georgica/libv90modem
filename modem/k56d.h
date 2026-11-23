@@ -152,10 +152,12 @@ typedef struct {
                                        1 x2's (64 states, non-linear, expanded shaping) */
     uint8_t    up_retried;          /* B1 failed under the first: the other one tried */
     uint8_t    catchup;             /* decoding the stored points under the other */
+    uint8_t    catch_odd;           /* catching up: 1 or 2 points this symbol period */
     uint8_t    ring_full;           /* points lost: no retry */
     uint16_t   ring_w, ring_r, ring_fill;   /* the ring's next write, next read, unread */
     int16_t    ring[K56D_RING][2];  /* its points from E on (clipped, before v34_nl_decode),
                                        while B1 is not decided or being caught up */
+    int32_t    eq_cr[QRX_NTAP], eq_ci[QRX_NTAP];  /* the equaliser at its E: back at a retry */
     int        tx_ready, rx_ready;
     int        down_rate, up_rate;  /* bit/s */
 } k56d_t;

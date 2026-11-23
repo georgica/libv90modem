@@ -496,7 +496,7 @@ upstream: 64 states, non-linear, expanded shaping), then
 
 | | ARM instructions per second of line |
 |---|---|
-| K56flex data mode, the heavy client (second 20 to 21) | 84.43 M |
+| K56flex data mode, the heavy client (second 20 to 21) | 84.43 M (84.42 M at fix round 1) |
 | V.90 data mode, the same run (second 15 to 16) | 39.35 M |
 | K56flex data mode, a client that keeps to our MP (baseline above) | 39.27 M |
 | x2 data mode (baseline above) | 82.57 M |
@@ -507,20 +507,44 @@ downstream does not change; 742404 bits up, 0 bad.
 The catch-up, from the same recording: `bench_v90.arm -k` (armv5) on
 prefixes 10 ms apart, instructions per 10 ms block. B1 fails under our
 MP's configuration at 16.202 s of the call (54 ms after its E: one data
-frame and the Viterbi's delay, 173 symbols, under the ring's 192); the
-stored points are then decoded 3 a symbol period:
+frame and the Viterbi's delay, 173 symbols, under the ring's 192). Lateness
+is when v90d's single pump thread would hand back each block's answer
+after the block came in, at 122 M instructions a second with nothing else
+running (each block starts when it arrives or when the one before is done;
+v90d prefills 20 ms, `fw/drv/pump.c`).
 
-| block (s of the call) | heavy client | a client that keeps to our MP |
-|---|---|---|
-| 16.19-16.20 | 0.34 M | 0.31 M |
-| 16.20-16.21 | 1.73 M | 0.32 M |
-| 16.21-16.22 | 1.94 M | 0.38 M |
-| 16.22-16.23 | **2.02 M** (the heaviest) | 0.41 M |
-| 16.23-16.24 | 0.93 M | 0.40 M |
-| 16.24-16.25 | 0.84 M | 0.40 M |
+First version (3 stored points every symbol period, catch-up about 27 ms):
 
-At the box's 122 M instructions a second the heaviest block is 16.5 ms of
-CPU for 10 ms of line; the three catch-up blocks together are 5.7 M (47 ms
-for 30 ms), once per call (and per renegotiation whose first hypothesis
-fails), then 0.84 M a block (8.4 ms per 10 ms) for the rest of the call.
+| block (s of the call) | heavy client | lateness | a client that keeps to our MP |
+|---|---|---|---|
+| 16.19-16.20 | 0.34 M | 2.8 ms | 0.31 M |
+| 16.20-16.21 | 1.73 M | 14.2 ms | 0.32 M |
+| 16.21-16.22 | 1.94 M | 20.1 ms | 0.38 M |
+| 16.22-16.23 | 2.02 M | **26.7 ms** | 0.41 M |
+| 16.23-16.24 | 0.93 M | 24.3 ms | 0.40 M |
+| 16.24-16.25 | 0.84 M | 21.2 ms | 0.40 M |
 
+Over the 20 ms prefill: about 12 ms of idle codewords on the line at our
+first data frames (Task 19 review). Ruling (amends D12): 3 stored points
+every 2 symbol periods. As committed (B1 under x2's configuration decided
+36 ms after the retry, caught up about 110 ms after it):
+
+| block (s of the call) | heavy client | CPU at 122 M/s | lateness |
+|---|---|---|---|
+| 16.19-16.20 | 0.34 M | 2.8 ms | 2.8 ms |
+| 16.20-16.21 | 1.24 M | 10.2 ms | 10.2 ms |
+| 16.21-16.22 | 1.18 M | 9.6 ms | 9.8 ms |
+| 16.22-16.23 | 1.18 M | 9.7 ms | 9.7 ms |
+| 16.23-16.24 | 1.19 M | 9.7 ms | 9.7 ms |
+| 16.24-16.25 | **1.28 M** (the heaviest) | 10.5 ms | 10.5 ms |
+| 16.25-16.31 (6 blocks) | 1.24-1.25 M | 10.2 ms each | 10.7 to **11.7 ms** |
+| 16.31-16.32 | 0.94 M | 7.7 ms | 9.4 ms |
+| 16.32-16.33 | 0.84 M | 6.9 ms | 6.9 ms |
+
+The blocks run at about 10.2 ms of CPU for 10 ms of line, not the review's
+estimate of 9.3 ms (the live 64-state decoding, 0.84 M a block, comes on top
+of the stored points' 0.4 M). The lateness grows by about 0.2 ms a block
+and peaks at 11.7 ms, inside the 20 ms prefill with 8.3 ms to spare, with
+the box doing nothing else. The equaliser is put back as it was at its E
+before the stored points are decoded again (its taps, 576 bytes, kept in
+k56d_t: 22272 -> 22848 bytes, still inside the union under v92d_t).

@@ -177,9 +177,11 @@ answering, on a mu-law line: never with `alaw` set.
   it will use. A client that sends x2's upstream regardless (64 states,
   non-linear, expanded shaping) fails B1 under what we asked; its points
   since its E are kept (192 symbols), decoded again under x2's
-  configuration, 3 a symbol period until the receiver has caught up (about
-  20 ms), and if B1 passes there the call goes on under it (a renegotiation
-  starts from the configuration that passed). Otherwise, as before,
+  configuration, 3 every 2 symbol periods until the receiver has caught up
+  (about 110 ms; B1 is decided about 36 ms after the retry), the
+  equaliser back as it was at its E, and if B1 passes there the call goes
+  on under it (a renegotiation starts from the configuration that passed,
+  and tries the other if its B1 fails). Otherwise, as before,
   `V90M_END_K56_FAILED`. Only the simulated client has done it.
 - **Renegotiation.** The client's (its S in data mode) is followed: our
   data stops at a frame's end, our short training, its MP, our MP, then
@@ -195,10 +197,11 @@ answering, on a mu-law line: never with `alaw` set.
   or in the client's renegotiation (one it gives up) is a retrain; a
   client that gives up during a training (the first, or a retrain's) and
   retrains again is not followed, and the call ends at that training's
-  time limit (`V90M_END_K56_FAILED`). The third retrain
-  in a row from data mode ends the call too; retrains are forgotten after
-  2 s of data mode. We never start one: `v90m_retrain` gives
-  `V90M_ESTATE`.
+  time limit (`V90M_END_K56_FAILED`). A retrain from its renegotiation
+  is counted twice, in `renegotiations` (its S stopped the data) and in
+  `retrains`. The third retrain in a row from data mode ends the call
+  too; retrains are forgotten after 2 s of data mode. We never start
+  one: `v90m_retrain` gives `V90M_ESTATE`.
 - **Cleardown and failures.** `v90m_cleardown` ends the call at once
   (`V90M_END_CLEARDOWN_OURS`), with nothing sent: no K56flex cleardown is
   known. A start-up, renegotiation or retrain that does not complete in
@@ -207,8 +210,9 @@ answering, on a mu-law line: never with `alaw` set.
 - **CPU.** K56flex data mode costs about the same as V.90's (it asks the
   client for V.90's upstream options); with a client that ignores our MP,
   about x2's (84 M ARM instructions a second against 39 M), and up to
-  200 M a second for the 30 ms of catching up after its B1
-  ([limits.md](limits.md), `docs/history/audit-0.6.md`).
+  128 M a second for the 110 ms of catching up after its B1, about the
+  box's whole CPU: v90d's answers come at most 11.7 ms late, inside its
+  20 ms of prefill ([limits.md](limits.md), `docs/history/audit-0.6.md`).
 
 ## Retrains, rate renegotiation, cleardown
 

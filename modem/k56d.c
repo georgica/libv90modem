@@ -170,7 +170,8 @@ static void rx_begin_data(k56d_t *d)
     if (up_params(d, d->up_rate, d->up_hyp) != 0) { end(d, K56D_ERR_RATE); return; }
     v34_rx_init(&d->vrx, &d->vpar, put_data, d);
     d->vgain = (int32_t)v34_gain_q14(d->vpar.energy_tx_q8);
-    d->up_retried = d->catchup = d->ring_full = 0;
+    d->up_retried = d->catchup = d->catch_odd = d->ring_full = 0;
+    memcpy(d->eq_cr, d->rx.cr, sizeof d->eq_cr); memcpy(d->eq_ci, d->rx.ci, sizeof d->eq_ci);
     d->ring_w = d->ring_r = d->ring_fill = 0;
     d->rxmode = RX_DATA;
     d->quiet = 0; d->q_dead = 0;
@@ -278,8 +279,10 @@ static int16_t clip16(int32_t v) { return (int16_t)(v > 32767 ? 32767 : v < -327
  * shaping, and nothing in-band says what it will send. A client may send
  * x2's upstream regardless (64 states, non-linear, expanded shaping). Its
  * points from E on are kept (ring) until B1 is decided; if B1 fails under
- * the hypothesis we started with, the receiver starts again under the other
- * and decodes the stored points, 3 a symbol (no burst), the live ones
+ * the hypothesis we started with, the receiver starts again under the other,
+ * the equaliser back as it was at E (B1 under the wrong one pulled it), and
+ * decodes the stored points, 3 every 2 symbol periods (a 10 ms block of
+ * the box stays under 10 ms of its CPU: docs/limits.md), the live ones
  * joining the queue, the equaliser left as it is meanwhile. B1 passes: the
  * data goes on under it. It fails too: K56D_ERR_B1, as before. A call whose
  * B1 passes at once is decoded exactly as without the ring. */
@@ -306,6 +309,7 @@ static int b1_check(k56d_t *d)
     d->up_hyp ^= 1;
     if (up_params(d, d->up_rate, d->up_hyp) != 0) { end(d, K56D_ERR_B1); return -1; }
     v34_rx_init(&d->vrx, &d->vpar, put_data, d);
+    memcpy(d->rx.cr, d->eq_cr, sizeof d->eq_cr); memcpy(d->rx.ci, d->eq_ci, sizeof d->eq_ci);
     g1 = (int32_t)v34_gain_q14(d->vpar.energy_tx_q8);
     d->vgain = g1;
     /* the stored points to the new scale: the same received signal */
@@ -319,14 +323,15 @@ static int b1_check(k56d_t *d)
     return 0;
 }
 
-#define CATCH_UP_PER_SYM 3
-
-/* up to CATCH_UP_PER_SYM stored points into the receiver (B1 checked as
- * it completes); done when the ring is empty. -1: ended */
+/* 1 and 2 stored points in turn (3 every 2 symbol periods; the live one
+ * joins the queue each period, so it shrinks by 1 every 2) into the
+ * receiver, B1 checked as it completes; done when the ring is empty (the
+ * ring never fills: one in, at least one out). -1: ended */
 static int catch_up(k56d_t *d)
 {
-    int k;
-    for (k = 0; k < CATCH_UP_PER_SYM && d->ring_fill; k++) {
+    int k, n = d->catch_odd ? 2 : 1;
+    d->catch_odd ^= 1;
+    for (k = 0; k < n && d->ring_fill; k++) {
         v34_pt_t x;
         x.re = d->ring[d->ring_r][0]; x.im = d->ring[d->ring_r][1];
         if (++d->ring_r == K56D_RING) d->ring_r = 0;
@@ -415,7 +420,7 @@ static void rx_symbol(k56d_t *d)
         in.re = clip16((int32_t)(((int64_t)r->zr * 512) / g)); in.im = clip16((int32_t)(((int64_t)r->zi * 512) / g));
         if (!d->rx_ready || d->catchup) ring_put(d, in);
         if (d->catchup) {
-            /* the stored points, this one last, 3 a symbol under the other
+            /* the stored points, this one last, 3 every 2 symbols under the other
              * hypothesis; this one's decision on its own (no precoding: the
              * plain slicer, as v34_rx_put's own tentative decision) */
             tent = v34_slice(&d->vpar, v34_nl_decode(&d->vpar, in));

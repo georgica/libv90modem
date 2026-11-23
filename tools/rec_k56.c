@@ -65,7 +65,7 @@ int main(int argc0, char **argv0)
     answer_init(&a, &ac);
     answer_v90_line(&a, -1, 0, 0);
     k56call_default(&kc, 3000);
-    kc.pad_mode = pad_mode; kc.rate = rate; kc.rbs = rbs & 0x3f; kc.heavy_up = heavy;
+    kc.pad_mode = pad_mode; kc.rate = rate; kc.rbs = rbs & 0x3f; kc.heavy_up = heavy ? K56C_HEAVY_ALWAYS : K56C_HEAVY_NONE;
     kc.getbit = get; kc.putbit = put; kc.user = aio;
     k56call_init(&k, &kc);
     for (n = 0; n < 8000L * secs; n++) {

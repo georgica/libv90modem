@@ -58,11 +58,12 @@ Changed (answering role, K56flex):
 - A client that ignores our MP and sends x2's upstream (64 states,
   non-linear, expanded shaping) is decoded: its B1 fails under what our MP
   asked for (16 states, linear, minimum shaping), and the points kept
-  since its E are decoded again under x2's configuration (3 a symbol, the
-  live ones joining them); if B1 passes there, the data goes on under it
-  (it ended with `V90M_END_K56_FAILED`). Its data mode costs about what
-  x2's does on the CPU. A wrong B1 under both still ends the call, some
-  20 ms later than before. Calls whose B1 passes are unchanged.
+  since its E are decoded again under x2's configuration (3 every 2
+  symbol periods, the live ones joining them; caught up after about
+  110 ms); if B1 passes there, the data goes on under it (it ended with
+  `V90M_END_K56_FAILED`). Its data mode costs about what x2's does on the
+  CPU. A wrong B1 under both still ends the call, about 40 ms later than
+  before. Calls whose B1 passes are unchanged.
   Simulation only.
 - A client that gives up its renegotiation and retrains (its tone B during
   the renegotiation) is followed as a retrain from data mode is; the call

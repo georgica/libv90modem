@@ -38,7 +38,9 @@
  *     client silent after its renegotiation's S: K56flex's end within 10 s;
  *     60 s of data mode (TEST_SHORT: 15 s) with no R of ours (the events
  *     and end reasons through the API: test/api/test_api.c); a retrain
- *     halfway through its renegotiation (R-3): followed, data again;
+ *     halfway through its renegotiation (R-3): followed, data again; a
+ *     client ignoring our MP that renegotiates, its upstream x2's again or
+ *     ours after it (the retry back to ours);
  *   - the client's retrain (Task 12): one 5 s into data mode (TEST_SHORT:
  *     2 s, robbed bits none only), r = 13, pad 0, robbed bits none and
  *     0x24: ANS_K56RT at once, Phase 2 again with INFO1a flagged, the whole
@@ -664,7 +666,7 @@ static void k56_data_tests(void)
      * B1 fails under what we asked; the stored points replayed under x2's
      * pass, and the data goes on under it (hypothesis B): KH_S of data mode
      * without an error either way */
-    kd_default(&ko); ko.heavy_up = 1; ko.hold = KH_S;
+    kd_default(&ko); ko.heavy_up = K56C_HEAVY_ALWAYS; ko.hold = KH_S;
     kd_call(&ko, 30 + KH_S, &o);
     kd_report("K56flex client ignoring our MP (64 states, non-linear, expanded)", &o);
     printf("     upstream hypothesis %d, %d s of data mode\n", A.u.k56.up_hyp, KH_S);
@@ -678,7 +680,7 @@ static void k56_data_tests(void)
     /* Review Focus 3: B1 wrong from a client that keeps to our MP, and from
      * one that does not: neither hypothesis passes, K56D_ERR_B1 as before */
     for (j = 0; j < 2; j++) {
-        kd_default(&ko); ko.rate = 1; ko.b1_bad = 1; ko.heavy_up = j;
+        kd_default(&ko); ko.rate = 1; ko.b1_bad = 1; ko.heavy_up = j ? K56C_HEAVY_ALWAYS : K56C_HEAVY_NONE;
         kd_call(&ko, 60, &o);
         printf("  K56flex client, B1 wrong, heavy upstream %d: ended %.2f s after ANS_K56, error %d, hypothesis %d\n",
                j, (o.end_at - o.k56_at) / 8000.0, o.error, A.u.k56.up_hyp);
@@ -847,6 +849,29 @@ static void k56_reneg_tests(void)
     CHECK(o.end_at - o.quiet_at <= 8000L * 10);
     CHECK_EQ_I(o.phase, ANS_FAILED); CHECK_EQ_I(o.error, K56D_ERR_RENEG);
     CHECK_EQ_I(o.k56_failed, 1); CHECK_EQ_I(o.k56_lost, 0); CHECK_EQ_I(o.cleared, 0); CHECK_EQ_I(o.connected_once, 1);
+
+    /* a client that ignores our MP renegotiates (13 -> 10): its data after
+     * it with x2's upstream again (the receiver starts from the hypothesis
+     * that passed: no retry), or with what our MP asks this time (x2's
+     * fails B1, the retry goes back to ours). The data check each way in
+     * both data segments */
+    for (j = 0; j < 2; j++) {
+        kd_default(&ko); ko.heavy_up = j ? K56C_HEAVY_FIRST : K56C_HEAVY_ALWAYS;
+        ko.reneg_ms = RN_MS; ko.reneg_rate = 10;
+        kd_call(&ko, 60, &o);
+        snprintf(what, sizeof what, "client ignoring our MP %s, a renegotiation 13 -> 10",
+                 j ? "until its renegotiation" : "throughout");
+        kd_report(what, &o);
+        printf("     upstream hypothesis %d after it, retried %d\n", A.u.k56.up_hyp, A.u.k56.up_retried);
+        CHECK_EQ_I(K.renegs, 1); CHECK_EQ_I(o.nseg, 2); CHECK_EQ_I(o.nmove, 2);
+        for (k = 0; k < 2; k++) {
+            CHECK(o.seg[k].dn >= DBITS); CHECK(o.seg[k].un >= DBITS);
+            CHECK_EQ_I(o.seg[k].dbad, 0); CHECK_EQ_I(o.seg[k].ubad, 0); CHECK(o.seg[k].balanced);
+        }
+        CHECK_EQ_I(A.phase, ANS_K56); CHECK_EQ_I(A.u.k56.state, K56D_DATA);
+        CHECK_EQ_I(A.u.k56.up_hyp, j ? 0 : 1); CHECK_EQ_I(A.u.k56.up_retried, j);
+        CHECK_EQ_I(o.down, 50000); CHECK_EQ_I(o.up, 31200); CHECK_EQ_I(o.error, 0);
+    }
 
     /* the client gives up its renegotiation halfway through its TRN and
      * retrains (R-3): its tone B in K56D_RENEG is followed as in data mode

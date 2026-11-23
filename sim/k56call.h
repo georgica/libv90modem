@@ -79,6 +79,8 @@
 /* where the client falls silent for good (cfg.silent) */
 enum { K56C_SIL_NONE, K56C_SIL_BEFORE_S, K56C_SIL_BEFORE_J, K56C_SIL_BEFORE_MP,
        K56C_SIL_BEFORE_E, K56C_SIL_DATA, K56C_SIL_RENEG, K56C_SIL_RETRAIN };
+/* cfg.heavy_up */
+enum { K56C_HEAVY_NONE, K56C_HEAVY_ALWAYS, K56C_HEAVY_FIRST };
 /* an MP the server cannot take (cfg.mp_bad) */
 enum { K56C_MP_GOOD, K56C_MP_RATE0, K56C_MP_MASK0, K56C_MP_UP_NONE };
 
@@ -113,7 +115,9 @@ typedef struct {
     int retrain_ms, retrains, retrain_200;
     /* heavy_up: a client that ignores our MP's options for its transmitter:
      * its upstream data uses 64 states, non-linear, expanded shaping (x2's
-     * configuration; GPC), whatever our MP asked. retrain_in_reneg: it gives
+     * configuration; GPC), whatever our MP asked (K56C_HEAVY_ALWAYS), or
+     * only until its first renegotiation (K56C_HEAVY_FIRST; what our MP
+     * asks after it). retrain_in_reneg: it gives
      * up its (first) renegotiation halfway through its TRN and retrains
      * (silence, tone B, as retrain_ms's) */
     int heavy_up, retrain_in_reneg;

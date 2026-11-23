@@ -157,10 +157,11 @@ a Rockwell or Lucent modem.
   client. SM56 did not renegotiate in two calls of 120 s, so only the
   simulated client has renegotiated with it.
 - **The client's retrains:** only its tone B in data mode, or in its
-  renegotiation, is taken as a retrain. A client that gives up during a training (the first, or a
-  retrain's) and retrains again is not followed: the call ends at that
-  training's time limit (`V90M_END_K56_FAILED`). SM56 does that after
-  about half of its own retrains. So "the third in a row ends the call"
+  renegotiation, is taken as a retrain. A client that gives up during a
+  training (the first, or a retrain's) and retrains again is not
+  followed: the call ends at that training's time limit
+  (`V90M_END_K56_FAILED`). SM56 does that after about half of its own
+  retrains. So "the third in a row ends the call"
   counts retrains each begun from data mode; they are forgotten once data
   mode has held 2 s (our own value: no source gives one). A retrain's
   Phase 2 must end within 9 s of the retrain's start (our own value), or
@@ -169,9 +170,14 @@ a Rockwell or Lucent modem.
   states, non-linear, expanded shaping whatever our MP asks is decoded
   (B1 retried under that configuration; only the simulated client has
   done it), and its data mode then costs about what x2's does: one such
-  call per ARM926 box. Catching up after its B1 costs up to 2.0 M ARM
-  instructions per 10 ms for 30 ms (16.5 ms of the box's CPU per 10 ms
-  block), once per call. Other mixes (32 states, or some options only) are
+  call per ARM926 box. Catching up after its B1 (3 stored points every 2
+  symbol periods, about 110 ms, once per call) costs up to 1.28 M ARM
+  instructions per 10 ms block, 10.5 ms of the box's CPU (122 M a
+  second): with nothing else running, v90d's answers come at most 11.7 ms
+  after their block, inside its 20 ms of prefill (the pump's deadline
+  holds, with 8 ms to spare; V.42 or PPP work in those 110 ms eats into
+  it; `pump_underruns` on the first live heavy call is the check). Other
+  mixes (32 states, or some options only) are
   not tried and end as a wrong B1 (`V90M_END_K56_FAILED`).
 - **Every caller hears our answer tone later.** V.8bis comes first (at
   least 400 ms of silence, CRe, the wait for CRd), so ANSam comes, against
