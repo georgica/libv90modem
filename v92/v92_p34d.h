@@ -127,6 +127,9 @@ typedef struct {
     int64_t    et_pw;               /* ... and the smoothed power of its two inputs */
     ecdly_t    ecd;                 /* what we sent; ecd.delay is the echo delay in use, given or measured */
     int32_t    base_q4;             /* data mode: the baseline under the caller's symbols, Q4 */
+    int32_t    up_scale;            /* data mode: what the received samples are multiplied by
+                                       before the decoder, Q14: 1 / the caller's gain over
+                                       the design, measured on B1u; 0 = not yet (1) */
     int64_t    nz_acc, nq_acc, ne_acc; int32_t nz_n;    /* TRN1d: residual, quantiser, echo power */
     uint32_t   noise, q_quiet, echo_rms;
     uint32_t   q_trn;               /* smoothed quantiser variance while the caller trains */

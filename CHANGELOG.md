@@ -128,6 +128,18 @@ Changed (V.92, both roles):
   before, down to the same level.
 
 Fixed:
+- V.92, answering role: a caller whose data mode arrives louder or weaker
+  than the CPd design asked for (implementations differ on the power
+  reference of V.92 8.8.3) is decoded. B1u failed (`V92D_ERR_B1`, then a
+  retrain with PCM upstream off) when the caller was off by 10 % or more
+  either way. The answering modem now measures the caller's gain on the
+  first 144 symbols of B1u (their power against the design's trial of the
+  encoder, then the scale at which the symbols sit on the points) and, if
+  it is off, decodes B1u again from its start with the samples scaled.
+  Simulated, 0.4 to 3.0 of the design are measured within 1 %; data flows
+  without error from 0.4 to 1.5 on every line tried, and above that on a
+  short line (docs/limits.md for the limits). A caller at the designed
+  level is decoded exactly as before.
 - V.90 and V.92, calling role: the last data frame before every Rd of
   the digital modem's (its rate renegotiation or cleardown, or its answer
   to a renegotiation or cleardown of ours) is delivered. It was dropped,

@@ -94,6 +94,17 @@ delivered).
   (`dly` 114 to 116) in 40 renegotiations, either end's, and nothing
   wrong delivered in those or in 46 more over eight kinds of line (noise
   40, pads, a strong echo, a bump); at most `dly` / 12 + 3.
+- **V.92 upstream: a caller off the designed level.** The answering modem
+  measures the caller's gain on B1u and scales what it decodes (within 1 %
+  from 0.4 to 3.0 of the design on the simulator), but the constellation
+  stays the one designed for the level asked. A weaker caller has that
+  much less margin against the line's noise (0.6 on a long line: some 100
+  bits wrong in 230000); a louder one sends its largest points past the
+  codec's full scale (from about 1.6 on the long lines of the simulator,
+  some 0.1 % of bits wrong at 2.4; on a short line clean to 3.0). Neither
+  is flagged by the modulus decoder, so the quality watch does not lower
+  the rate. A design for the measured level (a rate renegotiation after
+  B1u) is not done.
 
 ## x2 (answering)
 

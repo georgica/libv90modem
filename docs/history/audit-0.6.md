@@ -368,6 +368,21 @@ is fragile, low how many callers it hits).
 - Test that fails today: `test_v92call`: a caller whose data mode is 1.4
   times (3 dB) the designed level reaches data mode with B1u right (today
   `V92D_ERR_B1`).
+- Fixed in Task 21 (T21.7): the gain is measured on the first 144
+  symbols of B1u (`up_measure`: power against `dsn.usum`, the design's
+  trial of u(n), for a start within some 15 %; then the scale at which most
+  symbols lie within a quarter spacing of a point, 4 % then 1 % apart; a
+  decision-directed estimate does not move, the G.711 points being nearly
+  the same set at any nearby scale). Off the designed level, the decoder
+  starts B1u again from the training receiver's ring, two samples a tick
+  until it is back. `test_v92call` 32-34. Cost (ARMv5, counted): 14 k
+  instructions once per B1u at the designed level; off it, some 175 k in
+  the tick that measures, then a multiply and a 32-bit division a sample.
+  A scale is taken only where at least 3/4 of the symbols sit on the
+  points at it and 1/8 more than at scale 1: without the first rule the
+  replay proof's usr3 (a call that fails its B1u at the designed level,
+  67 of 144 on the points at 1) took 0.78 (86 of 144) and moved, still
+  failing B1u; with it the 636 runs are identical.
 
 **R-5. Ja's rate mask is checked only by the design** (Minor, high).
 `c.rates = p->ja.rates` (`v92_p34d.c:400`); a Ja with no rate (or none

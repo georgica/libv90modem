@@ -499,5 +499,51 @@ int main(int argc, char **argv)
         CHECK_EQ_I(p2.d.mode, P2D_MODE_V90);
         v90_call(&p2);
     }
+    /* ---- the caller's data mode off the level the design asked for ---- */
+    if (WANT(9)) {
+        /* Implementations differ on the power reference of 8.8.3 (V.92
+         * servers have been seen to build for an upstream some 9 dB louder
+         * than another reading): the caller's data signal arrives louder or
+         * weaker than the design asked for. The digital modem measures the
+         * gain on B1u and decodes on. */
+        static const struct { double g; int alaw, shape; } c[] = {
+            { 1.4, 0, 0 }, { 0.7, 1, 0 }, { 0.5, 0, 1 }, { 0.6, 1, 0 }, { 0.85, 0, 0 }, { 0.9, 1, 1 },
+            { 1.1, 0, 0 }, { 1.15, 1, 0 }, { 1.25, 0, 1 }, { 1.7, 1, 0 }, { 2.0, 0, 0 }, { 2.4, 1, 0 },
+            { 2.8, 0, 0 } };
+        static char name[48];
+        unsigned n;
+        for (n = 0; n < sizeof c / sizeof c[0]; n++) {
+            snprintf(name, sizeof name, "32 data mode at %.2f of the design", c[n].g);
+            base(&s, name, c[n].alaw, c[n].shape, 3, n & 1 ? 40 : 0);
+            s.gain_err = c[n].g;
+            run(&s, &o); report(&s, &o); check_good(&s, &o);
+        }
+        /* with a data frame of Ki = 0 before B1u (reading 57): looked for
+         * again when the decoder starts over */
+        base(&s, "32b 0.6 of the design, Ki = 0 before B1u", 0, 1, 3, 40);
+        s.gain_err = 0.6; s.b1u_lead = 1; s.conv_start = 11;
+        run(&s, &o); report(&s, &o); check_good(&s, &o);
+        CHECK_EQ_I(d.b1_leads, 1);
+        base(&s, "32c 2.8 of the design, Ki = 0 before B1u", 1, 0, 3, 0);
+        s.gain_err = 2.8; s.b1u_lead = 1;
+        run(&s, &o); report(&s, &o); check_good(&s, &o);
+        CHECK_EQ_I(d.b1_leads, 1);
+        /* and on a noisy line, through a rate renegotiation (as 15b): the
+         * gain measured again on the new B1u */
+        base(&s, "33 1.4 of the design, renegotiates, noisy", 0, 0, 40, 40);
+        s.phase0 = 0.4; s.gain_err = 1.4;
+        s.a_reneg_ms = 5541; s.seconds = 11;
+        run(&s, &o); report(&s, &o); check_good(&s, &o);
+        CHECK_EQ_I(o.req_rc, 0); CHECK_EQ_I(o.renegs, 1);
+        CHECK(o.up_bits2 > 2 * 24000); CHECK_EQ_I(o.up_bad2, 0);
+        /* The limit: louder still, on a long line, the largest points the
+         * precoder asks for pass the codec's full scale. B1u is right and
+         * data flows; the clipped symbols are decided wrong. */
+        base(&s, "34 2.4 of the design on a long line", 1, 1, 3, 40);
+        s.gain_err = 2.4;
+        run(&s, &o); report(&s, &o);
+        CHECK_EQ_I(o.state, V92D_DATA); CHECK_EQ_I(d.b1_bad, 0);
+        CHECK(o.up_bits > 3 * 24000); CHECK(o.up_bad * 500 < o.up_bits);
+    }
     T_REPORT("v92call");
 }

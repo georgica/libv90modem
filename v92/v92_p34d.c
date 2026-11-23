@@ -33,6 +33,10 @@
 #define SUVD_HOLD_MS   2500     /* SUVd at the latest so long into Phase 4, the design done or not */
 #define T_PACE_MS      2500     /* more for each sample the design waits between steps */
 
+#define UP_EST         144      /* B1u symbols the caller's gain is measured on (within the
+                                   255 samples the training receiver keeps) */
+#define UP_UNITY       16384    /* up_scale of a caller at the level designed for */
+
 #define CD_BLOCK       80       /* carrier watch: 10 ms */
 #define CD_BLOCKS      50       /* about half a second without signal in data mode */
 #define CD_SHIFT       6        /* "without": 18 dB under the power of B1u */
@@ -131,7 +135,7 @@ static void upstream_start(v92d_t *p, int32_t m)
 {
     if (p->dsn_state != 2 || v92_dec_init(&p->dec, &p->cpd.map, put_data, p) != 0) { fail(p, V92D_ERR_B1); return; }
     v92_dec_any_start(&p->dec);
-    p->base_q4 = 0;
+    p->base_q4 = 0; p->up_scale = 0;
     p->m_b1u = m;
     p->data_k = m + p->dsn.dly;
     p->b1_left = (int32_t)V92_B1U_FRAMES * p->cpd.map.K; p->b1_bad = 0;
@@ -166,6 +170,110 @@ static void b1u_lead(v92d_t *p, int16_t y)
     p->b1_left = (int32_t)V92_B1U_FRAMES * m->K; p->b1_bad = 0;
     p->b1_sym = 0; p->b1_zero = 0; p->b1_leads++;
     p->cd_acc = 0; p->cd_n = 0;
+}
+
+/* ---- the caller's gain in data mode ----
+ *
+ * The design builds the constellation for the power at which the caller
+ * sends TRN1u (8.8.3, reading 35), and the decoder slices on those points.
+ * Implementations differ on that reference: a caller whose data signal
+ * arrives some percent louder or weaker than designed is decided wrong at
+ * the larger points, and B1u fails. So the gain is measured on the first
+ * UP_EST symbols of B1u. The points are G.711 levels, nearly the same set
+ * at any scale near the right one, so a decision-directed estimate stays
+ * where it starts; what tells the right scale is that nearly every symbol
+ * then sits on a point. The power of the symbols against what the design's
+ * trial of the encoder gave (dsn.usum) puts the gain within some 15 %; the
+ * scale at which most symbols lie within a quarter of the spacing of a
+ * point, searched in steps of 4 % and then 1 % about that, is taken if
+ * most symbols do sit on the points there. A caller at the designed level
+ * (nearly all symbols on a point at scale 1) is left exactly as it was.
+ * Else the decoder starts again on B1u from its first symbol, which the
+ * training receiver still holds. */
+
+/* the decoder's input for received sample s */
+static int32_t up_in(const v92d_t *p, int32_t s)
+{
+    if (p->up_scale == 0 || p->up_scale == UP_UNITY) return s;
+    return (s * p->up_scale + 8192) >> 14;
+}
+
+/* of every step-th of the UP_EST samples from k (data frame interval 0),
+ * the number within a quarter of the spacing of the nearest point once
+ * multiplied by c (Q14) */
+static int up_fit(const v92d_t *p, int32_t k, int32_t c, int step)
+{
+    const v92_map_t *m = &p->cpd.map;
+    int j, n = 0;
+    for (j = 0; j < UP_EST; j += step) {
+        int i = j % V92_DFRAME, lc = v92_lc(m, i), eta;
+        int32_t r = ((int32_t)v92_trn_sample(&p->trn, k + j) * c + 8192) >> 14, a, e, h;
+        eta = v92_slice(m, i, r);
+        a = v92_point(m, i, eta); e = r - a;
+        /* the spacing on the side of r; past an end point, the one inside */
+        if ((e > 0 && eta < lc - 1) || eta == -lc) h = v92_point(m, i, eta + 1) - a;
+        else h = a - v92_point(m, i, eta - 1);
+        if (4 * (e < 0 ? -e : e) < h) n++;
+    }
+    return n;
+}
+
+/* best of the scales c, c + c * inc / 1024, ... (n of them), on every
+ * step-th sample */
+static int32_t up_search(const v92d_t *p, int32_t k, int32_t c, int n, int32_t inc, int step, int *fit)
+{
+    int32_t best = c;
+    int q;
+    *fit = -1;
+    for (q = 0; q < n; q++, c += (int32_t)((int64_t)c * inc / 1024)) {
+        int f;
+        if (c < 4096 || c > 65535) continue;        /* a gain of 4 .. 1/4 */
+        f = up_fit(p, k, c, step);
+        if (f > *fit) { *fit = f; best = c; }
+    }
+    return best;
+}
+
+/* UP_EST symbols of B1u are in from sample k0 on: measure, and if the caller
+ * is off the designed level start the decoder again from k0 */
+static void up_measure(v92d_t *p, int32_t k0)
+{
+    uint64_t pw = 0, ex;
+    int32_t c, j;
+    int f1, fc, ff;
+
+    p->up_scale = UP_UNITY;
+    if (p->trn.k - k0 > 255 || p->dsn.i <= 0) return;     /* (cannot happen) */
+    f1 = up_fit(p, k0, UP_UNITY, 1);
+    if (f1 >= UP_EST - UP_EST / 8) return;
+    for (j = 0; j < UP_EST; j++) {
+        int32_t s = v92_trn_sample(&p->trn, k0 + j);
+        pw += (uint64_t)((int64_t)s * s);
+    }
+    ex = ((uint64_t)p->dsn.usum * UP_EST / (uint32_t)p->dsn.i) << 14;
+    while (ex >= ((uint64_t)1 << 34) || pw >= ((uint64_t)1 << 34)) { ex >>= 1; pw >>= 1; }
+    if (pw == 0 || ex == 0) return;
+    c = (int32_t)isqrt64((ex << 28) / pw);                /* 1 / gain from the power, Q14 */
+    /* 0.75 .. 1.33 of it, 4 % apart, on a third of the symbols; then 1 %
+     * apart about the best, on all */
+    c = up_search(p, k0, c - c / 4, 15, 41, 3, &fc);
+    c = up_search(p, k0, c - c * 3 / 100, 7, 10, 1, &ff);
+    /* taken only where the symbols do sit on the points at that scale
+     * (a caller off the level: 126 to 144 of them in simulation) and
+     * clearly better than at 1 (a recorded call that failed its B1u at
+     * the designed level, usr3: 67 at 1, the best 86) */
+    if (ff < UP_EST * 3 / 4 || ff <= f1 + UP_EST / 8) return;
+    /* the caller is off the designed level: B1u again from its first symbol
+     * (and its leading data frames of Ki = 0 looked for again) */
+    if (p->trn.k - (k0 - V92_DFRAME * p->b1_leads) > 255) return;
+    if (v92_dec_init(&p->dec, &p->cpd.map, put_data, p) != 0) { fail(p, V92D_ERR_B1); return; }
+    v92_dec_any_start(&p->dec);
+    p->up_scale = c;
+    p->m_b1u -= V92_DFRAME * p->b1_leads;
+    p->data_k = p->m_b1u + p->dsn.dly;
+    p->base_q4 = 0;
+    p->b1_left = (int32_t)V92_B1U_FRAMES * p->cpd.map.K; p->b1_bad = 0;
+    p->b1_sym = 0; p->b1_zero = 0; p->b1_leads = 0;
 }
 
 /* ---- sequences: frame sync hunt, parse ---- */
@@ -385,7 +493,8 @@ static int32_t base_step(const v92d_t *p, int32_t e, int32_t tent)
     if (p->cfg.rx_linear) return (int32_t)st;
     i = p->dec.i_in == 0 ? V92_DFRAME - 1 : p->dec.i_in - 1;            /* the interval of tent */
     eta = v92_slice(m, i, tent); lc = v92_lc(m, i);
-    q = qvar(p, tent);
+    /* (the quantiser works on the received amplitude) */
+    q = qvar(p, p->up_scale == 0 || p->up_scale == UP_UNITY ? tent : tent * UP_UNITY / p->up_scale);
     if (e > 0) h = eta < lc - 1 ? (v92_point(m, i, eta + 1) - tent) / 2 : INT32_MAX;
     else h = eta > -lc ? (tent - v92_point(m, i, eta - 1)) / 2 : INT32_MAX;
     if (q > 2 * (uint64_t)nz) st = st * 2 * nz / q;
@@ -475,7 +584,7 @@ static void ru_heard(v92d_t *p)
          * heard, has moved the baseline since by up to some 125) */
         for (j = 0; j < sizeof y / sizeof y[0]; j++) {
             int32_t k = p->data_k - 1 - (int32_t)j;
-            y[j] = (int32_t)v92_trn_sample(&p->trn, k) - p->trn.sb[k & 255];
+            y[j] = up_in(p, v92_trn_sample(&p->trn, k)) - p->trn.sb[k & 255];
         }
         if (n > 0) v92_dec_flush_before(&p->dec, n + V92_DFRAME, y);
     }
@@ -630,8 +739,12 @@ uint8_t v92d_tick(v92d_t *p, int16_t rxs)
         v92_trn_store(&p->trn, x);
     }
     if (p->rx_on) {
+        int n = 0;
         if (p->b1_left > 0) { p->cd_acc += (int32_t)x * x; p->cd_n++; }
         while (p->rx_on && p->data_k < p->trn.k) {
+            /* the decoder started over on B1u (up_measure): two samples a
+             * tick until it is back, so no tick carries the lot */
+            if (p->up_scale && p->up_scale != UP_UNITY && n++ == 2) break;
 #ifdef P34D_TRACE
             v92d_trace_data(p, v92_trn_sample(&p->trn, p->data_k));
 #endif
@@ -649,12 +762,14 @@ uint8_t v92d_tick(v92d_t *p, int16_t rxs)
                  * (trn.sb is free in data mode: v92_trn_resume fills it
                  * again before the training receiver reads it) */
                 p->trn.sb[p->data_k & 255] = (int16_t)(p->base_q4 >> 4);
-                y = (int32_t)v92_trn_sample(&p->trn, p->data_k++) - (p->base_q4 >> 4);
+                y = up_in(p, v92_trn_sample(&p->trn, p->data_k++)) - (p->base_q4 >> 4);
                 v92_dec_put(&p->dec, y, &tent);
                 p->base_q4 += base_step(p, y - tent, tent);
                 if (p->base_q4 > BASE_MAX_Q4) p->base_q4 = BASE_MAX_Q4;
                 if (p->base_q4 < -BASE_MAX_Q4) p->base_q4 = -BASE_MAX_Q4;
                 if (p->b1_sym >= 0) b1u_lead(p, (int16_t)(y > 32767 ? 32767 : y < -32767 ? -32767 : y));
+                if (!p->up_scale && p->b1_left > 0 && p->data_k - (p->m_b1u + p->dsn.dly) == UP_EST)
+                    up_measure(p, p->m_b1u + p->dsn.dly);
             }
         }
         if (p->rx_on && p->trn_on == 2 && p->trn.k >= CLK_REBASE_AT) rebase(p);

@@ -376,7 +376,7 @@ int v92_dsn_step(v92_dsn_t *d)
     case ST_TRIAL:
         if (set_rate(d, d->lc) == 0) { d->st = ST_FAIL; return V92_DSN_ERR_RATE; }
         if (v92_enc_init(&d->enc, &d->cpd.map, f, mc_bit, d) != 0) { d->st = ST_FAIL; return V92_DSN_ERR_CHANNEL; }
-        d->pacc = 0; d->iacc = 0; d->xacc = 0; d->imax = 0; d->i = 0;
+        d->pacc = 0; d->iacc = 0; d->xacc = 0; d->imax = 0; d->i = 0; d->usum = 0;
         memset(d->xh, 0, sizeof d->xh);
         d->st = d->lo == d->hi ? ST_VERIFY : ST_MC;
         return 0;
@@ -434,6 +434,7 @@ int v92_dsn_step(v92_dsn_t *d)
             int32_t o = v92_enc_symbol(&d->enc, &sy);
             int64_t xl = sy.x / (1 << V92_XQ), is = isi_sample(d, sy.x, d->i);
             d->pacc += (int64_t)o * o >> 14;
+            d->usum += (uint32_t)(((int64_t)sy.u * sy.u) >> 14);
             d->xacc += xl * xl;
             if (xl * xl > d->iacc) d->iacc = xl * xl;
             if (d->i >= 256 && is * is > d->imax) d->imax = is * is;
