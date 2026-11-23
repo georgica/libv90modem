@@ -121,6 +121,10 @@ typedef struct {
     int full;                       /* 1: answer_t, 0: p2d + p34d */
     int max_down, max_up;           /* its ceilings */
     int v92;                        /* it offers V.92 (PCM upstream) */
+    int d_retrain;                  /* p2d + p34d / v92d: a retrain of either end restarts the digital
+                                       modem as answer.c does (70 ms of silence, Phase 2 again) */
+    /* an impulse added to one A/D sample of ours (a click): at imp_ms, imp_amp */
+    int imp_ms, imp_amp;
     /* the analogue modem */
     int caller_orig;                /* 1: orig_t, 0: v90a_t */
     int caller_level;
@@ -145,6 +149,9 @@ typedef struct {
     p2d_t p2; p34d_t p34; int dstate;  /* 0 Phase 2, 1 p34d, 2 dead, 3 v92d */
     v92d_t v92d;
     int dmute;                      /* the digital modem's output silenced (a test's doing) */
+    int d_rt_wait;                  /* d_retrain: samples of silence before its Phase 2 */
+    int d_v92_data, d_pcm_up;       /* d_retrain: v92d reached data mode; PCM upstream offered */
+    int d_retrains;                 /* d_retrain: retrains of the digital modem */
     /* a digital modem of the test's own (tools/rec_orig: the answerer through the
        public API): when set, it takes each network sample's codeword in place of
        the ones above and gives the codeword it sends */
@@ -258,9 +265,31 @@ static uint8_t vl_src(void *ctx)
             out = pcm_encode(alaw, p2d_tick(&l->p2, x));
             if (l->p2.state == P2D_DONE) { if (l->p2.mode == P2D_MODE_V92) vl_start_v92(l); else vl_start_p34(l); }
             else if (l->p2.state == P2D_FAILED) l->dstate = 2;
-        } else if (l->dstate == 1) out = p34d_tick(&l->p34, x);
-        else if (l->dstate == 3) out = v92d_tick(&l->v92d, x);
-        else out = v90_pcm_octet(alaw, 0, 1);
+        } else if (l->dstate == 1) {
+            out = p34d_tick(&l->p34, x);
+            if (l->cfg.d_retrain && l->p34.state == P34_RETRAIN) { l->dstate = 4; l->d_rt_wait = 0; l->d_retrains++; }
+        } else if (l->dstate == 3) {
+            out = v92d_tick(&l->v92d, x);
+            if (l->v92d.state == V92D_DATA) l->d_v92_data = 1;
+            if (l->cfg.d_retrain && (l->v92d.state == V92D_RETRAIN
+                                     || (l->v92d.state == V92D_FAILED && l->v92d.error != V92D_ERR_CLEARDOWN
+                                         && l->v92d.error != V92D_ERR_HANGUP && l->v92d.error != V92D_ERR_CARRIER))) {
+                /* as answer.c: PCM upstream is offered again unless the
+                 * digital modem never reached data mode, failed, or its
+                 * upstream did not hold the lowest rate */
+                if (l->v92d.state == V92D_FAILED || !l->d_v92_data || l->v92d.up_floor) l->d_pcm_up = 0;
+                l->dstate = 4; l->d_rt_wait = 0; l->d_retrains++;
+            }
+        } else if (l->dstate == 4) {
+            /* 9.5.1 / 9.7.1: 70 ms of silence, then Phase 2 of a retrain */
+            out = v90_pcm_octet(alaw, 0, 1);
+            if (++l->d_rt_wait >= 8 * 70) {
+                p2d_cfg pc = l->p2.cfg;
+                p2d_init_retrain(&l->p2, &pc);
+                if (l->cfg.v92) p2d_retrain_v92(&l->p2, l->d_pcm_up);
+                l->dstate = 0;
+            }
+        } else out = v90_pcm_octet(alaw, 0, 1);
     }
     if (l->dmute) out = v90_pcm_octet(alaw, 0, 1);
     return out;
@@ -271,6 +300,7 @@ static void vl_init(vl_t *l, const vl_cfg *c)
     dschan_cfg dc;
     memset(l, 0, sizeof *l);
     l->cfg = *c;
+    l->d_pcm_up = 1;
     rng_seed(&l->rng, c->seed + 101);
     bert_init(&l->down, 0x1234 + c->seed); bert_init(&l->up, 0x4321 + c->seed);
     l->down.armed = l->up.armed = 1;
@@ -344,6 +374,10 @@ static void vl_tick(vl_t *l)
     int16_t rx = dschan_tick(&l->ch, l->last_tx), tx;
     double o[4];
     int i, n;
+    if (l->cfg.imp_amp && l->k == (int64_t)l->cfg.imp_ms * 8) {
+        int32_t v = rx + l->cfg.imp_amp;
+        rx = (int16_t)(v > 32767 ? 32767 : v < -32767 ? -32767 : v);
+    }
     l->last_rx = rx;
     tx = l->cfg.caller_orig ? orig_tick(&l->org, rx) : v90a_tick(&l->va, rx);
     n = l->cfg.up_line ? lresamp_push(&l->lrs, tx, o, 4) : sresamp_push(&l->rs, tx, o, 4);

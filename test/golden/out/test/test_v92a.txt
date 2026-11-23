@@ -17,6 +17,8 @@ our cleardown (CPu), answered by a retrain of the digital modem's (R3)
   ours 5 (error 12) after 298 ms; Phase 2 entered 0; digital in Phase 2 1
 the digital modem without V.92: V.90
   state 3, PCM upstream 0, down 46666, up 28800 bit/s; digital p34d 11
+a click in data mode (50 units on one sample): recovered by a retrain
+  ours 3 (error 0), retrains 1, digital's 1; data again 10055 ms after the click, PCM upstream 1; then 2 s: 98679 bits down, 69368 up, 0 failures
 time-outs: the digital modem silent from
   the start of Phase 3 (no Sd): 1500 ms from Ja    ended 5, error 2, 1500 ms after Ja
   TRN1d learnt (no Jd): 4500 ms from Ja's end      ended 5, error 4, 4500 ms after the end of Ja
@@ -24,4 +26,4 @@ time-outs: the digital modem silent from
   Jp' (no DIL)                                     ended 5, error 6, 1087 ms after the silence
   Ri-bar (no CPd): 20 s from INFO1a                ended 5, error 8, 20138 ms after INFO1a
   data mode: carrier lost                          ended 5, error 13, 593 ms after the silence
-v92a: 74 checks, 0 failures
+v92a: 81 checks, 0 failures

@@ -548,3 +548,75 @@ and peaks at 11.7 ms, inside the 20 ms prefill with 8.3 ms to spare, with
 the box doing nothing else. The equaliser is put back as it was at its E
 before the stored points are decoded again (its taps, 576 bytes, kept in
 k56d_t: 22272 -> 22848 bytes, still inside the union under v92d_t).
+
+## T21.9: the calling receiver lost to one sample (found in Task 21b)
+
+Found when Task 21b's start-up timing made test_v92a fail: after a rate
+renegotiation begun by the digital modem, our V.92 calling side retrained
+and the retrain failed. Present at e71e131 and at c282fb1 (before the
+audit). test_v92a passed only because its windows (4 s of data, a
+renegotiation, 2 s) ended before the event.
+
+The line: test_v92a's (p2d and v92d without answer.c, 2 km, +30 ppm, echo
+-10 dB). Data mode from 8.17 s; at 13.24 s the receiver's error goes from
+4.7e4 to 2.4e7 in 2 ms and keeps growing. Up to then, sampled every
+250 ms: A/D input about 6000 RMS, canceller output about 1650 (the echo
+stays cancelled), the timing step at 1.0000300 (+30 ppm), its delta within
++-30, the error 13000 to 18000. Our clock slips one sample against the
+network's at 6.2, 10.4 and 14.5 s, not at 13.24 s; the canceller runs on
+our clock, so the drift does not move our echo. (The first guess, a
+canceller not following the drift, is wrong.)
+
+What happens at 13.231 s: the only full-scale A/D sample of the call's
+data mode. Our PCM upstream peaks at 15783 (RMS about 2500); its echo is
+-34392 there and the A/D sample would be -35579, clipped at -32767 (an
+error of 2812). The error grows from 64 samples later, the delay from the
+A/D to the decision at the equaliser's cursor.
+
+The same without clipping (echo -16 dB, which never clips): 50 units added
+to one A/D sample at 11.000 s lose the V.92 downstream for good (5000 and
+more check failures, then our retrain); -50, 1000 and 20000 too; 20 and
+less are survived. V.90 (V.34 upstream) the same.
+
+Mechanism: the equaliser's feedback carries the line's low-frequency tail.
+On this line b[0] = 0.73, b[1] = -0.55, b[3] = -0.30, ..., sum |b| = 3.9,
+sum b^2 = 1.23. A wrong decision feeds back errors larger than half a level
+step; they make more wrong decisions and the error never decays. Not the
+adaptation: holding the taps (rx.hold) for 50 ms or 500 ms from the
+impulse changes nothing. Feeding back the equaliser's soft output for
+unreliable decisions does not stop it either (at e^2 above 64 gmse the
+runaway goes on; at 16, 9 or 4 gmse the receiver is lost without any
+impulse: the feedback is unstable run linearly).
+
+Treating the clipped sample as an erasure (ruling (e)): tried and not
+taken. The sample cannot be repaired: replaced by 0 it is off by the
+downstream signal (1187 here), kept it is off by the clipping (2812), and
+the decisions survive 20 to 50. Neither changes the outcome (the call ends
+the same, at 21.56 s, the retrain failing in this harness). Nor does
+feeding back soft values for 48, 96 or 160 symbols after it. Bounding our
+own PCM upstream's peaks: not taken. They are the codewords the digital
+modem decodes level by level (V.92 bounds the average power, not the
+peaks), so cutting them would corrupt the upstream data; a conformant
+reduction would go through the digital modem's precoder and filter
+choices (CPd), which are not ours to make.
+
+Taken (ruling (d)): recovery by retrain, as a real call recovers. The
+receiver's watch retrains (12 dB over for 250 ms); in a whole call answer.c
+restarts the digital modem. test/v90link.h gains `d_retrain` (a retrain of
+either end restarts p34d / v92d the way answer.c does: 70 ms of silence,
+Phase 2 of a retrain, PCM upstream offered again unless the digital modem
+never reached data mode, failed, or its upstream did not hold the lowest
+rate) and `imp_ms` / `imp_amp` (a click on one A/D sample). test_v92a runs
+with `d_retrain`. Its new case, a 50-unit click in data mode, recovers in
+10.06 s with the data correct after. Without `d_retrain` it ends in
+V90A_ERR_RETRAINS. test_v92a's other output is unchanged.
+
+Deferred (a design item after the audit): recovery in v90arx without a
+retrain, by
+- re-seeding the feedback line and decisions after a runaway from a
+  feedback-free estimate (whether a linear equaliser decides well enough
+  at 48 kbit/s on this tail is open);
+- a feedback design that cannot run away (part of the tail in the forward
+  filter, or sum |b| bounded), at some cost in error and rate; or
+- spectral shaping (V.90 Appendix I, CP's Sr), which removes the low
+  frequencies the tail comes from (listed in docs/limits.md as a gap).

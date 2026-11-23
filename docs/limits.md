@@ -57,6 +57,22 @@ Each item names where it is recorded.
 - **The calling V.90 / V.92 receiver's watch** (3 dB over the design noise
   for 1 s, 12 dB for 250 ms, 6 dB under for 5 s) has thresholds that come
   from the simulator's lines only. (`docs/history/PROGRESS.md`, robust 2c.)
+- **A single impulse can start error propagation in the V.90 / V.92
+  calling receiver's decision-feedback equaliser** on lines whose
+  low-frequency tail sits in the feedback; recovery is by retrain, about
+  7 s (V.90) to 10 s (V.92). On the simulator's 2 km line the feedback
+  taps sum to about 4 in magnitude (the first 0.73): the few wrong
+  decisions a click makes feed back errors larger than half a level step,
+  which make more, and the error never decays. Measured: 50 units added to
+  one A/D sample (42 dB under the signal) loses the receiver; 20 does not.
+  One of our own A/D samples reaching full scale (our V.92 PCM upstream's
+  peak in a -10 dB hybrid echo) did the same. The receiver's watch then
+  retrains (12 dB over for 250 ms). A clipped sample cannot be repaired at
+  the sample: replacing it by 0 or keeping it leaves an error of thousands
+  of units against the 20 to 50 the decisions survive. Recovering without
+  a retrain (re-seeding the feedback after a runaway, or a feedback design
+  that cannot run away, or spectral shaping, V.90 Appendix I) is a design
+  item after the audit. (`docs/history/audit-0.6.md`, T21.9.)
 
 ## Not checked against a specification
 

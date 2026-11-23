@@ -24,6 +24,7 @@ static vl_cfg base(void)
     c.loop_km = 2; c.noise_dbm0 = -75; c.ppm = 30; c.phase = 0.3; c.echo_db = -10;
     c.up_loss_db = 6; c.up_noise_dbm0 = -70; c.up_line = 1; c.seed = 1;
     c.v92 = 1; c.caller_v92 = 1;
+    c.d_retrain = 1;                    /* a retrain restarts the digital modem, as answer.c does */
     return c;
 }
 
@@ -197,6 +198,41 @@ int main(void)
         int64_t f0 = l->down.fails + l->up.fails, d0 = l->down.got;
         run_for(l, MS(2000));
         CHECK(l->down.got - d0 > 2 * 40000);
+        CHECK_EQ_I(l->down.fails + l->up.fails - f0, 0);
+    }
+
+    /* A click: 50 units added to one A/D sample in data mode. The
+     * decision-feedback equaliser carries this line's low-frequency tail in
+     * its feedback (sum |b| about 4), so the few wrong decisions the click
+     * makes keep making more and the receiver is lost (T21.9; docs/limits.md).
+     * What recovers it is the retrain its watch begins, with the digital
+     * modem restarted as answer.c restarts it: back in data mode within 12
+     * s (about 10), the data correct after. */
+    printf("a click in data mode (50 units on one sample): recovered by a retrain\n");
+    c = base(); c.seed = 5;
+    vl_init(l, &c);
+    run_to(l, MS(40000), V90A_DATA);
+    run_for(l, MS(1000));
+    CHECK_EQ_I(l->va.state, V90A_DATA);
+    {
+        int64_t t0 = l->k + MS(10), f0, d0, u0, back = -1;
+        l->cfg.imp_ms = (int)(t0 / 8); l->cfg.imp_amp = 50;
+        while (l->k < t0 + MS(15000) && l->va.state != V90A_ENDED) {
+            vl_tick(l);
+            if (back < 0 && l->k > t0 && l->va.retrains > 0 && l->va.state == V90A_DATA) back = l->k;
+            if (back >= 0 && l->k >= back + MS(500)) break;
+        }
+        f0 = l->down.fails + l->up.fails; d0 = l->down.got; u0 = l->up.got;
+        run_for(l, MS(2000));
+        printf("  ours %d (error %d), retrains %d, digital's %d; data again %d ms after the click, PCM upstream %d;"
+               " then 2 s: %" PRId64 " bits down, %" PRId64 " up, %" PRId64 " failures\n",
+               l->va.state, l->va.error, l->va.retrains, l->d_retrains, back < 0 ? -1 : (int)ms((int32_t)(back - t0)), l->va.pcm,
+               l->down.got - d0, l->up.got - u0, l->down.fails + l->up.fails - f0);
+        CHECK_EQ_I(l->va.state, V90A_DATA);
+        CHECK(l->va.retrains >= 1);
+        CHECK(back >= 0 && back - t0 < MS(12000));         /* (V.92 retrains: 9 to 11 s, test_orig_retrain) */
+        CHECK(l->down.got - d0 > 2 * 40000);
+        CHECK(l->up.got - u0 > 2 * 24000);
         CHECK_EQ_I(l->down.fails + l->up.fails - f0, 0);
     }
 
