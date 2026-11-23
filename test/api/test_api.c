@@ -2028,6 +2028,47 @@ static void test_cfg_ranges(void)
     v90m_ec_destroy(e);
 }
 
+/* V.22bis, connected, then the line carries a steady tone at the receive
+ * carrier (1200 Hz for the answerer, 2400 for the caller; second run 5 Hz off):
+ * it looks like S1 for as long as it lasts. The wait for the end of an S1 is
+ * bounded (1 s), the retrains it asks for are counted, and the call ends
+ * LOST within 30 s, on both sides. */
+static void test_v22_s1_tone(void)
+{
+    int run;
+    for (run = 0; run < 2; run++) {
+        static end_t cl, an;
+        v90m_state sc, sa;
+        int16_t c_rx = 0, a_rx = 0;
+        int k, t_tone = 8000 * 8, t_a = -1, t_c = -1;
+        double pa = 0, pc = 0;
+        end_init(&cl, V90M_ROLE_ORIGINATE, V90M_MOD_V22 | V90M_MOD_V21);
+        end_init(&an, V90M_ROLE_ANSWER, V90M_MOD_V22 | V90M_MOD_V21);
+        for (k = 0; k < 8000 * 60 && (t_a < 0 || t_c < 0); k++) {
+            int16_t c_tx, a_tx;
+            v90m_process_linear(cl.m, &c_rx, &c_tx, 1);
+            v90m_process_linear(an.m, &a_rx, &a_tx, 1);
+            a_rx = c_tx; c_rx = a_tx;
+            if (k >= t_tone) {
+                a_rx = (int16_t)lrint(3000.0 * sin(pa)); pa += 2.0 * 3.14159265358979 * (1200 + 5 * run) / 8000.0;
+                c_rx = (int16_t)lrint(3000.0 * sin(pc)); pc += 2.0 * 3.14159265358979 * (2400 + 5 * run) / 8000.0;
+            }
+            if (k == t_tone - 1) {
+                v90m_get_state(cl.m, &sc); v90m_get_state(an.m, &sa);
+                CHECK_EQ_I(sc.connected, 1); CHECK_EQ_I(sa.connected, 1);
+            }
+            if (t_a < 0 && k >= t_tone) { v90m_get_state(an.m, &sa); if (sa.end != V90M_END_NONE) t_a = k; }
+            if (t_c < 0 && k >= t_tone) { v90m_get_state(cl.m, &sc); if (sc.end != V90M_END_NONE) t_c = k; }
+        }
+        v90m_get_state(cl.m, &sc); v90m_get_state(an.m, &sa);
+        printf("  V.22bis, a steady %d/%d Hz tone in data mode: answerer end %d after %d ms, caller end %d after %d ms\n",
+               1200 + 5 * run, 2400 + 5 * run, (int)sa.end, t_a < 0 ? -1 : (t_a - t_tone) / 8, (int)sc.end, t_c < 0 ? -1 : (t_c - t_tone) / 8);
+        CHECK_EQ_I(sa.end, V90M_END_LOST); CHECK(t_a >= 0 && t_a - t_tone <= 8000 * 30);
+        CHECK_EQ_I(sc.end, V90M_END_LOST); CHECK(t_c >= 0 && t_c - t_tone <= 8000 * 30);
+        v90m_destroy(cl.m); v90m_destroy(an.m); v90m_async_destroy(cl.a); v90m_async_destroy(an.a);
+    }
+}
+
 int main(void)
 {
     test_cfg();
@@ -2038,6 +2079,7 @@ int main(void)
     test_ec();
     test_ec_abort();
     test_originate();
+    test_v22_s1_tone();
     test_bell();
     test_bell_originate();
     test_x2();

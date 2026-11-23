@@ -22,6 +22,9 @@
   22 echo 60 samples late, not told  mu-law shape 0 noise 3  : state 9 err 0, data after 3266 ms, up 32000 bit/s (LC 23, K 48, 4G 71, 192 taps, delay 116), down 50666, up 183456 bits 0 bad, down 293170 bits 0 bad, tx power 0.85, peak at -0.05 T
   23 A-law, echo 400 late, not told  A-law  shape 1 noise 3  : state 9 err 0, data after 3761 ms, up 38666 bit/s (LC 38, K 58, 4G 79, 192 taps, delay 114), down 50666, up 202536 bits 0 bad, down 268128 bits 0 bad, tx power 0.45, peak at -0.05 T
   24 the caller falls silent         mu-law shape 0 noise 3  : state 12 err 11, data after 3173 ms, up 40000 bit/s (LC 39, K 60, 4G 72, 192 taps, delay 116), down 50666, up 93600 bits 0 bad, down 146034 bits 0 bad, tx power 0.42, peak at -0.05 T
+  24b the line goes dead             mu-law shape 0 noise 3  : state 12 err 11, data after 3173 ms, up 40000 bit/s (LC 39, K 60, 4G 72, 192 taps, delay 116), down 50666, up 93600 bits 58 bad, down 146034 bits 0 bad, tx power 0.42, peak at -0.05 T
+  24c the line goes dead as we renegotiate mu-law shape 0 noise 3  : state 12 err 11, data after 3173 ms, up 40000 bit/s (LC 39, K 60, 4G 72, 192 taps, delay 116), down 50666, up 93600 bits 61 bad, down 120840 bits 0 bad, tx power 0.42, peak at -0.05 T
+  24d the caller's weakest Ru        Ru of amplitude 20 taken after 1075 samples
   25 echo at the caller's level, slow tail mu-law shape 0 noise 5  : state 9 err 0, data after 3258 ms, up 25333 bit/s (LC 27, K 38, 4G 202, 192 taps, delay 116), down 50666, up 196080 bits 0 bad, down 394858 bits 0 bad, tx power 0.91, peak at -0.05 T
   25b weak echo under its own slow tail mu-law shape 0 noise 5  : state 9 err 0, data after 3201 ms, up 32000 bit/s (LC 28, K 48, 4G 105, 192 taps, delay 116), down 50666, up 249504 bits 0 bad, down 397708 bits 0 bad, tx power 0.83, peak at -0.05 T
     echo delay found: 263
@@ -35,4 +38,4 @@
   29 as the CX93001 on the FXS port  mu-law shape 0 noise 5  : state 9 err 0, data after 9139 ms, up 26666 bit/s (LC 28, K 40, 4G 203, 192 taps, delay 116), down 50666, up 209600 bits 0 bad, down 401052 bits 0 bad, tx power 0.81, peak at -0.05 T
   21 after Phase 2 (V.92 caller)     mu-law shape 1 noise 3  : state 9 err 0, data after 3065 ms, up 40000 bit/s (LC 39, K 60, 4G 79, 192 taps, delay 114), down 50666, up 237360 bits 0 bad, down 303354 bits 0 bad, tx power 0.78, peak at -0.05 T
   V.90 caller after a V.92 Phase 2: state 11 err 0, down 50666 up 31200 bit/s, up 174252 bits 0 bad, down 283594 bits 0 bad
-v92call: 1092 checks, 0 failures
+v92call: 1109 checks, 0 failures

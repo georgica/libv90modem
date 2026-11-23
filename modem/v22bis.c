@@ -39,6 +39,11 @@
 /* The Recommendation repeats the retrain signal for ever. We stop after this
  * many in a row without reaching data mode (about 15 s) and report failure. */
 #define RT_MAX_TRIES   10
+/* S1 is 100 ms long (6.3.1.2 / 6.4); one still on the line after this is not
+ * waited for: a steady tone at the carrier looks like S1 for as long as it
+ * lasts. When retraining that is a retrain signal of our own (RT_MAX_TRIES
+ * then ends the call), in start-up back to the wait for the far end. */
+#define V22_S1_MAX_MS  1000
 /* Loss of equalisation: the long-term slicer error (v22rx mse_long: about 500
  * symbols, each counted for at most 8192; 4096 = the squared distance from a
  * point to its decision boundary) above LOSS_MSE for LOSS_MS without a break.
@@ -174,7 +179,13 @@ int16_t v22m_tick(v22bis_t *m, int16_t in)
         break;
 
     case V22S_S1_RX:
-        if (m->rx.sig == V22_SIG_S1) break;
+        if (m->rx.sig == V22_SIG_S1) {
+            if (m->t >= MS(V22_S1_MAX_MS)) {
+                if (m->retraining) retrain_send(m, 0);
+                else go(m, m->role == V22_CALLER ? V22S_TRAIN : V22S_WAIT);
+            }
+            break;
+        }
         if (m->rx.sig == V22_SIG_NONE) {
             if (m->retraining) retrain_send(m, 0);
             else go(m, m->role == V22_CALLER ? V22S_TRAIN : V22S_WAIT);

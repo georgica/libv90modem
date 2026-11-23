@@ -367,5 +367,26 @@ int main(void)
     CHECK_EQ_I(A.phase, ANS_FAILED); CHECK_EQ_I(A.connected, 0); CHECK(answer_end(&A) != ANS_END_CLEARDOWN_FAR && answer_end(&A) != ANS_END_CLEARDOWN_OURS);
     CHECK(t < 2000);
 
+    /* ---- 10. the line goes dead in V.92 data (the caller hung up, the
+     * network sends the idle code): what the canceller gives out is its own
+     * estimate of our echo; the call ends as a carrier loss, in the half
+     * second the carrier watch allows, with no rate renegotiation ---- */
+    scen(&s, V92, 0, 1, 1);
+    start(&s);
+    CHECK_EQ_I(to_data(30000), 1); failed_why();
+    run(8000);
+    {
+        int reneg = 0;
+        for (t = 0; t < 8L * 60000 && A.phase != ANS_FAILED; t++) {
+            atx = answer_tick_pcm(&A, 0xFF);
+            if (A.phase == ANS_V92 && A.u.v92.state == V92D_RENEG) reneg = 1;
+        }
+        printf("  V.92 line dead in data mode: over after %ld ms, end %d, %d retrain(s), renegotiation %d\n",
+               t / 8, answer_end(&A), A.retrains, reneg);
+        CHECK_EQ_I(A.phase, ANS_FAILED); CHECK_EQ_I(answer_end(&A), ANS_END_LOST);
+        CHECK_EQ_I(reneg, 0); CHECK_EQ_I(A.retrains, 0);
+        CHECK(t > 8L * 400 && t < 8L * 750);
+    }
+
     T_REPORT("answer_v92");
 }

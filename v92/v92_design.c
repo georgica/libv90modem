@@ -89,6 +89,14 @@ static int64_t ratio(int64_t num, int64_t den, int q)
     return num / den;
 }
 
+/* v fits the int32_t it is stored in. On an ill-conditioned channel (a long
+ * low-pass tail, which the caller's own training decides) A'A b can already
+ * leave 32 bits, and the conjugate gradient iteration can go astray and
+ * grow its vectors without bound: such a channel is refused
+ * (V92_DSN_ERR_CHANNEL) rather than let them overflow. */
+static int fits32(int64_t v) { return v >= -(int64_t)2147483647 - 1 && v <= 2147483647; }
+#define DIVERGED(d) do { (d)->st = ST_FAIL; return V92_DSN_ERR_CHANNEL; } while (0)
+
 /* sum a b, Q24 * Q24 -> Q40 */
 static int64_t dot(const int32_t *a, const int32_t *b, int n)
 {
@@ -106,7 +114,7 @@ static int64_t isi_sample(v92_dsn_t *d, int32_t x, int n)
     int64_t acc = 0;
     d->xh[n & 255] = x;
     for (j = 0; j < ng; j++) {
-        if (j == D) j += d->lp1 + 1;
+        if (j == D && (j += d->lp1 + 1) >= ng) break;    /* the feedback taps reach the end of g */
         acc += (int64_t)d->g[j] * d->xh[(n - j) & 255];
     }
     return acc / ((int64_t)d->g0 << V92_XQ);
@@ -177,6 +185,7 @@ int v92_dsn_step(v92_dsn_t *d)
             if (j0 < 0) j0 = 0;
             if (j1 > V92_CH_NTAP - 1) j1 = V92_CH_NTAP - 1;
             for (j = j0; j <= j1; j++) acc += (int64_t)d->hn[j] * d->cp[d->i - j];
+            if (!fits32(acc / 16384)) DIVERGED(d);
             d->g[d->i] = (int32_t)(acc / 16384);
         }
         if (d->i >= ng) { d->st = ST_CORR; d->i = 0; }
@@ -185,9 +194,11 @@ int v92_dsn_step(v92_dsn_t *d)
     case ST_CORR:
         /* q = A' t + lambda p */
         for (n = 0; n < 16 && d->i < d->lz2; n++, d->i++) {
-            int64_t acc = 0;
+            int64_t acc = 0, q;
             for (j = 0; j < V92_CH_NTAP; j++) acc += (int64_t)d->hn[j] * d->g[d->i + j];
-            d->cq[d->i] = (int32_t)(acc / 16384) + (int32_t)(((int64_t)d->lambda * d->cp[d->i]) >> 30);
+            q = acc / 16384 + (((int64_t)d->lambda * d->cp[d->i]) >> 30);
+            if (!fits32(acc / 16384) || !fits32(q)) DIVERGED(d);
+            d->cq[d->i] = (int32_t)q;
         }
         if (d->i >= d->lz2) { if (d->skip) d->cq[d->skip] = 0; d->st = ST_UPD; }
         return 0;
@@ -199,7 +210,9 @@ int v92_dsn_step(v92_dsn_t *d)
              * from it. The recurrence for r drifts in this arithmetic. */
             for (j = 0; j < d->lz2; j++) {
                 int i = -d->s0 - j;
-                d->cr[j] = ((i >= 0 && i < V92_CH_NTAP) ? d->hn[i] * 1024 : 0) - d->cq[j];
+                int64_t r = ((i >= 0 && i < V92_CH_NTAP) ? d->hn[i] * 1024 : 0) - (int64_t)d->cq[j];
+                if (!fits32(r)) DIVERGED(d);
+                d->cr[j] = (int32_t)r;
                 d->cp[j] = d->cr[j];
             }
             if (d->skip) d->cr[d->skip] = d->cp[d->skip] = 0;
@@ -211,14 +224,27 @@ int v92_dsn_step(v92_dsn_t *d)
         pq = dot(d->cp, d->cq, d->lz2);
         al = ratio(d->rr, pq, 18);
         if (al > ((int64_t)1 << 34)) al = (int64_t)1 << 34;
-        for (j = 0; j < d->lz2; j++) {
-            d->cw[j] += (int32_t)((al * d->cp[j]) >> 18);
-            d->cr[j] -= (int32_t)((al * d->cq[j]) >> 18);
+        {
+            /* al <= 2^34: al p overflows int64 only past INT64_MAX / al */
+            int64_t lim = al > 0 ? INT64_MAX / al : INT64_MAX;
+            for (j = 0; j < d->lz2; j++) {
+                int64_t dw, dr;
+                if (d->cp[j] > lim || d->cp[j] < -lim || d->cq[j] > lim || d->cq[j] < -lim) DIVERGED(d);
+                dw = (al * d->cp[j]) >> 18;
+                dr = (al * d->cq[j]) >> 18;
+                if (!fits32(dw) || !fits32(dr) || !fits32(d->cw[j] + dw) || !fits32(d->cr[j] - dr)) DIVERGED(d);
+                d->cw[j] = (int32_t)(d->cw[j] + dw);
+                d->cr[j] = (int32_t)(d->cr[j] - dr);
+            }
         }
         rn = dot(d->cr, d->cr, d->lz2);
         be = ratio(rn, d->rr, 18);
         if (be > ((int64_t)1 << 22)) be = (int64_t)1 << 22;
-        for (j = 0; j < d->lz2; j++) d->cp[j] = d->cr[j] + (int32_t)((be * d->cp[j]) >> 18);
+        for (j = 0; j < d->lz2; j++) {
+            int64_t dp = (be * d->cp[j]) >> 18;         /* be <= 2^22: fits int64 */
+            if (!fits32(dp) || !fits32(d->cr[j] + dp)) DIVERGED(d);
+            d->cp[j] = (int32_t)(d->cr[j] + dp);
+        }
         d->rr = rn;
         d->iter++;
         if (rn < 64 || pq <= 0) d->st = ST_OUT;
@@ -232,7 +258,11 @@ int v92_dsn_step(v92_dsn_t *d)
     }
     case ST_OUT:
         /* w for the channel as given (Q8 per LU), Q30 */
-        for (j = 0; j < d->lz2; j++) d->w[j] = (int32_t)((int64_t)d->cw[j] * 16384 / d->hpk);
+        for (j = 0; j < d->lz2; j++) {
+            int64_t w = (int64_t)d->cw[j] * 16384 / d->hpk;
+            if (!fits32(w) || w == -(int64_t)2147483647 - 1) DIVERGED(d);    /* |w| is taken below */
+            d->w[j] = (int32_t)w;
+        }
         d->st = ST_G; d->i = 0;
         return 0;
 
@@ -257,7 +287,12 @@ int v92_dsn_step(v92_dsn_t *d)
         if (d->g0 < 4096) { d->st = ST_FAIL; return V92_DSN_ERR_CHANNEL; }
         for (j = 0; j < ng; j++)
             if (j < D || j > D + d->lp1) isi += (int64_t)d->g[j] * d->g[j];
-        d->isi_q28 = (uint32_t)(isi * 65536 / (((int64_t)d->g0 * d->g0) >> 12));
+        {
+            /* isi 2^16 / den without forming isi 2^16 (it need not fit:
+             * |g| < 2^28 as |w| <= |cw| 2^14 / hpk); past 2^32, saturated */
+            int64_t den = ((int64_t)d->g0 * d->g0) >> 12, qi = isi / den;
+            d->isi_q28 = qi >= 65536 ? UINT32_MAX : (uint32_t)(qi * 65536 + (isi % den) * 65536 / den);
+        }
         for (j = 0; j < d->lz2; j++) { int32_t a = d->w[j] < 0 ? -d->w[j] : d->w[j]; if (a > wmax) wmax = a; }
         /* G z2 = w / g0; the largest z2 at about 0.92 */
         g4 = (int64_t)wmax * 4 * 1118 / ((int64_t)1024 * d->g0) + 1;

@@ -83,6 +83,50 @@ Changed (V.34, both roles):
   with `V90M_END_CLEARDOWN_OURS` (it began a retrain, which ran on to
   whatever end the retrain found).
 
+Changed (V.22bis, both roles):
+- The wait for the end of a far-end S1 is bounded at 1 s (S1 is 100 ms): a
+  steady tone at the receive carrier (1200 or 1205 Hz for the answerer,
+  2400 for the caller) looks like S1 for as long as it lasts and kept a
+  connected call in that wait with no end code for as long as it went on
+  (600 s in the test). In a retrain the wait now ends with our own retrain
+  signal, so the retrain limit applies and the call ends `V90M_END_LOST`
+  (about 11 s); in start-up it goes back to waiting for the far end.
+- The V.22bis receiver forms its carrier-loop and equaliser products in 64
+  bits (they overflowed a signed 32-bit value on a full-scale click into a
+  high gain early in the data, an undefined behaviour); output is
+  unchanged where they did not overflow.
+
+Changed (V.92, both roles):
+- The detector of Ru, Su and Sd (the answering V.92 modem's Phase 3, data
+  mode and rate renegotiation; the calling side's wait for Sd) forms its
+  correlations in 64 bits: with samples past about 23170 they overflowed a
+  signed 32-bit value, an undefined behaviour. Output is unchanged where
+  they did not overflow; a full-scale Ru (to 32767 and -32768) is detected.
+- The CPd design (answering V.92) refuses, as an unusable channel, a
+  channel estimate whose arithmetic leaves 32 bits; the call ends as for
+  any failed design (`V92D_ERR_DESIGN`). On a long low-pass tail, which the
+  caller's own training decides, its vectors overflowed a signed 32-bit
+  value (and the residual ISI a 64-bit one), an undefined behaviour after
+  which it ran on with wrapped values. A residual ISI 16 times the
+  cursor's power or more now saturates its estimate instead of wrapping.
+  Designs that stayed in range are unchanged.
+- The CPd design's trials no longer read past the end of their channel
+  buffer when the cursor sits so late (a channel peak in the last taps of
+  the estimate) that the feedback taps after it reach the end; the read
+  was an undefined behaviour. Other designs are unchanged.
+- Answering V.92, data mode and rate renegotiation: a line that goes dead
+  (the caller hangs up and the network sends the idle code) ends the call
+  as a carrier loss (`V90M_END_LOST`) after the usual half second. The
+  echo canceller then gives out its own estimate of our echo, as loud as
+  the echo was: the carrier watch took that for the caller's signal and
+  data was delivered from it, and when what we sent was periodic (our Rd)
+  the Ru detector took it for the caller's Ru and started a rate
+  renegotiation (or, in ours, went on to Phase 4) instead. Now the carrier
+  watch wants the caller's power in the line as well as after the
+  canceller, and no Ru is taken while the line has brought nothing but the
+  idle code (within +-8) for 24 samples. The caller's Ru is detected as
+  before, down to the same level.
+
 Fixed:
 - V.90 and V.92, calling role: the last data frame before every Rd of
   the digital modem's (its rate renegotiation or cleardown, or its answer
