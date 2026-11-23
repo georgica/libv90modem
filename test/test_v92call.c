@@ -35,6 +35,8 @@ typedef struct {
     int a_reneg_ms, d_reneg_ms, a_clear_ms, d_clear_ms, tone_a_ms, d_retrain_ms;
     int uinfo, ltot, lmax;      /* from Phase 2, 0 = defaults */
     int mute_ms;                /* the caller's signal stops for good */
+    int dead_ms;                /* from then on the line brings digital silence (no echo either) */
+    int ru_ms, ru_amp;          /* from then on: the caller silent, a clean Ru of this amplitude in its place */
     int echo_search;            /* the echo delay is not given to the digital modem */
     int pace;                   /* samples per step of the CPd design (0: one) */
     int suvd_wait, cpd_wait;    /* the caller's patience in Phase 4, symbols (0: any) */
@@ -44,6 +46,7 @@ typedef struct {
 
 typedef struct {
     int state, error, d_data_at, a_tx, a_rx, up_rate, down_rate, renegs, d_end_at, req_rc;
+    int reneg_at;               /* the first sample in V92D_RENEG (-1: never) */
     long up_bits, up_bad, down_bits, down_bad;
     long up_bits2, up_bad2;     /* upstream after the last (re)start */
     int peak;                   /* where the channel peak ended up, 1/256 sample */
@@ -95,7 +98,7 @@ static void run(const scen_t *s, out_t *o)
     v92a_init(&a, &ac);
     a.phase = s->phase0;
 
-    memset(o, 0, sizeof *o); o->d_data_at = -1;
+    memset(o, 0, sizeof *o); o->d_data_at = -1; o->reneg_at = -1;
     for (i = 0; i < s->seconds * 8000; i++) {
         double amp, frac;
         int valid, ms = i / 8, ev = (i % 8) == 0;
@@ -105,7 +108,11 @@ static void run(const scen_t *s, out_t *o)
         dl_o[i % MAXD] = oct;
         valid = v92a_tick(&a, dl_o[(i - s->d_down + MAXD) % MAXD], &amp, &frac);
         if (s->mute_ms && ms >= s->mute_ms) valid = 0;
+        if (s->ru_ms && ms >= s->ru_ms) valid = 0;
         rx = v92chan_tick(&ch, oct, valid, amp, frac);
+        if (s->ru_ms && ms >= s->ru_ms) rx = (int16_t)(rx + ((i / 3) % 2 ? -s->ru_amp : s->ru_amp));
+        if (s->dead_ms && ms >= s->dead_ms) rx = 0;
+        if (o->reneg_at < 0 && d.state == V92D_RENEG) o->reneg_at = i;
         if (o->d_data_at < 0 && d.state == V92D_DATA) { o->d_data_at = i; o->peak = v92_trn_peak(&d.trn); }
         if (ev && s->a_reneg_ms && ms == s->a_reneg_ms) o->req_rc = v92a_renegotiate(&a, 0, 0);
         if (ev && s->a_clear_ms && ms == s->a_clear_ms) o->req_rc = v92a_renegotiate(&a, 0, 1);
@@ -365,6 +372,32 @@ int main(int argc, char **argv)
         /* next to nothing was delivered from the silence: the tail in the
          * decoder and at most the 10 ms the carrier watch needs to see it */
         CHECK(o.up_bad < 400);
+        /* the line goes dead (the caller hung up; the network sends
+         * digital silence): what the canceller gives out is then its own
+         * estimate of our echo, and that is no carrier, nor (when what we
+         * send is Rd) the caller's Ru */
+        base(&s, "24b the line goes dead", 0, 0, 3, 0);
+        s.dead_ms = 5500;
+        run(&s, &o); report(&s, &o);
+        CHECK_EQ_I(o.state, V92D_FAILED); CHECK_EQ_I(o.error, V92D_ERR_CARRIER);
+        CHECK(o.d_end_at > 5500 * 8 + 3000 && o.d_end_at < 5500 * 8 + 6000);
+        CHECK_EQ_I(o.reneg_at, -1); CHECK_EQ_I(o.renegs, 0);
+        CHECK(o.up_bad < 400);
+        base(&s, "24c the line goes dead as we renegotiate", 0, 0, 3, 0);
+        s.dead_ms = 5500; s.d_reneg_ms = 5500;
+        run(&s, &o); report(&s, &o);
+        CHECK_EQ_I(o.req_rc, 0);
+        CHECK_EQ_I(o.state, V92D_FAILED); CHECK_EQ_I(o.error, V92D_ERR_CARRIER);
+        CHECK(o.d_end_at > 5500 * 8 + 3000 && o.d_end_at < 5500 * 8 + 6000);
+        CHECK_EQ_I(d.revs, 0); CHECK_EQ_I(o.renegs, 0);
+        CHECK(o.up_bad < 400);
+        /* and the caller's Ru as weak as the detector takes it (20: 18 is
+         * not taken), in place of its data with our echo under it */
+        base(&s, "24d the caller's weakest Ru", 0, 0, 3, 0);
+        s.ru_ms = 5500; s.ru_amp = 20; s.seconds = 7;
+        run(&s, &o);
+        printf("  %-34s Ru of amplitude %d taken after %d samples\n", s.name, s.ru_amp, o.reneg_at - 5500 * 8);
+        CHECK(o.reneg_at > 5500 * 8 && o.reneg_at < 5500 * 8 + 1200);
     }
     /* ---- what the first real V.92 caller showed (live/v92a.raw, readings 53 on) ---- */
     if (WANT(8)) {

@@ -114,6 +114,18 @@ Changed (V.92, both roles):
   buffer when the cursor sits so late (a channel peak in the last taps of
   the estimate) that the feedback taps after it reach the end; the read
   was an undefined behaviour. Other designs are unchanged.
+- Answering V.92, data mode and rate renegotiation: a line that goes dead
+  (the caller hangs up and the network sends the idle code) ends the call
+  as a carrier loss (`V90M_END_LOST`) after the usual half second. The
+  echo canceller then gives out its own estimate of our echo, as loud as
+  the echo was: the carrier watch took that for the caller's signal and
+  data was delivered from it, and when what we sent was periodic (our Rd)
+  the Ru detector took it for the caller's Ru and started a rate
+  renegotiation (or, in ours, went on to Phase 4) instead. Now the carrier
+  watch wants the caller's power in the line as well as after the
+  canceller, and no Ru is taken while the line has brought nothing but the
+  idle code (within +-8) for 24 samples. The caller's Ru is detected as
+  before, down to the same level.
 
 Fixed:
 - V.90 and V.92, calling role: the last data frame before the digital

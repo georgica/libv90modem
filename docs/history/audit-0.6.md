@@ -287,6 +287,16 @@ reproduced).
   raises no UBSan report; detection is checked as well.
 - Fixed in Task 21 (T21.3): `X(k)` as `int64_t`; `test_p6_full` in
   `v92/test/test_rx.c`.
+- Found with the fix (T21.8): with exact sums, the canceller's output on a
+  dead line (rx = idle code after a hang-up) is its own estimate of our
+  echo, and when we send Rd it has Ru's shape: v92d took it for Ru (in
+  the replay proof, 15 traces of the h1-h4 and cxe recordings went to
+  `V92D_RENEG` 8-30 ms after the recordings' last sample). Nor did the
+  carrier watch, which measured only after the canceller, see the line
+  as quiet. Fixed in Task 21 (T21.8): no Ru while the line has been at
+  the idle code (|rx| <= 8) for 24 samples; the carrier watch wants the
+  caller's power in the line as well; `test_v92call` 24b-24d,
+  `test_answer_v92` 10. The 15 traces are again those before T21.3.
 
 **T21.4 The CPd design overflows on a long low-pass channel estimate**
 (Important, high, reproduced).

@@ -23,7 +23,9 @@
  * silence option, and cleardown (9.11) by either side. An upstream signal
  * that stays away for half a second ends the module (V92D_ERR_CARRIER), as
  * in ../modem/p34d: the Recommendation has no procedure for a caller that
- * is gone.
+ * is gone. The signal is looked for in the line as well as after the echo
+ * canceller, and a line that brings only the idle code has no Ru in it,
+ * whatever the canceller gives out (it gives out its estimate of our echo).
  * Not here: quick connect, modem-on-hold, fast parameter exchange (9.9).
  */
 #ifndef V90D_V92_P34D_H
@@ -176,7 +178,12 @@ typedef struct {
     int        rate_drops;
     /* loss of the upstream signal in data mode, 10 ms blocks */
     uint32_t   sig_ms;              /* mean square of the samples that carried B1u */
-    int64_t    cd_acc; int cd_n, cd_quiet;
+    int64_t    cd_acc;              /* sum of squares after the canceller (B1u: its samples) */
+    uint32_t   cd_line;             /* ... of the line itself, each square >> CD_LINE_SHIFT */
+    int16_t    cd_n;                /* samples in cd_acc */
+    uint8_t    cd_quiet;            /* blocks in a row without the caller's signal */
+    uint8_t    cd_idle;             /* samples in a row (to 255) in which the line brought the
+                                       idle code: no far end, whatever the canceller gives out */
 } v92d_t;
 
 /* Returns 0, or -1 if the configuration cannot work (state is V92D_FAILED):

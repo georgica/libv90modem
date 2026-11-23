@@ -36,6 +36,9 @@
 #define CD_BLOCK       80       /* carrier watch: 10 ms */
 #define CD_BLOCKS      50       /* about half a second without signal in data mode */
 #define CD_SHIFT       6        /* "without": 18 dB under the power of B1u */
+#define CD_LINE_SHIFT  5        /* the line's squares are summed >> 5: 80 of 2^30 fit 32 bits */
+#define LINE_IDLE      8        /* |line| up to this is the idle code (A-law 0xD5, 0x55: +-8; mu-law: 0) */
+#define LINE_IDLE_RUN  24       /* ... for 4 periods of Ru: nobody sends Ru, whatever the detector reads */
 
 static void fail(v92d_t *p, int err)
 {
@@ -100,7 +103,7 @@ static void put_data(void *user, int bit)
                 /* the carrier watch's reference: the power B1u came with
                  * (which points the moduli use is not ours to guess) */
                 p->sig_ms = p->cd_n ? (uint32_t)(p->cd_acc / p->cd_n) : 0;
-                p->cd_acc = 0; p->cd_n = 0; p->cd_quiet = 0;
+                p->cd_acc = 0; p->cd_line = 0; p->cd_n = 0; p->cd_quiet = 0; p->cd_idle = 0;
                 p->rx_ready = 1;
             }
         }
@@ -137,7 +140,7 @@ static void upstream_start(v92d_t *p, int32_t m)
     p->bad_seen = 0; p->q_bad = 0;
     p->rx_on = 1;
     p->trn_on = 2;
-    p->sig_ms = 0; p->cd_acc = 0; p->cd_n = 0; p->cd_quiet = 0;
+    p->sig_ms = 0; p->cd_acc = 0; p->cd_line = 0; p->cd_n = 0; p->cd_quiet = 0; p->cd_idle = 0;
 }
 
 /* The first data frame after E2u, sample by sample. A real analogue modem
@@ -459,14 +462,33 @@ static void reneg_resume(v92d_t *p)
     seq_reset(p, W_PH4);
 }
 
-/* Loss of the upstream signal in data mode: far below what B1u brought, for
- * about half a second. One sample in; 1 = lost. */
-static int carrier_lost(v92d_t *p, int16_t x)
+/* A dead line (the caller has hung up, the network sends the idle code)
+ * leaves the canceller giving out its own estimate of our echo: as loud as
+ * the echo was, and as periodic as what we send (Rd has Ru's shape). The
+ * caller's signal has to be in the line itself as well as in what the
+ * canceller leaves of it.
+ *
+ * line_idle: one sample of the line; 1 = it has brought nothing but the idle
+ * code for LINE_IDLE_RUN samples, and what Ru the detector reads is ours. */
+static int line_idle(v92d_t *p, int16_t rxs)
 {
+    if (rxs < -LINE_IDLE || rxs > LINE_IDLE) p->cd_idle = 0;
+    else if (p->cd_idle < 255) p->cd_idle++;
+    return p->cd_idle >= LINE_IDLE_RUN;
+}
+
+/* Loss of the upstream signal in data mode: far below what B1u brought, in
+ * the line or after the canceller, for about half a second. One sample in:
+ * the line, what the canceller left; 1 = lost. */
+static int carrier_lost(v92d_t *p, int16_t rxs, int16_t x)
+{
+    uint64_t q = p->sig_ms >> CD_SHIFT, line;
     p->cd_acc += (int32_t)x * x;
+    p->cd_line += (uint32_t)((int32_t)rxs * rxs) >> CD_LINE_SHIFT;
     if (++p->cd_n < CD_BLOCK) return 0;
-    if ((uint64_t)(p->cd_acc / CD_BLOCK) < (p->sig_ms >> CD_SHIFT)) p->cd_quiet++; else p->cd_quiet = 0;
-    p->cd_acc = 0; p->cd_n = 0;
+    line = (uint64_t)p->cd_line << CD_LINE_SHIFT;
+    if ((uint64_t)p->cd_acc / CD_BLOCK < q || line / CD_BLOCK < q) p->cd_quiet++; else p->cd_quiet = 0;
+    p->cd_acc = 0; p->cd_line = 0; p->cd_n = 0;
     return p->cd_quiet >= CD_BLOCKS;
 }
 
@@ -772,7 +794,7 @@ uint8_t v92d_tick(v92d_t *p, int16_t rxs)
         if (sig == V90TX_DATA) p->tx_ready = 1;
         if (p->tx_ready && p->rx_ready) {
             if (p->in_reneg) { p->renegs++; p->in_reneg = 0; }
-            v92_p6_init(&p->p6);
+            v92_p6_init(&p->p6); p->cd_idle = 0;
             enter(p, V92D_DATA);
         } else if ((int64_t)p->t > MS(p->in_reneg ? T_RENEG_MS + pace_ms(p) : T_PHASE4_MS) + 6 * p->cfg.rtd) {
             if (p->in_reneg) retrain(p, 1); else fail(p, V92D_ERR_B1);
@@ -781,8 +803,10 @@ uint8_t v92d_tick(v92d_t *p, int16_t rxs)
 
     case V92D_DATA:
         /* 9.8.1.2.1: Ru in data mode */
-        if (v92_p6_tick(&p->p6, x, RU_FLOOR) & V92_P6_ON) { reneg_begin(p, 0); break; }
-        if (carrier_lost(p, x)) { fail(p, V92D_ERR_CARRIER); break; }
+        r = v92_p6_tick(&p->p6, x, RU_FLOOR);
+        if (line_idle(p, rxs)) r = 0;           /* our own echo on a dead line */
+        if (r & V92_P6_ON) { reneg_begin(p, 0); break; }
+        if (carrier_lost(p, rxs, x)) { fail(p, V92D_ERR_CARRIER); break; }
         /* is the line still good enough for the rate? */
         if ((p->t & 8191) == 0) {
             uint32_t nb = p->dec.bad_frames - p->bad_seen;
@@ -799,8 +823,9 @@ uint8_t v92d_tick(v92d_t *p, int16_t rxs)
     case V92D_RENEG:
         /* until Ru-bar the caller sends data or Ru: a signal that dies away
          * can look like the start of Ru to the detector */
-        if (!p->revs && carrier_lost(p, x)) { fail(p, V92D_ERR_CARRIER); break; }
+        if (!p->revs && carrier_lost(p, rxs, x)) { fail(p, V92D_ERR_CARRIER); break; }
         r = v92_p6_tick(&p->p6, x, RU_FLOOR);
+        if (line_idle(p, rxs)) r = 0;           /* our own Rd, Rd-bar on a dead line */
         if (r) p->rx_ready = 0;                 /* Ru: no more data (the last 13 ms in the decoder are dropped) */
         if ((r & V92_P6_REV) && !p->revs) {
             p->revs = 1;
