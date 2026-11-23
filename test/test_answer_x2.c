@@ -262,6 +262,10 @@ static struct { int ms; long at; double amp, df; } TA;
  * next x2_call too */
 static struct { long at, from2, bad, n; } CK;
 static double NZ;
+/* the client behind a packet network (an ATA's jitter buffers), for the
+ * next x2_call (which clears it): d samples each way, and our echo off its
+ * line's hybrid a round trip late, 20 dB down; 0: the line above */
+static struct { int d; } FAR;
 static long up_taken;
 /* downstream: our getbit to the client's putbit; upstream the other way */
 /* our data bits taken from the point x2tx left data mode for its answer to
@@ -310,10 +314,12 @@ typedef struct {
 static void x2_call(int pad, int index, uint16_t up_mask, int silent, int echo_delay, int secs, long data_bits, x2_outcome *o)
 {
     static uint8_t down[XD]; static int16_t up[XD]; static double dl[XD];
-    const int d_ac = 37, d_ca = 41;     /* one-way delays, samples */
+    const int d_ac = FAR.d ? FAR.d : 37, d_ca = FAR.d ? FAR.d : 41;     /* one-way delays, samples */
     /* our echo off the line's hybrid comes back this late: behind a driver's
-     * buffers when we are not told (echo_delay -1: x2d measures it) */
-    const int e = echo_delay < 0 ? 300 : echo_delay;
+     * buffers when we are not told (echo_delay -1: x2d measures it); or the
+     * far hybrid's, a round trip late (FAR) */
+    const int e = FAR.d ? d_ac + d_ca : echo_delay < 0 ? 300 : echo_delay;
+    const double g = FAR.d ? 0.65 : 1.0;   /* (FAR: 20 dB down) */
     answer_cfg ac; x2call_cfg xc; rng_t rng;
     uint8_t arx = 0xff;
     long n, ta_n = 0;
@@ -363,7 +369,7 @@ static void x2_call(int pad, int index, uint16_t up_mask, int silent, int echo_d
         }
         /* what reaches us: the client, our own echo off the line's hybrid, noise */
         v = 0.5 * up[(n - d_ca) & (XD - 1)]
-            + 0.12 * dl[(n - e - 2) & (XD - 1)] + 0.08 * dl[(n - e - 4) & (XD - 1)] - 0.05 * dl[(n - e - 9) & (XD - 1)]
+            + g * 0.12 * dl[(n - e - 2) & (XD - 1)] + g * 0.08 * dl[(n - e - 4) & (XD - 1)] - g * 0.05 * dl[(n - e - 9) & (XD - 1)]
             + (NZ > 0 ? NZ : 2.0) * rng_gauss(&rng);
         arx = linear_to_ulaw((int32_t)lround(v));
         if (A.phase == ANS_X2 && o->x2_at < 0) o->x2_at = n;
@@ -395,7 +401,7 @@ static void x2_call(int pad, int index, uint16_t up_mask, int silent, int echo_d
             if (o->renegs == (RN.index2 ? 2 : 1) && UG.done && DN.n - o->dn0 >= data_bits && UP.n - o->up0 >= data_bits) break;
         }
     }
-    memset(&RN, 0, sizeof RN); TA.ms = 0; TA.amp = TA.df = 0; CK.at = 0; NZ = 0;
+    memset(&RN, 0, sizeof RN); TA.ms = 0; TA.amp = TA.df = 0; CK.at = 0; NZ = 0; FAR.d = 0;
     o->ok = A.connected && A.phase == ANS_X2 && x2call_state(&X) == X2C_DATA;
     o->down = A.bitrate; o->up = A.rx_bitrate; o->mod = A.modulation;
     o->error = A.u.x2.error; o->x2_failed = x2_failed_of(&A);
@@ -693,6 +699,33 @@ static void x2_tests(void)
 #endif
 }
 
+/* the client behind an ATA or a VoIP gateway (ISP calls of 2026-11-23: a
+ * Cisco IOS FXS port's hybrid at 302 ms, 19.5 dB down): our echo a round
+ * trip late, measured (echo delay not known). x2d finds it near the round
+ * trip of Phase 2 and cancels it: the upstream as clean as on a short path.
+ * And a round trip of 100 ms, inside the search as it always was. */
+static void x2_far_echo_tests(void)
+{
+    static const int ms[3] = { 300, 400, 100 };
+    x2_outcome o;
+    int k;
+    for (k = 0; k < 3; k++) {
+        int e;
+#ifdef TEST_SHORT
+        if (k > 0) break;
+#endif
+        FAR.d = ms[k] * 4; e = 2 * FAR.d + 2;      /* (the echo path's first tap) */
+        x2_call(0, 1, 0x03FE, X2C_SIL_NONE, -1, 40, 100000, &o);
+        printf("  x2, far echo %d ms, 20 dB down:", ms[k]); x2_report("", &o);
+        printf("     echo at %d samples, round trip of Phase 2 %d\n", e, answer_rtd(&A));
+        CHECK(o.ok);
+        CHECK(A.u.x2.ecd.delay >= e - 12 && A.u.x2.ecd.delay <= e);
+        CHECK(answer_snr_db10(&A) > 300);              /* upstream error below -30 dB */
+        CHECK(DN.n >= 100000); CHECK_EQ_I(DN.bad, 0);
+        CHECK(UP.n >= 100000); CHECK_EQ_I(UP.bad, 0);
+    }
+}
+
 int main(void)
 {
     const unsigned base = ANS_MODE_V90 | V8_MOD_V34 | V8_MOD_V22 | V8_MOD_V21;
@@ -764,5 +797,6 @@ int main(void)
     }
 
     x2_tests();
+    x2_far_echo_tests();
     T_REPORT("answer_x2");
 }

@@ -71,11 +71,21 @@ static void start(const scen_t *s)
     atx = v90_pcm_octet(s->alaw, 0, 1); now = 0;
 }
 
+/* the caller behind a packet network (an ATA's jitter buffers): far_d
+ * samples each way, so the echo of its line's hybrid (v92call's, 20 dB down)
+ * comes back a round trip late; 0: no such delay */
+#define FARN 4096
+static int far_d; static uint8_t far_dn[FARN], far_up[FARN];
+
 static void run(long samples)
 {
     while (samples-- > 0) {
+        uint8_t to_c = deaf ? v90_pcm_octet(A.p2cfg.alaw, 0, 1) : atx, from_c;
         if (rec_to >= 0 && now < RECN) rec[rec_to][now] = atx;
-        atx = answer_tick_pcm(&A, v92call_tick(&C, deaf ? v90_pcm_octet(A.p2cfg.alaw, 0, 1) : atx));
+        if (far_d) { far_dn[now & (FARN - 1)] = to_c; to_c = far_dn[(now - far_d) & (FARN - 1)]; }
+        from_c = v92call_tick(&C, to_c);
+        if (far_d) { far_up[now & (FARN - 1)] = from_c; from_c = far_up[(now - far_d) & (FARN - 1)]; }
+        atx = answer_tick_pcm(&A, from_c);
         now++;
     }
 }
@@ -406,6 +416,38 @@ int main(void)
         CHECK_EQ_I(A.phase, ANS_FAILED); CHECK_EQ_I(answer_end(&A), ANS_END_LOST);
         CHECK_EQ_I(reneg, 0); CHECK_EQ_I(A.retrains, 0);
         CHECK(t > 8L * 400 && t < 8L * 750);
+    }
+
+    /* ---- 11. the caller behind an ATA or a VoIP gateway (ISP calls of
+     * 2026-11-23: a Cisco IOS FXS port's hybrid at 302 ms, 19.5 dB down):
+     * the echo a round trip late, measured (as on the box). V.92 and V.90
+     * find it near the round trip of Phase 2 and cancel it: the upstream as
+     * clean as on a short path. And a round trip of 100 ms, inside the
+     * search as it always was ---- */
+    {
+        static const int ms[3] = { 300, 400, 100 };
+        int k, v;
+        for (v = 0; v < 2; v++)
+            for (k = 0; k < 3; k++) {
+                char what[64];
+                int e, d;
+#ifdef TEST_SHORT
+                if (k > 0) break;
+#endif
+                scen(&s, V92, 0, !v, !v);
+                far_d = ms[k] * 4; e = 2 * far_d + 21;  /* (v92call's echo path: 21 samples) */
+                memset(far_dn, v90_pcm_octet(0, 0, 1), sizeof far_dn); memset(far_up, v90_pcm_octet(0, 0, 1), sizeof far_up);
+                start(&s);
+                CHECK_EQ_I(to_data(40000), 1); failed_why();
+                d = v ? A.p34.ecd.delay : A.u.v92.ecd.delay;
+                snprintf(what, sizeof what, "far echo %d ms, 20 dB down (echo delay %d)", ms[k], d);
+                data_ok(what, v ? ANS_MOD_V90 : ANS_MOD_V92);
+                CHECK_EQ_I(A.retrains, 0);
+                CHECK(d >= e - 12 && d <= e + 2);
+                CHECK(answer_snr_db10(&A) > 300);      /* V.90: the upstream error below -30 dB */
+                if (!v) CHECK_EQ_I(A.u.v92.dec.bad_frames, 0);
+            }
+        far_d = 0;
     }
 
     T_REPORT("answer_v92");

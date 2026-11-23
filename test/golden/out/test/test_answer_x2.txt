@@ -48,4 +48,19 @@
   x2 click at 15.000 s: up 713400 bits 74 bad, 552000 bits 0 bad from 2 s after it; end 0
   x2 with noise rms 92: data 32000 / 24000 bit/s, upstream SNR 23.5 dB, up 1481460 bits 687372 bad; end 0
   x2 with noise rms 68: data 32000 / 24000 bit/s, upstream SNR 26.8 dB, up 1481400 bits 0 bad; end 0
-answer_x2: 497 checks, 0 failures
+  x2, far echo 300 ms, 20 dB down:  x2 : data 32000 / 24000 bit/s; down 113928 bits 0 bad, up 100020 bits 0 bad
+     pad mode 0 in the MP and the mapper; echo delay 2395; upstream SNR 37.3 dB
+     client saw: preamble 0 bad, TRN 0 bad, J words 99 + 1, ones 0 bad, alignment 0 bad,
+     sync 1667 frames (0 bad), records 110 (0 bad), start 680 (0 bad), data frames 4747 (0 lost)
+     echo at 2402 samples, round trip of Phase 2 2401
+  x2, far echo 400 ms, 20 dB down:  x2 : data 32000 / 24000 bit/s; down 112248 bits 0 bad, up 100020 bits 0 bad
+     pad mode 0 in the MP and the mapper; echo delay 3195; upstream SNR 36.6 dB
+     client saw: preamble 0 bad, TRN 0 bad, J words 99 + 1, ones 0 bad, alignment 0 bad,
+     sync 1667 frames (0 bad), records 144 (0 bad), start 680 (0 bad), data frames 4677 (0 lost)
+     echo at 3202 samples, round trip of Phase 2 3201
+  x2, far echo 100 ms, 20 dB down:  x2 : data 32000 / 24000 bit/s; down 117048 bits 0 bad, up 100020 bits 0 bad
+     pad mode 0 in the MP and the mapper; echo delay 795; upstream SNR 37.0 dB
+     client saw: preamble 0 bad, TRN 0 bad, J words 99 + 1, ones 0 bad, alignment 0 bad,
+     sync 1667 frames (0 bad), records 44 (0 bad), start 680 (0 bad), data frames 4877 (0 lost)
+     echo at 802 samples, round trip of Phase 2 801
+answer_x2: 518 checks, 0 failures

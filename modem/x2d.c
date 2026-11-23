@@ -68,6 +68,7 @@ int x2d_init(x2d_t *d, const x2d_cfg *cfg)
     x2tx_init(&d->tx);
     ec_init(&d->ec); d->ec_mu = -1;
     ecdly_init(&d->ecd, d->cfg.echo_delay < 0 ? 0 : d->cfg.echo_delay);
+    ecdly_near(&d->ecd, d->cfg.rtd);
     d->sym_rate = v34_symbol_rate(idx);
     v34_carrier(idx, cfg->marker & 1, &d->car_num, &d->car_den);
     d->rxmode = RX_WAIT_S;

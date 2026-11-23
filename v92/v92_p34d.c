@@ -89,6 +89,7 @@ int v92d_init(v92d_t *p, const v92d_cfg *cfg)
     if (r != 0) { fail(p, V92D_ERR_UINFO); return -1; }
     if (cfg->echo_delay > V92D_MAX_ECHO_DELAY) { fail(p, V92D_ERR_UINFO); return -1; }
     ecdly_init(&p->ecd, cfg->echo_delay);
+    ecdly_near(&p->ecd, cfg->rtd);
     return 0;
 }
 

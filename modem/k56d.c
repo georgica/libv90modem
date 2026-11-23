@@ -55,6 +55,7 @@ int k56d_init(k56d_t *d, const k56d_cfg *cfg)
     k56tx_init(&d->tx);
     ec_init(&d->ec); d->ec_mu = -1;
     ecdly_init(&d->ecd, d->cfg.echo_delay < 0 ? 0 : d->cfg.echo_delay);
+    ecdly_near(&d->ecd, d->cfg.rtd);
     v34_carrier(4, cfg->hi_carrier != 0, &d->car_num, &d->car_den);
     sdet_init(&d->sdet, SYM_RATE, d->car_num, d->car_den);
     d->sdet.div = 16;               /* nothing but S can be on the line */
@@ -521,7 +522,11 @@ static void ec_schedule(k56d_t *d, int16_t rxs)
 {
     int32_t n = ++d->ec_n, from = EC_SETTLE;
     if (d->cfg.echo_delay < 0) {
-        if (ecdly_measure(&d->ecd, n - EC_SETTLE, rxs, 1)) ec_init(&d->ec);
+        /* the search ends a little past the round trip (ecdly_near), so its
+         * window comes that much later: when the echo of TRN1A is back at
+         * every lag it tries */
+        from += d->ecd.base;
+        if (ecdly_measure(&d->ecd, n - from, rxs, 1)) ec_init(&d->ec);
         from += ECDLY_SAMPLES;
     }
     if (n < from) d->ec_mu = -1;

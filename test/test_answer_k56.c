@@ -422,10 +422,17 @@ static void kd_default(kd_opts *k)
 #define KH_S 10
 #endif
 
+/* the client behind a packet network (an ATA's jitter buffers), for the
+ * next kd_call (which clears it): d samples each way, and our echo off its
+ * line's hybrid a round trip late, 20 dB down; 0: the line above */
+static struct { int d; } KFAR;
+
 static void kd_call(const kd_opts *ko, long secs, kd_out *o)
 {
     static uint8_t down[XD]; static int16_t up[XD]; static double dl[XD];
-    const int d_ac = 37, d_ca = 41;
+    const int d_ac = KFAR.d ? KFAR.d : 37, d_ca = KFAR.d ? KFAR.d : 41;
+    const int e = KFAR.d ? d_ac + d_ca : 0;
+    const double g = KFAR.d ? 0.65 : 1.0;
     answer_cfg ac; k56call_cfg kc; rng_t rng;
     uint8_t arx = 0xff;
     long n;
@@ -471,7 +478,7 @@ static void kd_call(const kd_opts *ko, long secs, kd_out *o)
         dl[i] = (double)ulaw_to_linear(x2call_pad(atx, ko->pad));
         up[i] = k56call_tick(&K, down[(n - d_ac) & (XD - 1)]);
         v = 0.5 * up[(n - d_ca) & (XD - 1)]
-            + 0.12 * dl[(n - 2) & (XD - 1)] + 0.08 * dl[(n - 4) & (XD - 1)] - 0.05 * dl[(n - 9) & (XD - 1)]
+            + g * 0.12 * dl[(n - e - 2) & (XD - 1)] + g * 0.08 * dl[(n - e - 4) & (XD - 1)] - g * 0.05 * dl[(n - e - 9) & (XD - 1)]
             + 2.0 * rng_gauss(&rng);
         arx = linear_to_ulaw((int32_t)lround(v));
         if (K.state == K56C_K56 && o->flag_at < 0) o->flag_at = n;
@@ -526,6 +533,7 @@ static void kd_call(const kd_opts *ko, long secs, kd_out *o)
             if (!ko->silent && !ko->hold) break;
         }
     }
+    KFAR.d = 0;
     o->quiet_at = K.quiet_at; o->e_at = K.e_at;
     o->k56_failed = answer_end(&A) == ANS_END_K56_FAILED; o->k56_lost = answer_end(&A) == ANS_END_LOST;
     o->cleared = cleared_of(&A); o->phase = A.phase;
@@ -1391,6 +1399,36 @@ static void cfg_after_start_tests(void)
     printf("  answer_v90_cfg after the first sample: offers and phase kept (V.8 after V.8bis at %.2f s)\n", n / 8000.0);
 }
 
+/* the client behind an ATA or a VoIP gateway (ISP calls of 2026-11-23: a
+ * Cisco IOS FXS port's hybrid at 302 ms, 19.5 dB down): our echo a round
+ * trip late, measured on our TRN1A. k56d finds it near the round trip of
+ * Phase 2 and cancels it: the upstream as clean as on a short path. And a
+ * round trip of 100 ms, inside the search as it always was. */
+static void k56_far_echo_tests(void)
+{
+    static const int ms[3] = { 300, 400, 100 };
+    kd_opts ko; kd_out o;
+    int k;
+    for (k = 0; k < 3; k++) {
+        char what[64];
+        int e;
+#ifdef TEST_SHORT
+        if (k > 0) break;
+#endif
+        kd_default(&ko); ko.rate = 1; ko.echo_delay = -1;
+        KFAR.d = ms[k] * 4; e = 2 * KFAR.d + 2;    /* (the echo path's first tap) */
+        kd_call(&ko, 60, &o);
+        snprintf(what, sizeof what, "K56flex, far echo %d ms, 20 dB down", ms[k]);
+        kd_report(what, &o);
+        printf("     echo delay %d (the echo at %d samples), round trip of Phase 2 %d, upstream SNR %.1f dB\n",
+               A.u.k56.ecd.delay, e, answer_rtd(&A), answer_snr_db10(&A) / 10.0);
+        CHECK_EQ_I(o.connected_once, 1); CHECK_EQ_I(o.mod, ANS_MOD_K56);
+        CHECK(A.u.k56.ecd.delay >= e - 12 && A.u.k56.ecd.delay <= e);
+        CHECK(answer_snr_db10(&A) > 300);              /* upstream error below -30 dB */
+        CHECK(DA.n >= DBITS); CHECK(DC.n >= DBITS); CHECK_EQ_I(DA.bad, 0); CHECK_EQ_I(DC.bad, 0);
+    }
+}
+
 int main(void)
 {
     cfg_after_start_tests();
@@ -1400,6 +1438,7 @@ int main(void)
     k56_reneg_tests();
     k56_retrain_tests();
     v34peer_tests();
+    k56_far_echo_tests();
 #ifndef TEST_SHORT          /* on ARM under qemu (test.h): the K56flex client and v34peer only */
     orig_tests();
     x2_tests();

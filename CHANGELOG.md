@@ -206,6 +206,19 @@ Changed (V.92, both roles):
   before, down to the same level.
 
 Fixed:
+- Answering role, a caller behind a packet network (an ATA's or a VoIP
+  gateway's jitter buffers): the echo of the far hybrid comes back about a
+  round trip late, 300 ms on a Cisco IOS FXS port, past the 160 ms the echo
+  delay search covered; the canceller sat on nothing, the upstream error
+  stayed near -16 dB and the caller retrained. The search now ends a little
+  past Phase 2's round trip, as V.90 does since Will Sowerbutts's
+  `ecdly_near` (PR #1), in V.92 (PCM upstream), x2 and K56flex too
+  (K56flex also starts it that much later, when the echo of TRN1A is back).
+  A round trip under 128 ms changes nothing. V.34 needed nothing: its far
+  canceller is placed on the round trip already. Tested with a far echo
+  20 dB down at 300 ms and 400 ms, and at 100 ms, for V.90, V.92, x2,
+  K56flex and V.34: the delay within 12 samples of the echo, the upstream
+  error below -30 dB (V.92: its decoder's SNR above 30 dB), the data clean.
 - V.92, answering role: our cleardown (`v90m_cleardown`) ends with
   `V90M_END_CLEARDOWN_OURS` within 3.5 s whatever the caller does. It
   waited for the caller's Ru-bar and a new CPd design: a caller that no

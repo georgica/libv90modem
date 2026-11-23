@@ -239,6 +239,40 @@ int main(void)
         CHECK(P.erle_a > 40);
     }
 
+    /* ---- the answering side of a digital modem behind an ATA or a VoIP
+     * gateway (ISP calls of 2026-11-23: a Cisco IOS FXS port's hybrid at
+     * 302 ms, 19.5 dB down): no echo of its own, the far hybrid's a round
+     * trip late, 20 dB down; our own path's delay not known, so Phase 2's
+     * round trip still holds it (as answer.c gives it). The far canceller
+     * sits on the echo; the upstream error below -30 dB. And a round trip
+     * of 100 ms: inside the search, so the near canceller takes the echo
+     * and the far one is off ---- */
+    {
+        static const int ms[3] = { 300, 400, 100 };
+        for (k = 0; k < 3; k++) {
+            int e, lag;
+            double mse_db;
+#ifdef TEST_SHORT
+            if (k > 0) break;
+#endif
+            lc = CLEAN; lc.echo_a = 0; lc.d_ca = lc.d_ac = ms[k] * 4; lc.far_a = 0.124;
+            e = lc.d_ca + lc.d_ac + 2;                  /* (the echo path's first tap) */
+            mkcfg(&a, &c, 4, 1, 0, &lc); a.echo_delay = -1; a.rtd_has_io = 1; a.rtd = lc.d_ca + lc.d_ac + 3;
+            pair_init(&a, &c, &lc);
+            CHECK_EQ_I(pair_to_data(9000), 1);
+            CHECK_EQ_I(P.a.far_on, ms[k] > 160);
+            /* where the canceller's taps begin: the far one's (v34dx.c FAR_LEAD), or the near one's */
+            lag = P.a.far_on ? P.a.ecd.delay + P.a.cfg.rtd - 16 : P.a.ecd.delay;
+            sinks_reset(); pair_run(8000L * 4);
+            mse_db = 10 * log10((P.a.up.rx.mse + 1e-9) / 65536.0);
+            printf("  far echo %d ms, 20 dB down, nothing near: canceller from %d (the echo at %d), echo down %.0f dB,"
+                   " upstream error %.1f dB;", ms[k], lag, e, P.erle_a, mse_db); report("");
+            CHECK(lag >= e - 30 && lag <= e);
+            CHECK(mse_db < -30);
+            CHECK_EQ_I(P.ua.sink.errs, 0); CHECK_EQ_I(P.uc.sink.errs, 0); CHECK(P.a.rx_rate >= 28800);
+        }
+    }
+
     /* ---- ceilings, symmetric and asymmetric rates (MP bits 20:27, 50) ---- */
     {
         mkcfg(&a, &c, 4, 1, 0, &CLEAN); c.max_rx_rate = 19200; a.max_rx_rate = 26400;

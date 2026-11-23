@@ -17,4 +17,10 @@
   V.34 caller, V.92 enabled here: data mode at 7.90 s, 28800 / 28800 bit/s
   V.92 caller gone in data mode: over after 510 ms, 0 retrain(s)
   V.92 line dead in data mode: over after 500 ms, end 2, 0 retrain(s), renegotiation 0
-answer_v92: 247 checks, 0 failures
+  far echo 300 ms, 20 dB down (echo delay 2416) V.92: 50666 bit/s down, 40000 bit/s up; 152000 / 120000 bits, 0 / 0 bad; SNR 49.9 dB, rtd 2402
+  far echo 400 ms, 20 dB down (echo delay 3216) V.92: 50666 bit/s down, 40000 bit/s up; 152000 / 120000 bits, 0 / 0 bad; SNR 50.5 dB, rtd 3202
+  far echo 100 ms, 20 dB down (echo delay 816) V.92: 50666 bit/s down, 40000 bit/s up; 152000 / 120000 bits, 0 / 0 bad; SNR 49.7 dB, rtd 802
+  far echo 300 ms, 20 dB down (echo delay 2415) V.90: 50666 bit/s down, 28800 bit/s up; 152000 / 86400 bits, 0 / 0 bad; SNR 36.6 dB, rtd 2402
+  far echo 400 ms, 20 dB down (echo delay 3214) V.90: 50666 bit/s down, 28800 bit/s up; 152000 / 86400 bits, 0 / 0 bad; SNR 36.1 dB, rtd 3202
+  far echo 100 ms, 20 dB down (echo delay 814) V.90: 50666 bit/s down, 28800 bit/s up; 152000 / 86400 bits, 0 / 0 bad; SNR 36.4 dB, rtd 802
+answer_v92: 322 checks, 0 failures
