@@ -613,7 +613,10 @@ CPd dictates, at LU = the configured level.
   on. Our own Ru has Sd's period, so Sd is not looked for until Ja.
 - Rate renegotiation begun by the digital modem is followed (Ru on our data
   frame boundary after its Rd-bar); cleardown either way (CPu / CPd with
-  drn = 0). Retrains and rate renegotiations of our own are V.90's (the
+  drn = 0). The digital modem's cleardown is acknowledged before we go
+  silent: SUVu' / CPu' (9.6.2.1.2) until its SUVd' or CPd' (9.6.2.1.4's
+  point; no E2u, which leads to data), at most 100 ms + a round trip after
+  its CPd. Retrains and rate renegotiations of our own are V.90's (the
   analogue side's, 4.2c; `docs/history/PROGRESS.md` robust 2c), with a
   fresh PCM upstream after a retrain. No quick connect, no short Phase 2, no modem-on-hold. Tried in
   simulation and against this library's own answerer only.

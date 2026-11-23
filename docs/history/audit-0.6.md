@@ -211,6 +211,14 @@ the cleardown's signals, from the review of T21.1).
   (our SUVd' out, the caller's acknowledge or E2u in), else at
   `T_CLEAR_MS` (3.5 s from the request); every end is `V92D_ERR_HANGUP`.
   `test_v92call` 18 (the signals in order), 18c (no SUVu: 3.5 s, no CPd).
+- T21.12 (from the review of T21.11): our own V.92 caller hung up on the
+  drn = 0 CPd without acknowledging it (9.6.2.1.2), so our answerer waited
+  3.5 s against it. Now it sends SUVu' / CPu' until 9.6.2.1.4's point (no
+  E2u), at most 100 ms + a round trip; our answerer ends some 0.4 s after
+  the request (`test_v92a`). Also `test_v92call` 18d (no acknowledge: CPd
+  repeated, SUVd between, 3.5 s), 18e (the caller's Tone A), 18f (both
+  ends at once); the PH4 entry while clearing only on Rd-bar, TRN2d or
+  SUVd.
 
 **T21.2 Repeated CPd (9.6.1.1.3) is sent back to back** (Important,
 medium-high).

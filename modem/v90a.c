@@ -1033,7 +1033,14 @@ static void train92(v90a_t *a, const uint8_t *bits, int D, int32_t m0)
         a->got_cpd = 1;
         if (a->cpd.ack) a->got_ack = 1;
         if (a->t_mp == CLK_NONE) a->t_mp = a->now;
-        if (a->cpd.drn == 0) { end(a, a->clearing ? V90A_ERR_HANGUP : V90A_ERR_CLEARDOWN); return; }    /* 9.11 */
+        if (a->cpd.drn == 0) {                      /* 9.11: the digital modem clears down */
+            if (a->clearing) { end(a, V90A_ERR_HANGUP); return; }
+            /* 9.6.2.1.2: what we send from now on carries the acknowledge
+             * bit; seq_next ends the call once it has been answered, or
+             * after 100 ms + a round trip (9.6.2.1.3's wait for the
+             * answer, as our CPu repeat) */
+            if (a->got_cpd != 2) { a->got_cpd = 2; a->cpus_left = MS(100) + a->p2.rtd + 600; }
+        }
     }
     if ((ev & V92AS_ED) && (a->got_suvd || a->got_cpd)) {
         /* Ed (8.8.2): this frame and the next; B1d after them, with our CPu */
@@ -1088,6 +1095,18 @@ static void seq_next(v90a_t *a)
     int unit = a->ml.nbits * 12, n;
     if (a->seq_ack) a->ack_sent = 1;
     a->seq_ack = 0;
+    if (a->got_cpd == 2) {
+        /* the digital modem's cleardown: 9.6.2.1.4's point (we have sent a
+         * sequence with the acknowledge bit and received one, or Ed) ends
+         * it. There 9.6.2.1.4 sends E2u, but E2u leads to B1u and data
+         * (9.6.2.1.5), which drn = 0 rules out: silence instead, after one
+         * more sequence (what our transmitter still holds of the
+         * acknowledging one then leaves the line whole). Without the
+         * answer, the same once cpus_left symbols have gone out. */
+        a->cpus_left -= a->frn / a->ml.nbits;
+        if (a->cpus_left <= 0) { end(a, V90A_ERR_CLEARDOWN); return; }
+        if (a->ack_sent && (a->got_ack || a->got_ed)) a->cpus_left = 1;
+    }
     if (a->clearing) {
         /* CPu with drn = 0, CLEAR_CPS of them, then silence */
         v92_cpu_t u;
@@ -1097,7 +1116,7 @@ static void seq_next(v90a_t *a)
         load_bits(a, bits, v92_cpu_build(&u, unit, bits));
         return;
     }
-    if (a->ack_sent && (a->got_ack || a->got_ed)) { ugo(a, P_E2U); return; }
+    if (a->ack_sent && (a->got_ack || a->got_ed) && a->got_cpd != 2) { ugo(a, P_E2U); return; }
     if (a->got_suvd && a->cp_ready && (!a->cpu_sent || (!a->got_ack && a->since_cpu > MS(100) + a->p2.rtd + 600))) {
         v92_cpu_t u;
         cp_to_cpu(&a->cp, V92_UP_CPU, &u);

@@ -205,10 +205,18 @@ Fixed:
   our SUVd' (where 9.6.1.1.4 would send Ed): some 0.3 s with the simulated
   caller. Before, four CPds went out back to back right after TRN2d, with
   no SUVd and no wait for the caller's SUVu; only this library's own
-  caller and the simulator took that. Against this library's own caller,
-  which hangs up on the CPd without acknowledging it, the answering side
-  now ends at its 3.5 s limit (the caller itself ends as before, some
-  0.1 s later than it did).
+  caller and the simulator took that. A caller that never acknowledges
+  is given 3.5 s.
+- V.92, calling role: the digital modem's cleardown (a CPd with drn = 0)
+  is acknowledged before we go silent, as V.92 9.6.2.1.2 asks: what we
+  send after it (SUVu, or CPu if it was not yet out) carries the
+  acknowledge bit, and the call ends with `V90M_END_CLEARDOWN_FAR` at
+  9.6.2.1.4's point (our acknowledging sequence out, the digital modem's
+  SUVd' / CPd' or Ed in), one sequence later, or 100 ms + a round trip
+  after the CPd when no acknowledge comes (9.6.2.1.3's wait). No E2u: it
+  leads to B1u and data, which drn = 0 rules out. We hung up on the CPd at
+  once, so this library's answerer, which waits for the acknowledge,
+  ended only at its 3.5 s limit; now about 0.4 s after its request.
 - V.92, answering role: a CPd the caller does not answer (9.6.1.1.3) is
   repeated one copy at a time, with SUVd between the copies: 9.6.1.1.2's
   single CPd followed by SUVd, once per copy (V.92's Figures 12 to 14 draw

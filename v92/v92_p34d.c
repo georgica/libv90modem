@@ -28,8 +28,12 @@
 #define T_TRAIN_MS     8000     /* 9.5.2.1.11: CPt within 5000 ms of Su-bar */
 #define T_PHASE4_MS    20000    /* 9.6.1.2.1: B1u within 20 s (+ 6 round trips) */
 #define T_RENEG_MS     8000
-#define T_CLEAR_MS     3500     /* our cleardown from its start, the caller there or not (with a
-                                   caller that acknowledges: some 0.3 s in simulation) */
+/* our cleardown from its start, the caller there or not. What a caller that
+ * follows the text may take: our Rd and its Ru, about 0.1 s; TRN2u up to
+ * 16008 T, 2.0 s (9.8.2.2.3, 9.8.2.1.2); SUVu, our CPd, its acknowledge and
+ * two round trips: some 2.5 s in all. Under the 4 s T21.1 set; with a
+ * caller that acknowledges at once some 0.3 to 0.4 s (simulation). */
+#define T_CLEAR_MS     3500
 #define BASE_MAX_Q4    (1024 << 4)  /* the baseline is followed this far from zero, linear units Q4 */
 #define SUVD_HOLD_MS   2500     /* SUVd at the latest so long into Phase 4, the design done or not */
 #define T_PACE_MS      2500     /* more for each sample the design waits between steps */
@@ -1060,7 +1064,7 @@ uint8_t v92d_tick(v92d_t *p, int16_t rxs)
              * with drn = 0 (9.6.1.1.2), no design. Without, SUVd until
              * T_CLEAR_MS. */
             if (sig == V90TX_TRN2D && v90tx_units(&p->tx) >= RENEG_TRN2D) sel(p, V90TX_SUVD);
-            if (p->revs && sig != V90TX_RD) enter(p, V92D_PH4);
+            if (p->revs && (sig == V90TX_RD_BAR || sig == V90TX_TRN2D || sig == V90TX_SUVD)) enter(p, V92D_PH4);
             else if (clk_diff(p->now, p->t_clear) > MS(T_CLEAR_MS)) fail(p, V92D_ERR_HANGUP);
         } else if (p->revs && (sig == V90TX_RD_BAR || sig == V90TX_TRN2D)) enter(p, V92D_PH4);
         else if (p->t > MS(T_RENEG_MS)) retrain(p, 1);

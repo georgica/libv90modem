@@ -27,9 +27,8 @@ Each item names where it is recorded.
   sends what V.92 9.11 / 9.8.1.1.2 / 9.6.1.1.2 give (TRN2d, SUVd, on the
   caller's SUVu one CPd with drn = 0, SUVd) and is over when the caller
   acknowledges; only the simulator and this library's own caller have
-  answered it. Our caller hangs up on that CPd without acknowledging it,
-  so against it the answering side ends at its 3.5 s limit.
-  (`v92/README.md`, reading 38; `docs/history/audit-0.6.md`, T21.11.)
+  answered it. (`v92/README.md`, reading 38; `docs/history/audit-0.6.md`,
+  T21.11, T21.12.)
 - **x2 (answering): one real modem, one line.** The owner's U.S. Robotics
   56K FAX EXT (flash 5.1.4) called the box (v90d with this library,
   2026-11-21): x2 at 56000 / 28800 with PPP, held 3 min 50 s until we hung
@@ -88,7 +87,8 @@ Each item names where it is recorded.
   simulator); when a drop comes, the new design still takes the noise
   floor measured at the start-up, so on a line that stays noisy the lower
   rate can fail B1u and the call retrains without PCM upstream. A rate
-  renegotiation the caller starts is not affected. (`docs/history/audit-0.6.md`, T21.10; deferred.)
+  renegotiation the caller starts is not affected.
+  (`docs/history/audit-0.6.md`, T21.10; deferred.)
 
 ## Not checked against a specification
 

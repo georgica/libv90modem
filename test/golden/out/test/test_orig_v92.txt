@@ -16,5 +16,5 @@ reported only: the upstream through the downstream's loop and codec response
   2 km,    0 ppm, dschan's response up   V.92   12444  52000  34666  53.8   195     520026     0     346632     0
 ending a call
   ours: caller ended 4 after 798 ms (end 7), answerer phase 3, cleared 1
-  the answerer's: caller ended after 363 ms, end 6
+  the answerer's: caller ended after 375 ms, end 6
 orig_v92: 109 checks, 0 failures

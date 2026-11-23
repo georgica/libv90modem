@@ -155,14 +155,47 @@ int main(void)
     CHECK_EQ_I(l->va.state, V90A_DATA);
     CHECK_EQ_I(v92d_cleardown(&l->v92d), 0);
     {
-        int64_t t0 = l->k;
+        int64_t t0 = l->k, d_end = -1;
         run_for(l, MS(12000));
         printf("  ours %d (error %d) after %d ms\n", l->va.state, l->va.error, (int)ms((int32_t)(l->k - t0)));
         CHECK_EQ_I(l->va.error, V90A_ERR_CLEARDOWN);
+        /* 9.6.2.1.2: we sent SUVu / CPu with the acknowledge bit after the
+         * CPd with drn = 0, so the digital modem's cleardown is over at
+         * once (9.6.1.1.4's point), not at its time limit */
+        CHECK_EQ_I(l->va.ack_sent, 1);
+        while (l->k < t0 + MS(5000) && d_end < 0) { vl_tick(l); if (l->v92d.state == V92D_FAILED) d_end = l->k - t0; }
+        printf("  the digital modem: state %d (error %d) after %d ms\n", l->v92d.state, l->v92d.error, (int)ms((int32_t)d_end));
+        CHECK_EQ_I(l->v92d.state, V92D_FAILED);
+        CHECK_EQ_I(l->v92d.error, V92D_ERR_HANGUP);
+        CHECK(d_end >= 0 && d_end < MS(1000));
         /* every bit the digital modem sent before its Rd arrived (a frame
          * held back at Rd was dropped, 0.5.0) */
         printf("  downstream: %" PRId64 " bits sent, %" PRId64 " not received\n", l->down.sent, l->down.sent - l->down.got);
         CHECK_EQ_I(l->down.sent - l->down.got, 0);
+    }
+
+    printf("cleardown by the digital modem, whose acknowledge never reaches us\n");
+    c = base(); c.seed = 2;
+    vl_init(l, &c);
+    run_to(l, MS(40000), V90A_DATA);
+    run_for(l, MS(300));
+    CHECK_EQ_I(l->va.state, V90A_DATA);
+    CHECK_EQ_I(v92d_cleardown(&l->v92d), 0);
+    {
+        /* no acknowledge from the digital modem reaches us (its SUVd' and
+         * CPd' are read as without the bit): we acknowledge for 100 ms + a
+         * round trip (and a sequence or so), then end as the cleardown it
+         * is */
+        int64_t t0 = l->k, t_cpd = -1;
+        while (l->k < t0 + MS(12000) && l->va.state != V90A_ENDED) {
+            vl_tick(l);
+            l->va.got_ack = 0;
+            if (t_cpd < 0 && l->va.got_cpd && l->va.cpd.drn == 0) t_cpd = l->k;
+        }
+        printf("  ours %d (error %d) %d ms after the CPd\n", l->va.state, l->va.error, (int)ms((int32_t)(l->k - t_cpd)));
+        CHECK_EQ_I(l->va.error, V90A_ERR_CLEARDOWN);
+        CHECK(t_cpd >= 0);
+        CHECK(l->k - t_cpd > MS(100) && l->k - t_cpd < MS(100) + l->va.p2.rtd + MS(100));
     }
 
     printf("our cleardown (CPu), answered by a retrain of the digital modem's (R3)\n");

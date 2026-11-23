@@ -212,8 +212,11 @@ typedef struct {
     uint32_t   up92_rates;          /* Ja: upstream rates, bit r = (r + 18) * 8000 / 6 */
     v92aseq_t  aseq;                /* SUVd, CPd, Ed */
     v92_cpd_t  cpd;                 /* the CPd in use */
-    int        got_suvd, got_ack, got_cpd;
-    int        cpu_sent, ack_sent, seq_ack, cpus_left;
+    int        got_suvd, got_ack, got_cpd;     /* got_cpd 2: one with drn = 0 (the digital
+                                                   modem's cleardown, 9.11) */
+    int        cpu_sent, ack_sent, seq_ack, cpus_left;  /* cpus_left: our cleardown, CPus still to
+                                                   send; the digital modem's, symbols of
+                                                   acknowledging SUVu / CPu still to send */
     int32_t    since_cpu;
     v92_enc_t  enc;
     int32_t    b1_bits;

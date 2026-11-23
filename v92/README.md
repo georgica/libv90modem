@@ -627,10 +627,11 @@ sample; both include the transmitter and the echo canceller).
     (9.6.1.1.2). It is over where 9.6.1.1.4 would send Ed: our SUVd' out and
     the caller's acknowledge (CPu' / SUVu') or E2u in; silence then, not
     Ed, since no data mode follows drn = 0. With the simulated caller some
-    0.3 s. A caller that sends no SUVu (or no longer hears us, or hangs up
-    on our CPd without acknowledging it, as this library's own caller does)
-    gets SUVd, and our CPd (repeated as in reading 37) if its SUVu came, until 3.5 s from the request;
-    nothing in the cleardown retrains. A CPu or SUVu with drn = 0 is the
+    0.3 s, with this library's own caller some 0.4 s. A caller that sends
+    no SUVu (or no longer hears us, or hangs up on our CPd without
+    acknowledging it) gets SUVd, and our CPd (repeated as in reading 37) if
+    its SUVu came, until 3.5 s from the request; nothing in the cleardown
+    retrains. A CPu or SUVu with drn = 0 is the
     caller's cleardown.
 39. SUVu's "wait for CPu" hint is ignored: CPd is sent once after the first
     SUVu in any case (9.6.1.1.2).

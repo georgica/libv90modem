@@ -253,8 +253,9 @@ answering, on a mu-law line: never with `alaw` set.
   not hold even the lowest PCM rate.
 - **Cleardown** in V.90 (9.7), V.92 (9.11) and V.34 (11.7), either way:
   `v90m_cleardown` returns `V90M_OK` when it has begun, and
-  `V90M_EV_ENDED` follows within a fraction of a second (V.92: up to
-  3.5 s when the caller does not acknowledge the drn = 0 of our CPd).
+  `V90M_EV_ENDED` follows within a fraction of a second. In V.92 the
+  cleardown is a rate sequence (CPd) with data rate 0 (drn = 0); a caller
+  that does not acknowledge it is given up to 3.5 s.
   `V90M_ESTATE` means there is nothing to send (V.21, V.22, V.22bis,
   V.32bis, Bell, or not in data mode): just stop calling
   `v90m_process_*`.

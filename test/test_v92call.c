@@ -45,6 +45,7 @@ typedef struct {
     int b1u_lead, z2_dead, conv_start, ja_no_ones, ntrn1, jd_wait;      /* the caller's ways, see ../sim/v92a.h */
     int drop_cpd;               /* the caller misses its first so many CPds */
     int no_suvu;                /* in a rate renegotiation the caller sends no SUVu */
+    int no_ack;                 /* ... it never sets the acknowledge bit */
     int burst_ms[2]; double burst;          /* the line's noise rises to burst at burst_ms, and is
                                            back to noise when a rate drop of ours begins */
 } scen_t;
@@ -109,7 +110,7 @@ static void run(const scen_t *s, out_t *o)
     ac.b1u_lead = s->b1u_lead; ac.conv_start = s->conv_start; ac.ja_no_ones = s->ja_no_ones;
     if (s->ntrn1) ac.ntrn1 = s->ntrn1;
     if (s->jd_wait) ac.jd_wait = s->jd_wait;
-    ac.z2_dead = s->z2_dead; ac.drop_cpd = s->drop_cpd; ac.reneg_no_suvu = s->no_suvu;
+    ac.z2_dead = s->z2_dead; ac.drop_cpd = s->drop_cpd; ac.reneg_no_suvu = s->no_suvu; ac.reneg_no_ack = s->no_ack;
     ac.getbit = src_bit; ac.putbit = sink_bit; ac.user = &aio;
     v92a_init(&a, &ac);
     a.phase = s->phase0;
@@ -450,6 +451,35 @@ int main(int argc, char **argv)
         CHECK(o.d_end_at > 5500 * 8 && o.d_end_at < 5500 * 8 + 4 * 8000);
         CHECK(clear_seq_ok(o.seq, 0)); CHECK_EQ_I(o.reneg_cpds, 0);
         CHECK(a.rd_units >= 60); CHECK(a.suvd_n > 0);
+        /* the caller sends SUVu and CPu but never the acknowledge bit: our
+         * CPd again and again (9.6.1.1.3), SUVd between, until our limit */
+        base(&s, "18d we clear down, the caller never acknowledges", 0, 0, 3, 0);
+        s.d_clear_ms = 5500; s.no_ack = 1; s.seconds = 16;
+        run(&s, &o);
+        printf("  %-34s state %d err %d after %d ms; CPds %d, at most %d in a row\n", s.name, o.state, o.error,
+               (o.d_end_at - 5500 * 8) / 8, o.reneg_cpds, o.cpd_run);
+        CHECK_EQ_I(o.state, V92D_FAILED); CHECK_EQ_I(o.error, V92D_ERR_HANGUP);
+        CHECK_EQ_I(o.retrain_at, -1);
+        CHECK(o.d_end_at > 5500 * 8 + 3000 * 8 && o.d_end_at < 5500 * 8 + 4 * 8000);
+        CHECK(o.reneg_cpds >= 2); CHECK_EQ_I(o.cpd_run, 1); CHECK(a.clear_seen);
+        /* the caller's Tone A (its retrain) during our cleardown: still our
+         * cleardown, at once, no retrain */
+        base(&s, "18e the caller's Tone A in our cleardown", 0, 0, 3, 0);
+        s.d_clear_ms = 5500; s.tone_a_ms = 5600; s.seconds = 9;
+        run(&s, &o);
+        printf("  %-34s state %d err %d after %d ms\n", s.name, o.state, o.error, (o.d_end_at - 5500 * 8) / 8);
+        CHECK_EQ_I(o.state, V92D_FAILED); CHECK_EQ_I(o.error, V92D_ERR_HANGUP);
+        CHECK_EQ_I(o.retrain_at, -1);
+        CHECK(o.d_end_at < 5600 * 8 + 120 * 8);
+        /* both ends clear down at once: the caller's CPu with drn = 0 in
+         * ours ends it as ours */
+        base(&s, "18f both ends clear down at once", 0, 0, 3, 0);
+        s.d_clear_ms = 5500; s.a_clear_ms = 5500; s.seconds = 9;
+        run(&s, &o);
+        printf("  %-34s state %d err %d after %d ms\n", s.name, o.state, o.error, (o.d_end_at - 5500 * 8) / 8);
+        CHECK_EQ_I(o.state, V92D_FAILED); CHECK_EQ_I(o.error, V92D_ERR_HANGUP);
+        CHECK_EQ_I(o.retrain_at, -1);
+        CHECK(o.d_end_at < 5500 * 8 + 4 * 8000);
         base(&s, "19 the caller's Tone A", 0, 0, 3, 0);
         s.tone_a_ms = 5500;
         run(&s, &o); report(&s, &o);

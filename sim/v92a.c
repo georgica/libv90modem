@@ -42,6 +42,7 @@ enum { F_JA, F_CPT, F_SUVU, F_CPU };
 static void load_frame(v92a_t *p, int which, int ack)
 {
     int unit = p->ml.nbits * 12;
+    if (p->in_reneg && p->cfg.reneg_no_ack) ack = 0;
     p->frpos = 0; p->fr_kind = which; p->fr_ack = ack;
     if (which == F_JA) p->frn = v92_ja_build(&p->ja, p->fr);
     else if (which == F_CPT) p->frn = v92_cpu_build(&p->cpt, 12, p->fr);
