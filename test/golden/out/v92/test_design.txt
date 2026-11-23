@@ -14,4 +14,6 @@
   line 0, echo as loud mu-law amp 1400 noise 3 echo 1400: 26666 bit/s, M 12 of 28, 4G 225, delay 115, power 1.00 (limit 1), ISI -57.0 dB, rho 1.04, x rms max 1274, peak 2.19, 0 cuts, 8060 steps, 118680 bits, 0 errors
   the same, linear A/D mu-law amp 1400 noise 3 echo 1400: 41333 bit/s, M 43 of 128, 4G 226, delay 115, power 0.95 (limit 1), ISI -65.8 dB, rho 1.00, x rms max 1266, peak 1.75, 0 cuts, 8963 steps, 183954 bits, 0 errors
   the same, A-law tables A-law amp 1400 noise 3 echo 1400: 41333 bit/s, M 43 of 128, 4G 226, delay 115, power 0.97 (limit 1), ISI -65.8 dB, rho 1.00, x rms max 1266, peak 1.75, 0 cuts, 8963 steps, 183954 bits, 0 errors
-design: 198 checks, 0 failures
+  ramp from tap 30, 40 taps: end -1 after 17 steps
+  ramp from tap 40, 56 taps: end -1 after 15 steps
+design: 200 checks, 0 failures

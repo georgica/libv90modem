@@ -313,6 +313,11 @@ reproduced).
 - Test that fails today (check-ubsan): `v92/test_design`: the 40-tap ramp
   channel above gives an end code (a design or a refusal) with no UBSan
   report.
+- Fixed in Task 21 (T21.4): every value stored back in 32 bits (`g`,
+  `cq`, `cw`, `cr`, `cp`, `w`) and the step products `al p`, `al q` are
+  checked; out of range, the design ends `V92_DSN_ERR_CHANNEL`. `isi_q28`
+  is formed without `isi * 65536` and saturates. Both ramps now stop in
+  the first iteration (`cq`, A'A b already past 2^31).
 
 **T21.6 int32 sample clocks overflow after 74.6 h** (Important, high,
 reproduced). `v92d_t.now` and `.t` (`v92_p34d.c:112`, incremented every

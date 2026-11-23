@@ -102,6 +102,14 @@ Changed (V.92, both roles):
   correlations in 64 bits: with samples past about 23170 they overflowed a
   signed 32-bit value, an undefined behaviour. Output is unchanged where
   they did not overflow; a full-scale Ru (to 32767 and -32768) is detected.
+- The CPd design (answering V.92) refuses, as an unusable channel, a
+  channel estimate whose arithmetic leaves 32 bits; the call ends as for
+  any failed design (`V92D_ERR_DESIGN`). On a long low-pass tail, which the
+  caller's own training decides, its vectors overflowed a signed 32-bit
+  value (and the residual ISI a 64-bit one), an undefined behaviour after
+  which it ran on with wrapped values. A residual ISI 16 times the
+  cursor's power or more now saturates its estimate instead of wrapping.
+  Designs that stayed in range are unchanged.
 
 Fixed:
 - V.90 and V.92, calling role: the last data frame before the digital

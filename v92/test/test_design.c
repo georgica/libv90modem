@@ -194,5 +194,24 @@ int main(void)
     v92_dsn_start(&d, &cfg);
     while ((r = v92_dsn_step(&d)) == 0) ;
     CHECK_EQ_I(r, V92_DSN_ERR_RATE);
+    /* A channel estimate with a long low-pass tail (a ramp from 10^6 down
+     * to 0), the noise and training figures of an ordinary call: the
+     * design's vectors grow past 32 bits. It ends with an end code, in a
+     * bounded number of steps. */
+    {
+        static const int ramp[2][2] = { { 30, 40 }, { 40, V92_CH_NTAP - 40 } };
+        int i, j;
+        for (i = 0; i < 2; i++) {
+            memset(&cfg, 0, sizeof cfg);
+            for (j = 0; j < ramp[i][1]; j++)
+                cfg.h[ramp[i][0] + j] = 1000000 - j * (1000000 / ramp[i][1]);
+            cfg.noise = 9; cfg.q_quiet = 3; cfg.echo_rms = 400; cfg.res = 600; cfg.q_trn = 300;
+            cfg.ltot = 256; cfg.lmax = 192; cfg.rates = all;
+            v92_dsn_start(&d, &cfg);
+            while ((r = v92_dsn_step(&d)) == 0 && d.steps < 1000000) ;
+            printf("  ramp from tap %d, %d taps: end %d after %d steps\n", ramp[i][0], ramp[i][1], r, d.steps);
+            CHECK(r != 0);
+        }
+    }
     T_REPORT("design");
 }
