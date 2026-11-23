@@ -35,6 +35,7 @@ typedef struct {
     int a_reneg_ms, d_reneg_ms, a_clear_ms, d_clear_ms, tone_a_ms, d_retrain_ms;
     int uinfo, ltot, lmax;      /* from Phase 2, 0 = defaults */
     int mute_ms;                /* the caller's signal stops for good */
+    int deaf_ms;                /* from then on the caller no longer hears us (it gets the idle code) */
     int dead_ms;                /* from then on the line brings digital silence (no echo either) */
     int ru_ms, ru_amp;          /* from then on: the caller silent, a clean Ru of this amplitude in its place */
     int echo_search;            /* the echo delay is not given to the digital modem */
@@ -47,6 +48,7 @@ typedef struct {
 typedef struct {
     int state, error, d_data_at, a_tx, a_rx, up_rate, down_rate, renegs, d_end_at, req_rc;
     int reneg_at;               /* the first sample in V92D_RENEG (-1: never) */
+    int retrain_at;             /* the first sample in V92D_RETRAIN (-1: never) */
     long up_bits, up_bad, down_bits, down_bad;
     long up_bits2, up_bad2;     /* upstream after the last (re)start */
     int peak;                   /* where the channel peak ended up, 1/256 sample */
@@ -63,7 +65,7 @@ static void run(const scen_t *s, out_t *o)
     static uint8_t dl_o[MAXD];
     static io_t dio, aio;
     v92d_cfg dc; v92a_cfg ac; v92chan_cfg cc;
-    uint8_t oct = v90_pcm_octet(s->alaw, 0, 1);
+    uint8_t oct = v90_pcm_octet(s->alaw, 0, 1), idle = oct;
     int16_t rx = 0;
     int i, k, a_starts = 0, d_rx = 0;
     long sink0_n = 0, sink0_bad = 0;
@@ -98,7 +100,7 @@ static void run(const scen_t *s, out_t *o)
     v92a_init(&a, &ac);
     a.phase = s->phase0;
 
-    memset(o, 0, sizeof *o); o->d_data_at = -1; o->reneg_at = -1;
+    memset(o, 0, sizeof *o); o->d_data_at = -1; o->reneg_at = -1; o->retrain_at = -1;
     for (i = 0; i < s->seconds * 8000; i++) {
         double amp, frac;
         int valid, ms = i / 8, ev = (i % 8) == 0;
@@ -106,7 +108,7 @@ static void run(const scen_t *s, out_t *o)
             rx = (int16_t)(3000.0 * sin(2 * 3.14159265358979 * 2400.0 * i / 8000.0));
         oct = v92d_tick(&d, rx);
         dl_o[i % MAXD] = oct;
-        valid = v92a_tick(&a, dl_o[(i - s->d_down + MAXD) % MAXD], &amp, &frac);
+        valid = v92a_tick(&a, s->deaf_ms && ms >= s->deaf_ms ? idle : dl_o[(i - s->d_down + MAXD) % MAXD], &amp, &frac);
         if (s->mute_ms && ms >= s->mute_ms) valid = 0;
         if (s->ru_ms && ms >= s->ru_ms) valid = 0;
         rx = v92chan_tick(&ch, oct, valid, amp, frac);
@@ -123,6 +125,7 @@ static void run(const scen_t *s, out_t *o)
         if (a.data_starts != a_starts) { a_starts = a.data_starts; aio.src.s = 23; }
         if (d.rx_ready && !d_rx) { dio.sink.s = 23; sink0_n = dio.sink.n; sink0_bad = dio.sink.bad; }
         d_rx = d.rx_ready;
+        if (d.state == V92D_RETRAIN && o->retrain_at < 0) o->retrain_at = i;
         if (d.state == V92D_RETRAIN || d.state == V92D_FAILED) { o->d_end_at = i; break; }
     }
     o->ticks = i;
@@ -352,6 +355,16 @@ int main(int argc, char **argv)
         run(&s, &o); report(&s, &o);
         CHECK_EQ_I(o.req_rc, 0); CHECK_EQ_I(o.state, V92D_FAILED); CHECK_EQ_I(o.error, V92D_ERR_HANGUP);
         CHECK(a.clear_seen); CHECK_EQ_I(o.up_bad, 0); CHECK_EQ_I(o.down_bad, 0);
+        CHECK(o.d_end_at < 5500 * 8 + 4 * 8000);
+        /* the caller no longer hears us: Rd, TRN2d and the CPds with drn = 0
+         * go out all the same, and that is our cleardown, not a retrain */
+        base(&s, "18b we clear down, the caller deaf to us", 0, 0, 3, 0);
+        s.d_clear_ms = 5500; s.deaf_ms = 5400; s.seconds = 16;
+        run(&s, &o);
+        printf("  %-34s state %d err %d after %d ms\n", s.name, o.state, o.error, (o.d_end_at - 5500 * 8) / 8);
+        CHECK_EQ_I(o.req_rc, 0); CHECK_EQ_I(o.state, V92D_FAILED); CHECK_EQ_I(o.error, V92D_ERR_HANGUP);
+        CHECK_EQ_I(o.retrain_at, -1);
+        CHECK(o.d_end_at > 5500 * 8 && o.d_end_at < 5500 * 8 + 4 * 8000);
         base(&s, "19 the caller's Tone A", 0, 0, 3, 0);
         s.tone_a_ms = 5500;
         run(&s, &o); report(&s, &o);

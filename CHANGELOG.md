@@ -128,6 +128,14 @@ Changed (V.92, both roles):
   before, down to the same level.
 
 Fixed:
+- V.92, answering role: our cleardown (`v90m_cleardown`) ends with
+  `V90M_END_CLEARDOWN_OURS` in under a second whatever the caller does. It
+  waited for the caller's Ru-bar and a new CPd design: a caller that no
+  longer heard us (or a design refused) turned the hang-up into a retrain
+  8 s later and the call ended some 18 s after the request. Now Rd, TRN2d
+  and four CPds with drn = 0 (built from the CPd in use) go out without
+  waiting, then silence; nothing in the cleardown retrains. A caller that
+  hears us sees the same signals, sooner.
 - V.92, answering role: a caller whose data mode arrives louder or weaker
   than the CPd design asked for (implementations differ on the power
   reference of V.92 8.8.3) is decoded. B1u failed (`V92D_ERR_B1`, then a

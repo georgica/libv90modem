@@ -44,6 +44,7 @@ static void p_put(void *u, int bit)
 
 static answer_t A; static v92call_t C; static prbs_t UA, UC;
 static uint8_t atx;                 /* the octet we send */
+static int deaf;                    /* the caller no longer hears us: it gets the idle code */
 static long now;
 static uint8_t rec[2][RECN]; static int rec_to = -1;    /* what we sent, for comparisons */
 
@@ -74,7 +75,7 @@ static void run(long samples)
 {
     while (samples-- > 0) {
         if (rec_to >= 0 && now < RECN) rec[rec_to][now] = atx;
-        atx = answer_tick_pcm(&A, v92call_tick(&C, atx));
+        atx = answer_tick_pcm(&A, v92call_tick(&C, deaf ? v90_pcm_octet(A.p2cfg.alaw, 0, 1) : atx));
         now++;
     }
 }
@@ -238,6 +239,25 @@ int main(void)
     CHECK_EQ_I(A.u.v92.jd.rates, 0x1FFF);
     CHECK_EQ_I(A.rx_bitrate, 33333);
     data_ok("V.92 caller, ceilings 44000 / 33600", ANS_MOD_V92);
+    /* ---- 3b. our cleardown when the caller no longer hears us (it goes on
+     * sending data, but our Rd never reaches it, nor its Ru us): the CPd
+     * with drn = 0 goes out all the same and the call ends as our
+     * cleardown, in the time that takes; no retrain ---- */
+    deaf = 1;
+    run(800);
+    CHECK_EQ_I(answer_cleardown(&A), 0);
+    {
+        int retrain_seen = 0, retrains = A.retrains;
+        for (t = 0; t < 8L * 20000 && A.phase != ANS_FAILED; t++) {
+            run(1);
+            if (A.phase == ANS_RETRAIN || A.phase == ANS_P2) retrain_seen = 1;
+        }
+        printf("  our cleardown, the caller deaf to us: over after %ld ms, end %d, retrain %d\n", t / 8, answer_end(&A), retrain_seen);
+        CHECK_EQ_I(A.phase, ANS_FAILED); CHECK_EQ_I(answer_end(&A), ANS_END_CLEARDOWN_OURS);
+        CHECK_EQ_I(retrain_seen, 0); CHECK_EQ_I(A.retrains, retrains);
+        CHECK(t < 8L * 4000);
+    }
+    deaf = 0;
 
     /* ---- 4. the V.92 start-up fails (the caller's Ru never arrives): the
      * recovery of 9.5.1.2 is a retrain; its INFO1d says "no PCM upstream"

@@ -611,8 +611,11 @@ sample; both include the transmitter and the echo canceller).
     with the acknowledge, has been received.
 37. 9.6.1.1.3 gives no time for repeating CPd. It is sent again when no CPu
     has come 100 ms + a round trip + 150 ms after the last one ended.
-38. 9.11: we clear down with four CPd carrying drn = 0, then silence; a CPu
-    or SUVu with drn = 0 is the caller's cleardown.
+38. 9.11: we clear down with a rate renegotiation of ours that sends Rd,
+    Rd-bar, 48 data frames of TRN2d and four CPd carrying drn = 0 (the CPd
+    in use, no new design), then silence, whether the caller's Ru-bar came
+    or not: a caller that no longer hears us gets no retrain (some 0.8 s in
+    all). A CPu or SUVu with drn = 0 is the caller's cleardown.
 39. SUVu's "wait for CPu" hint is ignored: CPd is sent once after the first
     SUVu in any case (9.6.1.1.2).
 40. 9.8: Ru in data mode is recognised about 13 ms after it began; the

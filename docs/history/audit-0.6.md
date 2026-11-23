@@ -192,8 +192,15 @@ items, the class offset and the epsilon sign) and the test gaps.
   not reach cleardown.
 - Test that fails today: `test_answer_v92`: `answer_cleardown` in V.92
   data mode while the caller no longer hears us ends in `ANS_FAILED` with
-  `cleared = 2` within 2 s and no retrain (today `ANS_RETRAIN` at +8 s,
-  `cleared = 0`).
+  `cleared = 2` within 4 s and no retrain (today `ANS_RETRAIN` at +8 s,
+  `cleared = 0`). (Review correction: the bound was 2 s, which the healthy
+  cleardown's 2.33 s already passed; and the end code is defined either
+  way: the harm is an 18 s hang-up and a spurious retrain.)
+- Fixed in Task 21 (T21.1): while clearing, `V92D_RENEG` sends Rd, Rd-bar,
+  48 data frames of TRN2d and four CPds with drn = 0 built from the CPd in
+  use, then `V92D_ERR_HANGUP`, whether Ru-bar came or not (limit
+  `T_CLEAR_MS`, also HANGUP); nothing in a cleardown retrains. Some 0.8 s
+  with or without the caller. `test_answer_v92` 3b, `test_v92call` 18b.
 
 **T21.2 Repeated CPd (9.6.1.1.3) is sent back to back** (Important,
 medium-high).
