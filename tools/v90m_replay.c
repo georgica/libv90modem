@@ -2,7 +2,7 @@
  * it made of it, phase by phase. The tool to run on a recording that comes
  * with a bug report (README: "Reporting a bug").
  *
- *   v90m-replay [-a] [-9] [-x] [-k] [-u BPS] [-d BPS] [-l DBM0] [-e SAMPLES] [-P CODE] [-s SAMPLE] [-b FILE] RECORDING
+ *   v90m-replay [-a] [-9] [-x] [-k] [-u BPS] [-d BPS] [-l DBM0 | -r RMS] [-e SAMPLES] [-P CODE] [-s SAMPLE] [-b FILE] RECORDING
  *
  *   -a          A-law line (mu-law otherwise)
  *   -9          V.92 offered (PCM upstream up to 48000 bit/s unless -u)
@@ -15,6 +15,9 @@
  *               accepted, to 0.01 dB (the library's level is an rms value,
  *               so any step is possible; whole numbers give the same level
  *               as ever)
+ *   -r RMS      transmit level as the rms itself, 1..16384: the level a
+ *               recording's sidecar gives (nsdiald's tx_level_rms), which no
+ *               -l may reach exactly. Of -l and -r the last one given holds
  *   -e SAMPLES  the echo delay, as the recording modem was told (default: measured)
  *   -P CODE     INFO0d maximum power code, 1..31 (default 23)
  *   -s SAMPLE   start the modem at this sample of the recording (0-based),
@@ -164,13 +167,14 @@ static void x2_down(const x2tx_t *t, uint8_t sent)
 }
 
 static int opt_alaw, opt_v92, opt_x2, opt_k56, opt_hund = -1200, opt_up, opt_down = 56000, opt_echo = -1, opt_code;
+static long opt_rms;    /* -r, 0 = from opt_hund */
 
 static void configure(v90m_cfg *c, int lin)
 {
     v90m_cfg_default(c);
     c->modulations = V90M_MOD_V21 | V90M_MOD_V22 | V90M_MOD_V32BIS | V90M_MOD_V34 | V90M_MOD_V90 | (opt_v92 ? V90M_MOD_V92 : 0)
                      | (opt_x2 ? V90M_MOD_X2 : 0) | (opt_k56 ? V90M_MOD_K56 : 0);
-    c->tx_level = level_rms(opt_hund);
+    c->tx_level = opt_rms ? (int)opt_rms : level_rms(opt_hund);
     c->max_down_bps = opt_down;
     c->max_up_bps = opt_up ? opt_up : opt_v92 ? 48000 : 33600;
     c->alaw = opt_alaw;
@@ -202,15 +206,19 @@ int main(int argc, char **argv)
         else if (arg + 1 < argc && !strcmp(o, "-b")) bits_path = argv[++arg];
         else if (arg + 1 < argc && !strcmp(o, "-u")) opt_up = atoi(argv[++arg]);
         else if (arg + 1 < argc && !strcmp(o, "-d")) opt_down = atoi(argv[++arg]);
-        else if (arg + 1 < argc && !strcmp(o, "-l")) { if (parse_level(argv[++arg], &opt_hund)) bad = 1; }
+        else if (arg + 1 < argc && !strcmp(o, "-l")) { if (parse_level(argv[++arg], &opt_hund)) bad = 1; opt_rms = 0; }
+        else if (arg + 1 < argc && !strcmp(o, "-r")) {
+            if (parse_count(argv[++arg], &opt_rms) || opt_rms < 1 || opt_rms > V90M_TX_LEVEL_MAX) bad = 1;
+        }
         else if (arg + 1 < argc && !strcmp(o, "-s")) { if (parse_count(argv[++arg], &start)) bad = 1; }
         else if (arg + 1 < argc && !strcmp(o, "-e")) opt_echo = atoi(argv[++arg]);
         else if (arg + 1 < argc && !strcmp(o, "-P")) opt_code = atoi(argv[++arg]);
         else break;
     }
     if (bad || arg >= argc || !(f = fopen(argv[arg], "rb"))) {
-        fprintf(stderr, "usage: v90m-replay [-a] [-9] [-x] [-k] [-u BPS] [-d BPS] [-l DBM0] [-e SAMPLES] [-P CODE] [-s SAMPLE] [-b FILE] RECORDING\n"
-                        "  -l: a number with up to two decimals, e.g. -14.4; -s: a sample index, 0 or more\n");
+        fprintf(stderr, "usage: v90m-replay [-a] [-9] [-x] [-k] [-u BPS] [-d BPS] [-l DBM0 | -r RMS] [-e SAMPLES] [-P CODE] [-s SAMPLE] [-b FILE] RECORDING\n"
+                        "  -l: a number with up to two decimals, e.g. -14.4; -r: the transmit rms, 1..16384;\n"
+                        "  -s: a sample index, 0 or more\n");
         return 2;
     }
     len = (long)fread(file, 1, sizeof file, f);

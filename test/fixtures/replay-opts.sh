@@ -1,6 +1,6 @@
 #!/bin/sh
-# replay-opts.sh REPLAY: v90m-replay's -s (start sample) and -l (level, also
-# decimal) on the public recordings of fixtures.txt. Exit 1 on any failure.
+# replay-opts.sh REPLAY: v90m-replay's -s (start sample), -l (level, also
+# decimal) and -r (level as an rms) on the public recordings of fixtures.txt. Exit 1 on any failure.
 #
 #   -s: the default run starts the modem a little before the answer tone; -s S
 #       starts it at sample S, and the times are the recording's either way.
@@ -13,6 +13,11 @@
 #       "-14"; "-14.4" differs from "-14" only in how many samples differ
 #       from the recording (the recording's modem sent at -12); bad values
 #       exit 2 with the usage message.
+#   -r: the transmit rms itself, as nsdiald's sidecar records it
+#       (tx_level_rms): -12 dBm0 is rms 3963 and -14 is 3148, so "-r 3963"
+#       is the default and "-r 3148" is "-l -14"; "-r 3000" differs from
+#       "-l -14" only in the counts; of -l and -r the last one given holds;
+#       anything but a whole number 1..16384 exits 2 with the usage message.
 R=$1
 [ $# -eq 1 ] || { echo "usage: test/fixtures/replay-opts.sh REPLAY" >&2; exit 2; }
 case $R in /*) ;; *) R=$(pwd)/$R ;; esac
@@ -85,6 +90,24 @@ done
 for v in -1 abc "" 1.5 -0 1e3 " 5"; do
     "$R" -s "$v" v21a.raw > l.out 2> l.err; rc=$?
     if [ $rc -ne 2 ] || ! grep -q '^usage' l.err; then bad "-s '$v': exit $rc, want 2 and the usage message"; fi
+done
+
+# -r
+"$R" -r 3963 v21a.raw > r.3963 || bad "-r 3963"
+cmp -s l.def r.3963 || bad "-r 3963 is not the default (-12 dBm0)"
+"$R" -r 3148 v21a.raw > r.3148 || bad "-r 3148"
+cmp -s l.14 r.3148 || bad "-r 3148 is not -l -14"
+"$R" -r 3000 v21a.raw > r.3000 || bad "-r 3000"
+cmp -s l.14 r.3000 && bad "-r 3000 is -l -14"
+if diff l.14 r.3000 | grep '^[<>]' | grep -vq -e '^[<>]   second [0-9]*: ' -e '^[<>] [0-9]* samples; after the answer'; then
+    bad "-r 3000 differs from -l -14 in more than the differing-sample counts"
+    diff l.14 r.3000 | head -5
+else echo "  -r 3000 differs from -l -14 in the counts of differing samples only"; fi
+"$R" -l -14 -r 3963 v21a.raw | cmp -s - l.def || bad "-l -14 -r 3963 is not -r 3963"
+"$R" -r 3963 -l -14 v21a.raw | cmp -s - l.14 || bad "-r 3963 -l -14 is not -l -14"
+for v in 0 16385 -5 abc "" 1.5 " 5" 3000x 1e3 99999999999; do
+    "$R" -r "$v" v21a.raw > l.out 2> l.err; rc=$?
+    if [ $rc -ne 2 ] || ! grep -q '^usage' l.err; then bad "-r '$v': exit $rc, want 2 and the usage message"; fi
 done
 [ $fail -eq 0 ] && echo "replay options: pass"
 [ $fail -eq 0 ] || { echo "REPLAY OPTIONS FAILED"; exit 1; }

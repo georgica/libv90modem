@@ -20,6 +20,11 @@ Added (tools):
   exits 2: values the old `-l` read through `atoi` as something (`abc` as 0,
   `1e3` as 1) are now rejected. Without `-s` the run is unchanged.
   `test/fixtures/replay-opts.sh` tests both (part of `make test-fixtures`).
+- `v90m-replay -r RMS` sets the transmit level as the rms itself (1..16384),
+  the `tx_level_rms` a recording's sidecar gives: no `-l` reaches 3000
+  exactly, and a replay at a level a step away differs from the recording
+  within seconds. Of `-l` and `-r` the last one given holds. Tested in
+  `test/fixtures/replay-opts.sh`.
 
 Changed (answering role; a host that matched on `V90M_END_FAILED` for a
 dropped call should look at `V90M_END_LOST`):

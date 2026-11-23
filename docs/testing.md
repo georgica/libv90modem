@@ -199,7 +199,7 @@ recorded call into the answering modem and reports what it made of it,
 phase by phase:
 
 ```
-v90m-replay [-a] [-9] [-x] [-k] [-u BPS] [-d BPS] [-l DBM0] [-e SAMPLES] [-P CODE] RECORDING
+v90m-replay [-a] [-9] [-x] [-k] [-u BPS] [-d BPS] [-l DBM0 | -r RMS] [-e SAMPLES] [-P CODE] [-s SAMPLE] [-b FILE] RECORDING
 ```
 
 | | |
@@ -209,9 +209,12 @@ v90m-replay [-a] [-9] [-x] [-k] [-u BPS] [-d BPS] [-l DBM0] [-e SAMPLES] [-P COD
 | `-x` | x2 offered (`V90M_MOD_X2`) |
 | `-k` | K56flex offered (`V90M_MOD_K56`): V.8bis first; the recording is lined up with our answer tone after it |
 | `-u`, `-d BPS` | upstream / downstream rate ceilings |
-| `-l DBM0` | transmit level (default -12) |
+| `-l DBM0` | transmit level (default -12), to 0.01 dB |
+| `-r RMS` | transmit level as the rms itself, 1..16384 (`v90m_cfg.tx_level`): the level a recording's sidecar gives (nsdiald's `tx_level_rms`), which no `-l` may reach exactly; of `-l` and `-r` the last one given holds |
 | `-e SAMPLES` | the echo delay, as the recording modem was told (default: measured) |
 | `-P CODE` | INFO0d maximum power code, 1..31 (default 23) |
+| `-s SAMPLE` | start the modem at this sample of the recording (0-based), for a recording that begins at the answer tone; times stay the recording's |
+| `-b FILE` | the bits the V.90 / V.34 receiver decided (default `bits.txt`) |
 
 The modem must be set up as the recording modem was: what it hears holds
 the echo of what that modem sent. The last line counts the samples where
