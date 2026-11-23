@@ -172,7 +172,9 @@ typedef struct {
     int        b1_zero, b1_leads;   /* ... those with Ki = 0; data frames passed over before B1u */
     int        tx_ready, rx_ready;
     int        down_rate, up_rate;  /* bit/s */
-    int        in_reneg, reneg_ours, clearing;
+    int        in_reneg, clearing;
+    int        reneg_ours;          /* 0 the caller's, 1 ours, 2 ours to drop the upstream rate
+                                       (its design one step, 4000 bit/s, below up_rate) */
     int        renegs;              /* renegotiations completed */
     int        retrain_ours;
     int        up_floor;            /* the retrain is ours because the upstream did not hold
@@ -180,7 +182,7 @@ typedef struct {
     tonedet_t  tone_a;              /* Tone A (2400 Hz) watch */
     /* line quality in data mode */
     uint32_t   q_limit; int32_t q_bad; uint32_t bad_seen;
-    int        rate_drops;
+    int        rate_drops;          /* our rate drops so far (a count) */
     /* loss of the upstream signal in data mode, 10 ms blocks */
     uint32_t   sig_ms;              /* mean square of the samples that carried B1u */
     int64_t    cd_acc;              /* sum of squares after the canceller (B1u: its samples) */

@@ -44,6 +44,8 @@ typedef struct {
     int first_cpd_plain;        /* the caller answers a first CPd with the acknowledge bit by silence */
     int b1u_lead, z2_dead, conv_start, ja_no_ones, ntrn1, jd_wait;      /* the caller's ways, see ../sim/v92a.h */
     int drop_cpd;               /* the caller misses its first so many CPds */
+    int burst_ms[2]; double burst;          /* the line's noise rises to burst at burst_ms, and is
+                                           back to noise when a rate drop of ours begins */
 } scen_t;
 
 typedef struct {
@@ -51,6 +53,8 @@ typedef struct {
     int reneg_at;               /* the first sample in V92D_RENEG (-1: never) */
     int retrain_at;             /* the first sample in V92D_RETRAIN (-1: never) */
     int cpd_copies, cpd_run;    /* CPds we sent; the most of them in a row with no SUVd between */
+    int drops;                  /* rate drops of ours (bad frames in data mode) */
+    int drop_rate[4], drop_ceil[4];     /* each: the upstream rate then, the design's ceiling */
     long up_bits, up_bad, down_bits, down_bad;
     long up_bits2, up_bad2;     /* upstream after the last (re)start */
     int peak;                   /* where the channel peak ended up, 1/256 sample */
@@ -135,6 +139,12 @@ static void run(const scen_t *s, out_t *o)
         rx = v92chan_tick(&ch, oct, valid, amp, frac);
         if (s->ru_ms && ms >= s->ru_ms) rx = (int16_t)(rx + ((i / 3) % 2 ? -s->ru_amp : s->ru_amp));
         if (s->dead_ms && ms >= s->dead_ms) rx = 0;
+        for (k = 0; k < 2; k++) if (ev && s->burst_ms[k] && ms == s->burst_ms[k]) ch.cfg.noise = s->burst;
+        if (d.rate_drops > o->drops && o->drops < 4) {
+            o->drop_rate[o->drops] = d.up_rate; o->drop_ceil[o->drops] = -1; o->drops++;
+            ch.cfg.noise = s->noise;
+        }
+        if (o->drops && d.in_reneg && d.dsn_state == 1 && o->drop_ceil[o->drops - 1] < 0) o->drop_ceil[o->drops - 1] = d.dsn.cfg.max_rate;
         if (o->reneg_at < 0 && d.state == V92D_RENEG) o->reneg_at = i;
         if (o->d_data_at < 0 && d.state == V92D_DATA) { o->d_data_at = i; o->peak = v92_trn_peak(&d.trn); }
         if (ev && s->a_reneg_ms && ms == s->a_reneg_ms) o->req_rc = v92a_renegotiate(&a, 0, 0);
@@ -395,6 +405,26 @@ int main(int argc, char **argv)
         s.d_retrain_ms = 5500;
         run(&s, &o); report(&s, &o);
         CHECK_EQ_I(o.req_rc, 0); CHECK_EQ_I(o.state, V92D_RETRAIN); CHECK_EQ_I(d.retrain_ours, 1);
+    }
+    /* ---- the line gets worse in data mode: our own rate renegotiations ---- */
+    if (WANT(11)) {
+        /* the noise rises twice (each time back to what it was once the
+         * drop has begun: the design does not see the noise of data mode);
+         * each time the decoder's bad frames bring a renegotiation of ours
+         * whose design may go no higher than one step (4000 bit/s) below
+         * the rate then in use */
+        int n;
+        base(&s, "36 the noise rises in data mode, twice", 0, 0, 3, 0);
+        s.burst_ms[0] = 4500; s.burst_ms[1] = 15000; s.burst = 90;
+        s.a_reneg_ms = 22000; s.seconds = 26;      /* then the caller renegotiates */
+        run(&s, &o); report(&s, &o);
+        for (n = 0; n < o.drops; n++) printf("    drop %d: at %d bit/s, ceiling %d\n", n + 1, o.drop_rate[n], o.drop_ceil[n]);
+        printf("    the caller's renegotiation after them: ceiling %d, %d bit/s\n", d.dsn.cfg.max_rate, o.up_rate);
+        CHECK_EQ_I(o.drops, 2);
+        for (n = 0; n < o.drops && n < 4; n++) CHECK_EQ_I(o.drop_ceil[n], o.drop_rate[n] - 4000);
+        /* the drops do not hold the caller's later renegotiation down */
+        CHECK_EQ_I(o.req_rc, 0); CHECK_EQ_I(o.renegs, 3); CHECK_EQ_I(o.state, V92D_DATA);
+        CHECK_EQ_I(d.dsn.cfg.max_rate, 0);
     }
     /* ---- the echo delay measured during TRN1d; the caller's signal lost ---- */
     if (WANT(7)) {

@@ -244,6 +244,16 @@ medium-high).
 - Test that fails today: `test_v92call`: upstream noise raised in data mode
   in two steps; each renegotiation of ours lowers the CPd ceiling 4000
   bit/s below the rate then in use (today the second asks for 8000 less).
+- Fixed in Task 21 (T21.5): the drop renegotiation is marked
+  (`reneg_ours` = 2) and only its design has the ceiling, `up_rate - 4000`;
+  the retrain to V.90 upstream comes when that is below 24000.
+  `rate_drops` is a count only. `test_v92call` 36: the noise rises twice
+  (back once each drop has begun); drops at 40000 and 36000 ask for 36000
+  and 32000 (before: 28000 for the second), and the caller's
+  renegotiation after them has no ceiling (before: 20000, the design
+  refused it and the call left PCM upstream). Found with the test: the
+  modulus decoder flags few spoiled frames (11 to 33 in 10 s with a third
+  of the bits wrong), so the first drop came 8 s after the noise rose.
 
 **B-4. UINFO 112..127 ends the call instead of falling back** (Minor,
 high). INFO1a's 7-bit Ucode (Table 18 bits 25:31) above 111 makes

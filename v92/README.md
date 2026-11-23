@@ -539,10 +539,14 @@ Mirrors `../modem/p34d` as `../modem/answer.c` drives it today:
   V92D_FAILED with `m.error` (V92D_ERR_x; V92D_ERR_CLEARDOWN and
   V92D_ERR_HANGUP are the orderly ends).
 * `v92d_renegotiate()`, `v92d_cleardown()`, `v92d_retrain()` from data mode.
-* The module itself starts a rate renegotiation with a lower ceiling when
-  the decoder reports 4 or more bad frames in each of two consecutive
-  seconds (a retrain once the ceiling would fall below 24000 bit/s), and
-  retrains on Tone A. The automatic path is not covered by a test.
+* The module itself starts a rate renegotiation when the decoder reports 4
+  or more bad frames in each of two consecutive seconds; its design goes no
+  higher than one step (4000 bit/s) below the rate in use (a retrain once
+  that would fall below 24000 bit/s), and later renegotiations have no such
+  ceiling. It retrains on Tone A. `../test/test_v92call.c` 36 runs the
+  automatic path. (The modulus decoder flags few of the frames that noise
+  spoils: 11 to 33 in ten seconds with a third of the bits wrong, so the
+  drop can come late.)
 * `echo_delay`: samples from handing an octet to the line until its echo
   comes back (the bulk delay of the codec path). Negative: measured during
   TRN1d (stage 3, reading 46).

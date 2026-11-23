@@ -34,6 +34,8 @@
 #define SUVD_HOLD_MS   2500     /* SUVd at the latest so long into Phase 4, the design done or not */
 #define T_PACE_MS      2500     /* more for each sample the design waits between steps */
 
+#define RENEG_DROP     2        /* reneg_ours: ours, to drop the upstream rate */
+
 #define UP_UNITY       16384    /* up_scale of a caller at the level designed for */
 
 #define CD_BLOCK       80       /* carrier watch: 10 ms */
@@ -559,8 +561,10 @@ static void design_start(v92d_t *p)
     c.ltot = (uint16_t)p->cfg.ltot; c.lmax = (uint16_t)p->cfg.lmax;
     c.rates = p->ja.rates;
     c.max_rate = p->cfg.max_up_rate;
-    if (p->rate_drops && p->up_rate) {
-        int lim = p->up_rate - 4000 * p->rate_drops;
+    if (p->reneg_ours == RENEG_DROP && p->up_rate) {
+        /* our rate drop: one step below the rate in use (which carries the
+         * earlier drops already); other renegotiations have no such ceiling */
+        int lim = p->up_rate - 4000;
         if (!c.max_rate || lim < c.max_rate) c.max_rate = lim;
     }
     c.kappa_q4 = p->cfg.kappa_q4;
@@ -1017,8 +1021,8 @@ uint8_t v92d_tick(v92d_t *p, int16_t rxs)
             p->q_bad = nb >= 4 ? p->q_bad + 1 : 0;
             if (p->q_bad >= 2) {
                 p->rate_drops++;
-                if (p->up_rate - 4000 * p->rate_drops < 24000) { retrain(p, 1); p->up_floor = 1; }
-                else reneg_begin(p, 1);
+                if (p->up_rate - 4000 < 24000) { retrain(p, 1); p->up_floor = 1; }
+                else reneg_begin(p, RENEG_DROP);
             }
         }
         break;

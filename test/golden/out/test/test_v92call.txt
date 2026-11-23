@@ -20,6 +20,10 @@
   18b we clear down, the caller deaf to us state 12 err 10 after 798 ms
   19 the caller's Tone A             mu-law shape 0 noise 3  : state 11 err 0, data after 3173 ms, up 40000 bit/s (LC 39, K 60, 4G 72, 192 taps, delay 116), down 50666, up 95520 bits 1007 bad, down 123690 bits 0 bad, tx power 0.42, peak at -0.05 T
   20 we retrain                      mu-law shape 0 noise 3  : state 11 err 0, data after 3173 ms, up 40000 bit/s (LC 39, K 60, 4G 72, 192 taps, delay 116), down 50666, up 93060 bits 0 bad, down 120536 bits 0 bad, tx power 0.42, peak at -0.05 T
+  36 the noise rises in data mode, twice mu-law shape 0 noise 3  : state 9 err 0, data after 3173 ms, up 40000 bit/s (LC 39, K 60, 4G 71, 192 taps, delay 116), down 50666, up 727578 bits 190687 bad, down 986176 bits 0 bad, tx power 0.30, peak at -0.05 T
+    drop 1: at 40000 bit/s, ceiling 36000
+    drop 2: at 36000 bit/s, ceiling 32000
+    the caller's renegotiation after them: ceiling 0, 40000 bit/s
   22 echo 60 samples late, not told  mu-law shape 0 noise 3  : state 9 err 0, data after 3266 ms, up 32000 bit/s (LC 23, K 48, 4G 71, 192 taps, delay 116), down 50666, up 183456 bits 0 bad, down 293170 bits 0 bad, tx power 0.85, peak at -0.05 T
   23 A-law, echo 400 late, not told  A-law  shape 1 noise 3  : state 9 err 0, data after 3761 ms, up 38666 bit/s (LC 38, K 58, 4G 79, 192 taps, delay 114), down 50666, up 202536 bits 0 bad, down 268128 bits 0 bad, tx power 0.45, peak at -0.05 T
   24 the caller falls silent         mu-law shape 0 noise 3  : state 12 err 11, data after 3173 ms, up 40000 bit/s (LC 39, K 60, 4G 72, 192 taps, delay 116), down 50666, up 93600 bits 0 bad, down 146034 bits 0 bad, tx power 0.42, peak at -0.05 T
@@ -61,4 +65,4 @@
   33 1.4 of the design, renegotiates, noisy mu-law shape 0 noise 40 : state 9 err 0, data after 3056 ms, up 37333 bit/s (LC 31, K 56, 4G 73, 192 taps, delay 116), down 50666, up 248838 bits 0 bad, down 349904 bits 0 bad, tx power 0.91, peak at -0.03 T
   34 2.4 of the design on a long line A-law  shape 1 noise 3  : state 9 err 0, data after 3060 ms, up 38666 bit/s (LC 37, K 58, 4G 79, 192 taps, delay 114), down 50666, up 229622 bits 234 bad, down 303544 bits 0 bad, tx power 0.51, peak at -0.05 T
   35 symbols on the points at scale 2 only: scale 1.000 with the power as designed, 1.953 with it 6 dB under
-v92call: 1767 checks, 0 failures
+v92call: 1775 checks, 0 failures

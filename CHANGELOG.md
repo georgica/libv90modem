@@ -141,6 +141,14 @@ Fixed:
   of V.92 draws. The repeats went out back to back until the answer came;
   a real Agere engine is reported to clear down on that. A caller that
   answers the first CPd (every real call recorded) sees no change.
+- V.92, answering role: the rate drop the answering modem starts itself
+  when the upstream decoder reports bad frames asks for one step (4000
+  bit/s) below the rate in use. Every earlier drop was counted again: in a
+  call that began at 40000 the second drop asked for 28000 instead of
+  32000, and from 48000 the call lost PCM upstream at the fourth drop
+  rather than (at the latest) the seventh. The drops also held every later
+  renegotiation down, the caller's included (one whose ceiling fell below
+  24000 bit/s ended in a retrain without PCM upstream); they no longer do.
 - V.92, answering role: a caller whose data mode arrives louder or weaker
   than the CPd design asked for (implementations differ on the power
   reference of V.92 8.8.3) is decoded. B1u failed (`V92D_ERR_B1`, then a
