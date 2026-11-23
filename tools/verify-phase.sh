@@ -1,23 +1,26 @@
 #!/bin/sh
 # make verify-phase: the check at the end of each phase (docs/superpowers/
-# specs/2026-11-22-audit-refactor-optimize-design.md 7.4), about an hour.
-# The stages one after another, each printing one line:
+# specs/2026-11-22-audit-refactor-optimize-design.md 7.4; docs/history/
+# audit-0.6.md has its measured time). The costs run in the background from
+# the start; the other stages one after another; each prints one line:
 #   armv5     make check-arm with the armv5 uClibc compiler (the box's ABI),
 #             PAR=16, the whole short set
-#   ports     tools/check-ports.sh build/ports, every target; m68k-uclibc is
-#             reported only (README "Ports"), every other must pass
+#   ports     tools/check-ports.sh build/ports: the whole suites on host gcc,
+#             armv5, s390x and riscv64, QUICK on the rest; every target but
+#             m68k-uclibc must be identical to host gcc (m68k reported only,
+#             README "Ports")
 #   armv7hf   make check-arm with the armv7hf musl compiler, the whole short
 #             set, compared with the host short set (tools/short-cmp.sh)
 #   benches   bench-v90 bench-x2 bench-k56 bench-v34 bench-v90a bench-v90c
 #             bench-v92c bench-bell (armv5), then each recording replayed on
 #             the host and under qemu: the hashes must be the same
-#   costs     cost-x2 cost-k56 cost-v34 cost-v90a cost-v90c cost-v92c
-#             cost-bell (armv5, each in a build tree of its own, at once):
-#             their lines in build/costs.txt
 #   crd       make crd-scan RECS=...: 0 CRd detections
+#   costs     cost-x2 cost-k56 cost-v34 cost-v90a cost-v90c cost-v92c
+#             cost-bell (armv5, COST_TICKS=0): their lines in build/costs.txt
 # then "VERIFY-PHASE PASS (<seconds> s)" or "VERIFY-PHASE FAILED". Logs:
 # build/verify-phase/<stage>.log.
 #
+#   PORTS_PAR=2                  targets at once (each 16 / PORTS_PAR programs)
 #   A5=<armv5 arm-linux-gcc>     default ../toolchains/armv5-eabi--uclibc--*
 #   A7=<armv7hf arm-linux-gcc>   default ../toolchains/armv7-eabihf--musl--*
 #   RECS=<recordings>            default /home/georgica/sync-build/live-050
@@ -52,22 +55,71 @@ run() {
     else printf '%-8s FAIL  %5ss  %s (build/verify-phase/%s.log)\n' "$n" "$t" "$l" "$n"; tail -15 "$V/$n.log" | sed 's/^/    /'; fail=1; fi
 }
 
+# the costs (instruction counts, the same whatever the load): each cost-*
+# in a build tree of its own, all at once, in the background from the
+# start, beside the other stages; their lines in build/costs.txt (cost-v90c
+# and cost-v92c without the slowest ticks counted one by one, COST_TICKS=0)
+COSTS="x2 k56 v34 v90a v90c v92c bell"
+line_costs() { echo "$(grep -vc '^#' "$ROOT/build/costs.txt" 2>/dev/null || echo 0) lines in build/costs.txt"; }
+costs() {
+    for c in $COSTS; do
+        ( make -s -j4 ARM_CC="$A5" BUILD=build/vp-cost/$c COST_TICKS=0 cost-$c > "$V/cost-$c.log" 2>&1; echo $? > "$V/cost-$c.rc" ) &
+    done
+    wait
+    st=0
+    for c in $COSTS; do
+        [ "$(cat "$V/cost-$c.rc")" = 0 ] || { echo "cost-$c FAILED ($V/cost-$c.log)" >&2; st=1; }
+        echo "# cost-$c"
+        grep -E 'ARM instructions|ratio' "$V/cost-$c.log"
+    done > "$ROOT/build/costs.txt"
+    cat "$ROOT/build/costs.txt"
+    return $st
+}
+( s=$(now); costs > "$V/costs.log" 2>&1; echo $? > "$V/costs.rc"; echo $(( $(now) - s )) > "$V/costs.time" ) &
+costs_pid=$!
+
 line_armv5() { grep -E '^(ALL ARM CHECKS PASS|ARM CHECKS FAILED)' "$V/armv5.log" | tail -1; }
 run armv5 "make -s -j16 check-arm PAR=16 ARM_CC='$A5' BUILD=build/a5"
 
-# every target; the gate is each target's line, m68k-uclibc's reported only
-line_ports() { cat "$V/ports.sum"; }
+# every target: the whole suite (-DTEST_FULL) on host gcc (the reference),
+# armv5 (the box's ABI), s390x (big-endian, glibc) and riscv64 (64-bit
+# little-endian); QUICK on the others (the slow programs of SLOW left out:
+# tools/ports-slow.txt and the two longest everywhere, which the four run);
+# m68k reported only (README "Ports"). Slowest targets first, PORTS_PAR
+# targets at once, each running PAR/PORTS_PAR programs at once.
+FULL="armv5-uclibc s390x-glibc riscv64-musl"
+ORDER="armv5-uclibc s390x-glibc riscv64-musl i686-musl mips-musl mipsel-musl ppc64-musl ppc-musl m68k-uclibc
+aarch64be-musl aarch64-musl x86_64-musl armv7hf-musl win32-mingw host-clang host-gcc"
+PORTS_PAR=${PORTS_PAR:-2}
+line_ports() { cat "$V/ports.sum" 2>/dev/null; }
 ports() {
-    tools/check-ports.sh build/ports > "$V/ports.out" 2>&1
+    quick=$(for t in $ORDER; do case " $FULL host-gcc " in *" $t "*) ;; *) echo "$t" ;; esac; done | tr '\n' ' ')
+    { cat tools/ports-slow.txt; echo arm_test_orig_retrain; echo arm_test_orig_v90_te; } > "$V/ports-slow.txt"
+    # shellcheck disable=SC2086
+    PAR=$PORTS_PAR PROG_PAR=$((16 / PORTS_PAR)) JOBS=$((16 / PORTS_PAR)) QUICK="$quick" SLOW="$V/ports-slow.txt" \
+        tools/check-ports.sh build/ports $ORDER > "$V/ports.out" 2>&1
+    rc=$?
     cat "$V/ports.out"
-    tl=$(grep -E '^[a-z0-9_-]+( \(reference\))?: ' "$V/ports.out")
-    bad=$(echo "$tl" | grep -v '^m68k-uclibc:' | grep -E 'FAILED|DIFFER|NOT RUN|SKIPPED|exit [1-9]|exit missing')
-    # m68k: its counts, and how many programs differ (the list is in ports.out)
-    m68k=$(echo "$tl" | grep '^m68k-uclibc:' | awk -F'; ' '{ d = 0; for (i = 2; i <= NF; i++) if ($i ~ /^DIFFER:/) d = split($i, x, " ") - 1
+    [ $rc -le 1 ] || { echo "ports: check-ports.sh exited $rc" > "$V/ports.sum"; return 1; }
+    # the gate: every target but m68k, compared again, must pass whole
+    gate=$(for t in $ORDER; do [ "$t" = m68k-uclibc ] || echo "$t"; done)
+    # shellcheck disable=SC2086
+    COMPARE_ONLY=1 tools/check-ports.sh build/ports $gate > "$V/ports.gate" 2>&1; grc=$?
+    want=$(echo "$gate" | grep -vc '^host-gcc$')
+    # a target passes whole when its identical and skipped (quick) programs make up all of them
+    got=$(awk '/FAILED|DIFFER|NOT RUN/ { next }
+        match($0, /^[a-z0-9_-]+: exit 0, [0-9]+ of [0-9]+ programs identical/) {
+            split(substr($0, RSTART, RLENGTH), w, " "); k = 0
+            if (match($0, /, [0-9]+ skipped \(quick\)/)) { split(substr($0, RSTART + 2), x, " "); k = x[1] }
+            if (w[4] + k == w[6]) n++ }
+        END { print n + 0 }' "$V/ports.gate")
+    COMPARE_ONLY=1 tools/check-ports.sh build/ports m68k-uclibc > "$V/ports.m68k" 2>&1
+    m68k=$(grep '^m68k-uclibc:' "$V/ports.m68k" | awk -F'; ' '{ d = 0; for (i = 2; i <= NF; i++) if ($i ~ /^DIFFER:/) d = split($i, x, " ") - 1
         print $1 (d ? ", " d " differ" : "") }')
-    n=$(echo "$tl" | grep -v '^m68k-uclibc:' | grep -vE 'FAILED|DIFFER|NOT RUN|SKIPPED|exit [1-9]|exit missing' | grep -c .)
-    echo "$n targets identical to host-gcc; m68k (report only): ${m68k#m68k-uclibc: }" > "$V/ports.sum"
-    [ -z "$bad" ] || { echo "$bad"; echo "$(echo "$bad" | grep -c .) targets FAILED; $(cat "$V/ports.sum")" > "$V/ports.sum"; return 1; }
+    echo "$got of $want targets identical to host-gcc (full: $FULL); m68k (report only): ${m68k#m68k-uclibc: }" > "$V/ports.sum"
+    cat "$V/ports.gate"
+    [ $grc -eq 0 ] && grep -q '^ALL PORTS PASS' "$V/ports.gate" && [ "$got" -eq "$want" ] && [ -n "$m68k" ] || {
+        echo "FAILED: $(cat "$V/ports.sum")" > "$V/ports.sum"; return 1; }
 }
 run ports ports
 
@@ -108,26 +160,14 @@ EOT
 }
 run benches benches
 
-# the costs, each target in a build tree of its own, all at once
-line_costs() { echo "$(grep -c . "$ROOT/build/costs.txt" 2>/dev/null || echo 0) lines in build/costs.txt"; }
-costs() {
-    for c in x2 k56 v34 v90a v90c v92c bell; do
-        ( make -s -j4 ARM_CC="$A5" BUILD=build/vp-cost/$c cost-$c > "$V/cost-$c.log" 2>&1; echo $? > "$V/cost-$c.rc" ) &
-    done
-    wait
-    st=0
-    for c in x2 k56 v34 v90a v90c v92c bell; do
-        [ "$(cat "$V/cost-$c.rc")" = 0 ] || { echo "cost-$c FAILED ($V/cost-$c.log)"; st=1; }
-        echo "# cost-$c"
-        grep -E 'ARM instructions|ratio' "$V/cost-$c.log"
-    done > "$ROOT/build/costs.txt"
-    cat "$ROOT/build/costs.txt"
-    return $st
-}
-run costs costs
-
 line_crd() { tail -1 "$V/crd.log"; }
 run crd "make -s crd-scan RECS='$RECS' | tee /dev/stderr | tail -1 | grep -q ' 0 CRd detections'"
+
+# the costs, started first
+wait $costs_pid
+rc=$(cat "$V/costs.rc" 2>/dev/null || echo 1)
+if [ "$rc" = 0 ]; then printf '%-8s ok    %5ss  %s\n' costs "$(cat "$V/costs.time")" "$(line_costs)"
+else printf '%-8s FAIL  %5ss  %s (build/verify-phase/costs.log)\n' costs "$(cat "$V/costs.time" 2>/dev/null)" "$(line_costs)"; tail -15 "$V/costs.log" | sed 's/^/    /'; fail=1; fi
 
 t=$(( $(now) - t0 ))
 if [ $fail -eq 0 ]; then echo "VERIFY-PHASE PASS ($t s)"; exit 0; fi

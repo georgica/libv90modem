@@ -8,10 +8,12 @@
 # target ran case by case (SPLIT_TESTS, arm_test_p34:N) is compared as its
 # cases one after another, without their report lines (tools/split-check.sh),
 # with the host's whole program, without its own. Every run must have
-# passed. Programs the target left out (ARM_SKIP) are counted, not compared;
-# the API test and the examples are not in the pool.
+# passed. A host program the target did not run fails, unless SKIPFILE
+# lists it (the ARM_SKIP of that check-arm run, as tools/ports-slow.txt
+# lists programs: arm_test_x, v32/arm_test_y); those are counted, not
+# compared. The API test and the examples are not in the pool.
 #
-#   tools/short-cmp.sh HOSTBUILD TARGETBUILD
+#   tools/short-cmp.sh HOSTBUILD TARGETBUILD [SKIPFILE]
 #
 # When HOSTBUILD has no log of a host run yet (CI), the host short set is
 # built and run here first: make test-all BUILD=HOSTBUILD
@@ -23,8 +25,9 @@
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/tools/out-filter.sh"
-[ $# -eq 2 ] || { echo "usage: tools/short-cmp.sh HOSTBUILD TARGETBUILD" >&2; exit 2; }
-H=$1; T=$2
+[ $# -eq 2 ] || [ $# -eq 3 ] || { echo "usage: tools/short-cmp.sh HOSTBUILD TARGETBUILD [SKIPFILE]" >&2; exit 2; }
+H=$1; T=$2; SK=${3:-/dev/null}
+[ -r "$SK" ] || { echo "short-cmp: cannot read $SK"; exit 2; }
 case $H in "$ROOT"/*) MH=${H#"$ROOT"/} ;; *) MH=$H ;; esac
 case $H in /*) ;; *) H=$ROOT/$H ;; esac
 case $T in /*) ;; *) T=$ROOT/$T ;; esac
@@ -49,7 +52,13 @@ awk '{ k = $2; c = 0
 same=0; fail=0; nh=0; skipped=0
 for hk in $(awk '{ print $2 }' "$H/log/entries.txt"); do
     nh=$((nh + 1))
-    grep -q "^$hk " "$O/runs.txt" || { skipped=$((skipped + 1)); continue; }
+    if ! grep -q "^$hk " "$O/runs.txt"; then
+        # the target's name of it: arm_ before the program's name
+        case $hk in */*) ak=${hk%/*}/arm_${hk##*/} ;; *) ak=arm_$hk ;; esac
+        if grep -qxF "$ak" "$SK"; then skipped=$((skipped + 1))
+        else echo "short-cmp: $hk did not run on the target (not in ${SK#"$ROOT"/})"; fail=1; fi
+        continue
+    fi
     [ "$(cat "$H/log/$hk.rc" 2>/dev/null)" = 0 ] || { echo "short-cmp: $hk FAILED on the host ($H/log/$hk.log)"; fail=1; continue; }
     f=$O/$hk; mkdir -p "$(dirname "$f")"
     : > "$f.got"; bad=; split=0

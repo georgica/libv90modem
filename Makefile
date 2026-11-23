@@ -16,8 +16,9 @@
 #                        no allocation outside api/v90modem.o
 #   make verify          per commit (tools/verify.sh): host check and golden outputs,
 #                        replay proof, bench hashes, UBSan, the armv7hf short suite
-#                        against the host's (less tools/ports-slow.txt), check-fixed
-#   make verify-phase    per phase, about an hour (tools/verify-phase.sh): armv5, every
+#                        and an aarch64be (big-endian) one against the host short set
+#                        (less tools/ports-slow.txt), split-check, check-fixed
+#   make verify-phase    the release proof, hours (tools/verify-phase.sh): armv5, every
 #                        port, armv7hf in full, the benches on qemu, costs to
 #                        $(BUILD)/costs.txt, the CRd scan (RECS=)
 #   make install         into $(DESTDIR)$(PREFIX); make uninstall takes it out
@@ -156,11 +157,9 @@ check-symbols: $(STATIC)
 	 if [ -n "$$bad" ]; then echo "$(STATIC) defines symbols outside v90m_*:"; echo "$$bad" | head; exit 1; fi; \
 	 echo "symbols: $(STATIC) defines only v90m_* ($$($(NM) -g --defined-only $(STATIC) | grep -c ' _*v90m__i_') internal)"
 # Fixed point and no allocation after create, checked on the box's compiler
-# (FIXED_CC, the armv5 soft-float one): every library object compiled alone
-# must call no soft-float helper (__aeabi_f*, __aeabi_d*, __*sf*, __*df*:
-# there is no FPU, so any float or double in the code shows as one), and
-# only api/v90modem.o (which the create functions are in) may name malloc,
-# calloc, realloc or free
+# (FIXED_CC, the armv5 soft-float one): every library object compiled alone,
+# its undefined symbols against an allowlist (tools/check-fixed.sh): no
+# soft-float helper, no libm, malloc and free only in api/v90modem.o
 FIXED_CC  ?= $(firstword $(wildcard $(CURDIR)/../toolchains/armv5-eabi--uclibc--*/bin/arm-linux-gcc))
 FIXED_NM   = $(patsubst %gcc,%nm,$(FIXED_CC))
 FIXED_OBJ := $(patsubst %.c,$(BUILD)/fixed/%.o,$(LIB_SRC))
@@ -172,18 +171,7 @@ fixed-objs: $(FIXED_OBJ)
 check-fixed:
 	@if [ -z "$(FIXED_CC)" ] || [ ! -x "$(FIXED_CC)" ]; then echo "check-fixed: no armv5 compiler (FIXED_CC=$(FIXED_CC))"; exit 1; fi
 	@$(MAKE) -s $(if $(findstring jobserver,$(MAKEFLAGS)),,-j16) fixed-objs
-	@fail=0; \
-	 for o in $(FIXED_OBJ); do \
-	   u=$$($(FIXED_NM) -u $$o | awk '{ print $$NF }'); \
-	   f=$$(echo "$$u" | grep -E '^(__aeabi_[fd]|__.*sf|__.*df)' | tr '\n' ' ' | sed 's/ $$//'); \
-	   [ -z "$$f" ] || { echo "check-fixed: $${o#$(BUILD)/fixed/} calls float helpers: $$f"; fail=1; }; \
-	   case $$o in */api/v90modem.o) ;; *) \
-	     a=$$(echo "$$u" | grep -xE 'malloc|calloc|realloc|free' | tr '\n' ' ' | sed 's/ $$//'); \
-	     [ -z "$$a" ] || { echo "check-fixed: $${o#$(BUILD)/fixed/} allocates: $$a"; fail=1; } ;; \
-	   esac; \
-	 done; \
-	 [ $$fail -eq 0 ] || exit 1; \
-	 echo "fixed: $(words $(FIXED_OBJ)) objects, 0 float helpers, allocation only in api/v90modem.o"
+	@tools/check-fixed.sh $(FIXED_NM) $(BUILD)/fixed $(FIXED_OBJ)
 $(SHARED): $(PIC_OBJ)
 	$(CC) -shared -Wl,-soname,$(NAME).so.$(SOVER) -o $@ $(PIC_OBJ) $(LDLIBS)
 	ln -sf $(NAME).so.$(VERSION) $(BUILD)/$(NAME).so.$(SOVER)
@@ -268,6 +256,7 @@ ARM_ENTRIES = for t in $(TESTS); do \
 	   p=$(abspath $(BUILD))/arm_$$t; \
 	   case " $(SPLIT_TESTS) " in \
 	   *" $$t "*) n=$$($(QEMU) $$p --cases) || { echo "$$p --cases failed" >&2; exit 1; }; n=$$(echo "$$n" | tr -d '\r'); \
+	      case $$n in ''|*[!0-9]*|0) echo "$$p --cases: no case count ($$n)" >&2; exit 1 ;; esac; \
 	      i=1; while [ $$i -le $$n ]; do echo $$p:$$i; i=$$((i + 1)); done ;; \
 	   *) echo $$p ;; \
 	   esac; done
@@ -625,13 +614,14 @@ cost-v90c: $(BUILD)/rec_v90c $(BUILD)/bench_v90c $(BUILD)/bench_v90c.arm
 	   b=$$($(CNT) $(abspath $(BUILD))/bench_v90c.arm $(BUILD)/v90c_$$p.b 2>&1 | grep -c '^Trace'); \
 	   echo "V.90 caller, $$p ppm: data mode $$((b - a)) ARM instructions per second of line (seconds 2 to 3 of data mode)"; \
 	 done; \
-	 for t in $$($(abspath $(BUILD))/bench_v90c $(BUILD)/v90c_100.rec -w 4 | sed -n 's/^slow tick \([0-9]*\) .*/\1/p'); do \
+	 if [ "$(COST_TICKS)" != 0 ]; then \
+	  for t in $$($(abspath $(BUILD))/bench_v90c $(BUILD)/v90c_100.rec -w 4 | sed -n 's/^slow tick \([0-9]*\) .*/\1/p'); do \
 	   head -c $$((12 + 2 * t)) $(BUILD)/v90c_100.rec > $(BUILD)/v90c_t.a; \
 	   head -c $$((12 + 2 * (t + 1))) $(BUILD)/v90c_100.rec > $(BUILD)/v90c_t.b; \
 	   a=$$($(CNT) $(abspath $(BUILD))/bench_v90c.arm $(BUILD)/v90c_t.a 2>&1 | grep -c '^Trace'); \
 	   b=$$($(CNT) $(abspath $(BUILD))/bench_v90c.arm $(BUILD)/v90c_t.b 2>&1 | grep -c '^Trace'); \
 	   echo "V.90 caller, 100 ppm: tick $$t ($$((t / 8)) ms): $$((b - a)) ARM instructions"; \
-	 done
+	 done; fi
 # ---- the same for the caller in V.92 (PCM upstream): rec_v90c ... v92 records
 # a V.92 call (the upstream through the answerer's own V.92 line), and
 # bench_v90c replays it with V.92 on ----
@@ -651,13 +641,17 @@ cost-v92c: $(BUILD)/rec_v90c $(BUILD)/bench_v90c $(BUILD)/bench_v90c.arm
 	   b=$$($(CNT) $(abspath $(BUILD))/bench_v90c.arm $(BUILD)/v92c_$$p.b 2>&1 | grep -c '^Trace'); \
 	   echo "V.92 caller, $$p ppm: data mode $$((b - a)) ARM instructions per second of line (seconds 2 to 3 of data mode)"; \
 	 done; \
-	 for t in $$($(abspath $(BUILD))/bench_v90c $(BUILD)/v92c_100.rec -w 6 | sed -n 's/^slow tick \([0-9]*\) .*/\1/p'); do \
+	 if [ "$(COST_TICKS)" != 0 ]; then \
+	  for t in $$($(abspath $(BUILD))/bench_v90c $(BUILD)/v92c_100.rec -w 6 | sed -n 's/^slow tick \([0-9]*\) .*/\1/p'); do \
 	   head -c $$((12 + 2 * t)) $(BUILD)/v92c_100.rec > $(BUILD)/v92c_t.a; \
 	   head -c $$((12 + 2 * (t + 1))) $(BUILD)/v92c_100.rec > $(BUILD)/v92c_t.b; \
 	   a=$$($(CNT) $(abspath $(BUILD))/bench_v90c.arm $(BUILD)/v92c_t.a 2>&1 | grep -c '^Trace'); \
 	   b=$$($(CNT) $(abspath $(BUILD))/bench_v90c.arm $(BUILD)/v92c_t.b 2>&1 | grep -c '^Trace'); \
 	   echo "V.92 caller, 100 ppm: tick $$t ($$((t / 8)) ms): $$((b - a)) ARM instructions"; \
-	 done
+	 done; fi
+# COST_TICKS=0: cost-v90c and cost-v92c without the slowest ticks counted
+# one by one (which ticks are slowest depends on the host's load)
+COST_TICKS ?= 1
 # prof-v90c / prof-v92c: the cost of every tick and the profile, from one qemu
 # run each (much faster than cost-*: no -one-insn-per-tb). rec_v90c records a
 # call at PPM (default 100) with 4 s of data mode; bench_v90c -t replays it

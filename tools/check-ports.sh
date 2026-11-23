@@ -20,9 +20,11 @@
 # files go there too.
 #   PAR=4      targets built and run at once
 #   JOBS=2     make -j for each target (so at most PAR * JOBS compilers)
+#   PROG_PAR=8 test programs each target runs at once (tools/par-run.sh's
+#              PAR; so at most PAR * PROG_PAR programs)
 #   QUICK="t1 t2 ..."  targets that skip the slow programs listed in
-#              tools/ports-slow.txt (the comparison then covers the rest
-#              and says how many were skipped)
+#              SLOW (default tools/ports-slow.txt; the comparison then
+#              covers the rest and says how many were skipped)
 #   SKIP="arm_test_orig_seeds ..."  programs no target but the reference
 #              runs (as a quick target's are skipped and counted)
 #   COMPARE_ONLY=1  compare what an earlier run left in OUT, run nothing
@@ -37,6 +39,7 @@ TC=${TOOLCHAINS:-$ROOT/../toolchains}
 PAR=${PAR:-4}
 JOBS=${JOBS:-2}
 QUICK=${QUICK:-}
+SLOW=${SLOW:-$ROOT/tools/ports-slow.txt}
 SUBS=$(sed -n 's/^SUBS *:= *//p' "$ROOT/Makefile")
 # lines that measure the host, not the modem (TIMING, out_filter)
 . "$ROOT/tools/out-filter.sh"
@@ -67,10 +70,12 @@ REF=$(echo "$TARGETS" | awk 'NF {print $1; exit}')
 # --one NAME: build and run one target (what the parallel step below runs)
 if [ "${1:-}" = --one ]; then
     OUT=$2; name=$3
+    # the programs one target runs at once (par-run's PAR, not the targets')
+    PAR=${PROG_PAR:-8}; export PAR
     set -- $(echo "$TARGETS" | awk -v n="$name" '$1 == n')
     cc=$2; run=$3; B=$OUT/$name
     skip=-
-    case " $QUICK " in *" $name "*) [ "$name" != "$REF" ] && skip=$ROOT/tools/ports-slow.txt ;; esac
+    case " $QUICK " in *" $name "*) [ "$name" != "$REF" ] && skip=$SLOW ;; esac
     if [ -n "${SKIP:-}" ] && [ "$name" != "$REF" ]; then
         mkdir -p "$B"
         { [ "$skip" = - ] || cat "$skip"; printf '%s\n' $SKIP; } > "$B/skip.txt"
