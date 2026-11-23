@@ -6,6 +6,7 @@
 #include "test.h"
 #include "dxline.h"
 #include "../modem/v34ans.h"
+#include "../modem/clock.h"
 
 typedef struct {
     v34dx_t a, c; bend_t ua, uc; dxline_t line;
@@ -108,9 +109,9 @@ int main(void)
         /* 11.3.2.2.1: the caller's S / S-bar within 600 ms + a round trip of the start of our J
          * (the call modem may wait 500 ms; this one does not) */
         t_sbar_c = P.c.tx_first[DXS_PP];
-        CHECK(t_sbar_c - P.a.tx_first[DXS_J] < 8 * 600);
+        CHECK(clk_diff((uint32_t)t_sbar_c, P.a.tx_first[DXS_J]) < 8 * 600);
         /* 11.4.2.2.1: J' within 100 ms + a round trip of our S / S-bar transition */
-        CHECK(P.a.t_jp - (P.a.tx_first[DXS_TRN4]) < 8 * 100 + P.a.cfg.rtd + 8 * 20);
+        CHECK(clk_diff(P.a.t_jp, P.a.tx_first[DXS_TRN4]) < 8 * 100 + P.a.cfg.rtd + 8 * 20);
         /* 11.4.1.x.2: TRN of Phase 4 at least 512 T, at most 2000 ms */
         CHECK(P.a.tx_count[DXS_TRN4] >= 512 && P.a.tx_count[DXS_TRN4] * 1000L / S <= 2000);
         CHECK(P.c.tx_count[DXS_TRN4] >= 512 && P.c.tx_count[DXS_TRN4] * 1000L / S <= 2000);
@@ -119,7 +120,7 @@ int main(void)
         CHECK(P.a.mpa_sent >= 1 && P.c.mpa_sent >= 1);
         CHECK_EQ_I(P.a.tx_count[DXS_E], 10); CHECK_EQ_I(P.c.tx_count[DXS_E], 10);
         /* 11.4.2.x.2: E within 2500 ms of the start of Phase 4 */
-        CHECK(P.data_a - P.a.tx_first[DXS_S] < 8 * 2500 + 3 * P.a.cfg.rtd);
+        CHECK(P.data_a - (long)P.a.tx_first[DXS_S] < 8 * 2500 + 3 * P.a.cfg.rtd);
         /* the rates: the same at both ends, the top of Table 8 for this symbol rate */
         CHECK_EQ_I(P.a.tx_rate, P.c.rx_rate); CHECK_EQ_I(P.a.rx_rate, P.c.tx_rate);
         if (S == 2400) {
@@ -386,7 +387,7 @@ int main(void)
         pair_init(&a, &c, &lc);
         t = 0; while (P.n < 8000L * 6 && P.a.state != DX_RETRAIN) pair_run(8);
         CHECK_EQ_I(P.a.state, DX_RETRAIN); CHECK_EQ_I(P.a.retrain_ours, 1);
-        CHECK_NEAR((P.n - P.a.tx_first[DXS_J]) / 8.0, 600 + 44 / 8.0, 4);
+        CHECK_NEAR((P.n - (long)P.a.tx_first[DXS_J]) / 8.0, 600 + 44 / 8.0, 4);
         /* 11.3.2.2.2: the caller's S comes but its J does not */
         pair_init(&a, &c, &CLEAN);
         while (P.n < 8000L * 6 && P.a.state != DX_P3_RX) pair_run(8);

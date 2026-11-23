@@ -1,6 +1,7 @@
 /* V.92 Phases 3 and 4 with PCM upstream, digital modem. See v92_p34d.h. */
 #include <string.h>
 #include "v92_p34d.h"
+#include "clock.h"
 #include "v90_pcm.h"
 
 #define MS(ms) ((int32_t)(ms) * 8)
@@ -35,6 +36,12 @@
 #define CD_BLOCK       80       /* carrier watch: 10 ms */
 #define CD_BLOCKS      50       /* about half a second without signal in data mode */
 #define CD_SHIFT       6        /* "without": 18 dB under the power of B1u */
+/* 2^30 samples of the training receiver's clock (trn.k) in data mode: it,
+ * data_k and the symbol numbers counted on it back by REBASE, a multiple of
+ * its ring (256) and of two data frames (12), before a call of 2^31 samples
+ * (74.6 hours) takes them past INT32_MAX */
+#define REBASE_AT      0x40000000
+#define REBASE         0x30000000
 
 static void fail(v92d_t *p, int err)
 {
@@ -108,6 +115,18 @@ static void put_data(void *user, int bit)
          * decoder makes of silence is not data) */
         p->cfg.putbit(p->cfg.user, bit);
     }
+}
+
+/* a symbol number moved back by REBASE: -1 (none) stays; one from before
+ * REBASE, long past, becomes one long past with the same m % 768 */
+static int32_t m_back(int32_t m) { return m < 0 ? m : m >= REBASE ? m - REBASE : m % 768; }
+
+static void rebase(v92d_t *p)
+{
+    p->trn.k -= REBASE; p->data_k -= REBASE;
+    p->trn.dec_m = m_back(p->trn.dec_m);
+    p->m_b1u = m_back(p->m_b1u); p->m_trn2u = m_back(p->m_trn2u);
+    /* (trn.mref: v92_trn_resume sets it before the receiver decides again) */
 }
 
 /* E2u is over: symbol m is the first of B1u */
@@ -569,6 +588,7 @@ uint8_t v92d_tick(v92d_t *p, int16_t rxs)
                 if (p->b1_sym >= 0) b1u_lead(p, (int16_t)(y > 32767 ? 32767 : y < -32767 ? -32767 : y));
             }
         }
+        if (p->rx_on && p->trn_on == 2 && p->trn.k >= REBASE_AT) rebase(p);
         if (p->state >= V92D_RETRAIN) return octet;
     }
 
@@ -580,14 +600,14 @@ uint8_t v92d_tick(v92d_t *p, int16_t rxs)
             if (p->cfg.md_len > 0 && !p->revs) { p->revs = 1; enter(p, V92D_MD); break; }     /* 9.5.1.1.1 */
             p->trn_at = p->now - V92_P6_REV_LAG + 24 - TRN_LEAD;
             enter(p, V92D_TRN1U);
-        } else if (p->t > MS(T_RU_MS) + p->cfg.md_len * 276) {
+        } else if ((int64_t)p->t > MS(T_RU_MS) + p->cfg.md_len * 276) {
             fail(p, V92D_ERR_NO_RU);
         }
         break;
 
     case V92D_MD:
         /* Ru-bar ends 24 - LAG symbols from the reversal; then MD; listen again a little early */
-        if (p->t >= 20 + p->cfg.md_len * 276 - 48) { v92_p6_init(&p->p6); p->state = V92D_WAIT_RU; }
+        if ((int64_t)p->t >= 20 + p->cfg.md_len * 276 - 48) { v92_p6_init(&p->p6); p->state = V92D_WAIT_RU; }
         break;
 
     case V92D_TRN1U:
@@ -597,7 +617,7 @@ uint8_t v92d_tick(v92d_t *p, int16_t rxs)
             if (v90tx_load_dil(&p->tx, &p->ja.dil) != 0 || v90tx_set_jd(&p->tx, &p->jd) != 0) { fail(p, V92D_ERR_JA); break; }
             (void)v90tx_select(&p->tx, V90TX_SD);       /* 9.5.1.1.3; Sd-bar and TRN1d follow by themselves */
             enter(p, V92D_SD);
-        } else if (p->t > MS(T_JA_MS) + p->cfg.rtd) {
+        } else if ((int64_t)p->t > MS(T_JA_MS) + p->cfg.rtd) {
             fail(p, V92D_ERR_JA);
         }
         break;
@@ -653,7 +673,7 @@ uint8_t v92d_tick(v92d_t *p, int16_t rxs)
             (void)v90tx_set_xseq(&p->tx, V90TX_XSEQ_JP, p->xjp, n);
             (void)v90tx_select(&p->tx, V90TX_JP);                       /* after the current Jd */
             enter(p, V92D_JP);
-        } else if (p->now - p->t_trn1d > MS(T_SU_MS) + p->cfg.rtd) {
+        } else if (clk_diff(p->now, p->t_trn1d) > MS(T_SU_MS) + p->cfg.rtd) {
             retrain(p, 1);                                              /* 9.5.1.2.2 */
         }
         break;
@@ -666,7 +686,7 @@ uint8_t v92d_tick(v92d_t *p, int16_t rxs)
             p->trn_at = p->now - V92_P6_REV_LAG + 24 - TRN_LEAD;
             p->got_cpt = p->got_e1u = p->ri_sent = 0;
             enter(p, V92D_TRAIN);
-        } else if (p->t > MS(T_SU_MS) + p->cfg.rtd) {
+        } else if ((int64_t)p->t > MS(T_SU_MS) + p->cfg.rtd) {
             retrain(p, 1);
         }
         break;
@@ -682,7 +702,7 @@ uint8_t v92d_tick(v92d_t *p, int16_t rxs)
             p->got_suvu = p->got_cpu = p->got_ack = p->got_e2u = 0;
             p->cpd_sent = p->cpd_repeat = 0; p->t_cpd = 0; p->dsn_state = 0;
             enter(p, V92D_PH4);
-        } else if (p->t > MS(T_TRAIN_MS) + p->cfg.rtd) {
+        } else if ((int64_t)p->t > MS(T_TRAIN_MS) + p->cfg.rtd) {
             fail(p, V92D_ERR_CPT);
         }
         break;
@@ -740,7 +760,7 @@ uint8_t v92d_tick(v92d_t *p, int16_t rxs)
                  * with silence, seven calls of seven, and a plain one never. */
                 if (p->got_suvu && !p->cpd_sent) sel(p, V90TX_CPD);
                 else if (p->cpd_sent == 2 && !p->got_ack && !p->cpd_repeat
-                         && p->now - p->t_cpd > MS(100) + p->cfg.rtd + 1200) { p->cpd_repeat = 1; sel(p, cpd); }   /* 9.6.1.1.3 */
+                         && clk_diff(p->now, p->t_cpd) > MS(100) + p->cfg.rtd + 1200) { p->cpd_repeat = 1; sel(p, cpd); }   /* 9.6.1.1.3 */
                 else if (sig != suvd) sel(p, suvd);                                 /* the acknowledge bit */
             } else if (is_cpd) {
                 if (!p->cpd_sent) p->cpd_sent = 1;
@@ -748,7 +768,7 @@ uint8_t v92d_tick(v92d_t *p, int16_t rxs)
                 else if (sig != cpd) sel(p, cpd);
             }
         }
-        if (p->state == V92D_PH4 && p->t > MS(p->in_reneg ? T_RENEG_MS + pace_ms(p) : T_PHASE4_MS) + 6 * p->cfg.rtd) {
+        if (p->state == V92D_PH4 && (int64_t)p->t > MS(p->in_reneg ? T_RENEG_MS + pace_ms(p) : T_PHASE4_MS) + 6 * p->cfg.rtd) {
             if (p->in_reneg) retrain(p, 1); else fail(p, V92D_ERR_CPU);
         }
         break;
@@ -760,7 +780,7 @@ uint8_t v92d_tick(v92d_t *p, int16_t rxs)
             if (p->in_reneg) { p->renegs++; p->in_reneg = 0; }
             v92_p6_init(&p->p6);
             enter(p, V92D_DATA);
-        } else if (p->t > MS(p->in_reneg ? T_RENEG_MS + pace_ms(p) : T_PHASE4_MS) + 6 * p->cfg.rtd) {
+        } else if ((int64_t)p->t > MS(p->in_reneg ? T_RENEG_MS + pace_ms(p) : T_PHASE4_MS) + 6 * p->cfg.rtd) {
             if (p->in_reneg) retrain(p, 1); else fail(p, V92D_ERR_B1);
         }
         break;

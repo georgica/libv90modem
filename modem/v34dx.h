@@ -104,9 +104,9 @@ typedef struct {
     v34dx_cfg   cfg;
     v34dx_state state;
     int         error;
-    int32_t     now, t;             /* sample clock; samples in this state */
+    uint32_t    now, t;             /* sample clock; samples in this state (modem/clock.h) */
     int         retrain_ours;       /* DX_RETRAIN: we asked for it */
-    int32_t     t_neg;              /* when Phase 4 or the rate renegotiation began */
+    uint32_t    t_neg;              /* when Phase 4 or the rate renegotiation began */
     /* ---- transmit ---- */
     v34mod_t    mod;
     int         txsig; int32_t txn; /* signal and symbol index in it */
@@ -122,7 +122,7 @@ typedef struct {
     int         mp_sent, mpa_sent;
     v34_params_t tpar; v34_tx_t vtx; int32_t tx_dg;
     uint32_t    tx_count[DXS_N];    /* symbols sent of each signal so far */
-    int32_t     tx_first[DXS_N];    /* sample clock at the first / at the latest start */
+    uint32_t    tx_first[DXS_N];    /* sample clock at the first / at the latest start */
     /* ---- echo ---- */
     ec_t        ec, fec;            /* near; far (round trip later), when far_on */
     int         ec_mu, far_on;
@@ -142,7 +142,7 @@ typedef struct {
     /* sequences */
     uint16_t    jsr; int32_t jbits, j_at; int j_type;
     int         seq_j, seq_mp;
-    int         got_j, got_jp, far_16pt; int32_t t_jp;
+    int         got_j, got_jp, far_16pt; uint32_t t_jp;
     uint8_t     fbuf[DX_FBUF]; int fn, ones;
     v34_mp_t    far_mp, cand; int cand_ok;
     int         got_far_mp, got_far_mpa, got_e, far_clear;

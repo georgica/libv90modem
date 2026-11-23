@@ -99,8 +99,8 @@ typedef struct {
     x2d_cfg    cfg;
     x2d_state  state;
     int        error;
-    int32_t    now, t;              /* sample clock; samples in this state */
-    int32_t    t_mark;              /* a deadline's reference: when the current wait began */
+    uint32_t   now, t;              /* sample clock; samples in this state (modem/clock.h) */
+    uint32_t   t_mark;              /* a deadline's reference: when the current wait began */
     int        sym_rate, car_num, car_den;
     /* transmit */
     x2tx_t     tx;

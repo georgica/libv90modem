@@ -1,6 +1,7 @@
 /* See orig.h. */
 #include <string.h>
 #include "orig.h"
+#include "clock.h"
 #include "v21h_bpf.h"
 #include "bell103h_bpf.h"
 #include "probe.h"
@@ -306,7 +307,7 @@ static int16_t tick_v21(orig_t *o, int16_t rx)
 int16_t orig_tick(orig_t *o, int16_t rx)
 {
     int16_t tx = 0;
-    o->t++;
+    o->t = clk_sat_inc(o->t);
     switch (o->phase) {
     case ORIG_V8:
         /* Bell offered: 2225 Hz before a 2100 Hz tone was told is a pre-V.8

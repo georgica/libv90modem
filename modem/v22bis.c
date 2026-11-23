@@ -1,6 +1,7 @@
 /* V.22bis start-up handshake (6.3.1), retrain (6.4) and data-mode control,
  * both roles. */
 #include "v22bis.h"
+#include "clock.h"
 
 #define MS(ms) ((int32_t)(ms) * 8)        /* 8 kHz sample clock */
 
@@ -132,7 +133,7 @@ void v22m_retrain(v22bis_t *m)
 int16_t v22m_tick(v22bis_t *m, int16_t in)
 {
     v22rx_tick(&m->rx, in);
-    m->t++; m->total++;
+    m->t = clk_sat_inc(m->t); m->total = clk_sat_inc(m->total);
     if (m->t_s1 < MS(60000)) m->t_s1++;
 
     /* our own 100 ms of S1, then scrambled ones at 1200 */

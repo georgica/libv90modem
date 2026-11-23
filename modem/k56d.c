@@ -14,6 +14,7 @@
 #define TR(...) ((void)0)
 #endif
 #include "k56d.h"
+#include "clock.h"
 #include "p2ans.h"
 #include "../v90/v90_pcm.h"
 
@@ -59,7 +60,7 @@ int k56d_init(k56d_t *d, const k56d_cfg *cfg)
     d->sdet.div = 16;               /* nothing but S can be on the line */
     qamrx_init(&d->rx, SYM_RATE, d->car_num, d->car_den);
     d->rxmode = RX_OFF;
-    d->t_mark = -1;
+    d->t_mark = CLK_NONE;
     d->state = K56D_TRAIN1;
     if (d->cfg.rtd < 0 || d->cfg.max_up_rate < 0 || d->cfg.max_down_rate < 0) { end(d, K56D_ERR_CFG); return -1; }
     return 0;
@@ -454,29 +455,29 @@ uint8_t k56d_tick(k56d_t *d, int16_t rxs)
             if (pad > 2) { end(d, K56D_ERR_J); break; }
             d->pad = pad; d->rbs = (uint8_t)(d->j_octet & 0x3f);
             k56tx_got_j(&d->tx, d->j_octet);
-            d->t_mark = -1;
+            d->t_mark = CLK_NONE;
             enter(d, K56D_TRAIN2);
         } else if (d->rxmode == RX_WAIT_S) {
-            if (d->now - d->t_mark > MS(K56D_T_S)) end(d, K56D_ERR_NO_S);
-        } else if (d->now - d->t_mark > MS(K56D_T_J)) {
+            if (clk_diff(d->now, d->t_mark) > MS(K56D_T_S)) end(d, K56D_ERR_NO_S);
+        } else if (clk_diff(d->now, d->t_mark) > MS(K56D_T_J)) {
             end(d, K56D_ERR_NO_J);
         }
         break;
     case K56D_TRAIN2:
         /* K56D_T_MP from the start of our TRN2B (Ruling F4) */
-        if (seg == K56TX_TRN2B && d->t_mark < 0) d->t_mark = d->now;
+        if (seg == K56TX_TRN2B && d->t_mark == CLK_NONE) d->t_mark = d->now;
         if (seg >= K56TX_MP) {
             /* its E may be in already (rx_begin_data set t_mark for T_B1): keep that */
-            if (!d->got_e) d->t_mark = -1;
+            if (!d->got_e) d->t_mark = CLK_NONE;
             enter(d, K56D_MP);
         }
-        else if (!d->got_mp && d->t_mark >= 0 && d->now - d->t_mark > MS(K56D_T_MP)) end(d, K56D_ERR_NO_MP);
+        else if (!d->got_mp && d->t_mark != CLK_NONE && clk_diff(d->now, d->t_mark) > MS(K56D_T_MP)) end(d, K56D_ERR_NO_MP);
         break;
     case K56D_MP:
         if (!d->got_e) {
             /* K56D_T_E from the start of our MP' */
-            if (seg == K56TX_MPA && d->t_mark < 0) d->t_mark = d->now;
-            if (d->t_mark >= 0 && d->now - d->t_mark > MS(K56D_T_E)) end(d, K56D_ERR_NO_E);
+            if (seg == K56TX_MPA && d->t_mark == CLK_NONE) d->t_mark = d->now;
+            if (d->t_mark != CLK_NONE && clk_diff(d->now, d->t_mark) > MS(K56D_T_E)) end(d, K56D_ERR_NO_E);
             break;
         }
         /* its E came (rx_begin_data set t_mark): B1 both ways */
@@ -485,7 +486,7 @@ uint8_t k56d_tick(k56d_t *d, int16_t rxs)
             d->down_rate = k56tx_rate(&d->tx);
             TR("K56D %.3f data %d / %d\n", d->now / 8000.0, d->down_rate, d->up_rate);
             enter(d, K56D_DATA);
-        } else if (d->now - d->t_mark > MS(K56D_T_B1)) {
+        } else if (clk_diff(d->now, d->t_mark) > MS(K56D_T_B1)) {
             end(d, K56D_ERR_B1);
         }
         break;

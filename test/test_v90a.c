@@ -9,6 +9,7 @@
 #include <inttypes.h>
 #include "test.h"
 #include "v90link.h"
+#include "../modem/clock.h"
 
 #define MS(x) ((int64_t)(x) * 8)
 
@@ -195,7 +196,8 @@ int main(void)
         };
         int i;
         for (i = 0; i < (int)(sizeof T / sizeof T[0]); i++) {
-            int32_t from = -1, ref = -1;
+            int32_t from = -1;
+            uint32_t ref;
             c = base(); c.seed = (uint32_t)(10 + i);
             vl_init(l, &c);
             while (l->k < MS(40000) && l->va.state != V90A_ENDED) {
@@ -203,19 +205,19 @@ int main(void)
                 if (from < 0) {
                     int go = T[i].at == 0 ? l->va.state == V90A_P3
                            : T[i].at == 1 ? l->va.rx.state == V90ARX_DD
-                           : T[i].at == 2 ? l->va.t_jdp >= 0
-                           : T[i].at == 3 ? l->va.t_ribar >= 0
+                           : T[i].at == 2 ? l->va.t_jdp != CLK_NONE
+                           : T[i].at == 3 ? l->va.t_ribar != CLK_NONE
                            : l->va.state == V90A_DATA;
                     if (go) { from = (int32_t)l->k; l->dmute = 1; }
                 }
             }
             /* the reference each limit runs from */
-            ref = T[i].at == 0 ? l->va.t_ja : T[i].at == 1 ? l->va.t_ja_end : T[i].at == 3 ? l->va.t_info1a : from;
+            ref = T[i].at == 0 ? l->va.t_ja : T[i].at == 1 ? l->va.t_ja_end : T[i].at == 3 ? l->va.t_info1a : (uint32_t)from;
             printf("  %-48s ended %d, error %d, %d ms after %s\n", T[i].name, l->va.state, l->va.error,
-                   (int)ms(l->va.now - ref), T[i].at == 0 ? "Ja" : T[i].at == 1 ? "the end of Ja" : T[i].at == 3 ? "INFO1a" : "the silence");
+                   (int)ms(clk_diff(l->va.now, ref)), T[i].at == 0 ? "Ja" : T[i].at == 1 ? "the end of Ja" : T[i].at == 3 ? "INFO1a" : "the silence");
             CHECK_EQ_I(l->va.state, V90A_ENDED);
             CHECK_EQ_I(l->va.error, T[i].err);
-            CHECK(ms(l->va.now - ref) >= T[i].lo && ms(l->va.now - ref) <= T[i].hi);
+            CHECK(ms(clk_diff(l->va.now, ref)) >= T[i].lo && ms(clk_diff(l->va.now, ref)) <= T[i].hi);
         }
     }
     T_REPORT("v90a");

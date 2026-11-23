@@ -145,7 +145,7 @@ typedef struct {
 typedef struct {
     orig_cfg   cfg;
     orig_phase phase;
-    int32_t    t;            /* samples in this phase */
+    int32_t    t;            /* samples in this phase (saturates) */
     int        used_v8;      /* the answerer spoke V.8 */
     v8orig_t   v8;
     v22bis_t   v22;

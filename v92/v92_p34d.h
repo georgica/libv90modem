@@ -109,8 +109,8 @@ typedef struct {
     v92d_cfg   cfg;
     v92d_state state;
     int        error;
-    int32_t    now, t;              /* sample clock; samples in this state */
-    int32_t    t_trn1d;
+    uint32_t   now, t;              /* sample clock; samples in this state (modem/clock.h) */
+    uint32_t   t_trn1d;
     /* transmit */
     v90tx_t    tx;
     v90_jd_t   jd;
@@ -133,7 +133,7 @@ typedef struct {
     int32_t    rev_at;              /* sample of the last reversal, 0 = none */
     int        revs;
     v92_trn_t  trn;
-    int32_t    trn_at;              /* sample at which the training receiver starts, 0 = not armed */
+    uint32_t   trn_at;              /* sample at which the training receiver starts, 0 = not armed */
     int        trn_on;              /* 1: v92_trn_tick, 2: data mode (v92_trn_store) */
     int32_t    peak1;               /* v92_trn_peak() of the first TRN1u */
     v92_sgn_t  sgn;                 /* two-level sequences */
@@ -147,7 +147,7 @@ typedef struct {
     v92_ja_t   ja;
     v92_cpu_t  cpx;                 /* CPt, later CPu */
     int        got_ja, got_cpt, got_e1u, got_suvu, got_cpu, got_ack, got_e2u;
-    int        ri_sent, cpd_sent, cpd_repeat; int32_t t_cpd;
+    int        ri_sent, cpd_sent, cpd_repeat; uint32_t t_cpd;
     /* design */
     v92_dsn_t  dsn;
     int        dsn_state;           /* 0 idle, 1 running, 2 done */

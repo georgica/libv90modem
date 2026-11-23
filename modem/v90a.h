@@ -133,8 +133,8 @@ typedef struct {
     v90a_cfg   cfg;
     v90a_state state;
     int        error;
-    int32_t    now, t;              /* samples since the start; in this state */
-    int32_t    t_info1a;            /* when Phase 2 ended */
+    uint32_t   now, t;              /* samples since the start; in this state (modem/clock.h) */
+    uint32_t   t_info1a;            /* when Phase 2 ended */
     p2call_t   p2;
     /* ---- receive ---- */
     v90arx_t   rx; int rx_on;
@@ -191,7 +191,7 @@ typedef struct {
     int        up_rate, down_rate;
     uint16_t   up_rates;            /* CP bits 36:48 */
     /* events as this end saw them (samples since the start; -1 = not yet), for tests */
-    int32_t    t_ja, t_ja_end, t_sd, t_jd, t_jdp, t_dil_end, t_ri, t_ribar, t_mp, t_ed, t_data;
+    uint32_t   t_ja, t_ja_end, t_sd, t_jd, t_jdp, t_dil_end, t_ri, t_ribar, t_mp, t_ed, t_data;
     int        dil_passes;          /* the least symbols measured per interval and Ucode */
     int        erle_db10;           /* the canceller at the end of MD */
     int64_t    erle_rx, erle_res;
@@ -217,7 +217,7 @@ typedef struct {
     int32_t    since_cpu;
     v92_enc_t  enc;
     int32_t    b1_bits;
-    int32_t    t_su, t_jp, t_cpt, t_suvd;
+    uint32_t   t_su, t_jp, t_cpt, t_suvd;
     /* ---- retrains, our renegotiation, the receiver's watch on itself ---- */
     tonedet_t  tone_b;              /* the digital modem's Tone B: its retrain */
     info0_t    info0d;              /* the first Phase 2's INFO0d (a retrain has none) */

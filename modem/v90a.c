@@ -1,6 +1,7 @@
 /* V.90 analogue modem. See v90a.h. */
 #include <string.h>
 #include "v90a.h"
+#include "clock.h"
 #include "v34train.h"
 #include "probe.h"
 #include "pcmenc.h"
@@ -52,7 +53,7 @@ static void end(v90a_t *a, int err)
     if (err == V90A_ERR_HANGUP && a->clear_err) err = a->clear_err;
     /* once the call has carried data, a Phase 3 or 4 that fails (a retrain's)
      * and a renegotiation without Ed (9.6.2) are a retrain of ours (v90a_tick) */
-    a->rt_check = a->t_data >= 0 && (a->state == V90A_P3 || a->state == V90A_P4 || a->state == V90A_RENEG)
+    a->rt_check = a->t_data != CLK_NONE && (a->state == V90A_P3 || a->state == V90A_P4 || a->state == V90A_RENEG)
                   && err != V90A_ERR_CLEARDOWN && err != V90A_ERR_HANGUP && err != V90A_ERR_RATE
                   && err != V90A_ERR_RETRAINS && !a->clearing;
     a->state = V90A_ENDED; a->error = err; a->t = 0;
@@ -151,10 +152,10 @@ void v90a_init(v90a_t *a, const v90a_cfg *cfg)
     p2call_init_v90(&a->p2, &pc);
     tonedet_init(&a->tone_b, TONEDET_1200);
     a->state = V90A_P2;
-    a->t_info1a = a->t_ja = a->t_ja_end = a->t_sd = a->t_jd = a->t_jdp = a->t_dil_end = -1;
-    a->t_ri = a->t_ribar = a->t_mp = a->t_ed = a->t_data = -1;
+    a->t_info1a = a->t_ja = a->t_ja_end = a->t_sd = a->t_jd = a->t_jdp = a->t_dil_end = CLK_NONE;
+    a->t_ri = a->t_ribar = a->t_mp = a->t_ed = a->t_data = CLK_NONE;
     a->dil_m0 = a->dil_end = a->ri_m0 = a->ribar_m0 = a->m_trn2d = a->m_b1d = -1;
-    a->t_su = a->t_jp = a->t_cpt = a->t_suvd = -1;
+    a->t_su = a->t_jp = a->t_cpt = a->t_suvd = CLK_NONE;
 }
 
 static void start_p3_v92(v90a_t *a);
@@ -322,13 +323,13 @@ static void up_symbol(v90a_t *a, int32_t *re, int32_t *im)
     case U_QUIET: case U_OFF:
         return;
     case U_DILQ:
-        if (a->t_dil_end >= 0) { ugo(a, U_S4); up_symbol(a, re, im); }
+        if (a->t_dil_end != CLK_NONE) { ugo(a, U_S4); up_symbol(a, re, im); }
         return;
     case U_SJ:
         /* S until Jd', ending on its rotated point (then S-bar) */
         v34_s(n & 1, 2, re, im);
         a->un++;
-        if (a->t_jdp >= 0 && a->un >= 64 && (a->un & 1) == 0) ugo(a, U_SBJ);
+        if (a->t_jdp != CLK_NONE && a->un >= 64 && (a->un & 1) == 0) ugo(a, U_SBJ);
         return;
     case U_CPT:
         if (a->frpos >= a->frn) {
@@ -608,7 +609,7 @@ static void mp_bit(v90a_t *a, int bit)
             if (r > 0) {
                 a->mp = mp;
                 if (mp.ack) { a->got_mpa = 1; a->after_mpa = 1; } else a->got_mp = 1;
-                if (a->t_mp < 0) a->t_mp = a->now;
+                if (a->t_mp == CLK_NONE) a->t_mp = a->now;
                 a->mbn = 0; a->mones = 0;
                 if (mp.max_rate == 0) end(a, a->clearing ? V90A_ERR_HANGUP : V90A_ERR_CLEARDOWN);   /* 9.7 */
             } else if (r != V90_ERR_SHORT || a->mbn >= V90_MP1_BITS) {
@@ -651,7 +652,7 @@ static void frame(v90a_t *a, int32_t m0)
             return;
         }
         for (i = 0; i < D && a->state != V90A_ENDED; i++) mp_bit(a, bits[i]);
-        if (a->t_mp < 0 && a->mbn == 0) {
+        if (a->t_mp == CLK_NONE && a->mbn == 0) {
             /* TRN2d: scrambled ones, the descrambler in step from the start */
             a->trn2d_frames++;
             if (ones != D) a->trn2d_bad++;
@@ -825,6 +826,17 @@ static void rd_dec(v90a_t *a, const v90arx_dec_t *d)
     }
 }
 
+/* 2^30 symbols into the call: the symbol numbers back (v90arx_rebase) */
+static void rebase(v90a_t *a)
+{
+    v90arx_rebase(&a->rx);
+    a->jdp_m = v90arx_m_back(a->jdp_m);
+    a->dil_m0 = v90arx_m_back(a->dil_m0); a->dil_end = v90arx_m_back(a->dil_end); a->dil_mnext = v90arx_m_back(a->dil_mnext);
+    a->seg_m = v90arx_m_back(a->seg_m); a->cb_seg = v90arx_m_back(a->cb_seg);
+    a->ri_m0 = v90arx_m_back(a->ri_m0); a->ribar_m0 = v90arx_m_back(a->ribar_m0);
+    a->m_trn2d = v90arx_m_back(a->m_trn2d); a->m_b1d = v90arx_m_back(a->m_b1d); a->hold_until = v90arx_m_back(a->hold_until);
+}
+
 static void on_dec(v90a_t *a, const v90arx_dec_t *d)
 {
     a->ry[d->m & 63] = d->y; a->rsg[d->m & 63] = d->sign;
@@ -850,27 +862,27 @@ static void watch(v90a_t *a)
             if (a->us == P_JA) a->ja_stop = 1;          /* V.92 9.5.2.1.3: at the next 12 bit boundary */
             v90_scr_init(&a->jscr); a->jprev = 0; a->jbn = 0; a->jones = 0;
             a->ds = D_JD;
-        } else if (a->t_ja >= 0 && a->now - a->t_ja > MS(T_SD_MS)) { end(a, V90A_ERR_SD); return; }
+        } else if (a->t_ja != CLK_NONE && clk_diff(a->now, a->t_ja) > MS(T_SD_MS)) { end(a, V90A_ERR_SD); return; }
     }
     if (a->rx.state == V90ARX_FAIL) { end(a, V90A_ERR_TRAIN); return; }
-    if (a->ds == D_JD && !a->jd_ok && a->t_ja_end >= 0 && a->now - a->t_ja_end > MS(T_JD_MS)) { end(a, V90A_ERR_JD); return; }
-    if (a->ds == D_JD && a->jd_ok && !a->pcm && a->now - a->t_jd > MS(T_JDP_MS)) { end(a, V90A_ERR_JDP); return; }
-    if (a->pcm && a->ds == D_JD && a->t_su >= 0 && !a->jp_ok && a->now - a->t_su > MS(T_JP_MS)) { end(a, V90A_ERR_JP); return; }
-    if (a->pcm && a->ds == D_JD && a->jp_ok && a->us == P_TRN1B && a->now - a->t_jp > MS(T_JP_MS) + MS(100)) { end(a, V90A_ERR_JP); return; }
-    if (a->ds == D_DIL && a->now - a->t_jdp > MS(T_DIL_MS)) {
+    if (a->ds == D_JD && !a->jd_ok && a->t_ja_end != CLK_NONE && clk_diff(a->now, a->t_ja_end) > MS(T_JD_MS)) { end(a, V90A_ERR_JD); return; }
+    if (a->ds == D_JD && a->jd_ok && !a->pcm && clk_diff(a->now, a->t_jd) > MS(T_JDP_MS)) { end(a, V90A_ERR_JDP); return; }
+    if (a->pcm && a->ds == D_JD && a->t_su != CLK_NONE && !a->jp_ok && clk_diff(a->now, a->t_su) > MS(T_JP_MS)) { end(a, V90A_ERR_JP); return; }
+    if (a->pcm && a->ds == D_JD && a->jp_ok && a->us == P_TRN1B && clk_diff(a->now, a->t_jp) > MS(T_JP_MS) + MS(100)) { end(a, V90A_ERR_JP); return; }
+    if (a->ds == D_DIL && clk_diff(a->now, a->t_jdp) > MS(T_DIL_MS)) {
         if (v90dil_acc_min(&a->acc) >= 2) dil_finish(a); else end(a, V90A_ERR_DIL);
         if (a->state == V90A_ENDED) return;
     }
-    if (a->ds == D_DILEND && a->now - a->t_dil_end > MS(T_RI_MS)) { end(a, V90A_ERR_RI); return; }
+    if (a->ds == D_DILEND && clk_diff(a->now, a->t_dil_end) > MS(T_RI_MS)) { end(a, V90A_ERR_RI); return; }
     if ((a->state == V90A_P3 || a->state == V90A_P4)
-        && a->now - a->t_info1a > (a->pcm ? MS(T_P4_92_MS) + 6 * rtd : MS(T_P4_MS) + 5 * rtd)) { end(a, V90A_ERR_PHASE4); return; }
-    if (a->state == V90A_RENEG && a->t > (a->pcm ? MS(T_RENEG92_MS) : MS(T_RENEG_MS)) + 2 * rtd) { end(a, V90A_ERR_CARRIER); return; }
+        && clk_diff(a->now, a->t_info1a) > (a->pcm ? MS(T_P4_92_MS) + 6 * rtd : MS(T_P4_MS) + 5 * rtd)) { end(a, V90A_ERR_PHASE4); return; }
+    if (a->state == V90A_RENEG && (int64_t)a->t > (a->pcm ? MS(T_RENEG92_MS) : MS(T_RENEG_MS)) + 2 * rtd) { end(a, V90A_ERR_CARRIER); return; }
     if ((a->state == V90A_P4 || a->state == V90A_RENEG) && a->rx_ready && a->tx_ready && !a->clearing) {
         if (a->state == V90A_RENEG) a->renegs++;
         if (a->reneg_ours == 2) a->since_auto = 0;
         a->reneg_ours = 0;
         a->state = V90A_DATA; a->t = 0;
-        if (a->t_data < 0) a->t_data = a->now;
+        if (a->t_data == CLK_NONE) a->t_data = a->now;
     }
 }
 
@@ -1000,12 +1012,12 @@ static void train92(v90a_t *a, const uint8_t *bits, int D, int32_t m0)
     if (ev & V92AS_SUVD) {
         a->got_suvd = 1;
         if (sv.ack) a->got_ack = 1;
-        if (a->t_suvd < 0) a->t_suvd = a->now;
+        if (a->t_suvd == CLK_NONE) a->t_suvd = a->now;
     }
     if (ev & V92AS_CPD) {
         a->got_cpd = 1;
         if (a->cpd.ack) a->got_ack = 1;
-        if (a->t_mp < 0) a->t_mp = a->now;
+        if (a->t_mp == CLK_NONE) a->t_mp = a->now;
         if (a->cpd.drn == 0) { end(a, a->clearing ? V90A_ERR_HANGUP : V90A_ERR_CLEARDOWN); return; }    /* 9.11 */
     }
     if ((ev & V92AS_ED) && (a->got_suvd || a->got_cpd)) {
@@ -1097,8 +1109,9 @@ static int16_t ml_sym(v90a_t *a, const uint8_t *b)
 /* the next symbol; linear */
 static int16_t up92_symbol(v90a_t *a)
 {
-    int32_t n = a->un++;
+    int32_t n = a->un;
     int16_t v;
+    a->un = clk_sat_inc(a->un);         /* (P_DATA counts on) */
     switch (a->us) {
     case P_SIL:
         if (a->un >= MS(70)) ugo(a, P_RU);                  /* 9.5.2.1.1 */
@@ -1233,10 +1246,10 @@ static int16_t tick(v90a_t *a, int16_t rx)
     if (a->state == V90A_P2) {
         int16_t o = p2call_tick(&a->p2, rx);
         if (a->p2.state == P2L_DONE) { a->info0d = a->p2.info0d; start_p3(a); }
-        else if (a->p2.state == P2L_FAILED) end(a, a->t_data >= 0 ? V90A_ERR_RETRAINS : V90A_ERR_PHASE2);
+        else if (a->p2.state == P2L_FAILED) end(a, a->t_data != CLK_NONE ? V90A_ERR_RETRAINS : V90A_ERR_PHASE2);
         /* a retrain's Phase 2 (after data mode: orig's start-up limit is
          * over) has V90A_RT_P2_MS, whatever p2call's own limits do (D5) */
-        else if (a->t_data >= 0 && a->t > MS(V90A_RT_P2_MS)) end(a, V90A_ERR_RETRAINS);
+        else if (a->t_data != CLK_NONE && a->t > MS(V90A_RT_P2_MS)) end(a, V90A_ERR_RETRAINS);
         return o;
     }
     if (a->pcm) {
@@ -1295,6 +1308,7 @@ static int16_t tick(v90a_t *a, int16_t rx)
         a->erle_res += (int64_t)a->rx.eout * a->rx.eout;
     }
     for (i = 0; i < nd && a->state != V90A_ENDED; i++) on_dec(a, &a->rx.out[i]);
+    if (a->state == V90A_DATA && a->ds == D_DATA && clk_diff(a->rx.n, a->rx.n0) >= V90ARX_REBASE_AT) rebase(a);
     if (a->state != V90A_ENDED) watch(a);
     if (a->job != JOB_NONE && a->state != V90A_ENDED && !a->rx.dsn_ran) {
         if (a->job_new) a->job_new = 0;         /* (begun this tick: the first step in the next) */
@@ -1309,7 +1323,8 @@ static void begin_retrain(v90a_t *a, int ours)
 {
     v90a_cfg cfg = a->cfg;
     info0_t i0 = a->info0d;
-    int32_t now = a->now, t_data = a->t_data, rt_clock = a->rt_clock;
+    uint32_t now = a->now, t_data = a->t_data;
+    int32_t rt_clock = a->rt_clock;
     int retrains = a->retrains, ro = a->retrains_ours, rr = a->rt_recent, renegs = a->renegs, max0 = a->max_rx0;
     int best = a->best_rate, adown = a->auto_down;
     if (rr >= V90A_MAX_RETRAINS) {

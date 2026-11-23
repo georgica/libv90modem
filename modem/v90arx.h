@@ -148,14 +148,14 @@ typedef struct {
     int64_t step;               /* input samples per output, Q32: the clock ratio */
     int64_t slew;               /* phase correction per output, Q32 */
     int32_t gain;               /* AGC, Q12 */
-    int32_t n;                  /* network-rate samples made */
+    uint32_t n;                 /* network-rate samples made (modem/clock.h) */
     /* Sd */
     v92_p6_t sd;
-    int64_t sd_pow; int32_t sd_cnt;
+    int64_t sd_pow; int32_t sd_cnt;         /* (sd_cnt and sd_np saturate) */
     int32_t sd_br, sd_bi; int sd_i, sd_np;  /* Sd's 1333 Hz line in the period being summed */
     int32_t sd_x[V90ARX_SDLAG + 3][2];      /* ... in the last periods */
     int64_t sd_yr, sd_yi;       /* sum of the line times its conjugate SDLAG periods before */
-    int32_t n0;                 /* network sample at which TRN1d's first symbol is expected */
+    uint32_t n0;                /* network sample at which TRN1d's first symbol is expected */
     int32_t level;              /* RMS of Sd at the A/D, A/D units */
     /* training reference, channel estimate */
     v90_scr_t scr; int32_t mref; int16_t L;
@@ -166,7 +166,7 @@ typedef struct {
     int16_t qb[256];            /* equaliser input by k & 255 (k = n - n0) */
     int32_t h[V90ARX_NCH];      /* channel estimate, Q16, input units per symbol of level L */
     int32_t href[V90ARX_NCH];   /* ... when the equaliser was first computed: the timing reference */
-    int32_t nest;
+    int32_t nest;               /* estimator steps (saturates) */
     int64_t res;                /* smoothed squared residual of the estimate, input units^2 */
     int16_t cpk;                /* cursor: the estimate's largest tap */
     /* equaliser */
@@ -174,7 +174,7 @@ typedef struct {
     int16_t d[2 * V90ARX_NB]; int dpos;    /* decided levels, newest first, doubled */
     int32_t f[V90ARX_NF];       /* Q20, to an output in Table 1 units Q YF */
     int32_t b[V90ARX_NB];       /* Q16 */
-    int32_t neq;                /* symbols equalised */
+    uint32_t neq;               /* symbols equalised */
     int64_t pq, pd;             /* smoothed input and decision power, Q8 */
     int32_t kf, kb;             /* normalised steps, recomputed every 64 symbols */
     int     shf, shb;
@@ -210,6 +210,23 @@ void v90arx_ec(v90arx_t *r, int mu_shift);
 
 /* The constellation that applies from symbol m on (the active one until then). */
 void v90arx_set_cons(v90arx_t *r, const v90arx_cons_t *c, int32_t m);
+
+/* Symbol numbers (m, and the sample number k = n - n0 it is counted on) are
+ * int32_t: a call of 2^31 symbols (74.6 hours) would take them past
+ * INT32_MAX. Once k reaches V90ARX_REBASE_AT in data mode, the owner calls
+ * v90arx_rebase(): every symbol number from then on is V90ARX_REBASE less,
+ * a multiple of the data frame (6) and of the rings (256), so that m % 6
+ * and m & 255 are what they were. The owner moves its own symbol numbers
+ * back with v90arx_m_back(). */
+#define V90ARX_REBASE_AT 0x40000000
+#define V90ARX_REBASE    0x30000000
+void v90arx_rebase(v90arx_t *r);
+/* a symbol number moved back: -1 (none) stays; one from before
+ * V90ARX_REBASE, long past, becomes one long past with the same m % 768 */
+static inline int32_t v90arx_m_back(int32_t m)
+{
+    return m < 0 ? m : m >= V90ARX_REBASE ? m - V90ARX_REBASE : m % 768;
+}
 
 /* Before Sd: the clock offset as known from elsewhere (1/256 ppm, as
  * v90arx_ppm_q8). A V.92 analogue modem's transmitter runs on this clock

@@ -1,6 +1,8 @@
 /* V.90 analogue modem: PCM downstream receiver. See v90arx.h. */
 #include <string.h>
+#include <limits.h>
 #include "v90arx.h"
+#include "clock.h"
 #include "divrcp.h"
 #include "v34_tabs.h"           /* the fractional delay bank, shared with qamrx */
 #include "v90_pcm.h"
@@ -98,6 +100,12 @@ void v90arx_set_cons(v90arx_t *r, const v90arx_cons_t *c, int32_t m)
     r->next = *c; r->next_m = m; r->have_next = 1;
 }
 
+void v90arx_rebase(v90arx_t *r)
+{
+    r->n0 += V90ARX_REBASE;
+    if (r->have_next) r->next_m = v90arx_m_back(r->next_m);
+}
+
 int32_t v90arx_ppm_q8(const v90arx_t *r)
 {
     return (int32_t)(((r->step - ONE32) * 256000000LL) >> 32);
@@ -163,7 +171,7 @@ static void estimate(v90arx_t *r, int32_t k, int64_t pd, int g)
     if (e < -8191) e = -8191;
     /* once converged, an error beyond 4 sigma is an impairment of one symbol
      * (a robbed bit in TRN1d): not learnt from */
-    if (r->nest > 600 && (int64_t)e * e > 16 * r->res) { r->res += r->res >> 10; r->nest++; return; }
+    if (r->nest > 600 && (int64_t)e * e > 16 * r->res) { r->res += r->res >> 10; r->nest = clk_sat_inc(r->nest); return; }
     /* h += mu e s L / (NCH pd), h in Q16, applied as (es s) >> 8. The
      * decided levels' power can decay to nothing (a far end sending Ucode
      * 0 alone): not below (L / 8)^2 */
@@ -182,7 +190,7 @@ static void estimate(v90arx_t *r, int32_t k, int64_t pd, int g)
     es = (int64_t)e * r->L * ((int64_t)1 << 24) / ((int64_t)V90ARX_NCH * pd) >> g;
     upd_sb(r->h, r->sb, m0, es);
     r->res += (((int64_t)e * e) - r->res) / 64;
-    r->nest++;
+    r->nest = clk_sat_inc(r->nest);
 }
 
 /* How much later (Q16 samples) the response v is than u: the phase step
@@ -755,7 +763,8 @@ static void ls_set(v90arx_t *r)
 
 static void process(v90arx_t *r, int16_t q)
 {
-    int32_t n = r->n++, k;
+    uint32_t n = r->n++;
+    int32_t k;
 
     if (r->state == V90ARX_WAIT) {
         int st;
@@ -765,7 +774,7 @@ static void process(v90arx_t *r, int16_t q)
             /* the 1333 Hz line of each period of 6 */
             static const int16_t C6[6] = { 32767, 16384, -16384, -32767, -16384, 16384 };
             static const int16_t S6[6] = { 0, 28378, 28378, 0, -28378, -28378 };
-            r->sd_pow += (int64_t)q * q; r->sd_cnt++;
+            r->sd_pow += (int64_t)q * q; r->sd_cnt = clk_sat_inc(r->sd_cnt);
             r->sd_br += (q * C6[r->sd_i]) >> 8;
             r->sd_bi -= (q * S6[r->sd_i]) >> 8;
             if (++r->sd_i == 6) {
@@ -773,7 +782,8 @@ static void process(v90arx_t *r, int16_t q)
                  * SD_SKIP-th (the line's tail takes about 10 ms to settle
                  * into Sd's period after silence), and two periods late
                  * (the last ones before the reversal may hold Sd-bar) */
-                int w = V90ARX_SDLAG + 3, p = r->sd_np++;
+                int w = V90ARX_SDLAG + 3, p = r->sd_np;
+                if (r->sd_np < INT_MAX) r->sd_np++;
                 r->sd_x[p % w][0] = r->sd_br; r->sd_x[p % w][1] = r->sd_bi;
                 if (p - 2 - V90ARX_SDLAG >= SD_SKIP) {
                     const int32_t *a = r->sd_x[(p - 2) % w], *b = r->sd_x[(p - 2 - V90ARX_SDLAG) % w];
@@ -808,7 +818,7 @@ static void process(v90arx_t *r, int16_t q)
                 }
             }
             /* Sd-bar is 48 symbols, then TRN1d */
-            r->n0 = n - V92_P6_REV_LAG + 48;
+            r->n0 = n - (uint32_t)V92_P6_REV_LAG + 48;
             v90_scr_init(&r->scr);
             r->mref = 0; r->nest = 0;
             memset(r->h, 0, sizeof r->h);
@@ -822,7 +832,7 @@ static void process(v90arx_t *r, int16_t q)
     }
     if (r->state == V90ARX_FAIL) return;
 
-    k = n - r->n0;
+    k = clk_diff(n, r->n0);
     r->qb[k & 255] = q;
     /* TRN1d reference: the scrambler fed with ones, from zero (8.4.5); the
      * estimate needs it up to its end, V90ARX_EST0 steps from sample NCH,

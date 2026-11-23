@@ -13,6 +13,7 @@
 #define TR(...) ((void)0)
 #endif
 #include "x2d.h"
+#include "clock.h"
 #include "x2rec.h"
 #include "v34mp.h"
 #include "p2ans.h"
@@ -374,8 +375,8 @@ static void ec_schedule(x2d_t *d, int16_t rxs)
 static int p4_late(const x2d_t *d)
 {
     if (d->rxmode == RX_SRES)
-        return d->now - d->t_mark > X2TX_LEAD_N + X2TX_PRE_N + X2TX_TRN_N + MS(T_S4_MS) + 2 * d->cfg.rtd;
-    return !d->got_mp && d->now - d->t_mark > MS(T_MP_MS);
+        return clk_diff(d->now, d->t_mark) > X2TX_LEAD_N + X2TX_PRE_N + X2TX_TRN_N + MS(T_S4_MS) + 2 * d->cfg.rtd;
+    return !d->got_mp && clk_diff(d->now, d->t_mark) > MS(T_MP_MS);
 }
 
 uint8_t x2d_tick(x2d_t *d, int16_t rxs)
@@ -438,7 +439,7 @@ uint8_t x2d_tick(x2d_t *d, int16_t rxs)
     case X2D_REC:
         if (d->got_e && !d->e_sent) { x2tx_go(&d->tx); d->e_sent = 1; }   /* the start after this record */
         if (d->tx.seg == X2TX_START) enter(d, X2D_START);
-        else if (!d->got_e && d->now - d->t_mark > MS(T_E_MS)) end(d, X2D_ERR_NO_E);
+        else if (!d->got_e && clk_diff(d->now, d->t_mark) > MS(T_E_MS)) end(d, X2D_ERR_NO_E);
         break;
     case X2D_START:
         /* data moves from our start's last frame: the owner hears of it
@@ -447,7 +448,7 @@ uint8_t x2d_tick(x2d_t *d, int16_t rxs)
         if (d->tx_ready && d->rx_ready) {
             d->down_rate = x2tx_rate(&d->tx);
             enter(d, X2D_DATA);
-        } else if (d->now - d->t_mark > MS(T_B1_MS)) {
+        } else if (clk_diff(d->now, d->t_mark) > MS(T_B1_MS)) {
             end(d, X2D_ERR_B1);
         }
         break;

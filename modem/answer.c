@@ -1,5 +1,6 @@
 #include <string.h>
 #include "answer.h"
+#include "clock.h"
 #include "pcmenc.h"
 #include "v21_bpf.h"
 #include "bell103_bpf.h"
@@ -394,7 +395,7 @@ int16_t answer_tick(answer_t *a, int16_t rx)
     ans_phase was = a->phase;
     int was_p2 = v34_phase2(a);
     int32_t budget;
-    a->t++;
+    a->t = clk_sat_inc(a->t);
     switch (a->phase) {
     case ANS_V8BIS:
         /* K56flex's V.8bis; V.8 follows from its own silence, whatever came

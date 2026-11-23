@@ -146,7 +146,7 @@ typedef struct {
 typedef struct {
     answer_cfg cfg;
     ans_phase  phase;
-    int32_t    t;            /* samples in this phase */
+    int32_t    t;            /* samples in this phase (saturates) */
     int32_t    t_phase;      /* the backstop's clock (saturating): samples in this phase, or
                                 in V.34's Phase 2 within ANS_V34 since it began */
     int        used_v8;      /* the caller spoke V.8 */

@@ -6,6 +6,7 @@
 int16_t v34dx_trace_tx(int16_t y);
 #endif
 #include "v34dx.h"
+#include "clock.h"
 #include "probe.h"
 #include "pcmenc.h"
 #include "../v90/v90_pcm.h"
@@ -620,10 +621,10 @@ int16_t v34dx_tick(v34dx_t *p, int16_t rxs)
     /* transmitter sequencing and time limits */
     switch (p->state) {
     case DX_P3_SIL:
-        if (p->t >= p->cfg.lead) { tx_go(p, DXS_S); enter(p, DX_P3_TX); }
+        if ((int64_t)p->t >= p->cfg.lead) { tx_go(p, DXS_S); enter(p, DX_P3_TX); }
         break;
     case DX_P3_WAIT_S:
-        if (p->t > MS(T_FIRST_S_MS) + MS(p->cfg.md_len * 35)) fail(p, DX_ERR_NO_S);
+        if ((int64_t)p->t > MS(T_FIRST_S_MS) + MS(p->cfg.md_len * 35)) fail(p, DX_ERR_NO_S);
         break;
     case DX_P3_TX:
         if (p->txsig == DXS_TRN) ec_schedule(p, rxs);
@@ -649,7 +650,7 @@ int16_t v34dx_tick(v34dx_t *p, int16_t rxs)
             p->tx_g = p->far_16pt ? (int32_t)v34_gain_q14(V34_ENERGY_16PT_Q8) : 16384;
             p->tx_next = 1;
             p->t_neg = p->now; enter(p, DX_P4_TRN);
-        } else if (p->t > MS(T_S_AFTER_J) + p->cfg.rtd + MS(p->cfg.md_len * 35)) {
+        } else if ((int64_t)p->t > MS(T_S_AFTER_J) + p->cfg.rtd + MS(p->cfg.md_len * 35)) {
             retrain(p, 1);
         }
         break;
@@ -670,7 +671,7 @@ int16_t v34dx_tick(v34dx_t *p, int16_t rxs)
                 tx_go(p, DXS_S);
                 enter(p, DX_P3_TX);
             }
-        } else if (p->t > MS(T_FAR_J_MS) + 2 * p->cfg.rtd) {
+        } else if ((int64_t)p->t > MS(T_FAR_J_MS) + 2 * p->cfg.rtd) {
             retrain(p, 1);
         }
         break;
@@ -679,7 +680,7 @@ int16_t v34dx_tick(v34dx_t *p, int16_t rxs)
     case DX_P4_E:
         /* 11.4.2.x.2: E (and here B1 too) within 2500 ms and three round trips */
         lim = p->in_reneg ? MS(T_RENEG_MS) : MS(T_PHASE4_MS) + 3 * p->cfg.rtd;
-        if (p->now - p->t_neg > lim) {
+        if (clk_diff(p->now, p->t_neg) > lim) {
             /* our cleardown's time-out ends it as itself, not as a retrain */
             if (p->clearing) fail(p, DX_ERR_HANGUP); else retrain(p, 1);
             break;

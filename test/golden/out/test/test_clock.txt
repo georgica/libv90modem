@@ -1,0 +1,7 @@
+  V.90: 50666 bit/s down, 28800 up; after the clocks' wrap 152000 / 86400 bits, 0 / 0 wrong
+  V.92: 46666 bit/s down, 36000 up; after the clocks' wrap 140000 / 107946 bits, 0 / 0 wrong
+  x2: 32000 bit/s down, 24000 up; after the clocks' wrap 96000 / 72000 bits, 0 / 0 wrong
+  K56flex: 56000 bit/s down, 31200 up; after the clocks' wrap 168000 / 93600 bits, 0 / 0 wrong
+  V.34: 28800 bit/s down, 28800 up; after the clocks' wrap 86400 / 86400 bits, 0 / 0 wrong
+  V.22bis: 2400 bit/s; after the clocks' wrap 7200 / 7200 bits, 0 / 0 wrong
+clock: 73 checks, 0 failures

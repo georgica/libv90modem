@@ -107,8 +107,8 @@ typedef struct {
     k56d_cfg   cfg;
     k56d_state state;
     int        error;
-    int32_t    now, t;              /* sample clock; samples in this state */
-    int32_t    t_mark;              /* a deadline's reference: when the current wait began */
+    uint32_t   now, t;              /* sample clock; samples in this state (modem/clock.h) */
+    uint32_t   t_mark;              /* a deadline's reference: when the current wait began (CLK_NONE: none) */
     int        car_num, car_den;
     /* transmit */
     k56tx_t    tx;

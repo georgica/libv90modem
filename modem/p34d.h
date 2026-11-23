@@ -92,8 +92,8 @@ typedef struct {
     p34d_cfg   cfg;
     p34d_state state;
     int        error;
-    int32_t    now, t;              /* sample clock; samples in this state */
-    int32_t    t_trn1d;             /* when TRN1d began */
+    uint32_t   now, t;              /* sample clock; samples in this state (modem/clock.h) */
+    uint32_t   t_trn1d;             /* when TRN1d began */
     /* transmit */
     v90tx_t    tx;
     v90_jd_t   jd;

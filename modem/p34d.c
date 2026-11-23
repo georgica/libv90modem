@@ -4,6 +4,7 @@
 /* V.90 Phases 3 and 4, digital modem. See p34d.h. */
 #include <string.h>
 #include "p34d.h"
+#include "clock.h"
 #include "probe.h"
 #include "../v90/v90_pcm.h"
 
@@ -65,7 +66,7 @@ static void fail(p34d_t *p, int err)
 static void enter(p34d_t *p, p34d_state s)
 {
 #ifdef V42_XID_TRACE
-    if (p->in_reneg) fprintf(stderr, "P34 state %d left after %d samples for %d\n", (int)p->state, (int)p->t, (int)s);
+    if (p->in_reneg) fprintf(stderr, "P34 state %d left after %lu samples for %d\n", (int)p->state, (unsigned long)p->t, (int)s);
 #endif
     p->state = s; p->t = 0;
 }
@@ -417,14 +418,14 @@ uint8_t p34d_tick(p34d_t *p, int16_t rxs)
                 p->rxmode = RX_KNOWN;
                 enter(p, P34_TRAIN);
             }
-        } else if (p->t > MS(T_FIRST_S_MS) + MS(p->cfg.md_len * 35)) {
+        } else if ((int64_t)p->t > MS(T_FIRST_S_MS) + MS(p->cfg.md_len * 35)) {
             fail(p, P34_ERR_NO_S);
         }
         return octet;
     }
     if (p->state == P34_MD) {
         (void)qamrx_tick(&p->rx, x);
-        if (p->t >= MS(p->cfg.md_len * 35)) {
+        if ((int64_t)p->t >= MS(p->cfg.md_len * 35)) {
             sdet_init(&p->sdet, p->cfg.sym_rate, p->cfg.car_num, p->cfg.car_den);
             enter(p, P34_WAIT_S);
         }
@@ -488,7 +489,7 @@ uint8_t p34d_tick(p34d_t *p, int16_t rxs)
              * none was asked for) follows by itself */
             (void)v90tx_select(&p->tx, V90TX_JD_PRIME);
             enter(p, P34_DIL);
-        } else if (p->now - p->t_trn1d > MS(T_S_AFTER_JD) + p->cfg.rtd) {
+        } else if (clk_diff(p->now, p->t_trn1d) > MS(T_S_AFTER_JD) + p->cfg.rtd) {
             fail(p, P34_ERR_NO_S2);
         }
         break;
@@ -567,7 +568,7 @@ uint8_t p34d_tick(p34d_t *p, int16_t rxs)
         if (sig == V90TX_DATA) p->tx_ready = 1;
         if (p->tx_ready && p->rx_ready) {
 #ifdef V42_XID_TRACE
-            fprintf(stderr, "P34 data again (reneg %d), state %d lasted %d samples, up %d\n", p->in_reneg, (int)p->state, (int)p->t, (int)p->up_rate);
+            fprintf(stderr, "P34 data again (reneg %d), state %d lasted %lu samples, up %d\n", p->in_reneg, (int)p->state, (unsigned long)p->t, (int)p->up_rate);
 #endif
             p->in_reneg = 0; enter(p, P34_DATA); }
         else if (p->in_reneg && p->t > MS(T_RENEG_MS)) retrain(p, 1);
@@ -601,7 +602,7 @@ uint8_t p34d_tick(p34d_t *p, int16_t rxs)
          * missed the caller is waiting for Rd all the same. */
         if (p->rxmode == RX_SEQ || p->t > MS(T_RENEG_S_MS)) {
 #ifdef V42_XID_TRACE
-            fprintf(stderr, "P34 reneg: %s after %d samples, Rd\n", p->rxmode == RX_SEQ ? "S-bar found" : "no S-bar", (int)p->t);
+            fprintf(stderr, "P34 reneg: %s after %lu samples, Rd\n", p->rxmode == RX_SEQ ? "S-bar found" : "no S-bar", (unsigned long)p->t);
 #endif
             start_rd(p);
         }
