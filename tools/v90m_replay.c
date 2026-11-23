@@ -2,7 +2,7 @@
  * it made of it, phase by phase. The tool to run on a recording that comes
  * with a bug report (README: "Reporting a bug").
  *
- *   v90m-replay [-a] [-9] [-x] [-k] [-u BPS] [-d BPS] [-l DBM0] [-e SAMPLES] [-P CODE] [-b FILE] RECORDING
+ *   v90m-replay [-a] [-9] [-x] [-k] [-u BPS] [-d BPS] [-l DBM0] [-e SAMPLES] [-P CODE] [-s SAMPLE] [-b FILE] RECORDING
  *
  *   -a          A-law line (mu-law otherwise)
  *   -9          V.92 offered (PCM upstream up to 48000 bit/s unless -u)
@@ -11,9 +11,16 @@
  *               holds is lined up with our answer tone after it (V.8bis
  *               then hears silence and gives up)
  *   -u, -d BPS  upstream / downstream rate ceilings (33600 or 48000; 56000)
- *   -l DBM0     transmit level (default -12)
+ *   -l DBM0     transmit level (default -12); a decimal such as -14.4 is
+ *               accepted, to 0.01 dB (the library's level is an rms value,
+ *               so any step is possible; whole numbers give the same level
+ *               as ever)
  *   -e SAMPLES  the echo delay, as the recording modem was told (default: measured)
  *   -P CODE     INFO0d maximum power code, 1..31 (default 23)
+ *   -s SAMPLE   start the modem at this sample of the recording (0-based),
+ *               with no search for the answer tone and no silence assumed
+ *               before it, for a recording that begins at the answer tone.
+ *               Times in the report then count from SAMPLE.
  * The modem must be set up as the recording modem was: what it hears holds
  * the echo of what that modem sent. "our transmit differs from the
  * recording in 0" at the end says it was.
@@ -56,12 +63,53 @@ static long recorded_answer(const rec_t *r, int alaw)
     return -1;
 }
 
-static int level_rms(int dbm0)
+/* the transmit level in hundredths of dBm0 (at most 0) as the library's rms
+ * value: whole dB by the steps this tool always used, the rest by steps of
+ * 0.01 dB (0.99884937 in Q30, from 10^(-0.01/20)), the value held to 16
+ * fractional bits meanwhile */
+static int level_rms(int hund)
 {
     int32_t v = 15770;
-    if (dbm0 > 0) dbm0 = 0;
+    int dbm0, f;
+    if (hund > 0) hund = 0;
+    dbm0 = hund / 100;                          /* 0 or negative */
+    f = hund % 100;
     for (; dbm0 < 0; dbm0++) v = (v * 29205 + 16384) >> 15;
+    if (f < 0) {
+        int64_t w = (int64_t)v * 65536;
+        for (; f < 0; f++) w = (w * 1072506344 + ((int64_t)1 << 29)) >> 30;
+        v = (int32_t)((w + 32768) >> 16);
+    }
     return (int)v;
+}
+
+/* [+-]digits[.d[d]] -> hundredths, without strtod or atof (locale); the
+ * integer part up to 3 digits */
+static int parse_level(const char *s, int *hund)
+{
+    int neg = 0, ip = 0, n = 0, fp = 0, fd = 0;
+    if (*s == '-' || *s == '+') neg = *s++ == '-';
+    for (; *s >= '0' && *s <= '9'; s++, n++) ip = ip * 10 + (*s - '0');
+    if (n == 0 || n > 3) return -1;
+    if (*s == '.') {
+        for (s++; *s >= '0' && *s <= '9'; s++, fd++) fp = fp * 10 + (*s - '0');
+        if (fd == 0 || fd > 2) return -1;
+        if (fd == 1) fp *= 10;
+    }
+    if (*s) return -1;
+    *hund = (ip * 100 + fp) * (neg ? -1 : 1);
+    return 0;
+}
+
+/* a plain count: digits only, at most 9 */
+static int parse_count(const char *s, long *v)
+{
+    int n = 0;
+    long x = 0;
+    for (; *s >= '0' && *s <= '9'; s++, n++) x = x * 10 + (*s - '0');
+    if (n == 0 || n > 9 || *s) return -1;
+    *v = x;
+    return 0;
 }
 
 /* the data side: V.42, answering, from the moment the modem connects */
@@ -113,14 +161,14 @@ static void x2_down(const x2tx_t *t, uint8_t sent)
     }
 }
 
-static int opt_alaw, opt_v92, opt_x2, opt_k56, opt_dbm0 = -12, opt_up, opt_down = 56000, opt_echo = -1, opt_code;
+static int opt_alaw, opt_v92, opt_x2, opt_k56, opt_hund = -1200, opt_up, opt_down = 56000, opt_echo = -1, opt_code;
 
 static void configure(v90m_cfg *c, int lin)
 {
     v90m_cfg_default(c);
     c->modulations = V90M_MOD_V21 | V90M_MOD_V22 | V90M_MOD_V32BIS | V90M_MOD_V34 | V90M_MOD_V90 | (opt_v92 ? V90M_MOD_V92 : 0)
                      | (opt_x2 ? V90M_MOD_X2 : 0) | (opt_k56 ? V90M_MOD_K56 : 0);
-    c->tx_level = level_rms(opt_dbm0);
+    c->tx_level = level_rms(opt_hund);
     c->max_down_bps = opt_down;
     c->max_up_bps = opt_up ? opt_up : opt_v92 ? 48000 : 33600;
     c->alaw = opt_alaw;
@@ -138,6 +186,8 @@ int main(int argc, char **argv)
     rec_t r; v90m_cfg c; v90m_ec_cfg ecc; v90m_t *m; answer_t *a;
     long len, ans, k0, i, diff = 0, first = -1;
     int arg, err, lv = -1, lr = -1;
+    long start = -1, base = 0;
+    int bad = 0;
     const char *bits_path = "bits.txt";
     FILE *f;
 
@@ -150,13 +200,15 @@ int main(int argc, char **argv)
         else if (arg + 1 < argc && !strcmp(o, "-b")) bits_path = argv[++arg];
         else if (arg + 1 < argc && !strcmp(o, "-u")) opt_up = atoi(argv[++arg]);
         else if (arg + 1 < argc && !strcmp(o, "-d")) opt_down = atoi(argv[++arg]);
-        else if (arg + 1 < argc && !strcmp(o, "-l")) opt_dbm0 = atoi(argv[++arg]);
+        else if (arg + 1 < argc && !strcmp(o, "-l")) { if (parse_level(argv[++arg], &opt_hund)) bad = 1; }
+        else if (arg + 1 < argc && !strcmp(o, "-s")) { if (parse_count(argv[++arg], &start)) bad = 1; }
         else if (arg + 1 < argc && !strcmp(o, "-e")) opt_echo = atoi(argv[++arg]);
         else if (arg + 1 < argc && !strcmp(o, "-P")) opt_code = atoi(argv[++arg]);
         else break;
     }
-    if (arg >= argc || !(f = fopen(argv[arg], "rb"))) {
-        fprintf(stderr, "usage: v90m-replay [-a] [-9] [-x] [-k] [-u BPS] [-d BPS] [-l DBM0] [-e SAMPLES] [-P CODE] [-b FILE] RECORDING\n");
+    if (bad || arg >= argc || !(f = fopen(argv[arg], "rb"))) {
+        fprintf(stderr, "usage: v90m-replay [-a] [-9] [-x] [-k] [-u BPS] [-d BPS] [-l DBM0] [-e SAMPLES] [-P CODE] [-s SAMPLE] [-b FILE] RECORDING\n"
+                        "  -l: a number with up to two decimals, e.g. -14.4; -s: a sample index, 0 or more\n");
         return 2;
     }
     len = (long)fread(file, 1, sizeof file, f);
@@ -175,6 +227,11 @@ int main(int argc, char **argv)
     configure(&c, r.lin);
     if (!(m = v90m_create(&c, &err))) { fprintf(stderr, "v90m_create: %d\n", err); return 1; }
     a = v90m__answer(m);
+    if (start >= 0) {
+        if (start >= r.n) { fprintf(stderr, "-s %ld: the recording has %ld samples\n", start, r.n); return 2; }
+        base = start; k0 = 0; ans = start;
+        printf("the modem starts at sample %ld of the recording; times count from there\n", start);
+    } else {
     /* where this modem starts its answer tone: run it on silence until it
      * sends its first sound, which is what recorded_answer() finds (with
      * K56flex offered: the first after V.8bis, which hears nothing) */
@@ -186,16 +243,18 @@ int main(int argc, char **argv)
     ans = recorded_answer(&r, opt_alaw);
     if (ans < 0) { fprintf(stderr, "no answer tone in the recording\n"); return 1; }
     printf("answer tone at %.3f s in the recording; the modem starts %.3f s before it\n", ans / 8000.0, k0 / 8000.0);
+    }
 
     v90m_ec_cfg_default(&ecc, 0);
     ec = v90m_ec_create(&ecc, &err);
     v90m_reset(m, &c);
     trace_reset();
     tr_on = 1;
-    for (i = ans - k0; i < r.n; i++) {
+    /* i counts from the modem's start (from 0 with -s); base + i is the sample of the recording */
+    for (i = start >= 0 ? 0 : ans - k0; i < r.n - base; i++) {
         uint8_t want = 0xFF, tx; v90m_state st;
         if (i < 0) { uint8_t s = opt_alaw ? 0xD5 : 0xFF; v90m_process_g711(m, &s, &tx, 1); continue; }
-        want = rec_sent(&r, i);
+        want = rec_sent(&r, base + i);
         /* the echo cancellers take what was really sent as their reference
          * once data moves (V.34, V.92): this modem's data are not the
          * recording's */
@@ -203,8 +262,8 @@ int main(int argc, char **argv)
         rec_tx_on = (a->phase == ANS_V34 && a->connected)
                     || (a->phase == ANS_X2 && (a->u.x2.state == X2D_START || a->u.x2.state == X2D_DATA || a->u.x2.state == X2D_RENEG));
         if (rec_tx92 && (a->phase == ANS_V92 || a->phase == ANS_P3X)) { a->u.v92.cfg.getbit = rp_ones; a->u.v92.cfg.putbit = rp_drop; }
-        if (r.lin) { int16_t x = rec_heard_lin(&r, i); v90m_process_lin_rx(m, &x, &tx, 1); }
-        else { uint8_t x = rec_heard(&r, i); v90m_process_g711(m, &x, &tx, 1); }
+        if (r.lin) { int16_t x = rec_heard_lin(&r, base + i); v90m_process_lin_rx(m, &x, &tx, 1); }
+        else { uint8_t x = rec_heard(&r, base + i); v90m_process_g711(m, &x, &tx, 1); }
         if (tx != want) { if (first < 0) first = i; diff++; dsec[(i / 8000) % 120]++; }
         if (txbits && a->phase == ANS_X2) x2_down(&a->u.x2.tx, txown ? tx : want);
 
@@ -250,7 +309,7 @@ int main(int argc, char **argv)
                (int)sx.modulation, sx.tx_bps, sx.rx_bps, sx.snr_db10 / 10.0, sx.rtd, sx.echo_delay, sx.retrains, sx.renegotiations, bits_rx);
     }
     for (i = 0; i < 120; i++) if (dsec[i]) printf("  second %ld: %ld samples differ\n", i, dsec[i]);
-    printf("%ld samples; after the answer our transmit differs from the recording in %ld (first at %.3f s)\n", r.n, diff, first / 8000.0);
+    printf("%ld samples; after the answer our transmit differs from the recording in %ld (first at %.3f s)\n", r.n - base, diff, first / 8000.0);
     if (txbits) printf("downstream frames decoded %ld, not levels %ld\n", tx_frames, tx_bad);
     if (rxbits) fclose(rxbits);
     if (txbits) fclose(txbits);

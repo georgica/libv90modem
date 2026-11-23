@@ -38,6 +38,12 @@ off-hook); the replay finds the answer tone in what was sent (the first
 sound after 200 ms of silence) and starts the modem so that its own answer
 tone begins at that moment.
 
+A recording that starts at the answer tone, with no silence before it (the
+replay's search needs 200 ms of it), is played with `-s SAMPLE`: the modem
+starts at that sample (0-based, in samples of the heard stream) and every
+time in the report counts from there. `-l` takes decimals (`-14.4`), to
+0.01 dB; a bad value for either exits 2 with the usage message.
+
 For the replay to follow the call, the modem must be set up as the recording
 modem was (level, modulations offered, rate ceilings, V.92): what it hears
 contains the echo of what that modem sent. The replay's last line counts the

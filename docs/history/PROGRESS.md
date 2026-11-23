@@ -3886,8 +3886,9 @@ argument or the return address. In the tree:
   `qamrx_t` (`r`) instead of `car_num`, so the V.34 receiver's carrier ran
   at the wrong frequency and never trained: the twelve failures. The
   wrong value depends on where the linker puts the struct, which is why
-  some rebuilds passed by chance (and why "fails differently with
-  `-one-insn-per-tb`" was two different binaries, not the emulator).
+  some rebuilds passed by chance (and almost certainly why "fails
+  differently with `-one-insn-per-tb`" was two differently linked binaries,
+  not the emulator).
 - `modem/v90arx.c`, `v90arx_clock`: `ppm_q8` was the return address, so
   the answering V.90 receiver's clock was always clamped to its lower
   limit (no test looked at it; a check program printed 4290672329 for
@@ -3903,7 +3904,7 @@ of every tracked C file (all but the two spandsp peers, which need
 spandsp) at -O1, -O2, -Os and -O3, for `subq.l #N,%sp; move.l %sp,%aK`
 followed by an sp-relative source, found these two sites and no others
 before the change, and none after. The port matrix also builds m68k with
-`-fno-omit-frame-pointer`, which avoids the bug altogether, against new
+`-fno-omit-frame-pointer`, with which the suite passed under GCC 12.3, against new
 sites; m68k gates in `make verify-phase` like every other target.
 
 qemu-m68k was cleared: 300,000 random operand sets through `mulu.l`,

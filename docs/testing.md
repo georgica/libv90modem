@@ -116,8 +116,8 @@ omitted (-O1 and up), reads an incoming argument 8 bytes off around a
 64-bit division (`docs/history/PROGRESS.md`, "m68k"). The two places in
 the tree are written so that it compiles them right, and the matrix
 builds m68k with `-fno-omit-frame-pointer` in case new code meets it.
-qemu-m68k's 64-bit multiply and divide were checked against the 68040
-manual and are right.
+qemu-m68k's 64-bit multiply and divide agree with a reference written
+from the 68040 manual on 300,000 random operand sets.
 
 ## Other checks
 
