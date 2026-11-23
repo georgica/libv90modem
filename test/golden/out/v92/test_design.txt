@@ -16,4 +16,5 @@
   the same, A-law tables A-law amp 1400 noise 3 echo 1400: 41333 bit/s, M 43 of 128, 4G 226, delay 115, power 0.97 (limit 1), ISI -65.8 dB, rho 1.00, x rms max 1266, peak 1.75, 0 cuts, 8963 steps, 183954 bits, 0 errors
   ramp from tap 30, 40 taps: end -1 after 17 steps
   ramp from tap 40, 56 taps: end -1 after 15 steps
-design: 200 checks, 0 failures
+  peak in the last tap: end -2 after 5829 steps
+design: 201 checks, 0 failures

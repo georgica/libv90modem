@@ -318,6 +318,10 @@ reproduced).
   checked; out of range, the design ends `V92_DSN_ERR_CHANNEL`. `isi_q28`
   is formed without `isi * 65536` and saturates. Both ramps now stop in
   the first iteration (`cq`, A'A b already past 2^31).
+- Found while fixing T21.4 (the audit's fuzz, run 2442: peak in the last
+  tap, ISI as large as the peak): `isi_sample()` skipped the feedback taps
+  with `j += lp1 + 1` and read `g[j]` past `ng` (index 224 of 224) when
+  the cursor sits that late. Fixed in Task 21: the loop stops there.
 
 **T21.6 int32 sample clocks overflow after 74.6 h** (Important, high,
 reproduced). `v92d_t.now` and `.t` (`v92_p34d.c:112`, incremented every

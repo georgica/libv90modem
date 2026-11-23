@@ -114,7 +114,7 @@ static int64_t isi_sample(v92_dsn_t *d, int32_t x, int n)
     int64_t acc = 0;
     d->xh[n & 255] = x;
     for (j = 0; j < ng; j++) {
-        if (j == D) j += d->lp1 + 1;
+        if (j == D && (j += d->lp1 + 1) >= ng) break;    /* the feedback taps reach the end of g */
         acc += (int64_t)d->g[j] * d->xh[(n - j) & 255];
     }
     return acc / ((int64_t)d->g0 << V92_XQ);

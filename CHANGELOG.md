@@ -110,6 +110,10 @@ Changed (V.92, both roles):
   which it ran on with wrapped values. A residual ISI 16 times the
   cursor's power or more now saturates its estimate instead of wrapping.
   Designs that stayed in range are unchanged.
+- The CPd design's trials no longer read past the end of their channel
+  buffer when the cursor sits so late (a channel peak in the last taps of
+  the estimate) that the feedback taps after it reach the end; the read
+  was an undefined behaviour. Other designs are unchanged.
 
 Fixed:
 - V.90 and V.92, calling role: the last data frame before the digital
