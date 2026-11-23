@@ -35,8 +35,8 @@
  *   until it sees our TRN2A, J', TRN (16 points), its MP (rate_ac = rate,
  *   rate_ca 13, up_mask, asymmetric; or mp_bad's) until it has decoded our
  *   MP, MP' until our MP', E, then B1 and V.34 data at our MP's rate_ca,
- *   with the options our MP asked for. silent: where it falls quiet for
- *   good (the server's time limits).
+ *   with the options our MP asked for (heavy_up: x2's, whatever it asked).
+ *   silent: where it falls quiet for good (the server's time limits).
  *
  *   Its renegotiation ("Rate renegotiation"), reneg_ms into data mode (and
  *   reneg_ms2 into the data after it): up, V.34's (11.6) S, S-bar, TRN, its
@@ -49,7 +49,8 @@
  *   on the grid of 24 at min(the server's rate_ac, reneg_rate).
  *
  *   Its retrain ("Retrain"), retrain_ms into data mode and into the data
- *   after each one, retrains times: V.34's (11.5): 70 ms of silence, then
+ *   after each one, retrains times (or, retrain_in_reneg, halfway through
+ *   its renegotiation's TRN): V.34's (11.5): 70 ms of silence, then
  *   v34peer's Phase 2 of a retrain (tone B, ...; INFO1c 0x001 again, or
  *   0x200 with retrain_200), and after our INFO1a flagged again the whole
  *   training from silence 1 as above: what it found is counted on.
@@ -110,6 +111,12 @@ typedef struct {
      * after each retrain, until it has begun retrains of them. retrain_200:
      * a retrain's INFO1c says 0x200 (no K56flex) */
     int retrain_ms, retrains, retrain_200;
+    /* heavy_up: a client that ignores our MP's options for its transmitter:
+     * its upstream data uses 64 states, non-linear, expanded shaping (x2's
+     * configuration; GPC), whatever our MP asked. retrain_in_reneg: it gives
+     * up its (first) renegotiation halfway through its TRN and retrains
+     * (silence, tone B, as retrain_ms's) */
+    int heavy_up, retrain_in_reneg;
     int  (*getbit)(void *user);
     void (*putbit)(void *user, int bit);
     void *user;

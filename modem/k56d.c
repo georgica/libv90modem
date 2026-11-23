@@ -81,13 +81,16 @@ int k56d_cleardown(k56d_t *d)
 /* ---- the client's MP ---- */
 
 /* our V.34 receiver at 3200 baud, with what our MP asks of the client's
- * transmitter (decision 9): 16 states, minimum shaping, linear; GPC */
-static int up_params(k56d_t *d, int rate)
+ * transmitter (decision 9): 16 states, minimum shaping, linear; GPC. With
+ * up_hyp 1, x2's configuration instead (64 states, non-linear, expanded
+ * shaping; still GPC): a client that ignores our MP (docs/answering.md) */
+static int up_params(k56d_t *d, int rate, int hyp)
 {
     v34_cfg_t c;
     memset(&c, 0, sizeof c);
     c.symbol_rate = SYM_RATE; c.data_rate = (uint16_t)rate;
     c.trellis = V34_TRELLIS_16; c.expanded = 0; c.nonlinear = 0; c.scrambler = V34_GPC;
+    if (hyp) { c.trellis = V34_TRELLIS_64; c.expanded = 1; c.nonlinear = 1; }
     return v34_params_init(&d->vpar, &c);
 }
 
@@ -99,7 +102,7 @@ static int pick_up_rate(k56d_t *d, const v34_mp_t *m)
     for (n = 14; n >= 1; n--) {
         if (!((m->rates >> (n - 1)) & 1) || n > m->max_ca) continue;
         if (d->cfg.max_up_rate && n * 2400 > d->cfg.max_up_rate) continue;
-        if (up_params(d, n * 2400) == 0) return n * 2400;   /* (set again at its E) */
+        if (up_params(d, n * 2400, 0) == 0) return n * 2400;   /* (set again at its E) */
     }
     return 0;
 }
@@ -159,12 +162,16 @@ static void put_data(void *user, int bit)
     if (d->rx_ready && d->cfg.putbit) d->cfg.putbit(d->cfg.user, bit);
 }
 
-/* its E has just ended: B1 starts with the next symbol */
+/* its E has just ended: B1 starts with the next symbol, under the
+ * hypothesis that held last (a renegotiation's client is the same one);
+ * its points are kept until B1 is decided */
 static void rx_begin_data(k56d_t *d)
 {
-    if (up_params(d, d->up_rate) != 0) { end(d, K56D_ERR_RATE); return; }
+    if (up_params(d, d->up_rate, d->up_hyp) != 0) { end(d, K56D_ERR_RATE); return; }
     v34_rx_init(&d->vrx, &d->vpar, put_data, d);
     d->vgain = (int32_t)v34_gain_q14(d->vpar.energy_tx_q8);
+    d->up_retried = d->catchup = d->ring_full = 0;
+    d->ring_w = d->ring_r = d->ring_fill = 0;
     d->rxmode = RX_DATA;
     d->quiet = 0; d->q_dead = 0;
     d->t_mark = d->now;
@@ -251,6 +258,7 @@ static void seq_bit(k56d_t *d, int bit)
 static void reneg_begin(k56d_t *d)
 {
     d->rx_ready = d->tx_ready = 0;
+    tonedet_init(&d->tone_b, TONEDET_1200);                     /* its tone B here too: a retrain */
     d->got_mp = d->got_e = 0; d->cand_ok = 0;
     d->fn = d->ones = 0;
     sres_resume(&d->sres);
@@ -263,6 +271,72 @@ static void reneg_begin(k56d_t *d)
 /* ---- one received symbol ---- */
 
 static int16_t clip16(int32_t v) { return (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v); }
+
+/* ---- B1, and a client that ignores our MP (docs/answering.md; D12) ----
+ *
+ * Our MP asks the client's transmitter for 16 states, linear, minimum
+ * shaping, and nothing in-band says what it will send. A client may send
+ * x2's upstream regardless (64 states, non-linear, expanded shaping). Its
+ * points from E on are kept (ring) until B1 is decided; if B1 fails under
+ * the hypothesis we started with, the receiver starts again under the other
+ * and decodes the stored points, 3 a symbol (no burst), the live ones
+ * joining the queue, the equaliser left as it is meanwhile. B1 passes: the
+ * data goes on under it. It fails too: K56D_ERR_B1, as before. A call whose
+ * B1 passes at once is decoded exactly as without the ring. */
+
+static void ring_put(k56d_t *d, v34_pt_t p)
+{
+    if (d->ring_fill >= K56D_RING) { d->ring_full = 1; return; }
+    d->ring[d->ring_w][0] = p.re; d->ring[d->ring_w][1] = p.im;
+    if (++d->ring_w == K56D_RING) d->ring_w = 0;
+    d->ring_fill++;
+}
+
+/* B1 is in (vrx.b1_bits): 1/8 of its bits wrong at most (all ones). Else the
+ * other hypothesis once, on what the ring holds. -1: ended */
+static int b1_check(k56d_t *d)
+{
+    int32_t g0 = d->vgain, g1;
+    uint16_t i, k;
+    TR("K56D %.3f B1 %d of %d bits wrong\n", d->now / 8000.0, (int)d->vrx.b1_errors, (int)d->vrx.b1_bits);
+    if (d->vrx.b1_errors * 8 <= d->vrx.b1_bits) { d->rx_ready = 1; return 0; }
+    /* (the ring keeps one place for the next symbol) */
+    if (d->up_retried || d->ring_full || d->ring_fill >= K56D_RING) { end(d, K56D_ERR_B1); return -1; }
+    d->up_retried = 1;
+    d->up_hyp ^= 1;
+    if (up_params(d, d->up_rate, d->up_hyp) != 0) { end(d, K56D_ERR_B1); return -1; }
+    v34_rx_init(&d->vrx, &d->vpar, put_data, d);
+    g1 = (int32_t)v34_gain_q14(d->vpar.energy_tx_q8);
+    d->vgain = g1;
+    /* the stored points to the new scale: the same received signal */
+    for (i = 0, k = d->ring_r; i < d->ring_fill; i++) {
+        d->ring[k][0] = clip16((int32_t)(((int64_t)d->ring[k][0] * g0) / g1));
+        d->ring[k][1] = clip16((int32_t)(((int64_t)d->ring[k][1] * g0) / g1));
+        if (++k == K56D_RING) k = 0;
+    }
+    d->catchup = 1;
+    TR("K56D %.3f k56 upstream: hypothesis %c\n", d->now / 8000.0, d->up_hyp ? 'B' : 'A');
+    return 0;
+}
+
+#define CATCH_UP_PER_SYM 3
+
+/* up to CATCH_UP_PER_SYM stored points into the receiver (B1 checked as
+ * it completes); done when the ring is empty. -1: ended */
+static int catch_up(k56d_t *d)
+{
+    int k;
+    for (k = 0; k < CATCH_UP_PER_SYM && d->ring_fill; k++) {
+        v34_pt_t x;
+        x.re = d->ring[d->ring_r][0]; x.im = d->ring[d->ring_r][1];
+        if (++d->ring_r == K56D_RING) d->ring_r = 0;
+        d->ring_fill--;
+        v34_rx_put(&d->vrx, v34_nl_decode(&d->vpar, x), NULL);
+        if (!d->rx_ready && d->vrx.b1_bits >= d->vpar.map.N && b1_check(d) != 0) return -1;
+    }
+    if (!d->ring_fill) d->catchup = 0;
+    return 0;
+}
 
 static void rx_symbol(k56d_t *d)
 {
@@ -337,17 +411,25 @@ static void rx_symbol(k56d_t *d)
     case RX_DATA: {
         v34_pt_t in, tent, sent;
         int64_t g = d->vgain;
+        int flags = QRX_EQ | QRX_CARRIER | QRX_TIMING | QRX_DENSE;
         in.re = clip16((int32_t)(((int64_t)r->zr * 512) / g)); in.im = clip16((int32_t)(((int64_t)r->zi * 512) / g));
-        in = v34_nl_decode(&d->vpar, in);
-        v34_rx_put(&d->vrx, in, &tent);
+        if (!d->rx_ready || d->catchup) ring_put(d, in);
+        if (d->catchup) {
+            /* the stored points, this one last, 3 a symbol under the other
+             * hypothesis; this one's decision on its own (no precoding: the
+             * plain slicer, as v34_rx_put's own tentative decision) */
+            tent = v34_slice(&d->vpar, v34_nl_decode(&d->vpar, in));
+            if (catch_up(d) != 0) return;
+        } else {
+            in = v34_nl_decode(&d->vpar, in);
+            v34_rx_put(&d->vrx, in, &tent);
+        }
         sent = v34_nl_encode(&d->vpar, tent);
         dr = (int32_t)(((int64_t)sent.re * g) / 512); di = (int32_t)(((int64_t)sent.im * g) / 512);
-        qamrx_update(r, dr, di, QRX_EQ | QRX_CARRIER | QRX_TIMING | QRX_DENSE, 13);
-        if (!d->rx_ready && d->vrx.b1_bits >= d->vpar.map.N) {
-            TR("K56D %.3f B1 %d of %d bits wrong\n", d->now / 8000.0, (int)d->vrx.b1_errors, (int)d->vrx.b1_bits);
-            if (d->vrx.b1_errors * 8 > d->vrx.b1_bits) { end(d, K56D_ERR_B1); return; }
-            d->rx_ready = 1;
-        }
+        if (!d->rx_ready && !d->catchup && d->vrx.b1_bits >= d->vpar.map.N && b1_check(d) != 0) return;
+        /* catching up: the equaliser is left as it is */
+        if (d->catchup) flags = QRX_CARRIER | QRX_TIMING | QRX_DENSE;
+        qamrx_update(r, dr, di, flags, 13);
         if (d->rx_ready && d->state == K56D_DATA) {
             /* nothing is being received: we never retrain (decision 14) */
             if (r->mse > Q_DEAD_MSE) { if (++d->q_dead > Q_BAD_SYMS) { end(d, K56D_ERR_CARRIER); return; } }
@@ -396,6 +478,17 @@ static void wait_s(k56d_t *d, int16_t x)
     TR("K56D %.3f S\n", d->now / 8000.0);
 }
 
+/* its tone B, in data mode or in its renegotiation: its retrain (V.34
+ * 11.5, "Retrain"): silent from here; the owner's Phase 2 next */
+static uint8_t retrain(k56d_t *d)
+{
+    TR("K56D %.3f tone B (state %d)\n", d->now / 8000.0, (int)d->state);
+    d->tx_ready = d->rx_ready = 0;
+    d->rxmode = RX_IDLE;
+    enter(d, K56D_RETRAIN);
+    return 0xff;
+}
+
 uint8_t k56d_tick(k56d_t *d, int16_t rxs)
 {
     uint8_t octet;
@@ -428,15 +521,10 @@ uint8_t k56d_tick(k56d_t *d, int16_t rxs)
         if (d->rxmode == RX_DATA && d->state == K56D_DATA) {
             (void)sdet_tick(&d->sdet, x);
             if (d->sdet.present >= SDET_PRESENT) reneg_begin(d);
-            else if (tonedet_tick(&d->tone_b, x)) {
-                /* its retrain (V.34 11.5, "Retrain"): silent from here; the
-                 * owner's Phase 2 next */
-                TR("K56D %.3f tone B in data mode\n", d->now / 8000.0);
-                d->tx_ready = d->rx_ready = 0;
-                d->rxmode = RX_IDLE;
-                enter(d, K56D_RETRAIN);
-                return 0xff;
-            }
+            else if (tonedet_tick(&d->tone_b, x)) return retrain(d);
+        } else if (d->state == K56D_RENEG && tonedet_tick(&d->tone_b, x)) {
+            /* it gave up its renegotiation for a retrain (R-3) */
+            return retrain(d);
         }
     }
 

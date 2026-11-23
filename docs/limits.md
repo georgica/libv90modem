@@ -156,8 +156,8 @@ a Rockwell or Lucent modem.
   as in V.34's and x2's rate changes: an assumption, confirmed by no real
   client. SM56 did not renegotiate in two calls of 120 s, so only the
   simulated client has renegotiated with it.
-- **The client's retrains:** only its tone B in data mode is taken as a
-  retrain. A client that gives up during a training (the first, or a
+- **The client's retrains:** only its tone B in data mode, or in its
+  renegotiation, is taken as a retrain. A client that gives up during a training (the first, or a
   retrain's) and retrains again is not followed: the call ends at that
   training's time limit (`V90M_END_K56_FAILED`). SM56 does that after
   about half of its own retrains. So "the third in a row ends the call"
@@ -165,6 +165,14 @@ a Rockwell or Lucent modem.
   mode has held 2 s (our own value: no source gives one). A retrain's
   Phase 2 must end within 9 s of the retrain's start (our own value), or
   the call ends. Only the simulated client has retrained with it.
+- **A client that ignores our MP: x2's upstream only.** One that sends 64
+  states, non-linear, expanded shaping whatever our MP asks is decoded
+  (B1 retried under that configuration; only the simulated client has
+  done it), and its data mode then costs about what x2's does: one such
+  call per ARM926 box. Catching up after its B1 costs up to 2.0 M ARM
+  instructions per 10 ms for 30 ms (16.5 ms of the box's CPU per 10 ms
+  block), once per call. Other mixes (32 states, or some options only) are
+  not tried and end as a wrong B1 (`V90M_END_K56_FAILED`).
 - **Every caller hears our answer tone later.** V.8bis comes first (at
   least 400 ms of silence, CRe, the wait for CRd), so ANSam comes, against
   a call without K56flex: 1.790 s later for a caller without V.8bis,

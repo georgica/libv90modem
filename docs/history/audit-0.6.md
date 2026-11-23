@@ -487,3 +487,40 @@ another implementation's bench, checked against our code; not authority):
   Su (9.5.1.2.2), no CPt (`T_TRAIN_MS`), refused design, refused UINFO
   (B-4); each ends in a retrain or a failure no test checks.
 - No ARM cost run for V.92 answering (P-1).
+
+## K56flex: a client that ignores our MP (Task 19)
+
+`rec_k56 40 0 build/k56h.rec heavy` (the simulated client sends x2's
+upstream: 64 states, non-linear, expanded shaping), then
+`make cost-k56 K56_REC=build/k56h.rec K56_ARGS=heavy ARM_CC=$A5`:
+
+| | ARM instructions per second of line |
+|---|---|
+| K56flex data mode, the heavy client (second 20 to 21) | 84.43 M |
+| V.90 data mode, the same run (second 15 to 16) | 39.35 M |
+| K56flex data mode, a client that keeps to our MP (baseline above) | 39.27 M |
+| x2 data mode (baseline above) | 82.57 M |
+
+The transmit hash of the heavy call is the normal call's (52c83abc): our
+downstream does not change; 742404 bits up, 0 bad.
+
+The catch-up, from the same recording: `bench_v90.arm -k` (armv5) on
+prefixes 10 ms apart, instructions per 10 ms block. B1 fails under our
+MP's configuration at 16.202 s of the call (54 ms after its E: one data
+frame and the Viterbi's delay, 173 symbols, under the ring's 192); the
+stored points are then decoded 3 a symbol period:
+
+| block (s of the call) | heavy client | a client that keeps to our MP |
+|---|---|---|
+| 16.19-16.20 | 0.34 M | 0.31 M |
+| 16.20-16.21 | 1.73 M | 0.32 M |
+| 16.21-16.22 | 1.94 M | 0.38 M |
+| 16.22-16.23 | **2.02 M** (the heaviest) | 0.41 M |
+| 16.23-16.24 | 0.93 M | 0.40 M |
+| 16.24-16.25 | 0.84 M | 0.40 M |
+
+At the box's 122 M instructions a second the heaviest block is 16.5 ms of
+CPU for 10 ms of line; the three catch-up blocks together are 5.7 M (47 ms
+for 30 ms), once per call (and per renegotiation whose first hypothesis
+fails), then 0.84 M a block (8.4 ms per 10 ms) for the rest of the call.
+

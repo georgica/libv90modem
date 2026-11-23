@@ -54,6 +54,21 @@ dropped call should look at `V90M_END_LOST`):
   accordingly (renegotiations of V.34, x2 and K56flex no longer print
   retraining 1).
 
+Changed (answering role, K56flex):
+- A client that ignores our MP and sends x2's upstream (64 states,
+  non-linear, expanded shaping) is decoded: its B1 fails under what our MP
+  asked for (16 states, linear, minimum shaping), and the points kept
+  since its E are decoded again under x2's configuration (3 a symbol, the
+  live ones joining them); if B1 passes there, the data goes on under it
+  (it ended with `V90M_END_K56_FAILED`). Its data mode costs about what
+  x2's does on the CPU. A wrong B1 under both still ends the call, some
+  20 ms later than before. Calls whose B1 passes are unchanged.
+  Simulation only.
+- A client that gives up its renegotiation and retrains (its tone B during
+  the renegotiation) is followed as a retrain from data mode is; the call
+  ended at the renegotiation's time limit (`V90M_END_K56_FAILED`, 6 s).
+  Simulation only.
+
 Changed (calling role):
 - A retrain's Phase 2 is bounded whatever the answerer does. An answerer
   that kept repeating its INFO0 (V.90 and V.92: INFO0d; V.34: INFO0a) sent
