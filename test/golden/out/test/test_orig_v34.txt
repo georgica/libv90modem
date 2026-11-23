@@ -13,6 +13,8 @@
   answerer gone: over after 550 ms, 0 retrain(s)
   good line, a retrain's Phase 2 bounded 3200 sym/s  C->A 31200 bit/s  124800 bits 0 err  A->C 28800 bit/s  115200 bits 0 err  SNR 37.7 dB, rtd 371
   a retrain's Phase 2 for 30 s: v34orig 5 (error 3), orig end 8
+  good line, a retrain's Phase 2 fails 3200 sym/s  C->A 31200 bit/s  124800 bits 0 err  A->C 28800 bit/s  115200 bits 0 err  SNR 37.7 dB, rtd 371
+  a retrain's Phase 2 failed: v34orig 5 (error 1), orig end 8
   answerer gone in training: over after 16.1 s, 1 retrain(s); Phase 2 error 2
   ceilings 14400 out, 9600 in        3200 sym/s  C->A 14400 bit/s   43200 bits 0 err  A->C  9600 bit/s   28800 bits 0 err  SNR 38.1 dB, rtd 371
   own echo delay found               3200 sym/s  C->A 31200 bit/s   93600 bits 0 err  A->C 28800 bit/s   86400 bits 0 err  SNR 38.1 dB, rtd 371
@@ -20,4 +22,4 @@
   noise 22 dB down                   3200 sym/s  C->A 12000 bit/s   48000 bits 0 err  A->C 12000 bit/s   48000 bits 0 err  SNR 21.6 dB, rtd 371
   far echo 3 %, 40 ms late           3200 sym/s  C->A 16800 bit/s   67200 bits 0 err  A->C 28800 bit/s  115200 bits 0 err  SNR 37.7 dB, rtd 371
   long loop (13 dB down at 3 kHz)    3200 sym/s  C->A 12000 bit/s   48000 bits 0 err  A->C 24000 bit/s   96000 bits 0 err  SNR 34.0 dB, rtd 373
-orig_v34: 398 checks, 0 failures
+orig_v34: 427 checks, 0 failures

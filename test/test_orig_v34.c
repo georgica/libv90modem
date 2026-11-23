@@ -225,6 +225,7 @@ int main(void)
         CHECK_EQ_I(orig_retrain(&O), 0);
         for (t = 0; t < 2000 && O.v34.state != V34O_PHASE2; t++) run(8);
         CHECK_EQ_I(O.v34.state, V34O_PHASE2);
+        CHECK(O.v34.t < 100);                   /* the clock began with Phase 2 */
         /* its clock 1 sample short of the limit; two ticks of the caller's
          * own (the line and the answerer are no party to this) */
         O.v34.t = 8 * V34O_RT_P2_MS - 1;
@@ -233,6 +234,18 @@ int main(void)
         (void)orig_tick(&O, 0);
         printf("  a retrain's Phase 2 for %d s: v34orig %d (error %d), orig end %d\n", V34O_RT_P2_MS / 1000, O.v34.state, O.v34.error, O.end);
         CHECK_EQ_I(O.v34.state, V34O_ENDED); CHECK_EQ_I(O.v34.error, V34O_ERR_RETRAINS);
+        CHECK_EQ_I(O.phase, ORIG_FAILED); CHECK_EQ_I(O.end, ORIG_END_RETRAIN);
+    }
+
+    /* ---- a retrain's Phase 2 that fails (p2call's own limits: its restarts,
+     * an INFO0a repeated for ever) ends the call as a failed retrain ---- */
+    if (call_up("good line, a retrain's Phase 2 fails", &good, 0, 0, 28800)) {
+        CHECK_EQ_I(orig_retrain(&O), 0);
+        for (t = 0; t < 2000 && O.v34.state != V34O_PHASE2; t++) run(8);
+        CHECK_EQ_I(O.v34.state, V34O_PHASE2);
+        O.v34.p2.state = P2L_FAILED; O.v34.p2.error = P2L_ERR_REV;   /* (as at the fifth restart) */
+        (void)orig_tick(&O, 0);
+        printf("  a retrain's Phase 2 failed: v34orig %d (error %d), orig end %d\n", O.v34.state, O.v34.error, O.end);
         CHECK_EQ_I(O.phase, ORIG_FAILED); CHECK_EQ_I(O.end, ORIG_END_RETRAIN);
     }
 

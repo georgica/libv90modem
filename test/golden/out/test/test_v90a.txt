@@ -21,4 +21,4 @@ time-outs: the digital modem silent from
   Jd' (no DIL)                                     ended 5, error 6, 1087 ms after the silence
   Ri-bar (no MP): 15 s from INFO1a                 ended 5, error 8, 15028 ms after INFO1a
   data mode: carrier lost                          ended 5, error 13, 595 ms after the silence
-v90a: 62 checks, 0 failures
+v90a: 63 checks, 0 failures

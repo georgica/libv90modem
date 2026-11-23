@@ -122,7 +122,8 @@ typedef enum {
 #define ORIG_END_RETRAIN    8   /* V.90 / V.92: a retrain failed, or one more was due past the
                                    limit (V90A_MAX_RETRAINS; the receiver's then cleared down);
                                    V.34, once connected: too many retrains in a row, or a
-                                   retrain's Phase 2 past V34O_RT_P2_MS */
+                                   retrain's Phase 2 that failed or ran past V34O_RT_P2_MS
+                                   (a retrain's Phases 3 and 4 failing: ORIG_END_LOST) */
 
 typedef struct {
     int           level;     /* transmit RMS, 16-bit sample units */

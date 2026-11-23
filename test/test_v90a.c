@@ -172,6 +172,7 @@ int main(void)
     CHECK_EQ_I(v90a_retrain(&l->va), 0);
     run_to(l, l->k + MS(1000), V90A_P2);
     CHECK_EQ_I(l->va.state, V90A_P2);
+    CHECK(l->va.t < 100);                       /* the clock began with Phase 2 */
     /* its clock 1 sample short of the limit; two ticks of our own (the
      * digital modem is no party to this) */
     l->va.t = (int32_t)MS(V90A_RT_P2_MS) - 1;

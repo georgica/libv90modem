@@ -111,7 +111,8 @@ static int v34_end(const orig_t *o)
     case V34O_ERR_PHASE2:
         /* nothing to offer in INFO1c, or an INFO1a we cannot follow */
         if (!o->connected && o->v34.p2.error == P2L_ERR_NO_RATE) return ORIG_END_NO_COMMON;
-        return o->connected ? ORIG_END_LOST : ORIG_END_NO_CARRIER;
+        /* connected: only a retrain has a Phase 2 (as V.90's, V90A_ERR_RETRAINS) */
+        return o->connected ? ORIG_END_RETRAIN : ORIG_END_NO_CARRIER;
     default: return o->connected ? ORIG_END_LOST : ORIG_END_NO_CARRIER;
     }
 }
