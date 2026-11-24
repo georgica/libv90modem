@@ -4034,3 +4034,32 @@ test and checked against 0x906E and 0xBB3D.
     -DMNP_FCS2=1, 2, 3                                   -> 100 checks, 0 failures each
     test/golden/out/v42/test_mnppeer.txt                 -> new (a new program; nothing re-recorded)
     make verify                                          -> VERIFY PASS (461 s; golden 143 identical; log: build/verify-task3.log)
+
+Review fixes (round 1):
+
+- Credit enforced: the peer keeps the furthest N(S) any of its LAs allowed
+  (N(R) + N(k); at the start the LRs' k). An LT beyond it, whatever V(R) is,
+  counts in `rx_over_credit` and is handled as one without credit (discard,
+  LA; A.6.3.10, A.6.3.11, A.7.3.2.3). Every two-peer case asserts 0; a raw
+  sender in the test (HDLC frames built bit by bit) sends LTs 1..6 on k 2 and
+  credit 0, and the peer counts 4.
+- LN queues lose nothing: `mnppeer_send_ln` returns 0 when its queue is
+  full; a received LN that finds the queue full is counted (`ln_rx_full`),
+  not taken, not acknowledged, and comes again on the sender's T401.
+- The originator sends its LR again on a frame with a bad FCS (A.7.1.2 b).
+- The responder sends LD 1 (not 3) for an LR it cannot take, and LD 1 (not
+  4) when its LR tries run out: code 3 is the initiator's (Table A.5 Note,
+  now in `hst-facts.md` `MNP frames`).
+- `cfg.confirm_la_standard`: the confirming LA in the standard layout
+  although bit 2 is agreed, as BinModem sends it [BM]; the peer as responder
+  takes the confirming LA in either layout.
+- The CRC comment says the peer follows -DMNP_FCS2 but not a change of
+  mnp_frame.h's default.
+
+    v42/build/test_mnppeer (new checks, before the fixes)  -> 146 checks, 8 failures
+        (send_ln 9th returned 1; ln_rx_full 0 and 8 of 12 codes; confirming LA
+        layout 1; rx_over_credit 0; LD 3 and LD 4 where 1 is due; 1 LR, not 2)
+    v42/build/test_mnppeer                                 -> test_mnppeer: 146 checks, 0 failures
+    -DMNP_FCS2=1, 2, 3; qemu-arm                           -> 146 checks, 0 failures; 1.7 s
+    test/golden/out/v42/test_mnppeer.txt                   -> five new lines and the count line (100 -> 146)
+    make verify                                            -> VERIFY PASS (736 s; golden 143 identical; log: build/verify-task3-fix1.log)

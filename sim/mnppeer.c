@@ -7,10 +7,13 @@
 /* The mode 2 FCS (`MNP framing`): x^16 + x^15 + x^2 + 1, reflected, over
  * the body and the ETX. Its initial value and octet order are in no public
  * text; the facts take CRC-16/ARC (initial 0, low octet first, "123456789"
- * gives 0xBB3D) [OURS]. The four candidates, numbered as the facts' MNP_FCS2
- * constant numbers them: 0 initial 0 low first, 1 initial 0 high first,
- * 2 initial 0xFFFF low first, 3 initial 0xFFFF high first. A build that
- * defines MNP_FCS2 on the command line moves this peer with it. */
+ * gives 0xBB3D) [OURS]. The four candidates, numbered as the plan's Task 2
+ * interface numbers MNP_FCS2: 0 initial 0 low first, 1 initial 0 high
+ * first, 2 initial 0xFFFF low first, 3 initial 0xFFFF high first.
+ * This peer follows a -DMNP_FCS2=n given to the compiler, but NOT a change
+ * of the default in v42/mnp_frame.h, which it does not include: whoever
+ * changes that default changes MNPP_FCS2's default below (and T_FCS2 in
+ * v42/test/test_mnppeer.c) with it. */
 #ifndef MNPP_FCS2
 #ifdef MNP_FCS2
 #define MNPP_FCS2 MNP_FCS2
@@ -219,6 +222,8 @@ static void send_la(mnppeer_t *p, int framing)
     }
     put_frame(p, b, n, framing);
     p->adv_credit = nk;
+    /* the furthest N(S) any LA of ours has allowed: N(R) + N(k) */
+    if ((uint8_t)(nr + nk - p->adv_edge) < 128) p->adv_edge = (uint8_t)(nr + nk);
     p->unacked = 0;
     p->la_now = 0;
     p->t402 = 0;
@@ -289,8 +294,11 @@ static void next_frame(mnppeer_t *p)
     if (p->conf_la) {
         /* the confirming LA: N(R) 0, our credit; establishment framing, in
          * the layout the responder's LR set (A.6.4.2) */
+        int lay = p->layout;
         p->conf_la = 0;
+        if (p->cfg.confirm_la_standard) p->layout = MNPP_LAYOUT_STD;
         send_la(p, p->est_framing);
+        p->layout = lay;
         return;
     }
     if (p->lna_due) {
@@ -398,6 +406,8 @@ static void link_up(mnppeer_t *p, int credit)
     p->t401 = 0; p->retries = 0;
     p->vr = 1; p->dup_seen = 0; p->unacked = 0;
     p->adv_credit = p->k;
+    /* R(k) at the start: the k of the LRs (A.6.3.10) */
+    p->adv_edge = (uint8_t)p->k;
     p->t402 = 0; p->t404 = T404_MS;
     /* the originator hears the establishment framing too until the
      * responder is heard in the agreed one (a repeated LR, A.7.1.3) */
@@ -413,8 +423,10 @@ static void bad_frame(mnppeer_t *p, int framing)
     p->rx_bad++;
     if (p->state != MNPP_CONNECTED && p->state != MNPP_IDLE) return;
     if (p->phase == PH_DATA) p->la_now = 1;                 /* A.7.3.3 a */
-    else if (p->phase == PH_R_LR) {                          /* A.7.1.3 */
-        if (p->est_tries >= 2) finish(p, 4);
+    else if (p->phase == PH_O_LR) {                          /* A.7.1.2 b */
+        if (p->est_tries < p->n400) p->est_t = -1;
+    } else if (p->phase == PH_R_LR) {                        /* A.7.1.3 */
+        if (p->est_tries >= 2) finish(p, 1);
         else p->est_t = -1;
     }
 }
@@ -472,7 +484,7 @@ static void on_lr(mnppeer_t *p, const uint8_t *b, int n, int framing)
     }
     /* responder */
     if (p->phase == PH_R_LR) {                       /* asked again (A.7.1.3) */
-        if (p->est_tries >= 2) finish(p, 4);
+        if (p->est_tries >= 2) finish(p, 1);
         else p->est_t = -1;
         return;
     }
@@ -481,7 +493,9 @@ static void on_lr(mnppeer_t *p, const uint8_t *b, int n, int framing)
     fr = min_i(r.fr, p->cfg.framing);
     k = min_i(r.k, p->cfg.k);
     n401 = min_i(r.n401, p->cfg.n401);
-    if (!r.have_c2 || fr < 2 || k < 1 || n401 < 1) { p->est_framing = framing; finish(p, 3); return; }
+    /* code 3 is the initiator's only (Table A.5 Note); the responder that
+     * cannot take an LR says it got none it could use: code 1 [OURS] */
+    if (!r.have_c2 || fr < 2 || k < 1 || n401 < 1) { p->est_framing = framing; finish(p, 1); return; }
     p->framing = fr; p->k = k; p->n401 = n401;
     opt = (r.have_opt && p->cfg.send_opt) ? (r.opt & p->cfg.opt & 3) : 0;
     p->lr_have_opt = opt != 0;                       /* A.6.4.1.8: only if agreeing */
@@ -521,6 +535,15 @@ static void on_lt(mnppeer_t *p, uint8_t ns, const uint8_t *info, int len)
 {
     p->rx_lt++;
     if (len < 1 || len > p->n401) { p->rx_bad++; p->la_now = 1; return; }
+    /* beyond every credit we gave (A.6.3.10, A.6.3.11), whatever V(R) is:
+     * the sender broke the window; handled as an LT without receive credit
+     * (A.7.3.2.3). An honest sender never gets there: its window is an
+     * N(R) + N(k) of one of our LAs, and the edge is the furthest of them. */
+    if ((uint8_t)(ns - p->adv_edge) != 0 && (uint8_t)(ns - p->adv_edge) < 128) {
+        p->rx_over_credit++;
+        p->la_now = 1;
+        return;
+    }
     if (ns == p->vr) {
         if (credit_now(p) == 0 || MNPP_RING - p->rxq_n < (size_t)len) { p->la_now = 1; return; }  /* A.7.3.2.3 */
         {
@@ -567,7 +590,12 @@ static void on_frame(mnppeer_t *p, const uint8_t *b, int n, int framing)
         else if (type == T_LA && li == 3 && n == 4) lay = MNPP_LAYOUT_OPT;
         else { bad_frame(p, framing); return; }
         if (p->phase != PH_DATA && p->phase != PH_R_LR) return;
-        if (lay != p->layout && !p->cfg.layout_rx_any) { bad_frame(p, framing); return; }
+        /* the confirming LA is taken in either layout: A.6.4.2 wants A.3b
+         * when bit 2 is agreed, BinModem sends A.3a [BM] */
+        if (lay != p->layout && !p->cfg.layout_rx_any && !(p->phase == PH_R_LR && type == T_LA)) {
+            bad_frame(p, framing);
+            return;
+        }
         p->last_layout_rx = lay;
         if (type == T_LA) {
             nr = lay == MNPP_LAYOUT_STD ? b[4] : b[2];
@@ -585,7 +613,13 @@ static void on_frame(mnppeer_t *p, const uint8_t *b, int n, int framing)
         if (li != 7 || n != 8 || b[2] != 1 || b[3] != 1 || b[5] != 2 || b[6] != 1) { bad_frame(p, framing); return; }
         if (p->phase != PH_DATA) return;
         if (b[4] == p->vra) {                            /* A.7.4.3 */
-            if (p->lnr_n < MNPP_LNQ) p->lnr[p->lnr_n++] = b[7];
+            if (p->lnr_n == MNPP_LNQ) {
+                /* no room: neither taken nor acknowledged; the sender's
+                 * T401 brings it again (A.7.4.7) */
+                p->ln_rx_full++;
+                return;
+            }
+            p->lnr[p->lnr_n++] = b[7];
             p->vra++;
         }
         p->lna_due = 1;
@@ -741,7 +775,7 @@ void mnppeer_tick(mnppeer_t *p, unsigned ms)
         return;
     case PH_R_LR:
         if (timer_run(&p->est_t, m)) {
-            if (p->est_tries >= 2) finish(p, 4);          /* A.7.1.4 */
+            if (p->est_tries >= 2) finish(p, 1);          /* A.7.1.4; codes 1-3 only (A.6.5.1.3) */
             else p->est_t = -1;
         }
         return;
@@ -817,9 +851,11 @@ size_t mnppeer_read(mnppeer_t *p, uint8_t *d, size_t max)
     return n;
 }
 
-void mnppeer_send_ln(mnppeer_t *p, int code)
+int mnppeer_send_ln(mnppeer_t *p, int code)
 {
-    if (p->lnq_n < MNPP_LNQ) p->lnq[p->lnq_n++] = code & 0xFF;
+    if (p->lnq_n == MNPP_LNQ) return 0;
+    p->lnq[p->lnq_n++] = code & 0xFF;
+    return 1;
 }
 
 int mnppeer_get_ln(mnppeer_t *p)

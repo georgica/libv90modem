@@ -17,8 +17,8 @@
  * What it does (Annex A):
  *  - The originator sends its LR (after `lr_delay_ms`; after T400 = 750 ms
  *    of ODP with `odp_first`) in framing mode `framing`: 2, start-stop with
- *    SYN DLE STX ... DLE ETX FCS; 3, HDLC. It sends it again every T401, up
- *    to N400 times, then stops without an LD (A.7.2.2). On the responder's
+ *    SYN DLE STX ... DLE ETX FCS; 3, HDLC. It sends it again every T401 and
+ *    on a frame with a bad FCS (A.7.1.2 b), up to N400 times, then stops without an LD (A.7.2.2). On the responder's
  *    LR it counts as connected and confirms with an LA, N(R) 0 and N(k) its
  *    credit, in the layout that LR set (A.6.4.2) and the establishment
  *    framing; it confirms again on a repeated LR, which it hears until the
@@ -28,9 +28,11 @@
  *    only if the LR had it and the AND agrees a facility), replies in the framing the LR came in (after
  *    `lr_delay_ms`), sends its LR again on T401, a bad frame or a repeated
  *    LR, once (A.7.1.3), and counts as connected on the LA or on an LT.
- *    LD reason 2 for constant parameter 1 not 2, 3 for parameters that fail
+ *    LD reason 2 for constant parameter 1 not 2. For parameters that fail
  *    negotiation (and for an LR without constant parameter 2, framing mode,
- *    k or N401). Parameter 8 bit 1 agreed makes N401 256. After the LRs
+ *    k or N401) the originator sends 3; the responder sends 1, since code 3
+ *    is the initiator's only (Table A.5 Note), as it does when its LR tries
+ *    run out [OURS]. The responder takes the confirming LA in either layout. Parameter 8 bit 1 agreed makes N401 256. After the LRs
  *    each end hears only the agreed framing.
  *  - Data phase (A.7.3): LT with V(S) from 1, at most S(k) beyond the last
  *    N(R); LA on an invalid frame, an out-of-sequence LT (not the first
@@ -39,10 +41,15 @@
  *    repeating the last N(R) or on T401; N400 tries, then LD reason 4.
  *    Credit is the room in the receive ring in maximum-length frames, at
  *    most k, zero for `zero_credit_ms` after connecting (an LA with N(k) 0
- *    goes out at once, and one with the credit when it ends).
+ *    goes out at once, and one with the credit when it ends). An LT beyond
+ *    every N(R) + N(k) we have sent (at the start, the LRs' k) is counted in
+ *    `rx_over_credit` and handled as one without credit.
  *  - LN and LNA (A.7.4): one LN outstanding, V(SA) from 1, sent again every
  *    T401, N400 tries; a received LN with N(SA) = V(RA) is delivered once;
- *    every valid LN gets its LNA. The LN's type octet is passed through as
+ *    every valid LN gets its LNA, except one that finds the receive queue
+ *    full: it is counted (`ln_rx_full`), not taken and not acknowledged, so
+ *    the sender brings it again. mnppeer_send_ln says when its queue is
+ *    full. The LN's type octet is passed through as
  *    `code`; Tables 4 and 5 (what a break does to data) are not modelled.
  *
  * Layouts: standard, or Annex A's optimised LT and LA when both LRs carry
@@ -78,6 +85,9 @@ typedef struct {
     int never_lr;        /* 1: never send an LR */
     int t401_ms;         /* T401 (0: 2000 ms in establishment, 4000 ms in data) */
     int n400;            /* N400 (0: 12) */
+    int confirm_la_standard;  /* originator: the confirming LA in the standard
+                                 layout even when bit 2 is agreed, as BinModem
+                                 sends it [BM] (Annex A A.6.4.2 says A.3b) */
 } mnp_peer_cfg;
 
 enum { MNPP_IDLE = 0, MNPP_CONNECTED, MNPP_DISCONNECTED };
@@ -145,6 +155,7 @@ typedef struct {
     int conf_la;                  /* originator: the confirming LA is due */
     int t402, t404;
     int adv_credit;               /* N(k) of our last LA */
+    uint8_t adv_edge;             /* the furthest N(S) our LAs (or LR's k) allowed */
     int zc_left;
 
     /* attention (A.7.4) */
@@ -168,6 +179,8 @@ typedef struct {
     int rx_ld_reason;             /* reason of the LD received, 0 none */
     int last_layout_rx;           /* layout of the last LT or LA received, -1 none */
     int rx_bad;                   /* frames failing their FCS, or malformed */
+    int rx_over_credit;           /* LTs beyond any credit we gave (N(R) + N(k)) */
+    int ln_rx_full;               /* LNs not taken (and not acknowledged): queue full */
     int rx_unknown;               /* valid frames of an unknown type */
     int tx_frames, rx_frames;
 } mnppeer_t;
@@ -178,7 +191,7 @@ void   mnppeer_rx_bit(mnppeer_t *p, int bit);
 void   mnppeer_tick(mnppeer_t *p, unsigned ms);
 size_t mnppeer_write(mnppeer_t *p, const uint8_t *d, size_t n);
 size_t mnppeer_read(mnppeer_t *p, uint8_t *d, size_t max);
-void   mnppeer_send_ln(mnppeer_t *p, int code);
+int    mnppeer_send_ln(mnppeer_t *p, int code);   /* 1 queued, 0 queue full */
 int    mnppeer_get_ln(mnppeer_t *p);   /* the next LN code received, -1 none */
 void   mnppeer_release(mnppeer_t *p);
 int    mnppeer_state(const mnppeer_t *p);

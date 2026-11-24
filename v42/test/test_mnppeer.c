@@ -123,6 +123,8 @@ static void transfer(const char *name, const mnp_peer_cfg *ca, const mnp_peer_cf
     CHECK_EQ_I(l.ba.h_out, l.ba.h_in);
     CHECK_EQ_I(mnppeer_state(&l.a), MNPP_CONNECTED);
     CHECK_EQ_I(mnppeer_state(&l.b), MNPP_CONNECTED);
+    CHECK_EQ_I(l.a.rx_over_credit, 0);
+    CHECK_EQ_I(l.b.rx_over_credit, 0);
     printf("%s: connected at %ld/%ld ms, %u octets each way %s in %ld ms, LT %d/%d, retx %d/%d, bad %d/%d\n",
            name, l.con_a, l.con_b, (unsigned)total,
            (l.ab.h_out == l.ab.h_in && l.ba.h_out == l.ba.h_in && ok) ? "intact" : "DAMAGED", l.ms,
@@ -256,6 +258,61 @@ static void loop_ln(void)
     CHECK_EQ_I(l.a.ln_code, -1);
     CHECK_EQ_I(mnppeer_state(&l.a), MNPP_CONNECTED);
     printf("loop_ln: %d codes delivered once each, in order\n", n);
+
+    /* the send queue: MNPP_LNQ codes, then "full" */
+    for (i = 0; i < MNPP_LNQ; i++) CHECK_EQ_I(mnppeer_send_ln(&l.a, 2), 1);
+    CHECK_EQ_I(mnppeer_send_ln(&l.a, 2), 0);
+}
+
+/* the receive queue full: the LN is neither taken nor acknowledged, and
+ * counted; once read, the sender's T401 brings it again, nothing is lost */
+static void loop_ln_full(void)
+{
+    mnp_peer_cfg a = cfg(1, 3), b = cfg(0, 3);
+    loop_t l;
+    int i, sent = 0, n = 0, c, inorder = 1;
+    loop_init(&l, &a, &b);
+    CHECK(loop_data(&l, 1024, 60000));
+    /* 12 codes, more than b's queue holds; b reads none for 20 s */
+    for (i = 0; i < 20000; i++) {
+        while (sent < 12 && mnppeer_send_ln(&l.a, 0x20 + sent)) sent++;
+        loop_ms(&l);
+    }
+    CHECK_EQ_I(sent, 12);
+    CHECK_EQ_I(l.b.lnr_n, MNPP_LNQ);
+    CHECK(l.b.ln_rx_full > 0);
+    for (i = 0; i < 40000; i++) {
+        while ((c = mnppeer_get_ln(&l.b)) >= 0) {
+            if (c != 0x20 + n) inorder = 0;
+            n++;
+        }
+        loop_ms(&l);
+    }
+    while ((c = mnppeer_get_ln(&l.b)) >= 0) { if (c != 0x20 + n) inorder = 0; n++; }
+    CHECK_EQ_I(n, 12);
+    CHECK(inorder);
+    CHECK_EQ_I(mnppeer_state(&l.a), MNPP_CONNECTED);
+    CHECK_EQ_I(l.a.ln_code, -1);
+    printf("loop_ln_full: %d codes through a queue of %d, %d LNs refused while full, all in order\n",
+           n, MNPP_LNQ, l.b.ln_rx_full);
+}
+
+/* the confirming LA in the standard layout although bit 2 is agreed [BM] */
+static void loop_conf_std(void)
+{
+    mnp_peer_cfg a = cfg(1, 3), b = cfg(0, 3);
+    loop_t l;
+    int at_connect;
+    a.send_opt = b.send_opt = 1; a.opt = b.opt = 2;
+    a.confirm_la_standard = 1;
+    loop_init(&l, &a, &b);
+    while (l.ms < 5000 && l.con_b < 0) loop_ms(&l);
+    at_connect = l.b.last_layout_rx;
+    CHECK_EQ_I(at_connect, MNPP_LAYOUT_STD);
+    CHECK(loop_data(&l, 4096, 60000));
+    CHECK_EQ_I(l.b.last_layout_rx, MNPP_LAYOUT_OPT);
+    CHECK_EQ_I(l.ab.h_out, l.ab.h_in); CHECK_EQ_I(l.ba.h_out, l.ba.h_in);
+    printf("loop_conf_std: confirming LA layout %d, then layout %d\n", at_connect, l.b.last_layout_rx);
 }
 
 /* zero credit for 3 s after connecting: nothing comes before it ends */
@@ -279,6 +336,8 @@ static void loop_zero_credit(void)
     early = l.ab.got;
     CHECK(loop_data(&l, 8192, 120000));
     CHECK_EQ_I(early, 0);
+    CHECK_EQ_I(l.a.rx_over_credit, 0);
+    CHECK_EQ_I(l.b.rx_over_credit, 0);
     CHECK_EQ_I(l.ab.h_out, l.ab.h_in); CHECK_EQ_I(l.ba.h_out, l.ba.h_in);
     printf("loop_zero_credit: %u octets before the credit, then 8192 intact\n", (unsigned)early);
 }
@@ -444,6 +503,161 @@ static void loop_no_lr(void)
     printf("loop_no_lr: %d LRs, gave up at %ld ms\n", l.a.est_tries, l.ms);
 }
 
+/* ---- one peer against frames built here, bit by bit ---- */
+typedef struct {
+    mnppeer_t p;
+    uint8_t in[20000]; int in_n, in_i;   /* bits to the peer */
+    uint8_t out[40000]; int out_n;       /* bits from it */
+    int acc;
+} raw_t;
+
+static void raw_init(raw_t *r, const mnp_peer_cfg *c)
+{
+    mnppeer_init(&r->p, c);
+    r->in_n = r->in_i = r->out_n = 0;
+    r->acc = 0;
+}
+
+static void raw_bit(raw_t *r, int b) { if (r->in_n < (int)sizeof r->in) r->in[r->in_n++] = (uint8_t)b; }
+
+static void raw_flag(raw_t *r)
+{
+    int i;
+    for (i = 0; i < 8; i++) raw_bit(r, (0x7E >> i) & 1);
+}
+
+/* an HDLC frame: flag, body and FCS-16 with zeros inserted, flag;
+ * bad != 0 inverts the FCS's first octet */
+static void raw_frame(raw_t *r, const uint8_t *body, int n, int bad)
+{
+    uint8_t f[300];
+    uint16_t c = (uint16_t)(crc_bits(0xFFFFu, 0x8408u, body, n) ^ 0xFFFFu);
+    int i, b, ones = 0;
+    memcpy(f, body, (size_t)n);
+    f[n] = (uint8_t)((c & 0xFF) ^ (bad ? 0xFF : 0));
+    f[n + 1] = (uint8_t)(c >> 8);
+    raw_flag(r);
+    for (i = 0; i < n + 2; i++)
+        for (b = 0; b < 8; b++) {
+            int x = (f[i] >> b) & 1;
+            raw_bit(r, x);
+            ones = x ? ones + 1 : 0;
+            if (ones == 5) { raw_bit(r, 0); ones = 0; }
+        }
+    raw_flag(r);
+}
+
+/* ms milliseconds at 2400 bit/s: our bits in (mark when none), its bits out */
+static void raw_ms(raw_t *r, int ms)
+{
+    while (ms-- > 0) {
+        mnppeer_tick(&r->p, 1);
+        r->acc += BPS;
+        while (r->acc >= 1000) {
+            int x = mnppeer_tx_bit(&r->p);
+            r->acc -= 1000;
+            if (r->out_n < (int)sizeof r->out) r->out[r->out_n++] = (uint8_t)x;
+            mnppeer_rx_bit(&r->p, r->in_i < r->in_n ? r->in[r->in_i++] : 1);
+        }
+    }
+}
+
+/* the reason of the last LD among the peer's frames, -1 none */
+static int raw_last_ld(const raw_t *r)
+{
+    uint8_t fr[16][64];
+    int len[16], nf, i, reason = -1;
+    nf = wire_hdlc(r->out, r->out_n, fr, len, 16);
+    for (i = 0; i < nf; i++)
+        if (len[i] == 7 && fr[i][0] == 4 && fr[i][1] == 2 && fr[i][2] == 1 && fr[i][3] == 1
+            && crc_bits(0xFFFFu, 0x8408u, fr[i], 7) == 0xF0B8u)
+            reason = fr[i][4];
+    return reason;
+}
+
+/* a sender that ignores credit: the responder (k 2, credit 0 from the
+ * start) gets LTs 1..6 at once; 1 and 2 were within the k of its LR,
+ * 3..6 beyond any credit it gave */
+static void raw_over_credit(void)
+{
+    static raw_t r;
+    mnp_peer_cfg b = cfg(0, 3);
+    uint8_t lt[15], buf[64];
+    int ns, i;
+    b.k = 2;
+    b.zero_credit_ms = 100000;
+    raw_init(&r, &b);
+    raw_frame(&r, lr_courier, (int)sizeof lr_courier, 0);
+    raw_ms(&r, 600);
+    raw_frame(&r, la_conf, (int)sizeof la_conf, 0);
+    raw_ms(&r, 300);
+    CHECK_EQ_I(mnppeer_state(&r.p), MNPP_CONNECTED);
+    CHECK_EQ_I(r.p.k, 2);
+    for (ns = 1; ns <= 6; ns++) {
+        lt[0] = 4; lt[1] = 4; lt[2] = 1; lt[3] = 1; lt[4] = (uint8_t)ns;
+        for (i = 5; i < 15; i++) lt[i] = (uint8_t)(ns * 16 + i);
+        raw_frame(&r, lt, 15, 0);
+    }
+    raw_ms(&r, 2000);
+    CHECK_EQ_I(r.p.rx_lt, 6);
+    CHECK_EQ_I(r.p.rx_over_credit, 4);
+    CHECK_EQ_I(mnppeer_read(&r.p, buf, sizeof buf), 0);
+    printf("raw_over_credit: 6 LTs on credit 0 (k 2): %d beyond the credit given\n", r.p.rx_over_credit);
+}
+
+/* the responder's LD codes: 2 for constant parameter 1, 1 for parameters it
+ * cannot take and for its LR tries running out (code 3 is the initiator's,
+ * Table A.5 Note) */
+static void raw_ld_codes(void)
+{
+    static raw_t r;
+    mnp_peer_cfg b = cfg(0, 3);
+    uint8_t lr[sizeof lr_courier];
+    int c2, c1a, c1b;
+
+    memcpy(lr, lr_courier, sizeof lr);
+    lr[2] = 3;                                  /* constant parameter 1 */
+    raw_init(&r, &b);
+    raw_frame(&r, lr, (int)sizeof lr, 0);
+    raw_ms(&r, 600);
+    c2 = raw_last_ld(&r);
+    CHECK_EQ_I(c2, 2);
+    CHECK_EQ_I(mnppeer_state(&r.p), MNPP_DISCONNECTED);
+
+    memcpy(lr, lr_courier, sizeof lr);
+    lr[13] = 1;                                 /* framing mode 1 */
+    raw_init(&r, &b);
+    raw_frame(&r, lr, (int)sizeof lr, 0);
+    raw_ms(&r, 600);
+    c1a = raw_last_ld(&r);
+    CHECK_EQ_I(c1a, 1);
+
+    raw_init(&r, &b);                           /* an LR, then no LA */
+    raw_frame(&r, lr_courier, (int)sizeof lr_courier, 0);
+    raw_ms(&r, 6000);
+    c1b = raw_last_ld(&r);
+    CHECK_EQ_I(c1b, 1);
+    CHECK_EQ_I(r.p.est_tries, 2);
+    CHECK_EQ_I(mnppeer_state(&r.p), MNPP_DISCONNECTED);
+    printf("raw_ld_codes: constant 1 -> LD %d, framing 1 -> LD %d, no LA -> LD %d\n", c2, c1a, c1b);
+}
+
+/* the originator sends its LR again on a frame with a bad FCS (A.7.1.2 b) */
+static void raw_lr_on_bad(void)
+{
+    static raw_t r;
+    mnp_peer_cfg a = cfg(1, 3);
+    a.t401_ms = 5000;
+    raw_init(&r, &a);
+    raw_ms(&r, 300);
+    CHECK_EQ_I(r.p.est_tries, 1);
+    raw_frame(&r, lr_courier, (int)sizeof lr_courier, 1);
+    raw_ms(&r, 300);
+    CHECK_EQ_I(r.p.est_tries, 2);
+    CHECK_EQ_I(mnppeer_state(&r.p), MNPP_IDLE);
+    printf("raw_lr_on_bad: LR sent %d times by 600 ms (T401 5 s)\n", r.p.est_tries);
+}
+
 int main(void)
 {
     loop_mode3();
@@ -453,8 +667,13 @@ int main(void)
     loop_negotiate();
     loop_ld();
     loop_ln();
+    loop_ln_full();
+    loop_conf_std();
     loop_zero_credit();
     loop_no_lr();
     wire();
+    raw_over_credit();
+    raw_ld_codes();
+    raw_lr_on_bad();
     T_REPORT("test_mnppeer");
 }

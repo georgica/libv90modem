@@ -388,6 +388,11 @@ is the type. From the firmware's receive path 8FBB:1892 and frame builders at
   parameter 1 contains an unexpected value", 3 "LR received with incompatible
   or unknown parameter value", 4 to 254 reserved, 255 user-initiated
   (A.6.5.1.3; PS §3.1). [PUB]
+- Who may send code 3: the Note under Table A.5 says "Code 3 is only used
+  during the protocol establishment phase by the establishment initiator";
+  codes 1, 2 and 3 are the establishment failures (A.5, Table A.5 and its
+  Note, in A.6.5.1.3). A responder that cannot take an LR's parameters does
+  not send 3. [PUB]
 - The Courier's S17 (disconnect reason) list: 1 "Received data different than
   requested", 2 "Incompatible MNP protocol", 3 "Connection request parameters
   unknown", 4 "Remote modem retry timeout", 5 "Inactivity timeout", 6

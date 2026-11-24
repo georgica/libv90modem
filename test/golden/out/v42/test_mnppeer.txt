@@ -7,7 +7,12 @@ loop_negotiate: parameter 8 both 3&2: layout 1; caller only: layout 0
 loop_negotiate: parameter 8 both 3: n401 256, 8192 octets in 32 LTs
 loop_ld: release -> LD reason 255 at the other end, both ways
 loop_ln: 3 codes delivered once each, in order
+loop_ln_full: 12 codes through a queue of 8, 5 LNs refused while full, all in order
+loop_conf_std: confirming LA layout 0, then layout 1
 loop_zero_credit: 0 octets before the credit, then 8192 intact
 loop_no_lr: 3 LRs, gave up at 1503 ms
 wire: LR and LA octets as written out, mode 3 FCS F9 08, mode 2 FCS 45 10
-test_mnppeer: 100 checks, 0 failures
+raw_over_credit: 6 LTs on credit 0 (k 2): 4 beyond the credit given
+raw_ld_codes: constant 1 -> LD 2, framing 1 -> LD 1, no LA -> LD 1
+raw_lr_on_bad: LR sent 2 times by 600 ms (T401 5 s)
+test_mnppeer: 146 checks, 0 failures
