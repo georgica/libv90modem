@@ -48,6 +48,8 @@ typedef struct {
     int32_t  zr, zi;            /* derotated point of the newest symbol */
     int32_t  nsym;              /* symbols out, modulo 2^31 */
     int32_t  mse;               /* smoothed |e|^2 / |d|^2, Q16 (65536 = 0 dB) */
+    int32_t  cgrow;             /* the most any tap can have moved since the
+                                   taps were last held (qamrx_update) */
     int64_t  mse_acc;           /* the same with 8 more fractional bits */
 } qamrx_t;
 

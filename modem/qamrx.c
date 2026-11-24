@@ -12,6 +12,28 @@
  * division */
 #define DENSE_DN ((int64_t)1 << 25)
 typedef char qrx_dense_dn_check[(int64_t)2 * QRX_REF * QRX_REF == DENSE_DN ? 1 : -1];
+/* Against hostile audio (security pass, I2: loud or abrupt audio after S,
+ * which real calls' hang-up clicks also give), with the result unchanged
+ * wherever the arithmetic fitted before:
+ * - Products and sums that could leave their type are formed as unsigned
+ *   (defined: modulo 2^N) and converted back, which wraps (DESIGN.md: an
+ *   assumed implementation-defined behaviour). Where they fitted, the
+ *   value is the same; where they did not (signed overflow before), the
+ *   value is what the code computed in practice, so that recordings whose
+ *   clicks overflowed the tap update replay as they did.
+ * - The squared error, whose shift wrapped to a negative mse, is taken as
+ *   the clamp's 4 (6 dB) when it would not fit.
+ * - The taps: cgrow adds up the most an update can move a tap (2^31 >>
+ *   mu_shift), and before it passes QRX_CHEAD every tap is held to
+ *   +-QRX_CMAX and cgrow starts again. A tap then stays within QRX_CMAX +
+ *   QRX_CHEAD; k56d's one restore of taps saved under that bound adds at
+ *   most one QRX_CHEAD more (1.5 * 2^30 in all), so the taps never wrap
+ *   and the output's and the centroid's sums stay in int64. A real line's
+ *   taps are under 2^24 (Q20): the hold is a pass over the taps every 256
+ *   (mu_shift 10) to 4096 (14) symbols that changes nothing there, not a
+ *   clamp on every tap update. */
+#define QRX_CMAX ((int32_t)1 << 29)
+#define QRX_CHEAD ((int32_t)1 << 29)
 /* the tap update takes two taps a pass */
 typedef char qrx_ntap_even_check[QRX_NTAP % 2 == 0 ? 1 : -1];
 /* the equaliser output takes four taps a pass */
@@ -35,6 +57,7 @@ void qamrx_init(qamrx_t *r, int sym_rate, int car_num, int car_den)
     r->dnorm = 1; r->timing_on = 0;
     r->theta = 0; r->freq = 0;
     r->zr = r->zi = 0; r->nsym = 0; r->mse = 65536; r->mse_acc = (int64_t)65536 << 8;
+    r->cgrow = 0;
 }
 
 void qamrx_sync(qamrx_t *r, int32_t delay_q8)
@@ -51,6 +74,7 @@ void qamrx_sync(qamrx_t *r, int32_t delay_q8)
     for (i = 0; i < 2 * QRX_NTAP; i++) r->x[i] = 0;
     r->t_integ = 0; r->theta = 0; r->freq = 0; r->nsym = 0; r->mse = 65536;
     r->mse_acc = (int64_t)65536 << 8;
+    r->cgrow = 0;
     r->timing_on = 0; r->er = r->ei = 0;
     /* output grid: tau = t_sym0 + m * step. After the next push the evaluable
      * instant is (that sample - V34_ID); pick the first grid point not before it.
@@ -71,7 +95,11 @@ int qamrx_centroid(const qamrx_t *r)
         int64_t e = ((int64_t)r->cr[k] * r->cr[k] + (int64_t)r->ci[k] * r->ci[k]) >> 16;
         num += e * k; den += e;
     }
-    return den ? (int)((num * 256) / den) : QRX_CENTER * 256;
+    if (!den) return QRX_CENTER * 256;
+    /* num * 256 leaves int64 only for taps far beyond a real line's (see
+     * QRX_CHEAD); then the same quotient in two steps */
+    if (num < ((int64_t)1 << 54)) return (int)((num * 256) / den);
+    return (int)(num / den * 256 + (num % den) * 256 / den);
 }
 
 static void eq_out(const qamrx_t *r, int32_t *yr, int32_t *yi)
@@ -88,6 +116,27 @@ static void eq_out(const qamrx_t *r, int32_t *yr, int32_t *yi)
     }
     *yr = (int32_t)(ar >> 20); *yi = (int32_t)(ai >> 20);
 }
+
+/* every tap to +-QRX_CMAX (see QRX_CHEAD) */
+static void hold_taps(qamrx_t *r)
+{
+    int k;
+    for (k = 0; k < QRX_NTAP; k++) {
+        if (r->cr[k] > QRX_CMAX) r->cr[k] = QRX_CMAX;
+        if (r->cr[k] < -QRX_CMAX) r->cr[k] = -QRX_CMAX;
+        if (r->ci[k] > QRX_CMAX) r->ci[k] = QRX_CMAX;
+        if (r->ci[k] < -QRX_CMAX) r->ci[k] = -QRX_CMAX;
+    }
+    r->cgrow = 0;
+}
+
+/* a - b, a + b and a * b on int32 and int64 modulo 2^N (see QRX_CMAX) */
+static int32_t sub32(int32_t a, int32_t b) { return (int32_t)((uint32_t)a - (uint32_t)b); }
+static int32_t add32(int32_t a, int32_t b) { return (int32_t)((uint32_t)a + (uint32_t)b); }
+static int32_t mul32(int32_t a, int32_t b) { return (int32_t)((uint32_t)a * (uint32_t)b); }
+static int64_t add64(int64_t a, int64_t b) { return (int64_t)((uint64_t)a + (uint64_t)b); }
+static int64_t sub64(int64_t a, int64_t b) { return (int64_t)((uint64_t)a - (uint64_t)b); }
+static int64_t mul64(int64_t a, int64_t b) { return (int64_t)((uint64_t)a * (uint64_t)b); }
 
 /* one T/3 sample out of the interpolator and through the equaliser; returns 1
  * when it was the on-time sample of a symbol */
@@ -148,9 +197,10 @@ static int produce(qamrx_t *r)
                 s = sintab[(th >> 22) & SIN_MASK]; c = sintab[((th >> 22) + SIN_N / 4) & SIN_MASK];
                 zmr = (int32_t)(((int64_t)r->ymr * c + (int64_t)r->ymi * s) >> 15);
                 zmi = (int32_t)(((int64_t)r->ymi * c - (int64_t)r->ymr * s) >> 15);
-                g = (int64_t)r->er * (zpr - zmr) + (int64_t)r->ei * (zpi - zmi);
-                gn = (int32_t)(r->dnorm == DENSE_DN ? g * 4096 / DENSE_DN  /* Q12 */
-                                                    : g * 4096 / r->dnorm);
+                g = add64(mul64(r->er, sub32(zpr, zmr)), mul64(r->ei, sub32(zpi, zmi)));
+                g = mul64(g, 4096);
+                gn = (int32_t)(r->dnorm == DENSE_DN ? g / DENSE_DN  /* Q12 */
+                                                    : g / r->dnorm);
                 if (gn > 4096) gn = 4096;
                 if (gn < -4096) gn = -4096;
                 /* second-order loop, time constant about 130 symbols */
@@ -193,18 +243,23 @@ int qamrx_tick(qamrx_t *r, int16_t xin)
 
 void qamrx_update(qamrx_t *r, int32_t dr, int32_t di, int flags, int mu_shift)
 {
-    int32_t er = dr - r->zr, ei = di - r->zi, c, s, pr, pi;
-    int64_t dn, e2 = ((int64_t)er * er + (int64_t)ei * ei) << 16;
+    int32_t er = sub32(dr, r->zr), ei = sub32(di, r->zi), c, s, pr, pi;
+    /* |e|^2 << 16 is formed when it fits (|e|^2 under 2^47); past that
+     * (signed overflow before, and a negative mse), the clamp below at
+     * once: 4 << 16, which the quotient is anyway for any |d|^2 up to 2^45 */
+    uint64_t e2u = (uint64_t)((int64_t)er * er) + (uint64_t)((int64_t)ei * ei);
+    int64_t dn, e2 = e2u < ((uint64_t)1 << 47) ? (int64_t)e2u << 16 : -1;
     int k;
     if (flags & QRX_DENSE) {
         dn = DENSE_DN;
-        e2 /= DENSE_DN;
+        if (e2 >= 0) e2 /= DENSE_DN;
     } else {
-        dn = (int64_t)dr * dr + (int64_t)di * di;
+        uint64_t d2 = (uint64_t)((int64_t)dr * dr) + (uint64_t)((int64_t)di * di);
+        dn = d2 > (uint64_t)INT64_MAX ? INT64_MAX : (int64_t)d2;
         if (dn < 1) dn = 1;
-        e2 /= dn;
+        if (e2 >= 0) e2 /= dn;
     }
-    if (e2 > (4 << 16)) e2 = 4 << 16;
+    if (e2 > (4 << 16) || e2 < 0) e2 = 4 << 16;
     r->mse_acc += ((e2 << 8) - r->mse_acc) / 64;
     r->mse = (int32_t)(r->mse_acc >> 8);
 
@@ -223,20 +278,24 @@ void qamrx_update(qamrx_t *r, int32_t dr, int32_t di, int flags, int mu_shift)
         /* rounded, not truncated: a shift alone rounds every update down, and
          * half an LSB per symbol on every tap is a drift of 0.14 in 90 s */
         const int32_t half = (int32_t)1 << (mu_shift - 1);
+        /* an update moves a tap by at most 2^31 >> mu_shift */
+        const int32_t most = (int32_t)(((uint32_t)1 << 31) >> mu_shift);
+        if (r->cgrow > QRX_CHEAD - most) hold_taps(r);
+        r->cgrow += most;
         for (k = 0; k < QRX_NTAP; k += 2) {
-            r->cr[k] += (pr * x[k] + half) >> mu_shift;
-            r->ci[k] += (pi * x[k] + half) >> mu_shift;
-            r->cr[k + 1] += (pr * x[k + 1] + half) >> mu_shift;
-            r->ci[k + 1] += (pi * x[k + 1] + half) >> mu_shift;
+            r->cr[k] = add32(r->cr[k], add32(mul32(pr, x[k]), half) >> mu_shift);
+            r->ci[k] = add32(r->ci[k], add32(mul32(pi, x[k]), half) >> mu_shift);
+            r->cr[k + 1] = add32(r->cr[k + 1], add32(mul32(pr, x[k + 1]), half) >> mu_shift);
+            r->ci[k + 1] = add32(r->ci[k + 1], add32(mul32(pi, x[k + 1]), half) >> mu_shift);
         }
     }
     if (flags & QRX_CARRIER) {
         /* phase error Im{z conj(d)} / |d|^2 in rad, Q16 */
-        int64_t num = (int64_t)r->zi * dr - (int64_t)r->zr * di;
-        int32_t phi = (int32_t)((flags & QRX_DENSE) ? num * 65536 / DENSE_DN : num * 65536 / dn);
+        int64_t num = mul64(sub64((int64_t)r->zi * dr, (int64_t)r->zr * di), 65536);
+        int32_t phi = (int32_t)((flags & QRX_DENSE) ? num / DENSE_DN : num / dn);
         if (phi > 32768) phi = 32768;
         if (phi < -32768) phi = -32768;
-        r->freq += phi * 16;
+        r->freq = add32(r->freq, phi * 16);
         r->theta += (uint32_t)(phi * 1043);
     }
     r->theta += r->dcar + (uint32_t)r->freq;

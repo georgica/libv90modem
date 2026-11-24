@@ -4,4 +4,4 @@
   3200 tilt, 32 dB: slicer SNR 32.4 dB, errors 0
   +100 ppm, +5 Hz: slicer SNR 37.2 dB, errors 0, centroid 36.01 -> 36.01, loop 4.79 Hz
   -100 ppm, -5 Hz: slicer SNR 37.2 dB, errors 0, centroid 35.97 -> 35.98, loop -4.83 Hz
-qamrx: 18 checks, 0 failures
+qamrx: 22 checks, 0 failures

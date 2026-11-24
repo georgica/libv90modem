@@ -327,6 +327,14 @@ Fixed:
   against hostile audio, with no memory-safety impact: the hostile
   caller's own call is the one that suffers. Every other call is
   unchanged.
+- Answering role, x2, K56flex, V.34, V.90 and V.92: the receiver of the
+  V.34 upstream overflowed (signed overflow) on loud or abrupt audio after
+  S, such as full-scale noise or runs of -32768, and its mse could go
+  negative. Its arithmetic is now defined throughout and gives the same
+  results as before, the taps are held within range, and the mse stays
+  between 0 and its clamp (6 dB). A robustness fix against hostile audio,
+  with no memory-safety impact; every call computes as it did, the
+  recorded calls' hang-up clicks included.
 - Answering role, a V.21 caller without V.8 (three ISP calls,
   2026-11-23): it answers ANSam with its mark, a steady 980 Hz, sends no
   CM and waits for our 1650 Hz. We went on to V.22 and fell back to V.21
