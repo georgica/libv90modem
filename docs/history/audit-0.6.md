@@ -45,8 +45,8 @@ then (Task 4 fix round 1) the costs run beside the other stages without
 the per-tick counts (`COST_TICKS=0`), and the port matrix runs the whole
 suites on host gcc, armv5, s390x and riscv64 and QUICK on the rest (m68k
 reported only until Task 5b; since then gating, below), slowest targets first, 2 targets at once with 8 programs
-each. That configuration's time is to be measured at the release proof
-and recorded here.
+each. That configuration's time, measured at the release proof: 15230 s
+(below, "The release proof").
 
 ### m68k: a GCC wrong-code bug; gating again (Task 5b)
 
@@ -1787,3 +1787,130 @@ saturation runs in training only, where the calling side's Sd and TRN1d
 figure moved by less than 0.01 M. Far under the brief's 0.5 M. The x2 and
 V.90 bench hashes are the same before and after: tx 37c3e5f5 / 8e3136e9,
 rx af8dfaea / 4bebb9be.
+
+## The release proof (0.6.0)
+
+Run on the audit branch after 0.6.0-rc1 (1a11a08), with the two rc1 CI
+fixes below on top: `make verify-phase` (armv5 uClibc and armv7hf musl
+compilers, `RECS` the 106 private recordings), `tools/replay-proof.sh
+diff v0.5.0`, and `make install` with the example built through
+pkg-config.
+
+The rc1 CI fixes (found by the release proof and the GitHub CI):
+- a7c26ad `Makefile`: the cross-built libraries are built once before the
+  api tests. Each `arm/api_test_*` rule ran a sub-make for the same
+  `libv90modem.a`, and under `-j` several raced in a from-scratch armv5
+  `make check-arm` (an empty `libv90modem.o`, a failed `check-symbols`).
+- 2aed43f `tools/golden.sh`: the `-nt` probe works under dash (the CI's
+  host jobs failed on it).
+Neither touches library code or any output.
+
+### Result
+
+`VERIFY-PHASE PASS (15230 s)` (4 h 14 min), the stages:
+
+| stage | time | result |
+|---|---|---|
+| armv5 | 2365 s | ALL ARM CHECKS PASS |
+| ports | 12565 s | 15 of 15 targets identical to host gcc (below) |
+| armv7hf | 269 s | short-cmp: 137 programs identical (build/a7 against build/short) |
+| benches | 30 s | host = qemu hashes: 10 benches |
+| crd | 1 s | k56-crd-scan: 106 recordings, 0 CRd detections |
+| costs | 6356 s (beside the others) | 17 lines in build/costs.txt |
+
+The stages ran one after another, the costs beside them; the matrix took
+12565 s with 2 targets at once. The wall time is the ports' plus the other
+stages' (the costs finish first).
+
+`make verify` (TMPDIR=build/tmp, 16 threads) at a7c26ad: `VERIFY PASS
+(460 s)`; golden 141 programs identical, split 4 programs, replay 636
+identical, bench hashes 17 identical, ubsan, armv7hf and bigend (short-cmp
+129 identical) ok, fixed ok (104 objects, 0 float helpers).
+
+### Port matrix, per target
+
+Every target gates; each ran the whole suite (229 programs) and was
+compared with host gcc program by program. Whole suites on host gcc,
+armv5-uclibc, s390x-glibc, riscv64-musl; QUICK (219 of 229, the 10 slow
+programs of `tools/ports-slow.txt` skipped) on the rest.
+
+| target | result |
+|---|---|
+| host-gcc (the reference), host-clang | host-clang: 219 of 229 identical |
+| x86_64-musl, i686-musl | 219 of 229 identical, both |
+| aarch64-musl, aarch64be-musl (big-endian) | 219 of 229 identical, both |
+| armv7hf-musl | 219 of 229 identical |
+| armv5-uclibc (the box's ABI) | 229 of 229 identical (7 lines only with uClibc printf's rounding up, "0.3 0.8 5.84 0.14") |
+| s390x-glibc (big-endian) | 229 of 229 identical |
+| riscv64-musl | 229 of 229 identical |
+| ppc-musl, ppc64-musl (big-endian) | 219 of 229 identical, both |
+| mips-musl (big-endian), mipsel-musl | 219 of 229 identical, both |
+| m68k-uclibc (big-endian) | 219 of 229 identical (8 lines only with printf's rounding up) |
+| win32-mingw (wine) | 219 of 229 identical |
+
+### Memory per target
+
+`v90m_mem_size()` is unchanged since Task 29's table (above; no later task
+changes it), and `api_test_api` passed on every target above: it pins
+106320 (x86-64) and 106016 (32-bit ARM) and checks `v90m_mem_size() <=
+V90M_MEM_SIZE` (110592) on the others. Octets: 106320 on host-gcc,
+host-clang, x86_64-musl, aarch64, aarch64be, ppc64, riscv64, s390x;
+106016 on armv5, armv7hf, mips, mipsel, ppc, win32-mingw; 105832 i686;
+105704 m68k. Before Task 29 it was 118824 / 118512 / 118296 / 118188.
+`V90M_EC_MEM_SIZE` 51200 (`v90m_ec_mem_size()` 49792 on x86-64),
+`V90M_ASYNC_MEM_SIZE` 2048 (1064).
+
+### CPU per mode, before and after
+
+M ARM instructions per second of line in data mode, armv5 uClibc, gcc -O2,
+from `build/costs.txt` of this run (`COST_TICKS=0`), against the baseline
+(v0.5.0 code, above):
+
+| | baseline (v0.5.0) | 0.6.0 | change |
+|---|---|---|---|
+| x2 answering (`cost-x2`, second 15 to 16) | 82.57 | 56.60 | -25.97 (-31 %) |
+| V.90 answering (`cost-x2`'s, second 15 to 16) | 39.20 | 31.20 | -8.00 (-20 %) |
+| K56flex answering (second 20 to 21) | 39.27 | 32.14 | -7.13 (-18 %) |
+| V.34 answering (second 10 to 11) | 40.53 | 33.44 | -7.09 (-17 %) |
+| V.90 downstream receiver, 0 / 100 ppm | 44.62 / 48.97 | 36.45 / 40.91 | -8.17 / -8.06 |
+| V.90 calling, 0 / 100 ppm | 55.11 / 59.31 | 46.96 / 50.94 | -8.15 / -8.37 |
+| V.92 calling, 0 / 100 ppm | 69.95 / 74.32 | 62.11 / 66.52 | -7.84 / -7.80 |
+| Bell 103 / Bell 212A calling (first second) | 9.86 / 4.43 | 9.88 / 4.66 | +0.02 / +0.23 |
+| x2 + V.42, no compression, 32000 / 56000 | | 58.89 / 61.50 | new |
+| x2 + V.42 bis (2048/32), 32000 / 56000 | | 69.24 / 77.19 | new |
+| x2 + V.44 (2048/255/4096), 32000 / 56000 | | 89.25 / 108.78 | new |
+| K56flex, the heavy client | 84.43 | 58.60 | -25.83 (-31 %) |
+| V.42 per endpoint, 56 kbit/s both ways: none / V.42 bis / V.44 | 7.96 / 11.81 / 12.19 | 5.21 / 9.08 / 9.48 | -2.75 / -2.73 / -2.71 |
+
+The x2 + V.42 rows and the heavy K56flex client are the figures measured
+at b490ccd (Task 37); the only later code change, the rc1 fix wave, moved
+x2 by +0.02 M, and since then the V.42 path has changed only in XID
+parsing. `make cost-v42` was run again at the release proof and gave the
+same 5.21 / 9.08 / 9.48 M (hashes f0475237, 490794a1, 7f358e0c). The other
+rows are this run's `build/costs.txt`. Bell 212A is the one row above the
+baseline, Phase 1's (Task 13, above). One x2 call per box (D18).
+
+### Time
+
+`make verify`: 460 s at a7c26ad (6.3 min was the plan's figure).
+`make verify-phase`: 15230 s, the configuration of the release proof
+(ports 12565 s, armv5 2365 s, armv7hf 269 s, benches 30 s, crd 1 s; the
+costs, 6356 s, beside them). The first measurement, at Task 4, was 22468 s.
+
+### Replay differences against v0.5.0
+
+`tools/replay-proof.sh diff v0.5.0`: `636 runs, 102 differ from v0.5.0`;
+102 traces (.txt) and 3 bit files (pd_36000 in the V.92 sets), no exit
+code. The recordings and flag sets are the Phase 1 gate's, group for
+group (table "Replay proof against v0.5.0", above): 21 (Tasks 7, 10b,
+10c: end codes, retraining and renegotiation counts, +288 upstream bits
+at the S), 42 (Task 20: the x2 click blanking), 39 (T21.2: SUVd between
+repeated CPds). Each is a CHANGELOG entry of 0.6.0. Nothing else differs. The 636 replays of the current tree against the
+manifest are identical (`make verify`).
+
+### Install
+
+`make install PREFIX=build/inst`, then `examples/call_loop.c` built with
+`cc -std=c99 -Wall -Wextra -Werror $(pkg-config --cflags --libs --static
+libv90modem)` and run: exit 0 (caller and answerer end on a clear-down,
+line time 12.93 s).

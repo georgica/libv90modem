@@ -8,7 +8,7 @@ change is listed here. Rebuild against the new header with every version;
 "Simulation and own answerer only" means: tried against simulated lines and
 this library's own answering modem, never against a real modem or server.
 
-## 0.6.0-rc1 (2026-11-24)
+## 0.6.0 (2026-11-24)
 
 Security (V.92, calling role; no 0.5.x patch: upgrade to 0.6.0):
 - The V.92 analogue modem's upstream encoder could be made to divide by
@@ -92,9 +92,13 @@ What has been shown:
   every test program's output (golden files), the 636 replays and the
   benches' hashes unchanged, under UBSan, and on armv7hf and big-endian
   aarch64 against the host (`make verify`, at every commit).
-- The port matrix (riscv64, Windows, clang, and the rest) runs in the
-  release proof for 0.6.0 final; this rc has passed the x86-64 and ARMv5
-  suites. <!-- ports: filled at 0.6.0 final -->
+- The port matrix passed at the release proof: 15 targets, each printing
+  what host gcc prints, program by program (229 programs; the whole
+  suites on host gcc, ARMv5 uClibc, s390x and riscv64, 219 on the rest):
+  x86-64 and i686, aarch64 and big-endian aarch64, ARMv7 hard-float,
+  ARMv5, riscv64, s390x, ppc, ppc64, mips, mipsel and m68k (big-endian
+  ones among them), Windows (mingw, under wine) and clang. The ARMv5 and
+  m68k runs differ only where their C library's printf rounds up.
 - Not shown: the calling side against a real modem or server (still
   simulation and our own answerer only); K56flex against a real modem.
 
