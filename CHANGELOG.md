@@ -579,7 +579,9 @@ Fixed (error control):
   padding is now read through; a longer value that is not zero there is
   out of range, as one too large is. A 4-octet k or V.42 bis value of
   2^31 or more was taken as absent (the default); it is now out of range
-  too, so our own value is used. Calls whose XID values fit are
+  too: for k and P1 our own value is used, and a V.42 bis P2 that large
+  is refused as a negotiation failure, as any P2 above 250 already is.
+  Calls whose XID values fit are
   unchanged.
 - `v90m_ec_abort` stops the endpoint in every state, and
   `v90m_ec_state` says `V90M_EC_DISCONNECTED` (reason `V90M_EC_R_LOCAL`)

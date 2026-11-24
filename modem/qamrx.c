@@ -27,7 +27,9 @@ typedef char qrx_dense_dn_check[(int64_t)2 * QRX_REF * QRX_REF == DENSE_DN ? 1 :
  *   mu_shift), and before it passes QRX_CHEAD every tap is held to
  *   +-QRX_CMAX and cgrow starts again. A tap then stays within QRX_CMAX +
  *   QRX_CHEAD; k56d's one restore of taps saved under that bound adds at
- *   most one QRX_CHEAD more (1.5 * 2^30 in all), so the taps never wrap
+ *   most one QRX_CHEAD more (1.5 * 2^30 in all; this needs k56d to restore
+ *   a save at most once, with the receiver re-synced before each save), so
+ *   the taps never wrap
  *   and the output's and the centroid's sums stay in int64. A real line's
  *   taps are under 2^24 (Q20): the hold is a pass over the taps every 256
  *   (mu_shift 10) to 4096 (14) symbols that changes nothing there, not a
