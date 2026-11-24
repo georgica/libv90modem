@@ -1406,6 +1406,21 @@ copies of 347caac, which live only in the test:
   it was replaced; see the commit `v92_enc: the zero-tap trim from a
   private copy`. Our own server's filters have no padding, so the bench
   figures do not show this trim.
+- The review's second security finding is older than this task. It is in
+  v0.3.0 to v0.5.0, from C6-2 (eff5db5) on. The V.92 caller's upstream
+  starts once a CPd acknowledges ours, but its downstream decodes CPds
+  until Ed. Each CPd with a good CRC replaced (0.5.0) or was merged into
+  (since e71e131) the CPd the running encoder read at every symbol. A CPd
+  with Mi = 0 divided by zero (SIGFPE), and one with a constellation index
+  of 15 read past the map.
+  Fixed in c31f744:
+  - the encoder has its own map (`v90a_t.encm`), taken with `encf` in
+    start_b1u after `v92_map_check` / `v92_filt_check`;
+  - v92aseq refuses a CPd that names a rate and leaves a map or filter
+    failing those checks (as a CPd whose CRC fails);
+  - `test_v92_hostile` covers both.
+  Only programs that enable V.92 when calling were exposed; it is not in
+  the default modulations.
 - P8 skipped: memory. A stored 64-bit reciprocal of the gain in `v34up_t`
   makes `answer_t` 16 bytes larger on x86-64 (106208 -> 106224) and on
   ARMv5 (105928 -> 105944), and so `v90m_mem_size()`; by D16 it is not
@@ -1414,7 +1429,8 @@ copies of 347caac, which live only in the test:
 Memory: `answer_t` 106208 / 105928 and `v90m_mem_size()` 106320 / 106016
 (x86-64 / ARMv5) are unchanged. `x2map_t`'s cache is in `x2d_t`, the
 smaller member of the answering union, and `encf` is in `orig_t` (54528
-/ 54376).
+/ 54376; with the encoder's map and v92aseq's merge copy of c31f744,
+58440 / 58280).
 
 Proof: `make verify` gave VERIFY PASS (790 s). Golden 137 identical,
 replay 636 identical, bench 17 identical; ubsan, armv7hf, bigend and
