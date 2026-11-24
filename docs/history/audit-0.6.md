@@ -1162,3 +1162,65 @@ mode:
 | V.90 answering (`cost-v34`'s, second 10 to 11) | 39.46 | 35.58 | -3.88 | |
 
 The four items were measured together, not one by one.
+
+## Task 31: the V.34 non-linear decoder without most 64-bit divisions (dsp P2, P9)
+
+`v34_nl_decode` (x2's upstream: non-linear, every symbol) did nine 64-bit
+divisions by `energy_q8`, eight of `ep 2^28` by `(Phi^2) >> 4` and two of
+`x 2^17` by Phi, each some 250 instructions on ARMv5. Now:
+
+- the nine divisions by `energy_q8` through its reciprocal, computed once
+  a call (`modem/divrcp.h`; no new struct field);
+- `(ep << 28) / ((Phi^2) >> 4)` by `divlu` (new `modem/fixdiv.h`,
+  Hacker's Delight's 64 by 32 bit division with a 32-bit quotient, two
+  32-bit divides): ep <= 2^31 and `(Phi^2) >> 4` >= 2^28, so the high
+  word is below the divisor;
+- the iteration stops when Phi repeats (the next e, and every round
+  after, would be the same); a Phi alternating between two values still
+  runs all eight rounds;
+- the final `x 2^17 / Phi` as `2 (a / Phi)` plus one if twice the
+  remainder reaches Phi, a = |x| 2^16 < 2^32: 32-bit divides, then the
+  sign;
+- `v34_nl_phi_q16` (and so `v34_nl_encode`) divides by `div_s64_u32`
+  (divlu when the quotient fits 32 bits, C's division otherwise): one
+  division a call, where a reciprocal would itself cost a 64-bit one.
+
+`V90M_CLZ32` (divlu's normalisation, one CLZ on ARMv5) and
+`V90M_NOINLINE` are in the new `modem/compiler.h`, each builtin behind a
+C99 fallback; `-DV90M_NO_BUILTINS` takes the fallbacks.
+
+Proof: `v34/test/test_nl_exact.c` (its own commit, before this one) runs
+the three functions against verbatim copies of their v0.5.0 code over all
+130 parameter sets (symbol rate x rate x shaping): the int16 plane in
+steps of 256, its edges, 20000 random points about the constellation each
+and Phi of energies of any size; divlu, div_s64_u32 and V90M_CLZ32 against
+C on 10^7 random cases each and their edges. It is built twice, the second
+time (`test_nl_exact_nb`) with `-DV90M_NO_BUILTINS` for it and v34_nl.c.
+0 differences. Run once by hand with `dsp` (the audit's scope: the plane
+in steps of 97 by 89 and 200000 random points a set, 90 767 560 inputs,
+plus the edges): 90 793 296 points decoded and encoded, 0 differences.
+The whole plane at step 1 (`full`, 5.6 * 10^11 points) would take some 23
+CPU hours; one of its 4096 column shards (`full 1 4096`: 136 314 880
+points) gave 0 differences.
+`make verify`: golden 134, replay 636, bench 17 identical; no golden file
+re-recorded (the two new programs' own are new). The bench transmit and
+received hashes are the same on the host and under qemu, and the same as
+before.
+
+### Costs
+
+`make cost-x2 cost-k56 cost-v34 ARM_CC=$A5 COST_TICKS=0` (armv5 uClibc,
+each in its own BUILD), M ARM instructions per second of line in data
+mode:
+
+| | before | after | change | dsp's estimate |
+|---|---|---|---|---|
+| x2 answering (second 15 to 16) | 79.19 | 69.94 | -9.25 | -9.7 (`v34_nl_decode` 16.0 -> 6.3) and -0.55 (`v34_nl_encode`) |
+| V.90 answering (`cost-x2`'s, second 15 to 16) | 35.58 | 35.58 | 0.00 | |
+| K56flex answering (second 20 to 21) | 35.94 | 35.94 | 0.00 | |
+| V.34 answering (second 10 to 11) | 36.92 | 36.92 | 0.00 | |
+| V.90 answering (`cost-v34`'s, second 10 to 11) | 35.58 | 35.58 | 0.00 | |
+
+Only x2's upstream is non-linear in these calls (v34up.c decodes each
+symbol and re-encodes its decision); the decoder and the encoder were
+measured together, -9.25 M against dsp's -10.25 M for both.
