@@ -96,8 +96,8 @@ first: below, "K56flex".) The menu decides:
 
 `v90m_get_stats` adds the receiver's signal to error (`snr_db10`, 0.1 dB),
 the round-trip delay measured in the handshake (`rtd`, samples: V.34, V.90,
-V.92, x2, K56flex; both kept after the end and through a retrain, as the
-last measured in data mode), the echo delay in use (V.90, V.92, x2, K56flex: that of the engine
+V.92, x2, K56flex; both the engine's figure while connected, and after the
+end the last measured while data moved), the echo delay in use (V.90, V.92, x2, K56flex: that of the engine
 running now; during a retrain or after the end, that of the modulation of
 the call), and the counts of retrains and of rate renegotiations that
 stopped the data (V.34, V.90, V.92, x2, K56flex), each counted when data

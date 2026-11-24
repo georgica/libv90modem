@@ -128,11 +128,12 @@ Fixed (API, either role):
   as before, but a live reader sees the count at one of those moments, not
   at the stop.
 - `v90m_stats.snr_db10` and `rtd` keep the last value measured while data
-  moved, through a retrain, a cleardown and after the end of the call, until
-  `v90m_reset`; they read -1 only before the first measurement (they read
-  -1 as soon as the call was over, so an end-of-call log carried none).
-  During a retrain, or in a modulation without the figure, a live reader
-  gets that kept value, not -1.
+  moved (a retrain's figures are not kept), and give it after the end of
+  the call, a cleardown's included, until `v90m_reset`; they read -1 only
+  when none was measured in the call (they read -1 as soon as the call was
+  over, so an end-of-call log carried none). While connected the engine's
+  own figure is returned, in a retrain too; the kept value only where the
+  engine has none (-1).
 
 Changed (answering role; a host that matched on `V90M_END_FAILED` for a
 dropped call should look at `V90M_END_LOST`):

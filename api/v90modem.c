@@ -58,11 +58,12 @@ struct v90m {
     uint8_t  was_connected, was_moving, was_ended;
     uint8_t  busy;              /* inside v90m_process_*: a callback may be running */
     uint8_t  dead;              /* v90m_destroy came from a callback: stop after this sample */
-    uint8_t  reneg_pending;     /* data stopped, neither a retrain nor the end: counts when it moves again */
+    uint8_t  reneg_pending;     /* data stopped, not in a retrain: counts when it moves again, becomes
+                                   a retrain, or the call ends other than by a cleardown */
     uint8_t  meas_tick;         /* samples since the SNR and round trip were last kept */
     int      was_mod, was_tx, was_rx;
     unsigned renegotiations;
-    int16_t  last_snr, last_rtd;    /* the last measured while connected; -1 before the first */
+    int16_t  last_snr, last_rtd;    /* the last measured while data moves; -1 before the first */
     union { answer_t a; orig_t o; } u;     /* by cfg.role */
 };
 

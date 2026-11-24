@@ -352,13 +352,14 @@ void     v90m_get_state(const v90m_t *m, v90m_state *st);
 typedef struct {
     v90m_conn  modulation;
     int        tx_bps, rx_bps;
-    int        snr_db10;        /* receiver signal to error, 0.1 dB, 0..600; -1 = none (a
-                                   modulation without the figure, or none measured yet).
-                                   Kept while data moves: after the end, and in a retrain,
-                                   the last value measured in data mode; until v90m_reset */
+    int        snr_db10;        /* receiver signal to error, 0.1 dB, 0..600; -1 = none.
+                                   While connected, the engine's figure, in a retrain too;
+                                   where it has none, the last measured while data moved.
+                                   After the end of the call, that last value; -1 only if
+                                   none was measured this call. Until v90m_reset */
     int        rtd;             /* round-trip delay measured in the handshake, samples; -1 = none
                                    (answering: V.34, V.90, V.92, x2, K56flex; calling: V.32bis,
-                                   V.34, V.90, V.92); kept as snr_db10 is */
+                                   V.34, V.90, V.92); live or kept as snr_db10 is */
     int        echo_delay;      /* answering V.90 / V.92 / x2 / K56flex: in use (configured
                                    or measured) by the engine running now, during a retrain
                                    or after the end the call's; samples; -1 = none, and
