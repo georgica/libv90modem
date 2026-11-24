@@ -560,6 +560,15 @@ Changed (API: callbacks, NULL, configuration checks):
   header.
 
 Fixed (error control):
+- XID values longer than they need to be: a value padded with leading
+  zero octets past 4 (V.44's past 3) was read from its leading octets
+  (N401 sent as `00 00 00 08 00` read as 1 bit, V.44 P1T 2048 in 4
+  octets as 8, and the call released for a negotiation failure). The
+  padding is now read through; a longer value that is not zero there is
+  out of range, as one too large is. A 4-octet k or V.42 bis value of
+  2^31 or more was taken as absent (the default); it is now out of range
+  too, so our own value is used. Calls whose XID values fit are
+  unchanged.
 - `v90m_ec_abort` stops the endpoint in every state, and
   `v90m_ec_state` says `V90M_EC_DISCONNECTED` (reason `V90M_EC_R_LOCAL`)
   on return. In the detection phase it did nothing (the endpoint went on

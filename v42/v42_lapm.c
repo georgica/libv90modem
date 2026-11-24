@@ -1,5 +1,6 @@
 /* LAPM, the error control function of ITU-T V.42. Clause numbers in the
  * comments refer to V.42 (03/2002) unless they say V.42 bis. */
+#include <limits.h>
 #include <string.h>
 #include "v42_lapm.h"
 
@@ -232,6 +233,30 @@ static uint32_t be_value(const uint8_t *p, int n)
     return v;
 }
 
+/* A PV of n octets read as a number of at most max octets (security pass
+ * M3): leading zero octets past max are padding, so the value is the last
+ * max octets; any other octet there makes it more than max octets hold,
+ * and it is read as the largest they do (out of range, above every
+ * limit), not as its leading octets. */
+static uint32_t pv_value(const uint8_t *p, int n, int max)
+{
+    if (n > max) {
+        int k;
+        for (k = 0; k < n - max; k++)
+            if (p[k]) return max >= 4 ? UINT32_MAX : ((uint32_t)1 << (8 * max)) - 1;
+        p += n - max; n = max;
+    }
+    return be_value(p, n);
+}
+
+/* a value of up to 4 octets as an int: one past INT_MAX is out of range
+ * anyway, and held there (security pass M4: the conversion of 2^31 and
+ * above is implementation-defined, and gave a negative, absent value) */
+static int pv_int(uint32_t v)
+{
+    return v > (uint32_t)INT_MAX ? INT_MAX : (int)v;
+}
+
 /* The user data subfield (12.2.1.3) as V.44 Annex A lays it out:
  * parameters in the PI, PL, PV form of the other subfields, the V.44 set
  * led by its set identifier. Parameters of other sets (the manufacturer ID
@@ -245,7 +270,7 @@ static void parse_user(const uint8_t *p, int len, xid_t *x)
         const uint8_t *pv = p + pos + 2;
         int v;
         if (pos + 2 + pl > len) break;      /* cut short: use what came before */
-        v = (int)be_value(pv, pl > 3 ? 3 : pl);
+        v = (int)pv_value(pv, pl, 3);
         if (pi == 0x40) {
             /* "V44" in V.44 Table A.1; V.42 Table 11c NOTE 2 has 0x2A for
              * the first octet */
@@ -293,14 +318,14 @@ static int parse_xid(const uint8_t *info, int len, xid_t *x)
             const uint8_t *pv = info + pos + 2;
             uint32_t v;
             if (pos + 2 + pl > end) break;
-            v = be_value(pv, pl > 4 ? 4 : pl);
+            v = pv_value(pv, pl, 4);
             if (gi == GI_PARAM) {
                 switch (pi) {
                 case 3: if (pl >= 1) { x->has_opt = 1; x->opt_len = pl; memcpy(x->opt, pv, (size_t)(pl > 4 ? 4 : pl)); } break;
                 case 5: x->n401_tx = (int)(v >> 3); break;      /* units are bits */
                 case 6: x->n401_rx = (int)(v >> 3); break;
-                case 7: x->k_tx = (int)v; break;
-                case 8: x->k_rx = (int)v; break;
+                case 7: x->k_tx = pv_int(v); break;
+                case 8: x->k_rx = pv_int(v); break;
                 default: break;             /* not recognised: ignored (12.2.2) */
                 }
             } else if (gi == GI_PRIVATE) {
@@ -310,8 +335,8 @@ static int parse_xid(const uint8_t *info, int len, xid_t *x)
                     x->has_set_id = pl == 3 && (pv[0] == 'V' || pv[0] == 0x2A) && pv[1] == '4' && pv[2] == '2';
                 } else if (x->has_set_id) {
                     if (pi == 1 && pl >= 1) x->p0 = (int)(v & 3);
-                    else if (pi == 2 && pl >= 1) x->p1 = (int)v;
-                    else if (pi == 3 && pl >= 1) x->p2 = (int)v;
+                    else if (pi == 2 && pl >= 1) x->p1 = pv_int(v);
+                    else if (pi == 3 && pl >= 1) x->p2 = pv_int(v);
                 }
             }
             pos += 2 + pl;

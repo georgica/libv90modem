@@ -292,6 +292,31 @@ static void test_xid_response_smaller(void)
     CHECK_EQ_I(A.k_tx, 15); CHECK_EQ_I(A.n401_tx, 128);
 }
 
+/* XID values longer than they need to be (security pass M3, M4): zero
+ * padding is read through, and a value past an int is out of range, not
+ * absent */
+static void test_xid_long_values(void)
+{
+    /* N401 rx 64 octets (512 bits) in 5 octets; k rx 2^31 in 4 */
+    static const uint8_t rsp[] = { 0x03, 0xAF, 0x82, 0x80, 0x00, 0x11,
+                                   0x06, 0x05, 0x00, 0x00, 0x00, 0x02, 0x00,
+                                   0x08, 0x04, 0x80, 0x00, 0x00, 0x00,
+                                   0x05, 0x02, 0x04, 0x00 };
+    /* V.44 P1T 2048 in 4 octets (V.44 values are read in 3) */
+    static const uint8_t v44[] = { 0x03, 0xAF, 0x82, 0xFF, 0x40, 3, 'V', '4', '4', 0x43, 4, 0x00, 0x00, 0x08, 0x00 };
+    uint8_t f[V42HDLC_MAX_PAYLOAD]; int fcs;
+    setup(); ca.k_tx = 30; init_pair(); v42lapm_start(&A);
+    v42lapm_tx_frame(&A, f, &fcs);
+    v42lapm_rx_frame(&A, rsp, sizeof rsp, 0);
+    CHECK_EQ_I(A.state, V42LAPM_ESTABLISHING);
+    CHECK_EQ_I(A.n401_tx, 64);
+    CHECK_EQ_I(A.k_tx, 30);         /* more than we proposed: what we proposed */
+    setup(); cb.comp_tx = cb.comp_rx = 1; cb.v44_tx = cb.v44_rx = 1; init_pair();
+    v42lapm_rx_frame(&B, v44, sizeof v44, 0);
+    CHECK_EQ_I(B.state, V42LAPM_IDLE);
+    CHECK_EQ_I(B.v44_rx, 1);
+}
+
 static void neg(int akt, int akr, int ant, int anr, int bkt, int bkr, int bnt, int bnr,
                 int k_ab, int k_ba, int n_ab, int n_ba)
 {
@@ -1523,6 +1548,7 @@ int main(void)
     test_negotiation();
     test_xid_command_form();
     test_xid_response_smaller();
+    test_xid_long_values();
     test_v44_negotiation();
     test_data();
     test_window();
