@@ -94,6 +94,7 @@ void v90arx_set_cons(v90arx_t *r, const v90arx_cons_t *c, int32_t m)
 void v90arx_rebase(v90arx_t *r)
 {
     r->n0 += CLK_REBASE;
+    r->eqnext_m = -1; r->hnext_m0 = -1;     /* m moves */
     if (r->have_next) r->next_m = clk_back(r->next_m);
 }
 
@@ -158,8 +159,9 @@ static int64_t div_l(const v90arx_t *r, int64_t n) { return divrcp_sdiv(n, (uint
  * s the symbols' levels in Table 1 units (known, or decided), pd their mean
  * square; mu = 2^-g. The sum comes from the last step when that step was
  * on m0 - 1 (hnext_m0): its terms but the newest, with the same taps on
- * the same symbols (whatever changes h or sb[] else, ls_set, takes it
- * back; a step left out, a hold or a new state moves m0 past it) */
+ * the same symbols. It is good for the very next symbol only: a symbol
+ * that makes no step (a hold, a gate), ls_set (sb[] rewritten), the start
+ * of TRAIN (m0 goes back) and v90arx_rebase take it back. */
 static void estimate(v90arx_t *r, int32_t k, int64_t pd, int g)
 {
     int64_t acc, es, n;
@@ -732,12 +734,13 @@ static void equalise(v90arx_t *r, int32_t k, int16_t q)
         if (off > (ONE32 >> 15)) rc >>= 1;          /* 30.5 ppm */
         if (off > (ONE32 >> 14)) rc >>= 1;          /* 61 ppm */
         if (!gate) estimate(r, m - V90ARX_LEAD, r->state == V90ARX_TRAIN ? (int64_t)r->L * r->L : r->pd >> 8, 2);
+        else r->hnext_m0 = -1;                      /* (no step: no sum for the next) */
         if (++r->tblk >= TBLK) { r->tblk = 0; if (!r->thold) timing(r); else r->slew = 0; }
         /* a design under way takes its next step, one a symbol (a failed
          * one leaves the taps as they are) */
         if (r->dsn.step != DSN_IDLE) { (void)dsn_step(r); r->dsn_ran = 1; }
         else if (r->state == V90ARX_DD && ((r->neq & (uint32_t)(rc - 1)) == 0 || r->redo)) { r->redo = 0; (void)dsn_start(r); r->dsn_ran = 1; }
-    }
+    } else r->hnext_m0 = -1;
 
     if (r->nout >= 2) return;
     o = &r->out[r->nout++];
@@ -758,7 +761,8 @@ static void eq_start(v90arx_t *r, int32_t k)
         r->d[i] = r->d[i + V90ARX_NB] = v;
     }
     r->dpos = 0;
-    r->eqnext_m = -1;
+    /* the estimate's m0 goes back DFF + cursor symbols from EST's last */
+    r->eqnext_m = -1; r->hnext_m0 = -1;
 }
 
 /* An interval where UINFO arrives at another level than in the others: a

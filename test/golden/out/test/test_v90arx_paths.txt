@@ -5,4 +5,9 @@ v90arx: the paths that change the taps or the lines
   timing held, impulses (gate)       state 3,  4000 decisions, mse   3444, design steps  64, held    0, hash a11d2ec2
   band edge off, holds, impulses     state 3, 11999 decisions, mse   8614, design steps 192, held  120, hash 21dca930
   taps at the end: forward a4808661, feedback b9c64ac2, estimate 516108ff
-v90arx_paths: 1 checks, 0 failures
+ntrain 1800, held from TRAIN's start to EST's last symbol, line inverted
+  TRAIN at sample 2703 with 0 decisions out, EST's last step on symbol 1850
+  released at symbol 1851
+  state 3, 12000 decisions from TRAIN on, mse   2466, hash cfa5fce1
+  taps at the end: forward b35cb1f9, feedback 2c5b5da9, estimate 454358c0
+v90arx_paths: 3 checks, 0 failures

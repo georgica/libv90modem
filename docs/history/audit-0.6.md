@@ -1374,29 +1374,29 @@ four-tap pass gets part of it.
   The paths other than the step itself that change the taps, the lines or
   `sb[]`, and how each one is handled:
   - a hold or a gated symbol: no step, so no sum, and the next symbol
-    uses its own loops; for the estimate the skipped step moves m0 past
-    the marker;
+    uses its own loops; for the estimate such a symbol also clears
+    `hnext_m0` (fix round 1, below);
   - a design whose taps replace the equaliser's (`dsn_step`'s last step,
     after that symbol's LMS step): it clears `eqnext_m`;
   - `eq_start` (the lines refilled when TRAIN starts): it clears
-    `eqnext_m`;
+    `eqnext_m` and `hnext_m0` (the estimate's m0 jumps back by DFF +
+    cursor there and climbs to EST's marker again);
   - `ls_set` (TRN1d's interval levels rewrite `sb[]`): it clears
     `hnext_m0`;
-  - EST to TRAIN, where the estimate's m0 jumps back by DFF + cursor;
-    `v90arx_rebase`, where k and m drop by CLK_REBASE; a retrain or a
-    restart (`v90arx_init` clears both markers): the marker no longer
-    matches;
+  - `v90arx_rebase` (k and m drop by CLK_REBASE) clears both; a retrain
+    or a restart (`v90arx_init`) sets both to -1;
   - `produce`, the band edge, the timing hold and the clock change no tap
     or line; the newest sample, decision or symbol (`sb[m0]`) is read
     when the sum is used, not when it is formed.
 - `test/test_orig_retrain.c` wipes the receiver's h, f and b from outside
   (a test of the collapse). Its new `wipe()` also clears the two markers:
   a sum formed from the wiped taps belongs to them. Its output is
-  unchanged.
+  unchanged. The rule is written next to the fields in v90arx.h: code that
+  writes f, b, h, the lines or sb[] from outside sets the markers to -1.
 - The estimate's step `e L 2^24 / (NCH pd)`. NCH = 128 divides e L 2^24,
-  so the step is `(e L 2^17) / pd`, the same truncated quotient. When pd is
-  L^2 (the symbols known: EST and TRAIN), the division is through L^2's
-  reciprocal (`divrcp`, a new `ll_rcp`). Otherwise it is in 32 bits when
+  so the step is `(e L 2^17) / pd`, the same truncated quotient. Whenever pd
+  is L^2 (always with the symbols known, EST and TRAIN; in DD by chance),
+  the division is through L^2's reciprocal (`divrcp`, a new `ll_rcp`). Otherwise it is in 32 bits when
   `|e L 2^17| < 2^31` and `pd < 2^31`: C's int32 division truncates as
   int64's does, for negative values too. The rest stays a 64-bit
   division.
@@ -1440,3 +1440,30 @@ v92c tx 484a898d / rx 0e9531e0, v90a cdf21a51. `make verify`: VERIFY
 PASS. Golden 137 identical (test_v90arx_paths' own is new), replay 636,
 bench 17 identical. ubsan, armv7hf, bigend and fixed ok. No golden file
 re-recorded.
+
+### Fix round 1: the estimate's sum held over a skipped step
+
+- Review C1: at EST to TRAIN the estimate's m0 goes back DFF + cursor
+  symbols and climbs again. Only an `estimate` call cleared `hnext_m0`, and
+  a hold or a gate skips that call. With `ntrain` below EST's last symbol
+  and a hold from TRAIN's start to that symbol, decisions overwrote `sb[]`
+  in the span, and the stale sum was used. Nothing in v90a does this (it
+  leaves ntrain at 2000 and does not hold there), so verify could not see
+  it. `v90arx_rebase` had the same flaw in an absurd form.
+- Fix: every symbol that makes no estimator step (hold, gate) clears
+  `hnext_m0`, so the sum is good for the very next symbol only, as the
+  equaliser's already was. `eq_start` (TRAIN's start) and `v90arx_rebase`
+  clear both markers as well.
+- test_v90arx_paths has a second receiver with ntrain 1800 in that state
+  (the line inverted just before TRAIN, held to EST's last symbol). Its
+  golden lines were recorded from 347caac's plain dot product. Before the
+  fix they differed; after it they are identical.
+- Throw-away fused-vs-plain checker: no difference over `make check`, the
+  new stage, and a sweep of ntrain 40 .. 2400 (step 40), released at EST's
+  last symbol -1, 0 and +1, with and without the inversion (360 runs). The
+  same sweep on the pre-fix code failed 46 runs.
+- `make verify`: VERIFY PASS (golden 137 identical, replay 636, bench 17).
+  Costs after the fix (the same targets, BUILD build/ca34b): V.90 calling
+  47.43 / 51.39, V.92 calling 62.48 / 66.86 (0 / 100 ppm). That is +0.05 M
+  on the table above, so the changes against Task 33 are -7.56 / -7.42 and
+  -7.58 / -7.42.

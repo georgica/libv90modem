@@ -171,14 +171,16 @@ typedef struct {
     int64_t res;                /* smoothed squared residual of the estimate, input units^2 */
     int16_t cpk;                /* cursor: the estimate's largest tap */
     int64_t hnext;              /* the estimate's next sum but its newest tap, formed by its last step ... */
-    int32_t hnext_m0;           /* ... for the step on m0 = hnext_m0; -1: none */
+    int32_t hnext_m0;           /* ... for the step on m0 = hnext_m0; -1: none (code that writes
+                                   h or sb[] from outside sets it to -1) */
     /* equaliser */
     int16_t x[2 * V90ARX_NF]; int xpos;    /* forward line, newest first, doubled */
     int16_t d[2 * V90ARX_NB]; int dpos;    /* decided levels, newest first, doubled */
     int32_t f[V90ARX_NF];       /* Q20, to an output in Table 1 units Q YF */
     int32_t b[V90ARX_NB];       /* Q16 */
     int64_t fnext, bnext;       /* the next symbol's sums but their newest taps, formed by the last LMS step ... */
-    int32_t eqnext_m;           /* ... for symbol eqnext_m; -1: none */
+    int32_t eqnext_m;           /* ... for symbol eqnext_m; -1: none (code that writes f, b,
+                                   x or d from outside sets it to -1) */
     uint32_t neq;               /* symbols equalised */
     int64_t pq, pd;             /* smoothed input and decision power, Q8 */
     int32_t kf, kb;             /* normalised steps, recomputed every 64 symbols */
