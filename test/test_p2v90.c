@@ -24,10 +24,15 @@ typedef struct {
     int up_sr_mask;             /* the digital modem's INFO1d offer */
     const info0_t *retrain;     /* the analogue modem in a retrain's Phase 2, this the first INFO0d */
     int d_reinit;               /* the digital modem starts over each time it leaves P2D_INFO0 */
+    int drop_info1d;            /* this many of the digital modem's INFO1d lost; after each the
+                                   analogue modem starts Phase 2 again, INFO0a repeated (ack 0)
+                                   until INFO0d is in: the caller of an ISP call (cc260f5a) */
+    int restart_in;             /* != 0: the analogue modem starts over (as above) once, 20 ms
+                                   into this state of the digital modem's */
     int seconds;
 } scen_t;
 
-typedef struct { p2d_t d; p2call_t a; int a_done, d_done; int l12_samples; int d_inits; int tone_at; } run_t;
+typedef struct { p2d_t d; p2call_t a; int a_done, d_done; int l12_samples; int d_inits; int tone_at; int a_inits; } run_t;
 
 /* noise without the C library's maths (its log and sqrt differ in the last
  * bit between libraries, and so would this test's output): the sum of four
@@ -49,7 +54,7 @@ static void run(const scen_t *s, run_t *r)
     static int16_t aio[MAXD];
     p2d_cfg dc;
     p2call_cfg ac;
-    int n;
+    int n, dropping = 0, drops = s->drop_info1d;
     memset(ba, 0, sizeof ba); memset(bd, 0, sizeof bd); memset(aio, 0, sizeof aio);
     memset(r, 0, sizeof *r);
     nz = 3;
@@ -73,6 +78,19 @@ static void run(const scen_t *s, run_t *r)
         rxa = aio[(n - s->io / 2 + MAXD) % MAXD];
         td = (s->digital_dead_from && n >= s->digital_dead_from) ? 0 : p2d_tick(&r->d, clip16(xd));
         if (s->d_reinit && r->d.state != P2D_INFO0) { p2d_init(&r->d, &dc); r->d_inits++; }
+        if (drops && r->d.state == P2D_INFO1D) dropping = 1;
+        if (dropping) td = 0;
+        if (dropping && r->d.state != P2D_INFO1D && r->d.t >= 8 * 100) {
+            /* 100 ms after the lost INFO1d: the caller starts over */
+            dropping = 0; drops--;
+            p2call_init_v90(&r->a, &ac);
+            r->a_inits++;
+        }
+        if (s->restart_in && !r->a_inits && r->d.state == (p2d_state)s->restart_in && r->d.t == 8 * 20) {
+            p2call_init_v90(&r->a, &ac);
+            r->a_inits++;
+        }
+        if (r->a_inits && r->a.state == P2L_A_INFO0 && !r->a.got0d) r->a.resend = 1;
         ta = p2call_tick(&r->a, rxa);
         bd[n % MAXD] = td;
         ba[(n + s->io - s->io / 2) % MAXD] = ta;         /* on the line io - io/2 samples later */
@@ -160,6 +178,32 @@ int main(void)
     report("our first INFO0a lost (9.2.2.2.1)", &s, &r);
     check_ok(&s, &r);
     CHECK(r.a.n_info0c >= 2);
+
+    s = base(); s.drop_info1d = 1; s.seconds = 30;
+    run(&s, &r);
+    report("INFO1d lost, the caller back at INFO0a (9.2.1.2.1)", &s, &r);
+    printf("    caller restarted %d times, digital back to INFO0 %d times, INFO0d sent %d\n",
+           r.a_inits, r.d.n_restart, r.d.n_info0d);
+    check_ok(&s, &r);
+    CHECK_EQ_I(r.a_inits, 1);
+    CHECK_EQ_I(r.d.n_restart, 1);
+    CHECK_EQ_I(r.a.info0d.ack, 1);      /* the caller heard our INFO0d with bit 28 set */
+
+    s = base(); s.restart_in = P2D_WAIT_REV2;
+    run(&s, &r);
+    report("the caller back at INFO0a in WAIT_REV2 (9.2.1.2.1)", &s, &r);
+    check_ok(&s, &r);
+    CHECK_EQ_I(r.a_inits, 1);
+    CHECK_EQ_I(r.d.n_restart, 1);
+
+    s = base(); s.drop_info1d = 1000; s.seconds = 40;
+    run(&s, &r);
+    printf("  every INFO1d lost: digital %d, error %d at %d ms, caller restarted %d times, digital back to INFO0 %d times\n",
+           r.d.state, r.d.error, r.d_done / 8, r.a_inits, r.d.n_restart);
+    CHECK_EQ_I(r.d.n_restart, P2D_MAX_RESTART);
+    CHECK_EQ_I(r.d.state, P2D_FAILED);
+    CHECK_EQ_I(r.d.error, P2D_ERR_INFO1A);
+    CHECK(r.d_done > 0 && r.d_done < 8 * P2D_EXCHANGE_MS);
 
     printf("time-outs\n");
     s = base(); s.digital_dead_from = 1;

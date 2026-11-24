@@ -69,10 +69,15 @@ typedef struct {
     int      expect;                /* payload length hunted for, 0 = none */
     uint8_t  frame[INFO_MAX_BITS];
     uint8_t  fill;                  /* the 4 bits before the sync of that frame, bit 0 the last */
+    uint8_t  expect2;               /* a second payload length hunted for as well, 0 = none */
+    uint8_t  flen;                  /* payload length of the frame in r->frame */
 } dpskrx_t;
 
 void dpskrx_init(dpskrx_t *r, int fc);
 void dpskrx_expect(dpskrx_t *r, int payload_bits);
+/* after dpskrx_expect(): hunt for frames of this payload length as well
+ * (r->flen says which one came in); cleared by the next dpskrx_expect() */
+void dpskrx_expect_also(dpskrx_t *r, int payload_bits);
 int  dpskrx_tick(dpskrx_t *r, int16_t x);
 /* received carrier level, RMS in 16-bit sample units */
 int  dpskrx_level(const dpskrx_t *r);

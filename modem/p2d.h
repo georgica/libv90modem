@@ -33,7 +33,7 @@ typedef enum {
     P2D_REPLY3,         /* timed tone B reversal, 10 ms more */
     P2D_L1, P2D_L2,     /* sending the probing signals; L2 until tone A is heard */
     P2D_INFO1D,
-    P2D_WAIT_INFO1A,
+    P2D_WAIT_INFO1A,    /* silent; INFO1a, or INFO0a again (9.2.1.2.1: back to INFO0) */
     P2D_DONE,
     P2D_FAILED
 } p2d_state;
@@ -48,6 +48,10 @@ enum { P2D_OK = 0, P2D_ERR_INFO0 = 1, P2D_ERR_REV, P2D_ERR_TONE_A, P2D_ERR_INFO1
  * Phase 2 (3 to 5 s). */
 #define P2D_EXCHANGE_MS 20000   /* from p2d_init / p2d_init_retrain to P2D_DONE */
 #define P2D_MAX_RECOVER 4       /* entries into P2D_RECOVER (9.2.1.2.3); the next one fails */
+/* INFO0a again once the INFO0 exchange is behind us (9.2.1.2.1): from
+ * WAIT_REV2 or RECOVER, or after our INFO1d (a caller that has lost it and
+ * starts Phase 2 over); each takes us back to INFO0 with INFO0d, bit 28 set */
+#define P2D_MAX_RESTART 2       /* such returns to INFO0; the next INFO0a fails */
 
 /* how the call goes on after P2D_DONE (p2d_t.mode) */
 enum { P2D_MODE_V34 = 0,    /* INFO1a of Table 11/V.90: V.34 (V.90 9.2.1.1.8) */
@@ -65,7 +69,8 @@ typedef struct {
     dpsktx_t  tx; dpskrx_t rx;
     probetx_t ptx; proberx_t prx;
     int       probing;              /* 0 none, 1 L1, 2 L2 */
-    info0_t   info0a; int got0a, sent_ack, resend;
+    info0_t   info0a; int got0a, resend;
+    int       n_restart;            /* returns to INFO0 on INFO0a again (P2D_MAX_RESTART) */
     int       n_info0d;             /* INFO0d sequences sent */
     info1d_t  info1d;
     info1a_t  info1a;

@@ -8,6 +8,16 @@ change is listed here. Rebuild against the new header with every version;
 "Simulation and own answerer only" means: tried against simulated lines and
 this library's own answering modem, never against a real modem or server.
 
+## 0.6.1 (unreleased)
+
+Fixed:
+- Answering role, V.90 and V.92: a caller that lost our INFO1d and started
+  Phase 2 over with INFO0a (seen on a call to an ISP) failed the call with
+  `P2D_ERR_INFO1A`. We now answer as V.90 9.2.1.2.1 asks: INFO0d with bit 28
+  set, then Tone B, and Phase 2 goes on; the same for INFO0a while we wait
+  for the second Tone A phase reversal. Two such restarts per Phase 2, the
+  third fails as before. Simulation and own answerer only.
+
 ## 0.6.0 (2026-11-24)
 
 Security (V.92, calling role; no 0.5.x patch: upgrade to 0.6.0):
