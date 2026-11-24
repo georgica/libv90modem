@@ -543,14 +543,14 @@ static void rx_traceback(v34_rx_t *rx)
 typedef char v34_pred_row_check[sizeof(((v34_rx_t *)0)->pred[0]) == 32 ? 1 : -1];
 
 /* Add-compare-select for every target state, out of line so that its few
- * pointers stay in registers. pp is rx->pred[0][0]; nk (4, 8 or 16) is a
- * multiple of 4, four predecessors a pass. The predecessors are compared
- * in their stored (ascending) order with a strict <, so the first of equal
- * metrics wins; a state none of whose predecessors is reachable keeps
- * PM_INF and its first predecessor. Only the winner's position is carried
- * through the loop: prev[t] and lab[t] (its branch label) are stored at the
- * end. Returns the smallest new metric, its state (the first of equal
- * ones) in *bsp. */
+ * pointers stay in registers. pp is the whole of rx->pred, read through as
+ * bytes; nk (4, 8 or 16) is a multiple of 4, four predecessors a pass. The
+ * predecessors are compared in their stored (ascending) order with a strict
+ * <, so the first of equal metrics wins; a state none of whose
+ * predecessors is reachable keeps PM_INF and its first predecessor. Only the
+ * winner's position is carried through the loop: prev[t] and lab[t] (its
+ * branch label) are stored at the end. Returns the smallest new metric, its
+ * state (the first of equal ones) in *bsp. */
 static V90M_NOINLINE uint32_t acs(const uint32_t *pm, const uint32_t *bm, const uint8_t *pp,
                                   unsigned ns, unsigned nk, uint32_t *npm, uint8_t *prev,
                                   uint8_t *lab, unsigned *bsp)
@@ -611,7 +611,7 @@ static void rx_trellis_step(v34_rx_t *rx, const uint32_t *m2)
     /* add-compare-select, per target state. A state that cannot be reached
      * yet has metric PM_INF and never wins. st->pair first receives the
      * winning branch label, then the subset pair that gave its metric. */
-    best = acs(pm, bm, rx->pred[0][0], ns, nk, npm, st->prev, st->pair, &bs);
+    best = acs(pm, bm, (const uint8_t *)rx->pred, ns, nk, npm, st->prev, st->pair, &bs);
     for (t = 0; t < ns; t++) {
         st->pair[t] = bpair[st->pair[t]];
         rx->pm[t] = (npm[t] >= PM_INF) ? PM_INF : npm[t] - best;
