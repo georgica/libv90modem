@@ -320,6 +320,13 @@ Changed (V.92, both roles):
   before, down to the same level.
 
 Fixed:
+- Answering role, V.90 and V.92: a caller that picks a quiet TRN1d (a
+  small UINFO in INFO1a) and sends loud audio while it should be silent
+  drove the echo canceller's taps past their 32-bit range (signed
+  overflow). The taps now stop at their largest value. A robustness fix
+  against hostile audio, with no memory-safety impact: the hostile
+  caller's own call is the one that suffers. Every other call is
+  unchanged.
 - Answering role, a V.21 caller without V.8 (three ISP calls,
   2026-11-23): it answers ANSam with its mark, a steady 980 Hz, sends no
   CM and waits for our 1650 Hz. We went on to V.22 and fell back to V.21
