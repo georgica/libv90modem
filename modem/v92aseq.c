@@ -117,12 +117,15 @@ static void begin(v92aseq_t *s, unsigned v)
     }
 }
 
-/* A CPd that checked out, into the stored one *o: what is always carried
- * and each part it carries replace what was there; a part it leaves out is
- * kept, or zero (as v92_cpd_parse() leaves it) when none is stored. The
- * CPd being received (s->cpd) has its absent parts zero (begin()). */
-static void merge(v92aseq_t *s, v92_cpd_t *o)
+/* A CPd whose CRC checked out, into a copy *o of the stored one: what is
+ * always carried and each part it carries replace what was there; a part
+ * it leaves out is kept, or zero (as v92_cpd_parse() leaves it) when none
+ * is stored. The CPd being received (s->cpd) has its absent parts zero
+ * (begin()). Returns the parts *o then holds (V92AS_HAS_*); s->has is the
+ * caller's to set. */
+static uint8_t merge(const v92aseq_t *s, v92_cpd_t *o)
 {
+    uint8_t has;
     const v92_cpd_t *c = &s->cpd;
     o->drn = c->drn;
     o->e2u_extend = c->e2u_extend;
@@ -141,11 +144,30 @@ static void merge(v92aseq_t *s, v92_cpd_t *o)
         memcpy(o->map.lc, c->map.lc, sizeof o->map.lc);
         memcpy(o->map.pt, c->map.pt, sizeof o->map.pt);
     }
-    s->has = (uint8_t)(s->has | (c->has_mod ? V92AS_HAS_MOD : 0) | (c->has_filt ? V92AS_HAS_FILT : 0)
-                       | (c->has_const ? V92AS_HAS_CONST : 0));
-    o->has_mod = (uint8_t)((s->has & V92AS_HAS_MOD) != 0);
-    o->has_filt = (uint8_t)((s->has & V92AS_HAS_FILT) != 0);
-    o->has_const = (uint8_t)((s->has & V92AS_HAS_CONST) != 0);
+    has = (uint8_t)(s->has | (c->has_mod ? V92AS_HAS_MOD : 0) | (c->has_filt ? V92AS_HAS_FILT : 0)
+                    | (c->has_const ? V92AS_HAS_CONST : 0));
+    o->has_mod = (uint8_t)((has & V92AS_HAS_MOD) != 0);
+    o->has_filt = (uint8_t)((has & V92AS_HAS_FILT) != 0);
+    o->has_const = (uint8_t)((has & V92AS_HAS_CONST) != 0);
+    return has;
+}
+
+/* 1 if the merged CPd *o (holding the parts has) may be stored: one that
+ * names an upstream rate must have a usable map once it holds the moduli
+ * and the constellations (v92_map_check: Mi >= 1, the indices name sets of
+ * points, trellis 0..2, ...), and a usable filter once it holds one
+ * (v92_filt_check). A CRC protects against the line, not against the
+ * digital modem: an encoder on a map that fails these divides by zero or
+ * reads past the map. A CPd that names no upstream rate (drn 0, the
+ * cleardown, or 20..31, which Table 30 does not define) is stored
+ * unchecked, as before: nothing is encoded from it, since start_b1u
+ * refuses a drn outside 1..19. */
+static int storable(const v92_cpd_t *o, uint8_t has)
+{
+    if (o->drn < 1 || o->drn > V92_UP_NUM_RATES) return 1;
+    if ((has & V92AS_HAS_MOD) && (has & V92AS_HAS_CONST) && v92_map_check(&o->map) != 0) return 0;
+    if ((has & V92AS_HAS_FILT) && v92_filt_check(&o->filt) != 0) return 0;
+    return 1;
 }
 
 /* the CRC word is in: the sequence, if it checks out */
@@ -158,8 +180,13 @@ static void done(v92aseq_t *s, unsigned v, v92_suvd_t *suvd, v92_cpd_t *cpd)
         s->ev |= V92AS_SUVD;
     } else {
         v92_cpd_t *c = &s->cpd;
+        uint8_t has;
         c->map.K = (uint8_t)(c->drn >= 1 && c->drn <= V92_UP_NUM_RATES ? V92_UP_K(c->drn) : 0);
-        merge(s, cpd);
+        s->out = *cpd;
+        has = merge(s, &s->out);
+        if (!storable(&s->out, has)) { bad(s); return; }    /* refused: as a CPd that did not check out */
+        s->has = has;
+        *cpd = s->out;
         s->ev |= V92AS_CPD;
     }
     hunt(s);

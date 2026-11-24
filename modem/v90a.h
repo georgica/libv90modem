@@ -220,6 +220,14 @@ typedef struct {
                                                    acknowledging SUVu / CPu still to send */
     int32_t    since_cpu;
     v92_enc_t  enc;
+    /* enc's map and filter, which it reads at every symbol: cpd's as
+       start_b1u found them (both checked), the filter less the zeros at the
+       ends of its sections (v92_filt_trim). Written there only, just before
+       v92_enc_init: a CPd merged into cpd later (the downstream decodes CPds
+       until Ed, after the upstream has started) does not reach the running
+       encoder */
+    v92_map_t  encm;
+    v92_filt_t encf;
     int32_t    b1_bits;
     uint32_t   t_su, t_jp, t_cpt, t_suvd;
     /* ---- retrains, our renegotiation, the receiver's watch on itself ---- */

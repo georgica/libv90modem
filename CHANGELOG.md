@@ -10,6 +10,40 @@ this library's own answering modem, never against a real modem or server.
 
 ## 0.6.0 (unreleased)
 
+Security (V.92, calling role; no 0.5.x patch: upgrade to 0.6.0):
+- The V.92 analogue modem's upstream encoder could be made to divide by
+  zero or read out of bounds by the digital modem it calls.
+  - Affected: 0.3.0, 0.4.0 and 0.5.0, since the V.92 analogue modem came
+    in (eff5db5).
+  - Exposed: only programs that enable V.92 when calling
+    (`V90M_MOD_V92` with `V90M_ROLE_ORIGINATE`). V.92 is not in the
+    default modulations, and the answering side is not affected.
+- How: the upstream starts B1u and data as soon as a CPd acknowledges
+  ours, while the downstream goes on decoding CPds until Ed. Every later
+  CPd with a valid CRC replaced the stored one, whose map and filter the
+  running encoder read at every symbol. With one such CPd, a broken or
+  hostile server could:
+  - set a modulus Mi of 0: a division by zero, and the host process dies
+    (SIGFPE);
+  - set a constellation index past the six sets: the encoder reads up to
+    about 2.3 KB past the map, and transmits what it reads.
+- Changed:
+  - The encoder takes its own copies of the map and the filter, checked
+    (`v92_map_check`, `v92_filt_check`), when it starts. A later CPd
+    reaches neither.
+  - A later CPd that names an upstream rate and fails those checks is
+    refused, as a CPd whose CRC fails is.
+- Behaviour change for such a CPd (no valid CPd is affected):
+  - Before, the call ended with `V90A_ERR_CPD` when the upstream started
+    on it. Now the CPd is ignored, and the call ends with
+    `V90A_ERR_PHASE4` once Phase 4 has not reached B1d 20 s after INFO1a.
+  - The caller goes on acknowledging after a refused CPd, so the upstream
+    fails until the call ends.
+- During the 0.6.0 work, a trim of zero filter taps briefly cached
+  lengths in the encoder that could read out of bounds if the filter
+  changed under it. That was never released; the trim now works on the
+  encoder's own copy.
+
 Added (tools):
 - `v90m-replay -s SAMPLE` starts the modem at that sample of the recording
   (0-based) with no search for the answer tone and no silence assumed before

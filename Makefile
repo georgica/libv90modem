@@ -127,7 +127,7 @@ TESTS    := test_g711 test_noise test_filt test_resamp test_channel test_v21 tes
             test_v22tx test_v22rx test_v22bis test_v14 test_answer test_info test_dpsk test_probe test_p2 test_qamrx test_ec test_ecdly test_v34train test_sres test_answer_v90 test_p34 test_pcmenc \
             test_v34mp test_p2ans test_v34mod test_v34dx test_v34call test_answer_v34 test_answer_v32 test_answer_v90_v34 \
             test_p2_v92 test_v92call test_answer_v92 test_v92real test_answer_lin \
-            test_anstone test_v8orig test_orig test_orig_v32 test_p2call test_orig_v34 test_v90arx test_v90arx_robust test_v90adec test_v90dil test_p2v90 test_v90a test_orig_v90 test_orig_v90_te test_orig_seeds test_orig_retrain test_pcmtx test_v92aseq test_p2v92a test_v92a test_orig_v92 test_belltone test_orig_bell test_realcheck test_x2_pad test_answer_x2 test_x2rec test_x2map test_x2tx test_k56tab test_k56enc test_k56tx test_v8bismsg test_v8bis test_answer_k56 test_clock test_shared test_fixmath test_v34up test_ans_table test_exact test_interp_bound test_v90arx_paths
+            test_anstone test_v8orig test_orig test_orig_v32 test_p2call test_orig_v34 test_v90arx test_v90arx_robust test_v90adec test_v90dil test_p2v90 test_v90a test_orig_v90 test_orig_v90_te test_orig_seeds test_orig_retrain test_pcmtx test_v92aseq test_p2v92a test_v92a test_orig_v92 test_belltone test_orig_bell test_realcheck test_x2_pad test_answer_x2 test_x2rec test_x2map test_x2tx test_k56tab test_k56enc test_k56tx test_v8bismsg test_v8bis test_answer_k56 test_clock test_shared test_fixmath test_v34up test_ans_table test_exact test_interp_bound test_v90arx_paths test_small_exact test_v92_hostile
 # the slowest programs, split by case: `prog --cases` prints the count, `prog N`
 # runs case N alone, no argument all of them (tools/split-check.sh); the ARM
 # runner (check-arm) runs each case as its own job
@@ -433,9 +433,9 @@ replay: $(BUILD)/v90m-replay
 # (tools/k56_crd_scan.c): RECS=<dir> of v90m-replay recordings (*.raw);
 # a detection is a false CRd. Host only, not part of check.
 RECS ?=
-$(BUILD)/k56-crd-scan: tools/k56_crd_scan.c modem/v8bis.c modem/v8bismsg.c modem/v21.c modem/sintab.c v90/v90_pcm.c $(LIB_HDR)
+$(BUILD)/k56-crd-scan: tools/k56_crd_scan.c modem/v8bis.c modem/v8bismsg.c modem/v21.c modem/sintab.c v90/v90_pcm.c v90/v90_pcm_tab.c $(LIB_HDR)
 	@mkdir -p $(BUILD)
-	$(CC) $(T_CFLAGS) -o $@ tools/k56_crd_scan.c modem/v8bis.c modem/v8bismsg.c modem/v21.c modem/sintab.c v90/v90_pcm.c $(LDLIBS)
+	$(CC) $(T_CFLAGS) -o $@ tools/k56_crd_scan.c modem/v8bis.c modem/v8bismsg.c modem/v21.c modem/sintab.c v90/v90_pcm.c v90/v90_pcm_tab.c $(LDLIBS)
 .PHONY: crd-scan
 crd-scan: $(BUILD)/k56-crd-scan
 	@if [ -z "$(RECS)" ]; then echo "RECS not set (a directory of recordings)"; exit 1; fi; \
@@ -443,7 +443,7 @@ crd-scan: $(BUILD)/k56-crd-scan
 # our K56flex encoder's octets and data bits at every rate, pad and robbed
 # mask (tools/k56enc_dump.c), for SM56's decoder harness outside the
 # repository (docs/history/k56-facts.md "Oracle"). Host only, not part of check.
-K56ENC_DUMP_SRC := tools/k56enc_dump.c modem/k56enc.c modem/k56tab.c v34/v34_shell.c v90/v90_pcm.c v90/v90_scr.c
+K56ENC_DUMP_SRC := tools/k56enc_dump.c modem/k56enc.c modem/k56tab.c v34/v34_shell.c v90/v90_pcm.c v90/v90_pcm_tab.c v90/v90_scr.c
 $(BUILD)/k56enc-dump: $(K56ENC_DUMP_SRC) $(LIB_HDR)
 	@mkdir -p $(BUILD)
 	$(CC) $(T_CFLAGS) -o $@ $(K56ENC_DUMP_SRC) $(LDLIBS)

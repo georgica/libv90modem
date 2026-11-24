@@ -180,8 +180,13 @@ static void start_b1u(v90a_t *a)
 {
     const v92_cpd_t *c = &a->cpd;
     if (!a->got_cpd || c->drn < 1 || c->drn > V92_UP_NUM_RATES || !((a->up92_rates >> (c->drn - 1)) & 1)
-        || !v92aseq_cpd_complete(&a->aseq)
-        || v92_enc_init(&a->enc, &a->cpd.map, &a->cpd.filt, enc_get, a) != 0) { v90a__end(a, V90A_ERR_CPD); return; }
+        || !v92aseq_cpd_complete(&a->aseq) || v92_map_check(&c->map) != 0 || v92_filt_check(&c->filt) != 0) {
+        v90a__end(a, V90A_ERR_CPD);
+        return;
+    }
+    a->encm = c->map;
+    v92_filt_trim(&a->encf, &c->filt);
+    if (v92_enc_init(&a->enc, &a->encm, &a->encf, enc_get, a) != 0) { v90a__end(a, V90A_ERR_CPD); return; }
     a->b1_bits = (int32_t)V92_B1U_FRAMES * c->map.K;
     a->up_rate = V92_UP_BPS(c->drn);
     a->tx_ready = 0;

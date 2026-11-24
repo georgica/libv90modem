@@ -181,7 +181,7 @@ static int next_frame(x2tx_t *t)
         for (k = 0; k < nb; k++) bits[k] = t->getbit ? (uint8_t)(t->getbit(t->user) & 1) : 1;
         break;
     }
-    for (k = 0; k < nb; k++) bits[k] = (uint8_t)v90_scramble_gpc(&t->scr, bits[k]);
+    v90_scramble_gpc_bits(&t->scr, bits, nb);
     x2map_frame(&t->map, bits, t->frame);
     t->fpos = 0;
     return 1;
