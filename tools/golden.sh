@@ -34,7 +34,10 @@ case $B in /*) ;; *) B=$ROOT/$B ;; esac
 if [ "$mode" = check ] && [ ! -d "$GOLD" ]; then echo "golden: no test/golden/out"; exit 1; fi
 
 # the stale-log test below needs test's -nt
-[ "$ROOT/tools/golden.sh" -nt "$ROOT/tools/no-such-file" ] || { echo "golden: this shell's test has no -nt"; exit 2; }
+# (a test without it fails with status 2 or more; comparing a file with
+# itself is false (1) where it has it, in bash and in dash alike)
+[ "$ROOT/tools/golden.sh" -nt "$ROOT/tools/golden.sh" ]
+[ $? -le 1 ] || { echo "golden: this shell's test has no -nt"; exit 2; }
 
 list=$(make -s --no-print-directory -C "$ROOT" BUILD="$MB" print-golden) || { echo "golden: make print-golden failed"; exit 1; }
 OUT=$B/golden
