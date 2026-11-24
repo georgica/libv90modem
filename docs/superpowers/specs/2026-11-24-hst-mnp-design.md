@@ -76,9 +76,10 @@ as a general endpoint (approach B) that also serves MNP-only callers.
   what 0.6.0 gives it. With HST offered, every caller that sends CM (V.8)
   or AA (V.32) is untouched ("Golden files, hashes and the replay proof").
 - **Copying code or prose from BinModem** (GPL-3.0; we are GPL-2.0-only).
-  Only facts cross, through `binmodem-facts.md`. The builder does not open
-  BinModem's source or design notes; BinModem is used only as a built
-  binary.
+  The builder may read BinModem's source to learn from it (owner,
+  2026-11-24: "we can look at BinModems code we can't copy it"), but writes
+  every line and every comment of our own; facts are recorded in our words
+  (`binmodem-facts.md`, `docs/history/hst-facts.md`).
 - **Using D-Modem's or courier-emu's HST material**, in any form.
 
 ## Constraints
