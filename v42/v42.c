@@ -430,7 +430,9 @@ static void feed_lapm(v42ec_t *e)
         e->brk_tx_pend = 0;
 }
 
-static int hdlc_bit(v42ec_t *e)
+/* before a line bit, when the originator still waits for its first frame
+ * or the transmitter could take the next one */
+static void hdlc_next(v42ec_t *e)
 {
     if (e->orig_wait > 0 && (--e->orig_wait == 0 || e->hrx.flag_run >= FLAGS_SEEN)) {
         e->orig_wait = 0;
@@ -443,6 +445,11 @@ static int hdlc_bit(v42ec_t *e)
         n = v42lapm_tx_frame(&e->lapm, f, &fcs32);
         if (n > 0) v42hdlc_tx_frame(&e->htx, f, n, fcs32);
     }
+}
+
+static int hdlc_bit(v42ec_t *e)
+{
+    if (e->orig_wait > 0 || v42hdlc_tx_need_frame(&e->htx)) hdlc_next(e);
     return v42hdlc_tx_bit(&e->htx);
 }
 
@@ -513,6 +520,15 @@ void v42ec_rx_bit(v42ec_t *e, int bit)
     int r;
 
     bit = bit ? 1 : 0;
+    if (e->state != V42EC_DETECT && e->state != V42EC_ASYNC && e->state != V42EC_DISCONNECTED) {
+        /* HDLC alone: establishing, connected, releasing */
+        r = v42hdlc_rx_bit(&e->hrx, bit);
+        if (r > 0) {
+            v42lapm_rx_frame(&e->lapm, e->hrx.buf, r, e->hrx.last_fcs32);
+            sync(e);
+        }
+        return;
+    }
     switch (e->state) {
     case V42EC_DISCONNECTED:
         return;
@@ -559,13 +575,6 @@ void v42ec_rx_bit(v42ec_t *e, int bit)
                 v42lapm_rx_frame(&e->lapm, e->hrx.buf, r, e->hrx.last_fcs32);
                 sync(e);
             }
-        }
-        return;
-    default:
-        r = v42hdlc_rx_bit(&e->hrx, bit);
-        if (r > 0) {
-            v42lapm_rx_frame(&e->lapm, e->hrx.buf, r, e->hrx.last_fcs32);
-            sync(e);
         }
         return;
     }
