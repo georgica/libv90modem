@@ -12,9 +12,16 @@ void ec_init(ec_t *e)
 }
 
 /* NLMS: h += mu * err * x / energy. err/energy is tiny, so carry it with 40
- * fractional bits and drop 16 after the product (h is Q24). Needs energy >
- * 65536 = 2^16, so that |x[i]| / energy < 2^-8 (x[i]^2 <= energy): then
- * |g * x[i]| < |err| * 2^32, inside int64 for any |err| < 2^31.
+ * fractional bits and drop 16 after the product (h is Q24).
+ *
+ * err * 2^40 fits int64 only for |err| < 2^23. A real echo leaves an error
+ * of at most a few times 2^15; taps that a hostile caller drove to a large
+ * gain, then a loud transmit, give one up to about 2^29 (96 taps of
+ * 2^31 against 2^15, >> 24). So err is held to +-(2^23 - 1) here (the
+ * returned error is held to 16 bits anyway): no change below that, and a
+ * full-size step in the right direction above it. With energy > 65536 =
+ * 2^16, |x[i]| / energy < 2^-8 (x[i]^2 <= energy), so |g * x[i]| <
+ * |err| * 2^32 < 2^55.
  *
  * Each tap saturates at the int32 range (a gain of 128): a caller can make
  * the echo look louder than that (security pass, I1: a small UINFO, then a
@@ -22,11 +29,15 @@ void ec_init(ec_t *e)
  * it is only clamped when it leaves int32, so every update that fitted
  * before gives the same tap. Adaptation runs in training only, not in
  * data mode. */
+#define EC_ERR_MAX (((int32_t)1 << 23) - 1)
 static void update(ec_t *e, const int16_t *x, int32_t err, int mu_shift)
 {
-    int64_t g = (int64_t)err * ((int64_t)1 << 40) / e->energy;
-    int64_t half = (int64_t)1 << (15 + mu_shift);
+    int64_t g, half;
     int i;
+    if (err > EC_ERR_MAX) err = EC_ERR_MAX;
+    if (err < -EC_ERR_MAX) err = -EC_ERR_MAX;
+    g = (int64_t)err * ((int64_t)1 << 40) / e->energy;
+    half = (int64_t)1 << (15 + mu_shift);
     for (i = 0; i < EC_NTAP; i++) {
         int64_t h = e->h[i] + ((g * x[i] + half) >> (16 + mu_shift));
         if (h > INT32_MAX) h = INT32_MAX;

@@ -98,6 +98,32 @@ int main(void)
         CHECK_EQ_I(wrapped, 0);
     }
 
+    /* such taps, then a loud transmit: trained on a quiet DC (+27, energy
+     * just over 2^16) against a full-scale one, the taps sum to a gain of
+     * about 1200; frozen while our transmit goes to full scale, the
+     * estimate reaches about 2^25, and the error at the next adaptation
+     * is past 2^23, where err * 2^40 would leave int64 (signed overflow
+     * before; UBSan). Then it adapts on, both ways in: the taps stay in
+     * range and fall back toward the silent line. */
+    {
+        int64_t hsum = 0;
+        int16_t out;
+        int pass;
+        for (pass = 0; pass < 2; pass++) {
+            ec_init(&ec);
+            for (i = 0; i < 3000; i++) (void)ec_tick(&ec, 27, 32767, 0);
+            for (i = 0, hsum = 0; i < EC_NTAP; i++) hsum += ec.h[i];
+            CHECK(hsum > (int64_t)1000 << 24);      /* a gain over 1000 */
+            for (i = 0; i < EC_NTAP; i++) (void)ec_tick(&ec, 32767, 0, -1);
+            if (pass == 0) out = ec_tick(&ec, 32767, 0, 0);
+            else { out = ec_tick(&ec, 32767, 0, -1); ec_adapt(&ec, -33554432, 0); }
+            CHECK_EQ_I(out, -32768);
+            for (i = 0; i < 2000; i++) (void)ec_tick(&ec, 32767, 0, 0);
+            for (i = 0, hsum = 0; i < EC_NTAP; i++) hsum += ec.h[i];
+            CHECK(hsum < (int64_t)1 << 24 && hsum > -((int64_t)1 << 24));  /* |gain| under 1 */
+        }
+    }
+
     /* silence in, silence out, no blow-up when the transmit history is empty */
     ec_init(&ec);
     for (i = 0; i < 500; i++) CHECK_EQ_I(ec_tick(&ec, 0, 0, 2) == 0, 1);

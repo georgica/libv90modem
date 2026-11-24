@@ -323,7 +323,9 @@ Fixed:
 - Answering role, V.90 and V.92: a caller that picks a quiet TRN1d (a
   small UINFO in INFO1a) and sends loud audio while it should be silent
   drove the echo canceller's taps past their 32-bit range (signed
-  overflow). The taps now stop at their largest value. A robustness fix
+  overflow), and a loud transmit through such taps then overflowed the
+  adaptation step. The taps now stop at their largest value, and the
+  step is held. A robustness fix
   against hostile audio, with no memory-safety impact: the hostile
   caller's own call is the one that suffers. Every other call is
   unchanged.
