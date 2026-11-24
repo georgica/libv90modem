@@ -67,6 +67,25 @@ static inline int v34_descramble(v34_scr_t *s, int bit)
     return (int)o;
 }
 
+/* n bits at once, 1 <= n <= 8: the first in time in bit n - 1 of bits, the
+ * last in bit 0; the n output bits are returned the same way. The same as
+ * n calls of v34_scramble / v34_descramble, state included. */
+static inline unsigned v34_scramble_n(v34_scr_t *s, unsigned bits, int n)
+{
+    unsigned o = 0;
+    int k;
+    for (k = n - 1; k >= 0; k--) o = (o << 1) | (unsigned)v34_scramble(s, (int)((bits >> k) & 1));
+    return o;
+}
+
+static inline unsigned v34_descramble_n(v34_scr_t *s, unsigned bits, int n)
+{
+    unsigned o = 0;
+    int k;
+    for (k = n - 1; k >= 0; k--) o = (o << 1) | (unsigned)v34_descramble(s, (int)((bits >> k) & 1));
+    return o;
+}
+
 /* ---- training signals, 10.1.3 -------------------------------------- */
 
 /* S (10.1.3.7): symbol i of a segment of len symbols. S alternates point 0
