@@ -14,10 +14,11 @@ INC     := -I. -I../test -DV34_TEST_API
 LIB_SRC := v34_constel.c v34_core.c v34_params.c v34_shell.c v34_train.c \
            v34_tx.c v34_rx.c v34_nl.c
 LIB_HDR := v34.h v34_priv.h
-SUP_HDR := ../test/test.h test/fig5_data.h test/spec_tables.h test/testutil.h
+SUP_HDR := ../test/test.h test/fig5_data.h test/spec_tables.h test/testutil.h \
+           ../modem/compiler.h ../modem/fixdiv.h ../modem/divrcp.h
 TESTS   := test_scr test_params test_constel test_shell test_trellis \
            test_train test_roundtrip test_precoder test_ber test_resync \
-           test_bench test_nl test_sflush
+           test_bench test_nl test_sflush test_nl_exact test_nl_exact_nb
 
 .PHONY: all test test-arm cost-arm tables clean build-tests build-tests-arm print-tests print-tests-arm
 all: test
@@ -55,6 +56,12 @@ $(BUILD)/arm/libtest.a: $(ARM_T_OBJ)
 $(BUILD)/test_%: test/test_%.c $(BUILD)/libtest.a $(T_HDR) | $(BUILD)
 	$(CC) $(T_FLAGS) -o $@ $< $(BUILD)/libtest.a -lm
 
+# test_nl_exact once more with every builtin's C fallback (V90M_NO_BUILTINS):
+# this file and the library's v34_nl.c (linked ahead of libtest.a's copy)
+NB_FLAGS = $(T_FLAGS) -DV90M_NO_BUILTINS
+$(BUILD)/test_nl_exact_nb: test/test_nl_exact.c v34_nl.c $(BUILD)/libtest.a $(T_HDR) | $(BUILD)
+	$(CC) $(NB_FLAGS) -o $@ test/test_nl_exact.c v34_nl.c $(BUILD)/libtest.a -lm
+
 test: $(addprefix $(BUILD)/,$(TESTS))
 	@echo "== running host tests =="
 	@fail=0; for t in $(TESTS); do $(abspath $(BUILD))/$$t || fail=1; done; \
@@ -64,6 +71,9 @@ test: $(addprefix $(BUILD)/,$(TESTS))
 # (the tests shorten their own Monte Carlo runs when built for ARM)
 $(BUILD)/arm_test_%: test/test_%.c $(BUILD)/arm/libtest.a $(T_HDR) | $(BUILD)
 	$(ARM_CC) $(T_FLAGS) -static -o $@ $< $(BUILD)/arm/libtest.a -lm
+
+$(BUILD)/arm_test_nl_exact_nb: test/test_nl_exact.c v34_nl.c $(BUILD)/arm/libtest.a $(T_HDR) | $(BUILD)
+	$(ARM_CC) $(NB_FLAGS) -static -o $@ test/test_nl_exact.c v34_nl.c $(BUILD)/arm/libtest.a -lm
 
 test-arm: $(addprefix $(BUILD)/arm_,$(TESTS))
 	@echo "== running ARM tests under $(QEMU) =="
