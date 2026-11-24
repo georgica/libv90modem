@@ -39,7 +39,15 @@ typedef enum {
 } p2d_state;
 
 enum { P2D_OK = 0, P2D_ERR_INFO0 = 1, P2D_ERR_REV, P2D_ERR_TONE_A, P2D_ERR_INFO1A,
-       P2D_ERR_PCM_UP };    /* INFO1a selects PCM upstream where Table 18/V.92 "shall not" be used */
+       P2D_ERR_PCM_UP,      /* INFO1a selects PCM upstream where Table 18/V.92 "shall not" be used */
+       P2D_ERR_TIME };      /* Phase 2 ran past P2D_EXCHANGE_MS */
+
+/* Bounds on a caller that keeps Phase 2 going without end: INFO0a repeated
+ * (each one takes WAIT_REV1 back to INFO0), or Tone A reversed once but
+ * never twice (WAIT_REV2 -> RECOVER -> WAIT_REV1 ...). Far above a normal
+ * Phase 2 (3 to 5 s). */
+#define P2D_EXCHANGE_MS 20000   /* from p2d_init / p2d_init_retrain to P2D_DONE */
+#define P2D_MAX_RECOVER 4       /* entries into P2D_RECOVER (9.2.1.2.3); the next one fails */
 
 /* how the call goes on after P2D_DONE (p2d_t.mode) */
 enum { P2D_MODE_V34 = 0,    /* INFO1a of Table 11/V.90: V.34 (V.90 9.2.1.1.8) */
@@ -51,6 +59,8 @@ typedef struct {
     p2d_state state;
     int       error;
     int32_t   now, t;               /* sample clock; samples in the current state */
+    int32_t   t_x;                  /* samples in this Phase 2 (P2D_EXCHANGE_MS) */
+    int       n_recover;            /* entries into P2D_RECOVER (P2D_MAX_RECOVER) */
     int32_t   level;
     dpsktx_t  tx; dpskrx_t rx;
     probetx_t ptx; proberx_t prx;

@@ -1,6 +1,7 @@
 /* Phase 2 tone / INFO DPSK modem. See dpsk.h. */
 #include "dpsk.h"
 #include "sintab.h"
+#include "fixmath.h"
 #include "v22_tabs.h"
 
 #define UNITS_SYM 40        /* time units per symbol; one sample = 3 units */
@@ -154,21 +155,12 @@ void dpskrx_expect(dpskrx_t *r, int payload_bits)
     for (h = 0; h < 3; h++) for (i = 0; i < 128; i++) r->hunt[h].hist[i] = 0;
 }
 
-static int isqrt64(int64_t v)
-{
-    int64_t r = 0, b = (int64_t)1 << 40;
-    while (b > v) b >>= 2;
-    while (b) {
-        if (v >= r + b) { v -= r + b; r = (r >> 1) + b; }
-        else r >>= 1;
-        b >>= 2;
-    }
-    return (int)r;
-}
-
 int dpskrx_level(const dpskrx_t *r)
 {
-    return r->carrier ? isqrt64(r->pw / 2) : 0;
+    /* pw is an average of e = zr^2 + zi^2, never above the largest e and never
+     * below 0; zr and zi are (br*c + bi*s) >> 15 of a sum that does not
+     * overflow int32, so |zr|, |zi| <= 2^16, e <= 2^33 and pw / 2 <= 2^32. */
+    return r->carrier ? (int)isqrt_u64((uint64_t)(r->pw / 2)) : 0;
 }
 
 /* one differential bit for hunter h; returns 1 when a clean frame completed */
