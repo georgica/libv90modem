@@ -1120,3 +1120,45 @@ per second of line in data mode:
 Every row within 0.5 M of after Phase 1. The calling rows equal Task 27's
 after (55.19 / 59.02 / 70.33 / 74.56) to 0.01 M: the union itself costs
 nothing; their rise since Phase 1 was already there before this task.
+
+## Task 30: the S detector's and qamrx's divisions that are shifts; tap update (dsp P1, P4, P7, P15)
+
+- P1: `sdet_tick`'s threshold `pw * len^2 / div` was a 64-bit division
+  every sample. `div` is 8 or 16 wherever the modem sets it (sdet_init;
+  v34dx, x2d, k56d), so the threshold now divides by the constant 8 or 16
+  when `div` is that value, and by `div` otherwise: the constant form is
+  only taken where it is the same number.
+- P15: the threshold and |z|^2 only when `pw > 400`; o2 and p only while
+  the detector is armed (`holdoff < 0`), where they are read.
+- P4: under `QRX_DENSE` qamrx_update divides `|e|^2 << 16` and
+  `num * 65536` by the constant 2^25 (`DENSE_DN`, = 2 QRX_REF^2, checked
+  at compile time); the timing gradient divides by it when `dnorm` is
+  2^25, by `dnorm` otherwise.
+- P7: the equaliser's tap update takes two taps a pass (QRX_NTAP even,
+  checked at compile time).
+
+Proof: `test/test_exact.c` (its own commit, before this one) runs both
+against verbatim copies of the code before (sdet with div 8, 16, 5, 12
+over 2*10^6 samples of noise, S and S-bar; qamrx_update on 10^6 random
+states and on edge states; the timing third of qamrx_tick on 10^6 random
+states with dnorm 2^25, |d|^2, 1, 2^31 - 1 and near 2^25): every field
+and return value equal. `make verify`: golden 132 identical, replay 636
+identical, bench 17 identical; no golden file re-recorded. The bench
+transmit / received hashes are the same on the host and under qemu, and
+the same as before.
+
+### Costs
+
+`make cost-x2 cost-k56 cost-v34 ARM_CC=$A5 COST_TICKS=0` (armv5 uClibc,
+each in its own BUILD), M ARM instructions per second of line in data
+mode:
+
+| | before | after | change | dsp's estimate |
+|---|---|---|---|---|
+| x2 answering (second 15 to 16) | 82.79 | 79.19 | -3.60 | -4.4 (P1 -2.5, P4 -1.1, P7 -0.5, P15 -0.3) |
+| V.90 answering (`cost-x2`'s, second 15 to 16) | 39.46 | 35.58 | -3.88 | -3.85 and P7, P15 |
+| K56flex answering (second 20 to 21) | 39.54 | 35.94 | -3.59 | |
+| V.34 answering (second 10 to 11) | 40.51 | 36.92 | -3.59 | |
+| V.90 answering (`cost-v34`'s, second 10 to 11) | 39.46 | 35.58 | -3.88 | |
+
+The four items were measured together, not one by one.

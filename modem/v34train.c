@@ -68,8 +68,7 @@ int sdet_tick(sdet_t *d, int16_t x)
     int32_t c = sintab[((d->ph >> 22) + SIN_N / 4) & SIN_MASK], s = sintab[(d->ph >> 22) & SIN_MASK];
     int16_t pr = (int16_t)((x * c) >> 15), pi = (int16_t)(-(x * s) >> 15);
     int32_t or_, oi;
-    int64_t z2, o2, p, thr;
-    int ev = 0, old;
+    int ev = 0, old, on = 0;
 
     d->ph += d->dph;
     old = (d->mpos - d->len) & 31;
@@ -82,20 +81,25 @@ int sdet_tick(sdet_t *d, int16_t x)
     d->zpos = (d->zpos + 1) & 31;
 
     d->pw += ((int64_t)x * x - d->pw) / 64;
-    z2 = (int64_t)d->sr * d->sr + (int64_t)d->si * d->si;
-    o2 = (int64_t)or_ * or_ + (int64_t)oi * oi;
-    p = (int64_t)d->sr * or_ + (int64_t)d->si * oi;
-    /* S carries half its power in the carrier line: |z|^2 = len^2 P / 4 */
-    thr = (d->pw * d->len * d->len) / d->div;
+    if (d->pw > 400) {
+        /* S carries half its power in the carrier line: |z|^2 = len^2 P / 4.
+         * div is 8 or 16 wherever the modem sets it: divisions by those
+         * constants are shifts, not a 64-bit division every sample */
+        int64_t e = d->pw * d->len * d->len;
+        int64_t thr = d->div == 16 ? e / 16 : d->div == 8 ? e / 8 : e / d->div;
+        on = (int64_t)d->sr * d->sr + (int64_t)d->si * d->si > thr;
+    }
 
     if (d->holdoff > 0) d->holdoff--;
-    if (d->pw > 400 && z2 > thr) {
+    if (on) {
         d->present++;
     } else {
         if (d->present >= SDET_PRESENT) d->holdoff = -(d->len + 4);   /* armed */
         d->present = 0;
     }
     if (d->holdoff < 0) {
+        int64_t o2 = (int64_t)or_ * or_ + (int64_t)oi * oi;
+        int64_t p = (int64_t)d->sr * or_ + (int64_t)d->si * oi;
         d->holdoff++;
         /* reversed, and already half-way to full amplitude the other way */
         if (p < -(o2 / 2)) { ev = 1; d->holdoff = 400; }

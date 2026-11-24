@@ -6,6 +6,13 @@
 #include "fixmath.h"
 
 #define ONE24 (1 << 24)
+/* |d|^2 under QRX_DENSE, the mean power 2 QRX_REF^2 = 2^25: a division by
+ * this constant is a shift (with C's truncation toward zero), not a 64-bit
+ * division */
+#define DENSE_DN ((int64_t)1 << 25)
+typedef char qrx_dense_dn_check[(int64_t)2 * QRX_REF * QRX_REF == DENSE_DN ? 1 : -1];
+/* the tap update takes two taps a pass */
+typedef char qrx_ntap_even_check[QRX_NTAP % 2 == 0 ? 1 : -1];
 
 void qamrx_init(qamrx_t *r, int sym_rate, int car_num, int car_den)
 {
@@ -139,7 +146,8 @@ static int produce(qamrx_t *r)
                 zmr = (int32_t)(((int64_t)r->ymr * c + (int64_t)r->ymi * s) >> 15);
                 zmi = (int32_t)(((int64_t)r->ymi * c - (int64_t)r->ymr * s) >> 15);
                 g = (int64_t)r->er * (zpr - zmr) + (int64_t)r->ei * (zpi - zmi);
-                gn = (int32_t)(g * 4096 / r->dnorm);       /* Q12 */
+                gn = (int32_t)(r->dnorm == DENSE_DN ? g * 4096 / DENSE_DN  /* Q12 */
+                                                    : g * 4096 / r->dnorm);
                 if (gn > 4096) gn = 4096;
                 if (gn < -4096) gn = -4096;
                 /* second-order loop, time constant about 130 symbols */
@@ -183,11 +191,16 @@ int qamrx_tick(qamrx_t *r, int16_t xin)
 void qamrx_update(qamrx_t *r, int32_t dr, int32_t di, int flags, int mu_shift)
 {
     int32_t er = dr - r->zr, ei = di - r->zi, c, s, pr, pi;
-    int64_t dn = (int64_t)dr * dr + (int64_t)di * di, e2;
+    int64_t dn, e2 = ((int64_t)er * er + (int64_t)ei * ei) << 16;
     int k;
-    if (flags & QRX_DENSE) dn = (int64_t)2 * QRX_REF * QRX_REF;
-    if (dn < 1) dn = 1;
-    e2 = (((int64_t)er * er + (int64_t)ei * ei) << 16) / dn;
+    if (flags & QRX_DENSE) {
+        dn = DENSE_DN;
+        e2 /= DENSE_DN;
+    } else {
+        dn = (int64_t)dr * dr + (int64_t)di * di;
+        if (dn < 1) dn = 1;
+        e2 /= dn;
+    }
     if (e2 > (4 << 16)) e2 = 4 << 16;
     r->mse_acc += ((e2 << 8) - r->mse_acc) / 64;
     r->mse = (int32_t)(r->mse_acc >> 8);
@@ -207,15 +220,17 @@ void qamrx_update(qamrx_t *r, int32_t dr, int32_t di, int flags, int mu_shift)
         /* rounded, not truncated: a shift alone rounds every update down, and
          * half an LSB per symbol on every tap is a drift of 0.14 in 90 s */
         const int32_t half = (int32_t)1 << (mu_shift - 1);
-        for (k = 0; k < QRX_NTAP; k++) {
+        for (k = 0; k < QRX_NTAP; k += 2) {
             r->cr[k] += (pr * x[k] + half) >> mu_shift;
             r->ci[k] += (pi * x[k] + half) >> mu_shift;
+            r->cr[k + 1] += (pr * x[k + 1] + half) >> mu_shift;
+            r->ci[k + 1] += (pi * x[k + 1] + half) >> mu_shift;
         }
     }
     if (flags & QRX_CARRIER) {
         /* phase error Im{z conj(d)} / |d|^2 in rad, Q16 */
         int64_t num = (int64_t)r->zi * dr - (int64_t)r->zr * di;
-        int32_t phi = (int32_t)(num * 65536 / dn);
+        int32_t phi = (int32_t)((flags & QRX_DENSE) ? num * 65536 / DENSE_DN : num * 65536 / dn);
         if (phi > 32768) phi = 32768;
         if (phi < -32768) phi = -32768;
         r->freq += phi * 16;
