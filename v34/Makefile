@@ -18,7 +18,8 @@ SUP_HDR := ../test/test.h test/fig5_data.h test/spec_tables.h test/testutil.h \
            ../modem/compiler.h ../modem/fixdiv.h ../modem/divrcp.h
 TESTS   := test_scr test_params test_constel test_shell test_trellis \
            test_train test_roundtrip test_precoder test_ber test_resync \
-           test_bench test_nl test_sflush test_nl_exact test_nl_exact_nb
+           test_bench test_nl test_sflush test_nl_exact test_nl_exact_nb \
+           test_vit_hash
 
 .PHONY: all test test-arm cost-arm tables clean build-tests build-tests-arm print-tests print-tests-arm
 all: test

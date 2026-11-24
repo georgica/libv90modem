@@ -166,6 +166,14 @@ uint32_t v34_slice_subset(const v34_params_t *p, int re, int im, unsigned s,
     return d > V34_M_MAX ? V34_M_MAX : d;
 }
 
+void v34_slice_subsets(const v34_params_t *p, int re, int im, uint32_t m[8],
+                       int16_t pt[8][2])
+{
+    unsigned s;
+    for (s = 0; s < 8; s++)
+        m[s] = v34_slice_subset(p, re, im, s, pt[s]);
+}
+
 /* The 16-state code does not use Y4 (nor Y3), so the top bit of the subset
  * label never matters to it: its 2D metrics are those of the four cosets of
  * 4Z^2, "the points that are l clockwise quarter turns from the quarter
@@ -558,7 +566,6 @@ static void rx_symbol(v34_rx_t *rx, int re, int im)
 {
     v34_vstep_t *st = &rx->hist[rx->head];
     uint32_t m2[8];
-    unsigned s;
 
 #ifdef V34_TEST_API
     if (rx->hard) {                     /* no trellis decoding */
@@ -583,8 +590,7 @@ static void rx_symbol(v34_rx_t *rx, int re, int im)
         if (rx->nsub == 4)
             v34_slice_classes(rx->p, re, im, m, pt);
         else
-            for (s = 0; s < 8; s++)
-                m[s] = v34_slice_subset(rx->p, re, im, s, pt[s]);
+            v34_slice_subsets(rx->p, re, im, m, pt);
     }
     if (rx->k == 0) {
         rx->k = 1;
@@ -778,8 +784,7 @@ static void metrics_back(const v34_rx_t *rx, unsigned i, uint32_t m[8])
     if (rx->nsub == 4)
         v34_slice_classes(p, re, im, m, pt);
     else
-        for (k = 0; k < 8; k++)
-            m[k] = v34_slice_subset(p, re, im, k, pt[k]);
+        v34_slice_subsets(p, re, im, m, pt);
 }
 
 void v34_rx_flush_before(v34_rx_t *rx, unsigned n)
