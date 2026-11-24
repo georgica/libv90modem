@@ -1741,3 +1741,49 @@ hashes 17 identical; ubsan, armv7hf and bigend (short-cmp 129 identical)
 ok; fixed ok. No golden, replay or bench file re-recorded. `make
 verify-phase` (the ports and the costs again) is left to the release
 proof (Task 39), as the owner decided.
+
+## rc1 fix wave: hostile audio on the answering side (security pass I1, I2, M1, M3, M4)
+
+From the final security pass (the answering side against a hostile
+caller) and the final branch review, before 0.6.0-rc1:
+- I1 (5a28091, bd3f8d2): the echo canceller's taps saturate at the int32
+  range instead of overflowing, and the NLMS step holds an error past
+  2^23 (`err * 2^40` left int64). Training only.
+- I2 (bece0d4): the V.34 upstream receiver (`modem/qamrx.c`) has no
+  signed overflow on loud or abrupt audio. A first form that clamped the
+  error and the equaliser output changed 57 files of the replay proof:
+  the recordings' hang-up clicks already overflowed the tap products
+  (|pr| up to about 3 * 10^5 against x = 32767). Nothing was re-recorded;
+  the committed form computes those products and sums modulo 2^N
+  (unsigned, then the wrapping conversion DESIGN.md assumes), so every
+  result is the one before, holds the taps to +-2^29 once in 256 to 4096
+  symbols, and keeps the mse from going negative.
+- M1 (d5fc77c): the V.92 design's noise term saturates.
+- M3, M4 (33e4d1d): long and large XID values.
+
+`make verify` at d8e42a3: VERIFY PASS. Golden identical (the new tests'
+own check counts only), replay 636 identical, bench 17 identical.
+
+### Costs
+
+`make cost-x2 cost-v90a cost-v34 cost-v90c ARM_CC=$A5 COST_TICKS=0`
+(armv5 uClibc; before: a `git archive` of 45ffb75, after: of bece0d4, each
+target in its own BUILD; cost-v90a again on d8e42a3, which adds the
+canceller's step hold), M ARM instructions per second of line in data
+mode:
+
+| | before | after | change |
+|---|---|---|---|
+| x2 answering (second 15 to 16) | 56.58 | 56.60 | +0.02 |
+| V.90 answering (`cost-x2`'s) | 31.19 | 31.20 | +0.02 |
+| V.34 answering (second 10 to 11) | 33.42 | 33.44 | +0.02 |
+| V.90 downstream receiver, 0 / 100 ppm | 36.46 / 40.92 | 36.45 / 40.91 | -0.01 / -0.01 |
+| V.90 downstream receiver, Sd and TRN1d (0.7 s), 0 / 100 ppm | 21.49 / 23.26 | 21.48 / 23.25 (d8e42a3) | -0.01 / -0.01 |
+| V.90 calling, 0 / 100 ppm | 46.97 / 50.95 | 46.96 / 50.94 | -0.01 / -0.01 |
+
+The answering modes pay the tap hold's count per update and the mse
+guard: about 5 instructions a symbol, 0.02 M. The canceller's
+saturation runs in training only, where the calling side's Sd and TRN1d
+figure moved by less than 0.01 M. Far under the brief's 0.5 M. The x2 and
+V.90 bench hashes are the same before and after: tx 37c3e5f5 / 8e3136e9,
+rx af8dfaea / 4bebb9be.
