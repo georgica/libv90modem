@@ -3915,3 +3915,38 @@ reference written from the 68040 manual, in normal mode and with
 A newer gcc (m68k moved to LRA in 14) was not tried; the bug was not
 reported upstream (the owner's call; a draft is kept outside the
 repository).
+
+## hst 1: the facts, tagged, and the evidence plan (2026-11-24)
+
+Docs only. `docs/history/hst-facts.md` is the single source of values for the
+HST and MNP work: call start, back and forward channels, training, the V.17
+long train, MNP framing and frames, the LR and 0xC0, establishment, data and
+attention, timers, reversal, rate changes, cleardown, the evidence plan (R1,
+R2, R3 with what each settles), the recordings table (empty) and what is still
+unsettled. Each value has its source (BF §, PS §, Annex A clause, patent text
+line, V.17 clause) and one tag, [FW], [PUB], [BM] or [OURS].
+
+Sources used beyond `docs/hst/`: V.42 (03/93) Annex A (`build/hst-sources/
+itu/v42-93.txt`: A.3, A.4, A.6, A.7.1, A.7.5) and ITU-T V.17 (02/91), fetched
+from itu.int into `build/hst-sources/itu/V17-199102.pdf` (sha256 `2198a145...
+446cc9`; the text through `pdftotext -layout`; Figure 3 read from its rendered
+page). Found by us, not stated in any source: the scrambler state at the start
+of V.17's segment 2 (0x2ECDD5, from Table 4's first 23 output bits, the other 9
+as a check); the points A to D (-6,-2), (2,-6), (6,2), (-2,6); the Courier CRC
+check value (0x906E, bytes `6E 90`) and residue (0xF0B8), and CRC-16/ARC's
+check value (0xBB3D), by computation; the T401 values the plan pins (3659,
+6317, 1560, 1600 ms) from Annex A.7.5.1's formula with Trt 1000 ms. BinModem's
+code was read only to check the Courier LR template and the V.17 scrambler
+procedure; nothing was copied.
+
+Findings worth knowing: Annex A's Table A.9 N401 = 256 column does not follow
+its own formula (noted under `Timers`); V.17's Table 3 resync row is damaged in
+the PDF text layer (Task 15 uses the long train only).
+
+    grep -c '\[FW\]\|\[PUB\]\|\[BM\]\|\[OURS' docs/history/hst-facts.md   -> 237
+      (FW 44, PUB 76, BM 40, OURS 77; four of the lines are the tag
+      definitions and two are the re-tag convention)
+    make verify                                                          -> VERIFY PASS (log: build/verify-hst1.log)
+
+The owner's R1 procedure is handed to the controller as
+`.superpowers/sdd/2026-11-24-hst-mnp/r1-for-owner.md` (not in the repository).
