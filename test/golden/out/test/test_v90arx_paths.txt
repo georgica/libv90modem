@@ -1,0 +1,8 @@
+v90arx: the paths that change the taps or the lines
+  train, first design, ls_set        state 3, 21295 decisions, mse   8113, design steps 336, held    0, hash 5655837c
+  holds of 1 symbol (x8), of 200     state 3,  4000 decisions, mse   1029, design steps  56, held  208, hash be462817
+  band edge on (design at once)      state 3,  3999 decisions, mse   1076, design steps  72, held    0, hash 7b59a936
+  timing held, impulses (gate)       state 3,  4000 decisions, mse   3444, design steps  64, held    0, hash a11d2ec2
+  band edge off, holds, impulses     state 3, 11999 decisions, mse   8614, design steps 192, held  120, hash 21dca930
+  taps at the end: forward a4808661, feedback b9c64ac2, estimate 516108ff
+v90arx_paths: 1 checks, 0 failures
