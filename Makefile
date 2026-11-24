@@ -300,15 +300,18 @@ $(BUILD)/api_test_reneg: test/api/test_reneg.c $(DEV) include/v90modem.h api/v90
 	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -Iapi -o $@ $< $(DEV) $(LDLIBS)
 # the cross-built libraries, built once per make run, before any test program
 # that links them (several of those at once, each building the same library,
-# raced under -j)
+# raced under -j). The archives are targets of their own, made by that one
+# run, so a test program is linked again when one of them changed.
 .PHONY: arm-api-libs
 arm-api-libs:
 	@$(MAKE) -s BUILD=$(BUILD)/arm CC=$(ARM_CC) $(BUILD)/arm/$(NAME).a $(BUILD)/arm/$(NAME)-dev.a check-symbols
-$(BUILD)/arm/api_test_reneg: test/api/test_reneg.c include/v90modem.h api/v90modem_priv.h | arm-api-libs
+ARM_API_LIBS := $(BUILD)/arm/$(NAME).a $(BUILD)/arm/$(NAME)-dev.a
+$(ARM_API_LIBS): arm-api-libs ;
+$(BUILD)/arm/api_test_reneg: test/api/test_reneg.c include/v90modem.h api/v90modem_priv.h $(ARM_API_LIBS)
 	$(ARM_CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -Iapi -static -o $@ $< $(BUILD)/arm/$(NAME)-dev.a $(LDLIBS)
 $(BUILD)/api_test_%: test/api/test_%.c $(STATIC) $(DEV) include/v90modem.h api/v90modem_fields.h
 	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -o $@ $< $(STATIC) $(DEV) $(LDLIBS)
-$(BUILD)/arm/api_test_%: test/api/test_%.c include/v90modem.h api/v90modem_fields.h | arm-api-libs
+$(BUILD)/arm/api_test_%: test/api/test_%.c include/v90modem.h api/v90modem_fields.h $(ARM_API_LIBS)
 	$(ARM_CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -static -o $@ $< $(BUILD)/arm/$(NAME).a $(BUILD)/arm/$(NAME)-dev.a $(LDLIBS)
 
 test: $(addprefix $(BUILD)/,$(TESTS))
