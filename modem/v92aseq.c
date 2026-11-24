@@ -158,8 +158,10 @@ static uint8_t merge(const v92aseq_t *s, v92_cpd_t *o)
  * points, trellis 0..2, ...), and a usable filter once it holds one
  * (v92_filt_check). A CRC protects against the line, not against the
  * digital modem: an encoder on a map that fails these divides by zero or
- * reads past the map. A CPd of no rate (drn 0, the cleardown) is not
- * encoded from, and is stored as before. */
+ * reads past the map. A CPd that names no upstream rate (drn 0, the
+ * cleardown, or 20..31, which Table 30 does not define) is stored
+ * unchecked, as before: nothing is encoded from it, since start_b1u
+ * refuses a drn outside 1..19. */
 static int storable(const v92_cpd_t *o, uint8_t has)
 {
     if (o->drn < 1 || o->drn > V92_UP_NUM_RATES) return 1;
