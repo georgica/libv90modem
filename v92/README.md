@@ -79,7 +79,8 @@ Code reused from the tree, linked but not modified: `../v90/v90_scr.c`
 (clause 7/V.34 scrambler), `../v90/v90_seq.c` (CRC register, `v90_dil_t`,
 `v90_cp_t`), `../v34/v34_core.c` with `../v34/v34_constel.c` (Figure 9,
 Table 13 and the convolutional encoders of V.34 through `v34_priv.h`). Tests
-also use `../v90/v90_pcm.c` and `../test/test.h`.
+also use `../v90/v90_pcm.c` with its table `../v90/v90_pcm_tab.c` (generated
+by `../tools/gen_pcm_lin.py`) and `../test/test.h`.
 
 ## Conventions
 
