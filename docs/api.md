@@ -69,7 +69,7 @@ version; the init functions check the length given):
 
 | | |
 |---|---|
-| `V90M_MEM_SIZE` | 120 KiB, for `v90m_init` |
+| `V90M_MEM_SIZE` | 108 KiB, for `v90m_init` |
 | `V90M_EC_MEM_SIZE` | 50 KiB, for `v90m_ec_init` |
 | `V90M_ASYNC_MEM_SIZE` | 2048, for `v90m_async_init` |
 | `v90m_align` | a union for the alignment: `union { v90m_align a; uint8_t b[V90M_MEM_SIZE]; } mem;` |

@@ -52,8 +52,8 @@ static void run(const row_t *r, uint32_t seed, res_t *o)
     o->t_data = (int32_t)(l->k / 8);
     o->down = l->org.rx_bitrate; o->up = l->org.bitrate;
     o->rtd = orig_rtd(&l->org);
-    o->robbed = l->org.v90.res.robbed[0] | l->org.v90.res.robbed[1] << 1 | l->org.v90.res.robbed[2] << 2
-              | l->org.v90.res.robbed[3] << 3 | l->org.v90.res.robbed[4] << 4 | l->org.v90.res.robbed[5] << 5;
+    o->robbed = l->org.e.v90.res.robbed[0] | l->org.e.v90.res.robbed[1] << 1 | l->org.e.v90.res.robbed[2] << 2
+              | l->org.e.v90.res.robbed[3] << 3 | l->org.e.v90.res.robbed[4] << 4 | l->org.e.v90.res.robbed[5] << 5;
     vl_tick(l);
     while (l->k < MS(40000) + MS(1000) && !answer_moving(&l->ans)) vl_tick(l);
     { int64_t e = l->k + MS(300); while (l->k < e) vl_tick(l); }     /* the first bits of each direction settle in */

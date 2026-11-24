@@ -64,7 +64,7 @@ void v22m_init(v22bis_t *m, v22_role role, int allow2400, int level,
     m->role = role; m->allow2400 = allow2400;
     v22tx_init(&m->tx, role == V22_CALLER ? V22_FC_LOW : V22_FC_HIGH, level, getbit, user);
     v22rx_init(&m->rx, role == V22_CALLER ? V22_FC_HIGH : V22_FC_LOW, putbit, user);
-    m->state = V22S_WAIT; m->t = 0; m->t112 = -1; m->s1_tx = 0; m->seen = 0; m->total = 0;
+    m->state = V22S_WAIT; m->t = 0; m->t112 = -1; m->s1_tx = 0; m->seen = 0;
     m->bitrate = 0; m->tx_ready = m->rx_ready = 0;
     m->retraining = 0; m->rt_sent = 0; m->rt_tries = 0; m->retrains = 0; m->rt_lost = 0; m->t_s1 = 0;
     m->s1_snr = -1; m->low_snr_1200 = 0;
@@ -138,7 +138,7 @@ void v22m_retrain(v22bis_t *m)
 int16_t v22m_tick(v22bis_t *m, int16_t in)
 {
     v22rx_tick(&m->rx, in);
-    m->t = clk_sat_inc(m->t); m->total = clk_sat_inc(m->total);
+    m->t = clk_sat_inc(m->t);
     if (m->t_s1 < MS(60000)) m->t_s1++;
 
     /* our own 100 ms of S1, then scrambled ones at 1200 */

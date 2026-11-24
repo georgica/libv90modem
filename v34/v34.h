@@ -283,9 +283,10 @@ typedef struct {
     int16_t   xd[V34_XD_LEN][2]; /* inputs delayed to the decision point */
     uint8_t   xmode;         /* 1: fed through v34_rx_put (x domain) */
     uint8_t   k;             /* 0/1: position inside the 4D symbol */
-    uint8_t   hard;          /* 1: trellis decoder bypassed (diagnostic, V34_TEST_API;
-                                kept in every build: one layout, one memory size) */
+#ifdef V34_TEST_API
+    uint8_t   hard;          /* 1: trellis decoder bypassed (diagnostic) */
     int16_t   hard_y[2];     /* first point of the 4D symbol in that mode */
+#endif
     uint16_t  xd_w, xd_r;    /* write / read positions in xd */
     uint32_t  m1[8];         /* subset metrics of the first 2D symbol */
     /* Viterbi */

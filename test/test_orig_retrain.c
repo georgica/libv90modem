@@ -146,9 +146,9 @@ static void run(int v92, int kind, uint32_t seed, res_t *o)
         break;
     case K_WIPE:
         /* the receiver's channel estimate and equaliser gone: decisions on nothing */
-        memset(l->org.v90.rx.h, 0, sizeof l->org.v90.rx.h);
-        memset(l->org.v90.rx.f, 0, sizeof l->org.v90.rx.f);
-        memset(l->org.v90.rx.b, 0, sizeof l->org.v90.rx.b);
+        memset(l->org.e.v90.rx.h, 0, sizeof l->org.e.v90.rx.h);
+        memset(l->org.e.v90.rx.f, 0, sizeof l->org.e.v90.rx.f);
+        memset(l->org.e.v90.rx.b, 0, sizeof l->org.e.v90.rx.b);
         break;
     case K_ANS_OWN:
         /* the answerer's engine retrains of its own accord (its checks of
@@ -192,8 +192,8 @@ static void run(int v92, int kind, uint32_t seed, res_t *o)
         { int64_t a, b; count(l, &a, &b, &a, &a); o->fd2 = (int)b; }
         o->ok = o->ok && still(l);
     }
-    o->rt_o = orig_retrains(&l->org); o->rt_a = l->ans.retrains; o->rn_o = l->org.v90.renegs;
-    o->rt_ours = l->org.v90.retrains_ours;
+    o->rt_o = orig_retrains(&l->org); o->rt_a = l->ans.retrains; o->rn_o = l->org.e.v90.renegs;
+    o->rt_ours = l->org.e.v90.retrains_ours;
 }
 
 static void print(const char *name, const res_t *o)
@@ -337,9 +337,9 @@ static void limits(int v92)
     CHECK_EQ_I(orig_retrains(&l->org), 3);
     /* past the limit the receiver lost is a cleardown (9.7 / 9.11), not a retrain */
     t0 = l->k;
-    memset(l->org.v90.rx.h, 0, sizeof l->org.v90.rx.h);
-    memset(l->org.v90.rx.f, 0, sizeof l->org.v90.rx.f);
-    memset(l->org.v90.rx.b, 0, sizeof l->org.v90.rx.b);
+    memset(l->org.e.v90.rx.h, 0, sizeof l->org.e.v90.rx.h);
+    memset(l->org.e.v90.rx.f, 0, sizeof l->org.e.v90.rx.f);
+    memset(l->org.e.v90.rx.b, 0, sizeof l->org.e.v90.rx.b);
     while (l->k < t0 + MS(10000) && l->org.phase != ORIG_FAILED) vl_tick(l);
     run_ms(l, 500);
     printf("  lost past the limit: end %d after %d ms, answerer cleared %d, retrains %d\n", l->org.end,

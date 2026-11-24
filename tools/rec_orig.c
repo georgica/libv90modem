@@ -144,7 +144,7 @@ int main(int argc, char **argv)
     end += 8000;
 
     if (pcm) {
-        vl_cfg c; orig_cfg oc; vl_t *l = &VL;
+        vl_cfg c; orig_cfg oc; vl_t *l = &VL; int ran90;
         memset(&c, 0, sizeof c);
         c.loop_km = 2; c.noise_dbm0 = -75; c.ppm = 100; c.phase = 0.3; c.echo_db = -16;
         c.up_loss_db = 6; c.up_noise_dbm0 = -70; c.full = 1; c.caller_orig = 1; c.seed = 5;
@@ -163,8 +163,12 @@ int main(int argc, char **argv)
             if (data_at < 0 && orig_moving(&l->org)) { data_at = nrec - 8000; end = nrec + 16000; }
             if (l->org.phase == ORIG_FAILED) break;
         }
+        /* the V.90 engine's, if JM chose it (the engines share memory;
+         * 0, 0 as an engine never started, otherwise) */
+        ran90 = l->org.used_v8 && l->org.v8.selected == V8_SEL_V90;
         printf("rec_orig %s: %ld samples, caller %s (V.90 engine state %d, error %d), data mode at %.3f s, %d / %d bit/s down / up\n", kind, nrec,
-               l->org.modulation == ORIG_MOD_V92 ? "V.92" : l->org.modulation == ORIG_MOD_V90 ? "V.90" : "other", (int)l->org.v90.state, l->org.v90.error,
+               l->org.modulation == ORIG_MOD_V92 ? "V.92" : l->org.modulation == ORIG_MOD_V90 ? "V.90" : "other",
+               ran90 ? (int)l->org.e.v90.state : 0, ran90 ? l->org.e.v90.error : 0,
                data_at / 8000.0, l->org.rx_bitrate, l->org.bitrate);
     } else {
         line34_cfg lc; orig_cfg oc;

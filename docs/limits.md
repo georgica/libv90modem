@@ -366,6 +366,15 @@ minimum-distance ladder in linear terms behind the pad reproduces 25 of
 the 39 constellations, and only when each table's first point and
 spacing are given, and none of the 3 dB tables but 32000's.
 
+## Memory
+
+- **The answering side's state sets the memory of a modem.** One modem,
+  either role, is `v90m_mem_size()` octets: 106320 on x86-64, 106016 on
+  ARMv5, within `V90M_MEM_SIZE` (108 KiB) on every port target. The
+  calling side's state, whose modulations after V.8 share memory, is some
+  52 KiB; a smaller modem would take a smaller answering state.
+  (`docs/history/audit-0.6.md`, Task 29.)
+
 ## CPU
 
 All figures are ARM instructions counted under qemu (ARMv5, gcc -O2);

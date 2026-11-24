@@ -160,7 +160,6 @@ typedef struct {
     int32_t   t112;         /* samples since circuit 112 turned on (-1: not yet) */
     int32_t   s1_tx;        /* samples of S1 still to send */
     int32_t   seen;         /* how long the awaited signal has been present */
-    int32_t   total;        /* samples since start (saturates; read nowhere) */
     int       bitrate;      /* 0 until agreed, then 1200 or 2400 */
     int       tx_ready, rx_ready;   /* circuit 106 follows 105 / circuit 104 not clamped */
     /* retrain (6.4) */

@@ -47,7 +47,7 @@ static void jump_v90a(v90a_t *a)
     r->neq = (uint32_t)NEAR; r->nest = (int32_t)NEAR;
     a->mod.nsym = (int32_t)NEAR; a->dly_pos = (int)(0x7FFFFF00 + (a->dly_pos & 1));
 }
-static void jump_orig(orig_t *o) { o->t = (int32_t)NEAR; jump_v90a(&o->v90); }
+static void jump_orig(orig_t *o) { o->t = (int32_t)NEAR; jump_v90a(&o->e.v90); }
 static void jump_v92d(v92d_t *p)
 {
     int32_t d = (int32_t)(near_of(p->trn.k, 768) - p->trn.k);
@@ -86,8 +86,8 @@ static void pcm_call(int v92)
     CHECK(l->up.got - u0 > (int64_t)(RUN_S - 1) * l->org.bitrate);
     CHECK_EQ_I(l->down.fails - f0d, 0); CHECK_EQ_I(l->up.fails - f0u, 0);
     /* the clocks went past 2^31; the symbol numbers were brought back */
-    CHECK(l->org.v90.now > 0x80000000u); CHECK(l->org.v90.rx.n > 0x80000000u);
-    CHECK(clk_diff(l->org.v90.rx.n, l->org.v90.rx.n0) < CLK_REBASE_AT);
+    CHECK(l->org.e.v90.now > 0x80000000u); CHECK(l->org.e.v90.rx.n > 0x80000000u);
+    CHECK(clk_diff(l->org.e.v90.rx.n, l->org.e.v90.rx.n0) < CLK_REBASE_AT);
     CHECK_EQ_I(l->org.t, INT32_MAX); CHECK_EQ_I(l->ans.t, INT32_MAX);
     if (v92) { CHECK(l->ans.u.v92.now > 0x80000000u); CHECK(l->ans.u.v92.trn.k < 0x40000000); }
     else {
@@ -109,9 +109,9 @@ static void pcm_call(int v92)
     e = l->k + MS(2000); while (l->k < e) vl_tick(l);
     printf("  %s renegotiated: %d bit/s down, %d up; %" PRId64 " / %" PRId64 " bits, %" PRId64 " / %" PRId64 " wrong; renegotiations %d, retrains %d\n",
            what, l->org.rx_bitrate, l->org.bitrate, l->down.got - d0, l->up.got - u0, l->down.fails - f0d, l->up.fails - f0u,
-           (int)l->org.v90.renegs, orig_retrains(&l->org));
+           (int)l->org.e.v90.renegs, orig_retrains(&l->org));
     CHECK(orig_moving(&l->org)); CHECK(answer_moving(&l->ans));
-    CHECK(l->org.rx_bitrate <= 40000); CHECK_EQ_I(l->org.v90.renegs, 1); CHECK_EQ_I(orig_retrains(&l->org), 0);
+    CHECK(l->org.rx_bitrate <= 40000); CHECK_EQ_I(l->org.e.v90.renegs, 1); CHECK_EQ_I(orig_retrains(&l->org), 0);
     CHECK(l->down.got - d0 > (int64_t)l->org.rx_bitrate); CHECK(l->up.got - u0 > (int64_t)l->org.bitrate);
     CHECK_EQ_I(l->down.fails - f0d, 0); CHECK_EQ_I(l->up.fails - f0u, 0);
 }
@@ -131,8 +131,8 @@ static void sd_counters(void)
     vl_init(l, &c);
     while (l->k < MS(40000) && l->org.phase != ORIG_FAILED && !orig_moving(&l->org)) {
         vl_tick(l);
-        if (!hit && l->org.phase == ORIG_V90 && l->org.v90.rx_on && l->org.v90.rx.state == V90ARX_WAIT && l->org.v90.rx.sd_cnt > 0) {
-            l->org.v90.rx.sd_cnt = INT32_MAX - 2; l->org.v90.rx.sd_np = INT32_MAX - 2;
+        if (!hit && l->org.phase == ORIG_V90 && l->org.e.v90.rx_on && l->org.e.v90.rx.state == V90ARX_WAIT && l->org.e.v90.rx.sd_cnt > 0) {
+            l->org.e.v90.rx.sd_cnt = INT32_MAX - 2; l->org.e.v90.rx.sd_np = INT32_MAX - 2;
             hit = 1;
             e = l->k + MS(1000); while (l->k < e) vl_tick(l);
             break;
@@ -301,7 +301,7 @@ static void v22_call(void)
     CHECK(A.connected && P.connected); CHECK_EQ_I(A.modulation, ANS_MOD_V22BIS);
     for (n = 0; n < 8000L; n++) { int16_t t = answer_tick(&A, ctx); ctx = callpeer_tick(&P, atx); atx = t; }
     jump_answer(&A);
-    A.v22.t = (int32_t)NEAR; A.v22.total = (int32_t)NEAR; P.v22.t = (int32_t)NEAR; P.v22.total = (int32_t)NEAR;
+    A.v22.t = (int32_t)NEAR; P.v22.t = (int32_t)NEAR;
     dn0 = SA.n; up0 = SP.n; dbad0 = SA.bad; ubad0 = SP.bad;
     for (n = 0; n < 8000L * RUN_S; n++) { int16_t t = answer_tick(&A, ctx); ctx = callpeer_tick(&P, atx); atx = t; }
     printf("  V.22bis: %d bit/s; after the clocks' wrap %ld / %ld bits, %ld / %ld wrong\n",

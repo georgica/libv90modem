@@ -181,16 +181,18 @@ static void test_cfg(void)
     /* the bounds of the header, and memory full of rubbish */
     CHECK(v90m_mem_size() <= V90M_MEM_SIZE);
     {
-        /* pinned: what v90d sizes its buffers by (K56flex's state lives in
-         * the answerer's union) */
+        /* pinned: what v90d sizes its buffers by. The answerer's state sets
+         * it (K56flex's lives in its union); the caller's engines share
+         * memory since 0.6.0, at least 12000 octets less than 0.5.0's */
 #if defined(__x86_64__)
-        size_t expect = 118824;
+        size_t expect = 106320, was = 118824;
 #elif defined(__arm__)
-        size_t expect = 118512;
+        size_t expect = 106016, was = 118512;
 #else
-        size_t expect = v90m_mem_size();
+        size_t expect = v90m_mem_size(), was = expect + 12000;
 #endif
         CHECK(v90m_mem_size() == expect);
+        CHECK(v90m_mem_size() <= was - 12000);
     }
     CHECK(v90m_ec_mem_size() <= V90M_EC_MEM_SIZE);
     CHECK(v90m_async_mem_size() <= V90M_ASYNC_MEM_SIZE);

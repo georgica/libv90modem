@@ -148,10 +148,14 @@ typedef struct {
     int32_t    t;            /* samples in this phase (saturates) */
     int        used_v8;      /* the answerer spoke V.8 */
     v8orig_t   v8;
-    v22bis_t   v22;
-    v32_t      v32;
-    v34orig_t  v34;
-    v90a_t     v90;
+    /* the engine after V.8, by phase: one at a time, so they share memory
+     * (each start_* initialises its own). ORIG_LEGACY (Annex A) runs the
+     * V.22bis and V.32bis callers together, and Bell 212A is V.22bis's */
+    union {
+        struct { v22bis_t v22; v32_t v32; } leg;   /* ORIG_LEGACY, ORIG_V22, ORIG_V32 */
+        v34orig_t v34;                             /* ORIG_V34 */
+        v90a_t    v90;                             /* ORIG_V90 */
+    } e;
     v21mod_t   fmod; v21demod_t fdem; arx_t uart;
     int        fbit; int32_t cd_run; int64_t cd_thresh;
     int16_t    bpf[128]; int bpos;  /* V.21 channel 2 receive band-pass history */

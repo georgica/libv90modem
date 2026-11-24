@@ -434,6 +434,11 @@ Changed (API: callbacks, NULL, configuration checks):
   `V90M_EINVAL` (0x80 went out as a combination V.42 does not define).
 - `v90m_ec_tick` with `ms` above `INT_MAX` expires the timers (it extended
   them).
+- Memory: `V90M_MEM_SIZE` is 108 KiB (it was 120 KiB), and
+  `v90m_mem_size()` 106320 octets on x86-64 (118824), 106016 on ARMv5
+  (118512): the calling side's modulations after V.8 share memory, which
+  leaves the answering side's state the larger. Rebuild against the new
+  header.
 
 Fixed (error control):
 - `v90m_ec_abort` stops the endpoint in every state, and

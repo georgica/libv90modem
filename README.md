@@ -235,9 +235,9 @@ calling side.
 ## Memory and CPU
 
 One modem, either role, takes `v90m_mem_size()` octets, at most
-`V90M_MEM_SIZE` (120 KiB) on every platform: 118824 on x86-64, 118512 on
-ARMv5 (the calling side's state is the larger; the answering side's alone
-is some 104 KiB). A V.42 endpoint takes at most `V90M_EC_MEM_SIZE` (50 KiB;
+`V90M_MEM_SIZE` (108 KiB) on every platform: 106320 on x86-64, 106016 on
+ARMv5 (the answering side's state is the larger; the calling side's, whose
+modulations after V.8 share memory, is some 52 KiB). A V.42 endpoint takes at most `V90M_EC_MEM_SIZE` (50 KiB;
 49792 octets on x86-64), a start-stop framer `V90M_ASYNC_MEM_SIZE` (2 KiB;
 1064 octets). All three can
 live in memory of the caller's (`v90m_init`, `v90m_ec_init`,

@@ -1056,3 +1056,67 @@ mode), before at 15ee679:
 The per-symbol calls that now cross files (the upstream symbol, each
 decision, the watch) cost nothing measurable; bench hashes unchanged
 (bbf20f60 V.90, 484a898d V.92, host and qemu).
+
+## Task 29: the calling side's engines share memory; new pins (Phase 2 gate)
+
+`orig_t`'s engines after V.8 are one union, `e`: `e.leg` (the V.22bis and
+V.32bis callers together: Annex A runs both in ORIG_LEGACY, Bell 212A is
+V.22bis's), `e.v34`, `e.v90`. Each `start_*` initialises its own and
+`orig_init` clears all; every getter reads only the engine of the phase.
+The one read after the end, `orig_retrains` in ORIG_FAILED, takes V.34 or
+V.90 by the modulation, which only that engine sets, and no engine starts
+after ORIG_FAILED: its output is as before. `tools/rec_orig` printed the
+V.90 engine's state and error whatever the call became; it now prints
+them only when JM chose V.90 (0, 0 otherwise, as an engine never started
+gave). Also removed: `v22bis_t.total` (read nowhere) and, outside
+`V34_TEST_API`, `v34_rx_t.hard` / `hard_y` and the `rx->hard` test in
+`v34_rx_flush_before` (24 octets off answer_t and every V.34 receiver).
+
+Byte identical (`make verify`: replay 636 identical, bench hashes
+identical); one golden re-record, `test/golden/out/api/test_api.txt`: its
+count line, 924 -> 925 checks (the new CHECK that the size is at least
+12000 octets below 0.5.0's).
+
+### Memory per target
+
+`v90m_mem_size()` (octets) on every port target of `tools/check-ports.sh`,
+read by a program that prints it, built with each target's compiler and
+flags and run under its runner, with `api_test_api` (925 checks, 0
+failures on every target; `v90m_mem_size() <= V90M_MEM_SIZE` among them).
+The port suites themselves were not run (deferred to Task 39).
+
+| target | before (orig_t sets it) | after (answer_t sets it) | orig_t after | answer_t after |
+|---|---|---|---|---|
+| host-gcc, host-clang, x86_64-musl | 118824 | 106320 | 53752 | 106208 |
+| aarch64, aarch64be, ppc64, riscv64, s390x | 118824 | 106320 | 53752 | 106208 |
+| armv5-uclibc, armv7hf-musl, mips, mipsel, ppc, win32-mingw | 118512 | 106016 | 53592 | 105928 |
+| i686-musl | 118296 | 105832 | 53476 | 105748 |
+| m68k-uclibc | 118188 | 105704 | 53414 | 105622 |
+
+Before, `orig_t` (118712 x86-64, 118424 ARMv5) set the size; after, the
+answerer's `answer_t` does: `orig_t` lost 64960 octets (x86-64), but the
+modem takes only 12504 less (12496 on ARMv5), the gap to answer_t. The
+brief's target, at most 118824 - 12000 = 106824 (x86-64) and 106512
+(ARMv5), is met. Pins: 106320 (x86-64), 106016 (32-bit ARM).
+`V90M_MEM_SIZE` (D17): the largest, 106320, + 2048 = 108368, up to a
+multiple of 4096: 110592 (108 KiB, was 120 KiB). `V90M_EC_MEM_SIZE` and
+`V90M_ASYNC_MEM_SIZE` unchanged (49792 / 1064 x86-64).
+
+### Costs after Phase 2
+
+`make cost-x2 cost-k56 cost-v34 cost-v90c cost-v92c ARM_CC=$A5
+COST_TICKS=0` (armv5 uClibc, each in its own BUILD), M ARM instructions
+per second of line in data mode:
+
+| | after Phase 1 | after Phase 2 | change |
+|---|---|---|---|
+| x2 answering (second 15 to 16) | 82.85 | 82.79 | -0.06 |
+| V.90 answering (`cost-x2`'s, second 15 to 16) | 39.40 | 39.46 | +0.06 |
+| K56flex answering (second 20 to 21) | 39.64 | 39.54 | -0.10 |
+| V.34 answering (second 10 to 11) | 40.71 | 40.51 | -0.20 |
+| V.90 calling, 0 / 100 ppm | 55.06 / 58.89 | 55.19 / 59.01 | +0.13 / +0.12 |
+| V.92 calling, 0 / 100 ppm | 70.16 / 74.39 | 70.32 / 74.55 | +0.16 / +0.16 |
+
+Every row within 0.5 M of after Phase 1. The calling rows equal Task 27's
+after (55.19 / 59.02 / 70.33 / 74.56) to 0.01 M: the union itself costs
+nothing; their rise since Phase 1 was already there before this task.
