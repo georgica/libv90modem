@@ -253,6 +253,17 @@ int main(void)
         CHECK_EQ_I(r.d.info1a.lmax_code, 2);
         CHECK_EQ_I(r.d.info1a.md_len, 22);
         CHECK_EQ_I(r.d.info1a.uinfo, 88);
+
+        /* at low SNR (noise 700, about 9 dB) a hunter one symbol phase off
+         * may see the first 41 bits clean and the rest not: its INFO0a must
+         * still wait for the hunter that has the whole INFO1a */
+        s = base(); s.v92 = 1; s.info1a = &f; s.noise = 700; s.d_ad = 100;
+        run(&s, &r);
+        printf("  the same at noise 700, 100 samples a -> d: digital %d (err %d, mode %d) at %d ms, back to INFO0 %d times\n",
+               r.d.state, r.d.error, r.d.mode, r.d_done / 8, r.d.n_restart);
+        CHECK_EQ_I(r.d.state, P2D_DONE);
+        CHECK_EQ_I(r.d.mode, P2D_MODE_V92);
+        CHECK_EQ_I(r.d.n_restart, 0);
     }
 
     printf("time-outs\n");

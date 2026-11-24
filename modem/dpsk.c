@@ -196,12 +196,15 @@ static int hunt_bit(dpskrx_t *r, int h, int bit)
     if (!r->expect) return 0;
     if (frame_ends(r, h, r->expect, 0)) return 1;
     if (!r->expect2) return 0;
-    /* The second length is taken only where a frame of the first with the
-     * same sync would have ended, and did not: the start of a longer frame
-     * whose CRC happens to hold as a shorter one (1 in 2^16 of them) is
-     * never taken for the shorter, at the cost of the shorter's arriving
-     * (expect - expect2) bits late. */
-    return frame_ends(r, h, r->expect2, r->expect > r->expect2 ? r->expect - r->expect2 : 0);
+    /* The second length is taken only one bit after a frame of the first
+     * with the same sync would have ended, and did not: the start of a
+     * longer frame whose CRC happens to hold as a shorter one (1 in 2^16 of
+     * them) is never taken for the shorter. The one bit more is for the
+     * other hunters: each samples a symbol within one symbol of this one,
+     * so one that has the longer frame clean has reported it (and cleared
+     * every history) by then. The shorter frame arrives (expect - expect2
+     * + 1) bits late; the history holds the 8 + expect + 1 + 4 it needs. */
+    return frame_ends(r, h, r->expect2, r->expect > r->expect2 ? r->expect - r->expect2 + 1 : 0);
 }
 
 int dpskrx_tick(dpskrx_t *r, int16_t x)

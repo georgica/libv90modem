@@ -77,9 +77,10 @@ void dpskrx_init(dpskrx_t *r, int fc);
 void dpskrx_expect(dpskrx_t *r, int payload_bits);
 /* after dpskrx_expect(): hunt for frames of this payload length as well
  * (r->flen says which one came in); cleared by the next dpskrx_expect().
- * When it is the shorter, such a frame is reported only once a frame of
- * the expected length with the same sync would have ended and did not, so
- * (expect - payload_bits) bits late: the expected frame always wins. */
+ * When it is the shorter, such a frame is reported only one bit after a
+ * frame of the expected length with the same sync would have ended and did
+ * not, in any hunter, so (expect - payload_bits + 1) bits late: an expected
+ * frame that any hunter receives clean always wins. */
 void dpskrx_expect_also(dpskrx_t *r, int payload_bits);
 int  dpskrx_tick(dpskrx_t *r, int16_t x);
 /* received carrier level, RMS in 16-bit sample units */
