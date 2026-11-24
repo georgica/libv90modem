@@ -19,6 +19,7 @@
  * m1[s1] + m2[s2] over all pairs (s1, s2) carrying that label. */
 #include <string.h>
 #include "v34_priv.h"
+#include "../modem/compiler.h"
 
 #define PM_INF      (1u << 30)
 /* Sanity windows for the two inverse-precoder recursions (rebuilt x(n)
@@ -166,18 +167,62 @@ uint32_t v34_slice_subset(const v34_params_t *p, int re, int im, unsigned s,
     return d > V34_M_MAX ? V34_M_MAX : d;
 }
 
+/* The decoder's version for the 32- and 64-state codes: what eight
+ * v34_slice_subset calls give, in one pass. In a = re + im, b = re - im the
+ * eight subsets' lattices (ra, rb) + (8i, 8j) have between them only four
+ * residues of ra modulo 8 (0, 2, 4, 6) and four of rb, each shared by two
+ * subsets; the nearest a (and b) of a residue does not depend on which
+ * representative of it the formula is given. So the four nearest a, the
+ * four nearest b and their squared distances are found once, and a
+ * subset's point is the pair its residues pick. The squared distance in
+ * (a, b) is twice the one in (re, im), exactly: da = dx + dy, db = dx - dy. */
+static const uint8_t sub_res[8] = {     /* v34_subset_rep[s]: (ra mod 8) / 2 | (rb mod 8) / 2 << 2 */
+    1 | 0 << 2, 0 | 1 << 2, 3 | 0 << 2, 0 | 3 << 2,
+    3 | 2 << 2, 2 | 3 << 2, 1 | 2 << 2, 2 | 1 << 2 };
+
 void v34_slice_subsets(const v34_params_t *p, int re, int im, uint32_t m[8],
                        int16_t pt[8][2])
 {
+    int lim = (p->ymax + 4) * V34_ONE, av[4], bv[4], k, x, y;
+    uint32_t da2[4], db2[4], d;
     unsigned s;
-    for (s = 0; s < 8; s++)
-        m[s] = v34_slice_subset(p, re, im, s, pt[s]);
+
+    re = clampq(re, lim); im = clampq(im, lim);
+    for (k = 0; k < 4; k++) {
+        int r = 2 * k;
+        int32_t e;
+        av[k] = r + 8 * (((re + im - r * V34_ONE + 4 * V34_ONE + (1 << 20)) >> 10) - 1024);
+        bv[k] = r + 8 * (((re - im - r * V34_ONE + 4 * V34_ONE + (1 << 20)) >> 10) - 1024);
+        e = re + im - av[k] * V34_ONE; da2[k] = (uint32_t)(e * e);
+        e = re - im - bv[k] * V34_ONE; db2[k] = (uint32_t)(e * e);
+    }
+    for (s = 0; s < 8; s++) {
+        unsigned ia = sub_res[s] & 3, ib = sub_res[s] >> 2;
+        int a = av[ia], b = bv[ib];
+        x = (int)((unsigned)(a + b + 4096) >> 1) - 2048;    /* (a + b) / 2, exact */
+        y = (int)((unsigned)(a - b + 4096) >> 1) - 2048;
+        if (p->precode || v34_inside(p, x, y)) {
+            d = (da2[ia] + db2[ib]) >> 1;
+        } else if (nearest_inside(p, re, im, &x, &y, 4, 1)) {
+            d = dist2(re, im, x, y);
+        } else {
+            pt[s][0] = pt[s][1] = 0;
+            m[s] = V34_M_BIG;
+            continue;
+        }
+        pt[s][0] = (int16_t)x; pt[s][1] = (int16_t)y;
+        d >>= V34_M_SHIFT;
+        m[s] = d > V34_M_MAX ? V34_M_MAX : d;
+    }
 }
 
 /* The 16-state code does not use Y4 (nor Y3), so the top bit of the subset
  * label never matters to it: its 2D metrics are those of the four cosets of
  * 4Z^2, "the points that are l clockwise quarter turns from the quarter
- * constellation grid". Half the slicing work of the 8-way partition. */
+ * constellation grid". Half the slicing work of the 8-way partition.
+ * v34_slice_classes below calls this for constellations of BRUTE_PTS
+ * points or fewer (its brute-force branch); v34_slice_subsets, the 8-way
+ * partition's one pass, does not cover the 4-way one, so it stays. */
 uint32_t v34_slice_class(const v34_params_t *p, int re, int im, unsigned l,
                          int16_t pt[2])
 {
@@ -494,11 +539,48 @@ static void rx_traceback(v34_rx_t *rx)
               (unsigned)(rx->nsteps - rx->nout));    /* 1 .. DEPTH */
 }
 
+/* acs() walks rx->pred a state at a time: 16 branches of 2 bytes each */
+typedef char v34_pred_row_check[sizeof(((v34_rx_t *)0)->pred[0]) == 32 ? 1 : -1];
+
+/* Add-compare-select for every target state, out of line so that its few
+ * pointers stay in registers. pp is rx->pred[0][0]; nk (4, 8 or 16) is a
+ * multiple of 4, four predecessors a pass. The predecessors are compared
+ * in their stored (ascending) order with a strict <, so the first of equal
+ * metrics wins; a state none of whose predecessors is reachable keeps
+ * PM_INF and its first predecessor. Only the winner's position is carried
+ * through the loop: prev[t] and lab[t] (its branch label) are stored at the
+ * end. Returns the smallest new metric, its state (the first of equal
+ * ones) in *bsp. */
+static V90M_NOINLINE uint32_t acs(const uint32_t *pm, const uint32_t *bm, const uint8_t *pp,
+                                  unsigned ns, unsigned nk, uint32_t *npm, uint8_t *prev,
+                                  uint8_t *lab, unsigned *bsp)
+{
+    uint32_t best = PM_INF;
+    unsigned t, bs = 0;
+    for (t = 0; t < ns; t++, pp += 32) {
+        const uint8_t *q = pp, *end = pp + 2 * nk, *pb = pp;
+        uint32_t cb = PM_INF, c;
+        do {
+            c = pm[q[0]] + bm[q[1]]; if (c < cb) { cb = c; pb = q; }
+            c = pm[q[2]] + bm[q[3]]; if (c < cb) { cb = c; pb = q + 2; }
+            c = pm[q[4]] + bm[q[5]]; if (c < cb) { cb = c; pb = q + 4; }
+            c = pm[q[6]] + bm[q[7]]; if (c < cb) { cb = c; pb = q + 6; }
+            q += 8;
+        } while (q != end);
+        npm[t] = cb;
+        prev[t] = pb[0];
+        lab[t] = pb[1];
+        if (cb < best) { best = cb; bs = t; }
+    }
+    *bsp = bs;
+    return best;
+}
+
 static void rx_trellis_step(v34_rx_t *rx, const uint32_t *m2)
 {
     const v34_params_t *p = rx->p;
     v34_vstep_t *st = &rx->hist[rx->head];
-    uint32_t bm[32], npm[V34_MAX_STATES], best = PM_INF;
+    uint32_t bm[32], npm[V34_MAX_STATES], best;
     uint8_t bpair[32];
     const uint32_t *m1 = rx->m1, *pm = rx->pm;
     const unsigned ns = p->nstates, nk = rx->nkeys, nlab = rx->nlab, npairs = rx->npairs;
@@ -527,24 +609,13 @@ static void rx_trellis_step(v34_rx_t *rx, const uint32_t *m2)
     }
 
     /* add-compare-select, per target state. A state that cannot be reached
-     * yet has metric PM_INF and never wins. */
+     * yet has metric PM_INF and never wins. st->pair first receives the
+     * winning branch label, then the subset pair that gave its metric. */
+    best = acs(pm, bm, rx->pred[0][0], ns, nk, npm, st->prev, st->pair, &bs);
     for (t = 0; t < ns; t++) {
-        const uint8_t *pp = rx->pred[t][0], *end = pp + 2 * nk;
-        uint32_t cb = PM_INF;
-        unsigned sb = pp[0], lb = pp[1];
-        do {
-            unsigned s = pp[0], l = pp[1];
-            uint32_t c = pm[s] + bm[l];
-            if (c < cb) { cb = c; sb = s; lb = l; }
-            pp += 2;
-        } while (pp != end);
-        npm[t] = cb;
-        st->prev[t] = (uint8_t)sb;
-        st->pair[t] = bpair[lb];
-        if (cb < best) { best = cb; bs = t; }
-    }
-    for (t = 0; t < ns; t++)
+        st->pair[t] = bpair[st->pair[t]];
         rx->pm[t] = (npm[t] >= PM_INF) ? PM_INF : npm[t] - best;
+    }
     rx->best = (uint8_t)bs;
 
     /* the best metric was 0 before this step: `best` is what the decoded

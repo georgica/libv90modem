@@ -38,7 +38,8 @@ void v34_precode_pc(const v34_params_t *p, int32_t (*xh)[2],
 /* Nearest valid point of 2D subset s (Figure 9 label) to (re, im) in Q7:
  * a point of the L-point constellation when there is no precoding, any
  * grid point otherwise. Returns the metric, V34_M_BIG if the subset has no
- * valid point. pt receives the point in integer units. */
+ * valid point. pt receives the point in integer units. (The decoder takes
+ * all eight at once, v34_slice_subsets.) */
 uint32_t v34_slice_subset(const v34_params_t *p, int re, int im, unsigned s,
                           int16_t pt[2]);
 

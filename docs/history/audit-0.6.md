@@ -1224,3 +1224,79 @@ mode:
 Only x2's upstream is non-linear in these calls (v34up.c decodes each
 symbol and re-encodes its decision); the decoder and the encoder were
 measured together, -9.25 M against dsp's -10.25 M for both.
+
+## Task 32: the Viterbi add-compare-select; the subset slicer in one pass (dsp P3, P3b, P6)
+
+- P3: `acs()` (v34_rx.c) does the add-compare-select for every target
+  state, out of line (`V90M_NOINLINE`) so that its few pointers stay in
+  registers: four predecessors a pass (nkeys is 4, 8 or 16), only the
+  winner's position carried through the loop, prev and the branch label
+  stored once a state. The same strict `<` in the same (ascending)
+  predecessor order, the same first predecessor for a state not yet
+  reachable, the same first best state. The labels go through `bpair[]`
+  afterwards, in the renormalisation's loop.
+- P6: `v34_slice_subsets` slices the eight subsets of the 32- and
+  64-state codes in one pass. In a = re + im, b = re - im their lattices
+  have four residues of a and four of b modulo 8 between them: the four
+  nearest a, the four nearest b and their squares are found once, a
+  subset's point is the pair its residues pick, its squared distance
+  (da^2 + db^2) / 2, exactly. Outside the constellation the same
+  `nearest_inside` as before. `v34_slice_subset` stays as the tests'
+  reference. `v34_slice_class`'s brute-force branch (constellations of 8
+  points or fewer, through `v34_slice_classes`, 16 states) stays: the 8-way
+  pass does not cover the 4-way partition.
+- P3b skipped: it costs more than it saves. Kept exact (path metrics left
+  unnormalised once every state is reachable, `pm[best]` taken off the
+  branch metrics instead; the old renormalisation while a state is still
+  unreachable), test_vit_hash and the suite unchanged, but the decoder
+  counted 8375 instead of 8350 ARM instructions per 2D symbol at 64
+  states, 4500 instead of 4463 at 32 and 1701 instead of 1688 at 16
+  (`test_bench count`, armv5): the renormalisation already shares its loop
+  with the label mapping, and taking `pm[best]` off up to 32 branch
+  metrics plus the check for an unreachable state cost more than the
+  compare and subtraction it removes.
+
+Proof: `v34/test/test_vit_hash.c` (its own commit, before this one):
+10^6 2D symbols from a fixed LCG (data and noise, integers only) through
+`v34_rx_put` at 16, 32 (precoded) and 64 states, three noise levels each,
+a hash of every trellis step's survivor history (nearest points,
+predecessors, pairs), best state, smoothed metric and decoded bits. The
+first noise level moves each coordinate by -1, 0 or +1 unit exactly, so
+that path metrics tie: a throwaway probe counted 1.26 M ties in 3.56 M
+compares at 16 states and 11.7 M in 56.9 M at 64 (about 35 000 and
+80 000 in the other runs). Mutations of the new code each change the
+printed hashes: `<=` for `<` in any of the four compares or in the best
+state's, a reordered pair of compares, a wrong first predecessor. The
+slicer against eight `v34_slice_subset` calls, metric and point: all 50
+constellations without precoding (8 of 8 points or fewer) and three
+precoded (ymax 9, 47, 227), the int16 grid in steps of 40 within the
+clamping window, the plane's edges and 10000 random points a set; by hand
+`full` (steps of 8: 95 725 421 points) and `plane` (the whole int16 plane
+in steps of 8 for every set: 3 556 769 792 points, 8 shards), 0
+differences. A rounding changed in the slicer shows in the suite (on the
+grid of 8 alone it would not: every squared distance there is a multiple
+of 128, hence the random points). The ARMv5 build's (short) output is the
+same before and after.
+`make verify`: golden 135, replay 636, bench 17 identical; ubsan, armv7hf,
+bigend, fixed ok; no golden file re-recorded (test_vit_hash's own is
+new). The bench transmit and received hashes are the same on the host and
+under qemu, and the same as before.
+
+### Costs
+
+`make cost-x2 cost-k56 cost-v34 ARM_CC=$A5 COST_TICKS=0` (armv5 uClibc,
+each in its own BUILD), M ARM instructions per second of line in data
+mode:
+
+| | before | after | change | dsp's estimate |
+|---|---|---|---|---|
+| x2 answering (second 15 to 16) | 69.94 | 60.95 | -8.99 | -8.2 (ACS) and -1.0 to -1.3 (slicer); P3b's -1.0 to -1.5 not taken |
+| V.90 answering (`cost-x2`'s, second 15 to 16) | 35.58 | 35.10 | -0.48 | -0.4 |
+| K56flex answering (second 20 to 21) | 35.94 | 35.46 | -0.48 | |
+| V.34 answering (second 10 to 11) | 36.92 | 36.43 | -0.48 | |
+| V.90 answering (`cost-v34`'s, second 10 to 11) | 35.58 | 35.10 | -0.48 | |
+
+x2's upstream decodes 64 states (8 subsets); the others 16 (4 classes,
+whose slicer is unchanged), so they gain from the ACS alone. The v34
+bench's decoder (`test_bench count`, armv5) per 2D symbol: 16 states
+1837 -> 1688, 32 states 5295 -> 4463, 64 states 11166 -> 8350.
