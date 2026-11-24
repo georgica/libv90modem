@@ -1356,3 +1356,26 @@ a tap, and `eq_out`); the calling modes from v90arx's and pcmtx's runs
 (7 -> 6 a tap), which were straight already. P10's -0.6 M assumed 7 ->
 6 a tap from two taps a pass, which this compiler does not give; the
 four-tap pass gets part of it.
+
+## Task 36: V.42's per-bit path inline; FCS by table (v42 perf 0, 1)
+
+V.42 runs per line bit on the box's CPU, beside the modem, and is not in
+the modem's cost figures. `make cost-v42` (new) counts it: `rig/bench_v42`
+runs two endpoints back to back with both directions kept full of text
+(30000 line bits to set up the link, then 56000 more each way); the count
+is the difference of the two runs, halved: per endpoint, per second at 56
+kbit/s both ways, the harness's loop (about 0.7 M) included. The host's
+output and the target's (state, octets received, their hash) must agree.
+
+### Costs
+
+`make cost-v42 ARM_CC=$A5` (armv5 uClibc), M ARM instructions per endpoint
+per second at 56 kbit/s both ways:
+
+| | before |
+|---|---|
+| no compression | 7.96 |
+| V.42 bis (2048/32) | 11.81 |
+| V.44 (2048/255/4096) | 12.19 |
+
+The v42 audit's figures with its scratch bench were 7.9 / 11.6 / 12.2.
