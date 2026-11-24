@@ -313,7 +313,8 @@ static void frame(v90a_t *a, int32_t m0)
     uint8_t bits[V90_MAX_D];
     int D = a->dec.D, i, ones = 0;
     (void)v90adec_frame(&a->dec, a->fu, a->fp, bits);
-    for (i = 0; i < D; i++) { bits[i] = (uint8_t)v90_descramble_gpc(&a->dscr, bits[i]); ones += bits[i]; }
+    v90_descramble_gpc_bits(&a->dscr, bits, D);
+    for (i = 0; i < D; i++) ones += bits[i];
     switch (a->ds) {
     case D_TRAIN:
         if (a->pcm && a->after_mpa != 3) { v90a__train92(a, bits, D, m0); break; }

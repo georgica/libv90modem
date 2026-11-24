@@ -69,21 +69,30 @@ static inline int v34_descramble(v34_scr_t *s, int bit)
 
 /* n bits at once, 1 <= n <= 8: the first in time in bit n - 1 of bits, the
  * last in bit 0; the n output bits are returned the same way. The same as
- * n calls of v34_scramble / v34_descramble, state included. */
+ * n calls of v34_scramble / v34_descramble, state included.
+ *
+ * Laid below sr (bit 0 the newest), bit p of the n new bits sees the
+ * sequence j bits before it at bit p + j of (sr << n) | bits, so all n
+ * come from a few shifts of one word. The descrambler's taps are inputs,
+ * all known. The scrambler's are its outputs: those before these n come
+ * from sr, and where the middle tap (5) falls inside them, o[p] = c[p] ^
+ * o[p + tap] is solved by o ^= o >> tap, o ^= o >> 2 tap, ... (the x^-23
+ * tap is always older than the n bits). */
 static inline unsigned v34_scramble_n(v34_scr_t *s, unsigned bits, int n)
 {
-    unsigned o = 0;
-    int k;
-    for (k = n - 1; k >= 0; k--) o = (o << 1) | (unsigned)v34_scramble(s, (int)((bits >> k) & 1));
-    return o;
+    uint32_t m = ((uint32_t)1 << n) - 1, y = s->sr << n;
+    uint32_t o = ((uint32_t)bits ^ (y >> s->tap) ^ (y >> 23)) & m;
+    int sh;
+    for (sh = s->tap; sh < n; sh *= 2) o ^= o >> sh;
+    s->sr = (y | o) & 0x7FFFFF;
+    return (unsigned)o;
 }
 
 static inline unsigned v34_descramble_n(v34_scr_t *s, unsigned bits, int n)
 {
-    unsigned o = 0;
-    int k;
-    for (k = n - 1; k >= 0; k--) o = (o << 1) | (unsigned)v34_descramble(s, (int)((bits >> k) & 1));
-    return o;
+    uint32_t m = ((uint32_t)1 << n) - 1, x = (s->sr << n) | ((uint32_t)bits & m);
+    s->sr = x & 0x7FFFFF;
+    return (unsigned)((x ^ (x >> s->tap) ^ (x >> 23)) & m);
 }
 
 /* ---- training signals, 10.1.3 -------------------------------------- */

@@ -191,8 +191,9 @@ static uint8_t data_symbol(k56tx_t *t)
         int nb = k56enc_bits(&t->enc), i;
         for (i = 0; i < nb; i++) {
             int b = t->b1 || !t->getbit ? 1 : t->getbit(t->user) & 1;
-            bits[i] = (uint8_t)v90_scramble_gpa(&t->dscr, b);
+            bits[i] = (uint8_t)b;
         }
+        v90_scramble_gpa_bits(&t->dscr, bits, nb);
         k56enc_frame(&t->enc, bits, t->frame);
         if (t->b1)
             t->b1--;

@@ -432,9 +432,9 @@ replay: $(BUILD)/v90m-replay
 # (tools/k56_crd_scan.c): RECS=<dir> of v90m-replay recordings (*.raw);
 # a detection is a false CRd. Host only, not part of check.
 RECS ?=
-$(BUILD)/k56-crd-scan: tools/k56_crd_scan.c modem/v8bis.c modem/v8bismsg.c modem/v21.c modem/sintab.c v90/v90_pcm.c $(LIB_HDR)
+$(BUILD)/k56-crd-scan: tools/k56_crd_scan.c modem/v8bis.c modem/v8bismsg.c modem/v21.c modem/sintab.c v90/v90_pcm.c v90/v90_pcm_tab.c $(LIB_HDR)
 	@mkdir -p $(BUILD)
-	$(CC) $(T_CFLAGS) -o $@ tools/k56_crd_scan.c modem/v8bis.c modem/v8bismsg.c modem/v21.c modem/sintab.c v90/v90_pcm.c $(LDLIBS)
+	$(CC) $(T_CFLAGS) -o $@ tools/k56_crd_scan.c modem/v8bis.c modem/v8bismsg.c modem/v21.c modem/sintab.c v90/v90_pcm.c v90/v90_pcm_tab.c $(LDLIBS)
 .PHONY: crd-scan
 crd-scan: $(BUILD)/k56-crd-scan
 	@if [ -z "$(RECS)" ]; then echo "RECS not set (a directory of recordings)"; exit 1; fi; \
@@ -442,7 +442,7 @@ crd-scan: $(BUILD)/k56-crd-scan
 # our K56flex encoder's octets and data bits at every rate, pad and robbed
 # mask (tools/k56enc_dump.c), for SM56's decoder harness outside the
 # repository (docs/history/k56-facts.md "Oracle"). Host only, not part of check.
-K56ENC_DUMP_SRC := tools/k56enc_dump.c modem/k56enc.c modem/k56tab.c v34/v34_shell.c v90/v90_pcm.c v90/v90_scr.c
+K56ENC_DUMP_SRC := tools/k56enc_dump.c modem/k56enc.c modem/k56tab.c v34/v34_shell.c v90/v90_pcm.c v90/v90_pcm_tab.c v90/v90_scr.c
 $(BUILD)/k56enc-dump: $(K56ENC_DUMP_SRC) $(LIB_HDR)
 	@mkdir -p $(BUILD)
 	$(CC) $(T_CFLAGS) -o $@ $(K56ENC_DUMP_SRC) $(LDLIBS)
