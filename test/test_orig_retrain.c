@@ -68,6 +68,17 @@ static void line(vl_cfg *c, int v92, uint32_t seed)
     if (v92) { c->v92 = 1; c->caller_v92 = 1; c->up_line = 1; }
 }
 
+/* the receiver's channel estimate and equaliser gone: decisions on nothing
+ * (and the next symbol's sums its last steps formed from them) */
+static void wipe(vl_t *l)
+{
+    v90arx_t *r = &l->org.e.v90.rx;
+    memset(r->h, 0, sizeof r->h);
+    memset(r->f, 0, sizeof r->f);
+    memset(r->b, 0, sizeof r->b);
+    r->hnext_m0 = -1; r->eqnext_m = -1;
+}
+
 static int both(vl_t *l) { return orig_moving(&l->org) && answer_moving(&l->ans); }
 static void run_ms(vl_t *l, int ms) { int64_t e = l->k + MS(ms); while (l->k < e) vl_tick(l); }
 
@@ -145,10 +156,7 @@ static void run(int v92, int kind, uint32_t seed, res_t *o)
         else CHECK_EQ_I(p34d_renegotiate(&l->ans.p34), 0);
         break;
     case K_WIPE:
-        /* the receiver's channel estimate and equaliser gone: decisions on nothing */
-        memset(l->org.e.v90.rx.h, 0, sizeof l->org.e.v90.rx.h);
-        memset(l->org.e.v90.rx.f, 0, sizeof l->org.e.v90.rx.f);
-        memset(l->org.e.v90.rx.b, 0, sizeof l->org.e.v90.rx.b);
+        wipe(l);
         break;
     case K_ANS_OWN:
         /* the answerer's engine retrains of its own accord (its checks of
@@ -337,9 +345,7 @@ static void limits(int v92)
     CHECK_EQ_I(orig_retrains(&l->org), 3);
     /* past the limit the receiver lost is a cleardown (9.7 / 9.11), not a retrain */
     t0 = l->k;
-    memset(l->org.e.v90.rx.h, 0, sizeof l->org.e.v90.rx.h);
-    memset(l->org.e.v90.rx.f, 0, sizeof l->org.e.v90.rx.f);
-    memset(l->org.e.v90.rx.b, 0, sizeof l->org.e.v90.rx.b);
+    wipe(l);
     while (l->k < t0 + MS(10000) && l->org.phase != ORIG_FAILED) vl_tick(l);
     run_ms(l, 500);
     printf("  lost past the limit: end %d after %d ms, answerer cleared %d, retrains %d\n", l->org.end,

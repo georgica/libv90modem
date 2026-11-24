@@ -1356,3 +1356,87 @@ a tap, and `eq_out`); the calling modes from v90arx's and pcmtx's runs
 (7 -> 6 a tap), which were straight already. P10's -0.6 M assumed 7 ->
 6 a tap from two taps a pass, which this compiler does not give; the
 four-tap pass gets part of it.
+
+## Task 34: each LMS step forms the next dot product; the estimate's divisions (call P1, P5, P6)
+
+- `modem/v90arx.c`, the calling side's downstream receiver. The forward
+  and feedback taps' LMS steps (`FUPD`, `BUPD`) and the channel
+  estimate's (`upd_sb`) each also add the new tap times the sample of the
+  tap before it (`b[j] += step; next += b[j] dl[j - 1]`, j >= 1; tap 0
+  has none). That is the next symbol's dot product but its newest term,
+  because the line moves on by one. The next symbol adds `f[0] x[0]` and
+  `b[0] dl[0]` (`h[0] sb[m0]`) and skips its own loops. The terms are at
+  most 2^31 x 2^15 = 2^46 (int32 taps of any value, int16 samples), at
+  most 128 of them: the int64 sum is exact in any order, so it is the
+  same as the loops'.
+- A sum is used only by the symbol it was formed for: `eqnext_m` (the
+  equaliser), `hnext_m0` (the estimate), -1 for none. Each use clears it.
+  The paths other than the step itself that change the taps, the lines or
+  `sb[]`, and how each one is handled:
+  - a hold or a gated symbol: no step, so no sum, and the next symbol
+    uses its own loops; for the estimate the skipped step moves m0 past
+    the marker;
+  - a design whose taps replace the equaliser's (`dsn_step`'s last step,
+    after that symbol's LMS step): it clears `eqnext_m`;
+  - `eq_start` (the lines refilled when TRAIN starts): it clears
+    `eqnext_m`;
+  - `ls_set` (TRN1d's interval levels rewrite `sb[]`): it clears
+    `hnext_m0`;
+  - EST to TRAIN, where the estimate's m0 jumps back by DFF + cursor;
+    `v90arx_rebase`, where k and m drop by CLK_REBASE; a retrain or a
+    restart (`v90arx_init` clears both markers): the marker no longer
+    matches;
+  - `produce`, the band edge, the timing hold and the clock change no tap
+    or line; the newest sample, decision or symbol (`sb[m0]`) is read
+    when the sum is used, not when it is formed.
+- `test/test_orig_retrain.c` wipes the receiver's h, f and b from outside
+  (a test of the collapse). Its new `wipe()` also clears the two markers:
+  a sum formed from the wiped taps belongs to them. Its output is
+  unchanged.
+- The estimate's step `e L 2^24 / (NCH pd)`. NCH = 128 divides e L 2^24,
+  so the step is `(e L 2^17) / pd`, the same truncated quotient. When pd is
+  L^2 (the symbols known: EST and TRAIN), the division is through L^2's
+  reciprocal (`divrcp`, a new `ll_rcp`). Otherwise it is in 32 bits when
+  `|e L 2^17| < 2^31` and `pd < 2^31`: C's int32 division truncates as
+  int64's does, for negative values too. The rest stays a 64-bit
+  division.
+- `neq % rc` is `neq & (rc - 1)`: rc is 2048 >> 0..2 and neq is uint32.
+- Proof. `test/test_v90arx_paths.c` (its own commit before this one, with
+  its own golden file) drives v90arx through the paths above: holds of one
+  symbol and of 200, the band edge on and off (a design at once), the
+  timing hold, impulses (gate and outlier steps), 70 ppm (a design every
+  512 symbols), ls_set. Its output is unchanged. In a throw-away build,
+  each fused sum was checked against the plain loops (abort on a
+  difference), over `make check` (14 programs use the sums) and V.90 and
+  V.92 caller recordings at 0 and 100 ppm. There was no difference once
+  test_orig_retrain's wipe cleared the markers: that wipe was the only
+  stale sum it found.
+- qamrx fusion skipped: it needs new fields in `qamrx_t` (the two partial
+  sums and the symbol they are for). `qamrx_t` is inside `answer_t`,
+  outside its union, and so in the memory pins. Between `qamrx_update` and
+  the next on-time `eq_out`, the T/3 line also moves on by three samples,
+  two of them for the early output. The timing nudge can change that
+  count. The fusion is not one shift by one sample.
+
+### Costs
+
+`make cost-v90c cost-v92c ARM_CC=$A5 COST_TICKS=0` (armv5 uClibc, own
+BUILD; build/cost-before.txt, build/cost-after.txt). The before figures
+are Task 33's after (HEAD 347caac; the library has not changed since).
+In M ARM instructions per second of line in data mode:
+
+| | before | after | change | call's estimate |
+|---|---|---|---|---|
+| V.90 calling, 0 / 100 ppm | 54.99 / 58.81 | 47.39 / 51.34 | -7.60 / -7.47 | |
+| V.92 calling, 0 / 100 ppm | 70.05 / 74.28 | 62.43 / 66.82 | -7.63 / -7.47 | -4 to -6 (P1), -1 (P5), -0.15 (P6) |
+
+The gain is more than the estimates added up. The plain loops cost 6 or 7
+instructions a tap over 304 taps (48 + 128 + 128). On the steps they
+replace, each tap costs one multiply-accumulate more, on values already in
+registers. Not measured apart: the three changes went in together.
+Bench hashes (`bench-v90c`, `bench-v92c`, `bench-v90a`, ARM_CC=$A5) are
+the same on the host and under qemu: v90c tx bbf20f60 / rx 64820c91,
+v92c tx 484a898d / rx 0e9531e0, v90a cdf21a51. `make verify`: VERIFY
+PASS. Golden 137 identical (test_v90arx_paths' own is new), replay 636,
+bench 17 identical. ubsan, armv7hf, bigend and fixed ok. No golden file
+re-recorded.

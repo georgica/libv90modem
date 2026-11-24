@@ -160,6 +160,7 @@ typedef struct {
     /* training reference, channel estimate */
     v90_scr_t scr; int32_t mref; int16_t L;
     uint64_t l_rcp;             /* floor((2^64 - 1) / L), for divisions by L */
+    uint64_t ll_rcp;            /* ... / L^2: the estimate's step while the symbols are known */
     int16_t ls[6];              /* UINFO's level by interval on TRN1d (L, or what ls_set found) */
     int64_t ls_num[6], ls_den[6];
     int16_t sb[256];            /* symbol levels (Table 1 units) by m & 255: reference or decided */
@@ -169,11 +170,15 @@ typedef struct {
     int32_t nest;               /* estimator steps (saturates) */
     int64_t res;                /* smoothed squared residual of the estimate, input units^2 */
     int16_t cpk;                /* cursor: the estimate's largest tap */
+    int64_t hnext;              /* the estimate's next sum but its newest tap, formed by its last step ... */
+    int32_t hnext_m0;           /* ... for the step on m0 = hnext_m0; -1: none */
     /* equaliser */
     int16_t x[2 * V90ARX_NF]; int xpos;    /* forward line, newest first, doubled */
     int16_t d[2 * V90ARX_NB]; int dpos;    /* decided levels, newest first, doubled */
     int32_t f[V90ARX_NF];       /* Q20, to an output in Table 1 units Q YF */
     int32_t b[V90ARX_NB];       /* Q16 */
+    int64_t fnext, bnext;       /* the next symbol's sums but their newest taps, formed by the last LMS step ... */
+    int32_t eqnext_m;           /* ... for symbol eqnext_m; -1: none */
     uint32_t neq;               /* symbols equalised */
     int64_t pq, pd;             /* smoothed input and decision power, Q8 */
     int32_t kf, kb;             /* normalised steps, recomputed every 64 symbols */

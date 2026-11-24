@@ -61,6 +61,8 @@ void v90arx_init(v90arx_t *r, const v90arx_cfg_t *cfg)
     r->L = (int16_t)v90_ucode_linear(cfg->alaw, (unsigned)cfg->uinfo);
     if (r->L < 1) r->L = 1;             /* mu-law Ucode 0: it divides */
     r->l_rcp = divrcp_rcp((uint64_t)r->L);
+    r->ll_rcp = divrcp_rcp((uint64_t)((int64_t)r->L * r->L));
+    r->hnext_m0 = -1; r->eqnext_m = -1;
     for (i = 0; i < 6; i++) r->ls[i] = r->L;
     /* until told otherwise: the two points of UINFO (TRN1d, Jd, Jd') */
     for (i = 0; i < 6; i++) {
@@ -125,13 +127,18 @@ static int64_t dot_sb(const int32_t *h, const int16_t *sb, int32_t m0)
  * product per tap: es = 256 q + rr (q = es >> 8, 0 <= rr < 256), so
  * (es s) >> 8 = q s + ((rr s) >> 8) exactly, and its low 32 bits are those
  * of (uint32)q * s plus the small term (wrapping as the 64-bit sum's low
- * word does). */
-#define UPD1(jj, ss) do { int32_t s_ = (ss); \
-        h[jj] = (int32_t)((uint32_t)h[jj] + q * (uint32_t)s_ + (uint32_t)((rr * s_) >> 8)); } while (0)
-static void upd_sb(int32_t *h, const int16_t *sb, int32_t m0, int64_t es)
+ * word does). Returned: the next step's dot_sb (on m0 + 1) but its newest
+ * term, sum over j >= 1 of the new h[j] sb[(m0 + 1 - j) & 255], each tap
+ * times the symbol of the tap before (p_; 0 for tap 0). The terms are at
+ * most 2^31 2^15 = 2^46, 128 of them: the int64 sum is exact in any
+ * order, so the same as dot_sb's. */
+#define UPD1(jj, ss) do { int32_t s_ = (ss), v_ = (int32_t)((uint32_t)h[jj] + q * (uint32_t)s_ + (uint32_t)((rr * s_) >> 8)); \
+        h[jj] = v_; an += (int64_t)v_ * p_; p_ = s_; } while (0)
+static int64_t upd_sb(int32_t *h, const int16_t *sb, int32_t m0, int64_t es)
 {
     uint32_t q = (uint32_t)(uint64_t)(es >> 8);
-    int32_t rr = (int32_t)(es & 255);
+    int32_t rr = (int32_t)(es & 255), p_ = 0;
+    int64_t an = 0;
     int i0 = (int)(m0 & 255), j = 0, n1 = i0 + 1 < V90ARX_NCH ? i0 + 1 : V90ARX_NCH;
     const int16_t *s = sb + i0;
     for (; j + 4 <= n1; j += 4, s -= 4) { UPD1(j, s[0]); UPD1(j + 1, s[-1]); UPD1(j + 2, s[-2]); UPD1(j + 3, s[-3]); }
@@ -139,6 +146,7 @@ static void upd_sb(int32_t *h, const int16_t *sb, int32_t m0, int64_t es)
     s = sb + i0 - j + 256;
     for (; j + 4 <= V90ARX_NCH; j += 4, s -= 4) { UPD1(j, s[0]); UPD1(j + 1, s[-1]); UPD1(j + 2, s[-2]); UPD1(j + 3, s[-3]); }
     for (; j < V90ARX_NCH; j++, s--) UPD1(j, s[0]);
+    return an;
 }
 #undef UPD1
 
@@ -148,13 +156,18 @@ static int64_t div_l(const v90arx_t *r, int64_t n) { return divrcp_sdiv(n, (uint
 
 /* NLMS step of the channel estimate on sample k: q(k) = sum h[j] s(k + LEAD - j) / L,
  * s the symbols' levels in Table 1 units (known, or decided), pd their mean
- * square; mu = 2^-g */
+ * square; mu = 2^-g. The sum comes from the last step when that step was
+ * on m0 - 1 (hnext_m0): its terms but the newest, with the same taps on
+ * the same symbols (whatever changes h or sb[] else, ls_set, takes it
+ * back; a step left out, a hold or a new state moves m0 past it) */
 static void estimate(v90arx_t *r, int32_t k, int64_t pd, int g)
 {
-    int64_t acc, es;
+    int64_t acc, es, n;
     int32_t e, m0 = k + V90ARX_LEAD;
     int j;
-    acc = dot_sb(r->h, r->sb, m0);
+    if (m0 == r->hnext_m0) acc = r->hnext + (int64_t)r->h[0] * r->sb[m0 & 255];
+    else acc = dot_sb(r->h, r->sb, m0);
+    r->hnext_m0 = -1;
     e = (int32_t)r->qb[k & 255] - asr64(div_l(r, acc), 16);
     if (e > 8191) e = 8191;
     if (e < -8191) e = -8191;
@@ -176,8 +189,17 @@ static void estimate(v90arx_t *r, int32_t k, int64_t pd, int g)
     }
     if (pd < ((int64_t)r->L * r->L >> 6)) pd = (int64_t)r->L * r->L >> 6;
     if (pd < 1) pd = 1;
-    es = (int64_t)e * r->L * ((int64_t)1 << 24) / ((int64_t)V90ARX_NCH * pd) >> g;
-    upd_sb(r->h, r->sb, m0, es);
+    /* e L 2^24 / (NCH pd), truncated: NCH = 128 divides e L 2^24 exactly,
+     * so it is (e L 2^17) / pd, the same quotient. With the symbols known
+     * pd is L^2, a reciprocal's division; else in 32 bits when both fit
+     * (|e L| < 2^14: C's int32 division truncates as int64's does) */
+    n = (int64_t)e * r->L * ((int64_t)1 << 17);
+    if (pd == (int64_t)r->L * r->L) es = divrcp_sdiv(n, (uint64_t)pd, r->ll_rcp);
+    else if (n > INT32_MIN && n <= INT32_MAX && pd <= INT32_MAX) es = (int32_t)n / (int32_t)pd;
+    else es = n / pd;
+    es >>= g;
+    r->hnext = upd_sb(r->h, r->sb, m0, es);
+    r->hnext_m0 = m0 + 1;
     r->res += (((int64_t)e * e) - r->res) / 64;
     r->nest = clk_sat_inc(r->nest);
 }
@@ -527,6 +549,7 @@ static int dsn_step(v90arx_t *r)
             r->b[j] = (int32_t)(acc > 0x7fffffff ? 0x7fffffff : acc < -0x7fffffff ? -0x7fffffff : acc);
         }
         memcpy(r->f, q->fn, sizeof r->f);
+        r->eqnext_m = -1;               /* new taps: the next sums from them */
         q->step = DSN_IDLE;
         return 1;
     }
@@ -583,15 +606,24 @@ static void equalise(v90arx_t *r, int32_t k, int16_t q)
     if (m < 0) return;
     x = &r->x[r->xpos]; dl = &r->d[r->dpos];
 
-    /* four taps a pass (NF and NB are multiples of 4) */
-    for (i = 0; i < V90ARX_NF; i += 4) {
-        acc += (int64_t)r->f[i] * x[i]; acc += (int64_t)r->f[i + 1] * x[i + 1];
-        acc += (int64_t)r->f[i + 2] * x[i + 2]; acc += (int64_t)r->f[i + 3] * x[i + 3];
+    /* the sums: from the last symbol's LMS step when it was the one before
+     * (eqnext_m) with the newest terms added, both lines having moved on
+     * by one since (a hold, a gate, a design's taps leave none: the sums
+     * are formed here, four taps a pass; NF and NB are multiples of 4) */
+    if (m == r->eqnext_m) {
+        acc = r->fnext + (int64_t)r->f[0] * x[0];
+        acc2 = r->bnext + (int64_t)r->b[0] * dl[0];
+    } else {
+        for (i = 0; i < V90ARX_NF; i += 4) {
+            acc += (int64_t)r->f[i] * x[i]; acc += (int64_t)r->f[i + 1] * x[i + 1];
+            acc += (int64_t)r->f[i + 2] * x[i + 2]; acc += (int64_t)r->f[i + 3] * x[i + 3];
+        }
+        for (i = 0; i < V90ARX_NB; i += 4) {
+            acc2 += (int64_t)r->b[i] * dl[i]; acc2 += (int64_t)r->b[i + 1] * dl[i + 1];
+            acc2 += (int64_t)r->b[i + 2] * dl[i + 2]; acc2 += (int64_t)r->b[i + 3] * dl[i + 3];
+        }
     }
-    for (i = 0; i < V90ARX_NB; i += 4) {
-        acc2 += (int64_t)r->b[i] * dl[i]; acc2 += (int64_t)r->b[i + 1] * dl[i + 1];
-        acc2 += (int64_t)r->b[i + 2] * dl[i + 2]; acc2 += (int64_t)r->b[i + 3] * dl[i + 3];
-    }
+    r->eqnext_m = -1;
     y = asr64(acc, 20) - asr64(acc2, 16 - V90ARX_YF);
 
     if (r->have_next && m >= r->next_m) { r->cons = r->next; r->have_next = 0; }
@@ -634,26 +666,38 @@ static void equalise(v90arx_t *r, int32_t k, int16_t q)
         /* mu 1/8 for the first second, then 1/32 */
         g = r->neq < FASTN ? 3 : 5;
         es = (int32_t)(((int64_t)ec * r->kf) >> 16);
+        /* each tap's step also forms the next symbol's sum, the new tap
+         * times the sample of the tap before (p; none before tap 0): the
+         * line moves on by one, and its newest sample is added then. The
+         * terms are at most 2^31 2^15 = 2^46, at most 128 of them: the
+         * int64 sum is exact in any order, the same as the loops' above */
         {
             int sh = r->shf + g;
-            int32_t half = (int32_t)1 << (sh - 1);
+            int32_t half = (int32_t)1 << (sh - 1), p = 0;
+            int64_t an = 0;
             /* 32 bits, as always; with a wild error (es far out) the
              * product overflows and wraps, as it always did, now defined:
              * unsigned arithmetic, two's complement back */
             /* (a lost receiver's taps run to the end of the range: the
              * step wraps there as well, defined; the retrain follows) */
-#define FUPD(ii) r->f[ii] = (int32_t)((uint32_t)r->f[ii] - (uint32_t)((int32_t)((uint32_t)es * (uint32_t)x[ii] + (uint32_t)half) >> sh))
+#define FUPD(ii) do { int32_t v_ = (int32_t)((uint32_t)r->f[ii] - (uint32_t)((int32_t)((uint32_t)es * (uint32_t)x[ii] + (uint32_t)half) >> sh)); \
+        r->f[ii] = v_; an += (int64_t)v_ * p; p = x[ii]; } while (0)
             for (i = 0; i < V90ARX_NF; i += 4) { FUPD(i); FUPD(i + 1); FUPD(i + 2); FUPD(i + 3); }
 #undef FUPD
+            r->fnext = an;
         }
         es = (int32_t)(((int64_t)ec * r->kb) >> 16);
         {
             int sh = r->shb + g;
-            int32_t half = (int32_t)1 << (sh - 1);
-#define BUPD(ii) r->b[ii] = (int32_t)((uint32_t)r->b[ii] + (uint32_t)((int32_t)((uint32_t)es * (uint32_t)dl[ii] + (uint32_t)half) >> sh))
+            int32_t half = (int32_t)1 << (sh - 1), p = 0;
+            int64_t an = 0;
+#define BUPD(ii) do { int32_t v_ = (int32_t)((uint32_t)r->b[ii] + (uint32_t)((int32_t)((uint32_t)es * (uint32_t)dl[ii] + (uint32_t)half) >> sh)); \
+        r->b[ii] = v_; an += (int64_t)v_ * p; p = dl[ii]; } while (0)
             for (i = 0; i < V90ARX_NB; i += 4) { BUPD(i); BUPD(i + 1); BUPD(i + 2); BUPD(i + 3); }
 #undef BUPD
+            r->bnext = an;
         }
+        r->eqnext_m = m + 1;
     }
     {
         int16_t dv = (int16_t)(lev >> V90ARX_YF);
@@ -683,7 +727,7 @@ static void equalise(v90arx_t *r, int32_t k, int16_t q)
          * faster the clocks slip (every 0.26, 0.13, 0.06 s up to 30 ppm,
          * 61 ppm, above) */
         int64_t off = r->step - ONE32;
-        int rc = V90ARX_RECALC;
+        int rc = V90ARX_RECALC;                     /* a power of two */
         if (off < 0) off = -off;
         if (off > (ONE32 >> 15)) rc >>= 1;          /* 30.5 ppm */
         if (off > (ONE32 >> 14)) rc >>= 1;          /* 61 ppm */
@@ -692,7 +736,7 @@ static void equalise(v90arx_t *r, int32_t k, int16_t q)
         /* a design under way takes its next step, one a symbol (a failed
          * one leaves the taps as they are) */
         if (r->dsn.step != DSN_IDLE) { (void)dsn_step(r); r->dsn_ran = 1; }
-        else if (r->state == V90ARX_DD && (r->neq % rc == 0 || r->redo)) { r->redo = 0; (void)dsn_start(r); r->dsn_ran = 1; }
+        else if (r->state == V90ARX_DD && ((r->neq & (uint32_t)(rc - 1)) == 0 || r->redo)) { r->redo = 0; (void)dsn_start(r); r->dsn_ran = 1; }
     }
 
     if (r->nout >= 2) return;
@@ -714,6 +758,7 @@ static void eq_start(v90arx_t *r, int32_t k)
         r->d[i] = r->d[i + V90ARX_NB] = v;
     }
     r->dpos = 0;
+    r->eqnext_m = -1;
 }
 
 /* An interval where UINFO arrives at another level than in the others: a
@@ -747,6 +792,7 @@ static void ls_set(v90arx_t *r)
         r->sb[m & 255] = (int16_t)(v >= 0 ? r->ls[m % 6] : -r->ls[m % 6]);
     }
     for (s = 0; s < 6; s++) r->cons.lv[s][0] = (int32_t)r->ls[s] << V90ARX_YF;
+    r->hnext_m0 = -1;                   /* sb[] changed under the estimate's next sum */
 }
 
 /* ---- one network-rate sample ----------------------------------------------- */
