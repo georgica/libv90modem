@@ -25,9 +25,9 @@
  * calling thread.
  *
  * What a callback may do to the modem that calls it: v90m_retrain,
- * v90m_cleardown, v90m_get_state, v90m_get_stats (and anything on another
- * object: every v90m_ec_* and v90m_async_* function). v90m_reset returns
- * V90M_ESTATE and changes nothing. v90m_destroy takes effect at the end of
+ * v90m_cleardown, v90m_get_state, v90m_get_stats, v90m_get_diag (and
+ * anything on another object: every v90m_ec_* and v90m_async_* function).
+ * v90m_reset returns V90M_ESTATE and changes nothing. v90m_destroy takes effect at the end of
  * the sample under way: no event after it, the rest of the block is
  * silence (linear 0, mu-law 0xFF, A-law 0xD5), the modem is freed (when it
  * came from v90m_create) and v90m_process_* returns V90M_OK. After a
@@ -38,9 +38,9 @@
  * own memory is not allowed.
  *
  * NULL: every function checks the object it is given (and the struct that
- * v90m_get_state, v90m_get_stats and v90m_ec_get_status fill): with NULL a
- * function returning int returns V90M_EINVAL, one returning size_t or
- * unsigned long 0, a void one does nothing. Except the four called for
+ * v90m_get_state, v90m_get_stats, v90m_get_diag and v90m_ec_get_status
+ * fill): with NULL a function returning int returns V90M_EINVAL, one
+ * returning size_t or unsigned long 0, a void one does nothing. Except the four called for
  * every bit, v90m_ec_tx_bit, v90m_ec_rx_bit, v90m_async_getbit and
  * v90m_async_putbit: their object must not be NULL. */
 #ifndef V90MODEM_H
@@ -372,6 +372,50 @@ typedef struct {
                                    V.32bis, V.34, V.90, V.92) */
 } v90m_stats;
 void     v90m_get_stats(const v90m_t *m, v90m_stats *st);
+
+/* Start-up diagnostics (added in 0.6.1): how far the call got, what it
+ * chose, and why it ended, in either role, in one place; for a log line
+ * such as "start-up failed (P2D_ERR_INFO1A, phase 2, V.90)". Cheap; fine
+ * to read after every sample, and kept after the end until v90m_reset. A
+ * struct and a function of their own: v90m_state and v90m_stats keep their
+ * size within 0.6. */
+typedef enum {
+    V90M_PHASE_NONE = 0,        /* before the first sample */
+    V90M_PHASE_TONE,            /* answering: the silence and our answer tone (with K56flex, V.8bis
+                                   before them); calling: listening for the answer tone */
+    V90M_PHASE_V8,              /* V.8: CM, JM, CJ */
+    V90M_PHASE_PHASE2,          /* V.34, V.90, V.92, x2, K56flex: Phase 2, a retrain's too */
+    V90M_PHASE_PHASE3,          /* ... Phase 3 */
+    V90M_PHASE_PHASE4,          /* ... Phase 4 */
+    V90M_PHASE_TRAIN,           /* V.21, V.22, V.22bis, V.32bis, Bell, which have no phases: their
+                                   start-up; also a caller without V.8 being waited for, and
+                                   calling, the wait for a pre-V.8 or Bell answerer's signal */
+    V90M_PHASE_DATA             /* data mode, rate renegotiations included (and V.22bis's and
+                                   V.32bis's retrains) */
+} v90m_phase;
+typedef struct {
+    int        error;           /* why the call ended, as the modem's engines say it:
+                                   v90m_err_name(error); 0 while the call goes on. After a
+                                   start-up that failed, the deepest cause with a name (an
+                                   engine's error such as P2D_ERR_INFO1A, or the modem's own
+                                   limit such as ANS_ERR_TIMEOUT); after a connection, how it was
+                                   lost or cleared down (P34_ERR_CARRIER, P34_ERR_HANGUP, ...) */
+    v90m_phase phase;           /* the phase now; after the end, the one the call ended in */
+    v90m_conn  selected;        /* the modulation chosen: from V.8's JM, or for a modem without
+                                   V.8 once its signal is heard, whether or not its training
+                                   finishes; V90M_CONN_NONE before. It then follows the call:
+                                   V.92 once Phase 2 agrees PCM upstream, V.34 once a V.90 caller's
+                                   INFO1a selects it, x2 or K56flex at their point of no return,
+                                   the modulation in force once connected. V.8's V.22 item
+                                   (V.22 or V.22bis): V90M_CONN_V22BIS until the connection
+                                   says which */
+} v90m_diag;
+void     v90m_get_diag(const v90m_t *m, v90m_diag *d);
+/* The name of an error of v90m_diag ("P2D_ERR_INFO1A"), "none" for 0, "?"
+ * for a number that is no error; never NULL. Diagnostic text, not an enum:
+ * the numbers may change in any version, the names do not within 0.6.x
+ * (the list: docs/api.md). */
+const char *v90m_err_name(int code);
 
 /* ------------------------------------- start-stop characters (V.14 basic)
  * Characters (1 start, 8 data LSB first, 1 stop, mark idle) on the bit pump

@@ -14,8 +14,8 @@ time). Callbacks (`getbit`, `putbit`, `on_event`) are only ever made from
 inside `v90m_process_*()` on the calling thread.
 
 What a callback may do to the modem that calls it: `v90m_retrain`,
-`v90m_cleardown`, `v90m_get_state`, `v90m_get_stats` (and anything on
-another object: every `v90m_ec_*` and `v90m_async_*` function).
+`v90m_cleardown`, `v90m_get_state`, `v90m_get_stats`, `v90m_get_diag` (and
+anything on another object: every `v90m_ec_*` and `v90m_async_*` function).
 `v90m_reset` returns `V90M_ESTATE` and changes nothing. `v90m_destroy`
 takes effect at the end of the sample under way: no event after it, the
 rest of the block is silence (linear 0, mu-law 0xFF, A-law 0xD5), the
@@ -27,7 +27,7 @@ only after `v90m_process_*` returns, and never from a callback of a modem
 that goes on. `v90m_init` on the modem's own memory is not allowed.
 
 NULL: every function checks the object it is given (and the struct that
-`v90m_get_state`, `v90m_get_stats` and `v90m_ec_get_status` fill): with
+`v90m_get_state`, `v90m_get_stats`, `v90m_get_diag` and `v90m_ec_get_status` fill): with
 NULL a function returning `int` returns `V90M_EINVAL`, one returning
 `size_t` or `unsigned long` 0, a `void` one does nothing. Except the four
 called for every bit, `v90m_ec_tx_bit`, `v90m_ec_rx_bit`,
@@ -211,6 +211,61 @@ stay as they were.
 | `echo_delay` | answering V.90 / V.92 / x2 / K56flex: in use (configured or measured) by the engine running now, during a retrain or after the end the call's; samples; -1 = none, and always -1 calling |
 | `retrains` | begun, this call |
 | `renegotiations` | rate renegotiations that stopped the data, this call: counted when data moves again, when it becomes a retrain, or when the call ends in it; a cleardown's stop, ours or the far end's, is not one (answering: V.34, V.90, V.92, x2, K56flex; calling: V.32bis, V.34, V.90, V.92) |
+
+## Start-up diagnostics
+
+Added in 0.6.1. `void v90m_get_diag(const v90m_t *m, v90m_diag *d)`: how
+far the call got, what it chose and why it ended, either role, in one
+place, for a log line such as `start-up failed (P2D_ERR_INFO1A, phase 2,
+V.90)`. Cheap, fine after every sample, and kept after the end until
+`v90m_reset`. A struct and a function of their own: `v90m_state` and
+`v90m_stats` keep their size within 0.6 (a program built against 0.6.0
+runs on 0.6.1's shared library).
+
+| `v90m_diag` | |
+|---|---|
+| `error` | why the call ended, as the modem's engines say it: `v90m_err_name(error)`; 0 while the call goes on. After a start-up that failed, the deepest cause with a name (an engine's own, such as `P2D_ERR_INFO1A`, or the modem's own limit, such as `ANS_ERR_TIMEOUT`); after a connection, how it was lost or cleared down (`P34_ERR_CARRIER`, `P34_ERR_HANGUP`, ...) |
+| `phase` | `v90m_phase` now; after the end, the phase the call ended in |
+| `selected` | `v90m_conn`: the modulation chosen, from V.8's JM or, for a modem without V.8, once its signal is heard, whether or not its training finishes; `V90M_CONN_NONE` before. It then follows the call: V.92 once Phase 2 agrees PCM upstream, V.34 once a V.90 caller's INFO1a selects it, x2 or K56flex at their point of no return, the modulation in force once connected. V.8's V.22 item (V.22 or V.22bis): `V90M_CONN_V22BIS` until the connection says which |
+
+`v90m_phase`:
+
+| | |
+|---|---|
+| `V90M_PHASE_NONE` (0) | before the first sample |
+| `V90M_PHASE_TONE` | answering: the silence and our answer tone (with K56flex, V.8bis before them); calling: listening for the answer tone |
+| `V90M_PHASE_V8` | V.8: CM, JM, CJ |
+| `V90M_PHASE_PHASE2` | V.34, V.90, V.92, x2, K56flex: Phase 2, a retrain's too |
+| `V90M_PHASE_PHASE3` | ... Phase 3 |
+| `V90M_PHASE_PHASE4` | ... Phase 4 |
+| `V90M_PHASE_TRAIN` | V.21, V.22, V.22bis, V.32bis, Bell, which have no phases: their start-up; also a caller without V.8 being waited for, and calling, the wait for a pre-V.8 or Bell answerer's signal |
+| `V90M_PHASE_DATA` | data mode, rate renegotiations included (and V.22bis's and V.32bis's retrains) |
+
+`const char *v90m_err_name(int code)`: the name of an `error`, `"none"`
+for 0, `"?"` for a number that is no error; never NULL. The names are
+diagnostic text, not an enum: the numbers behind them may change in any
+version, the names do not within 0.6.x. Most are the engines' own (the
+header named in brackets, for the detail):
+
+| prefix | where | names |
+|---|---|---|
+| `V8_ERR_` | V.8, either role | `NO_TONE` (calling: no answer tone), `NO_JM` (calling: ANSam, no JM in answer to CM), `NO_COMMON` (nothing in common), `NO_CM` (answering: a caller without V.8, and neither V.22 nor V.21 offered) |
+| `V21_ERR_` | V.21, Bell 103 | `NO_CARRIER` (the far carrier never held), `CARRIER` (lost in data mode) |
+| `V22_ERR_` | V.22bis, V.22, Bell 212A | `NO_ANSWER` (the start-up did not complete in time), `HANDSHAKE` (it failed), `RETRAIN` (a retrain in data mode never completed), `CARRIER` (lost in data mode) |
+| `V32_ERR_` | V.32bis, either role (v32/v32.h) | `NO_TONE`, `TRAIN`, `NO_RATE`, `CARRIER` |
+| `P2D_ERR_` | answering V.90 / V.92 Phase 2 (modem/p2d.h) | `INFO0`, `REV`, `TONE_A`, `INFO1A`, `PCM_UP`, `TIME` |
+| `P34_ERR_` | answering V.90 Phases 3, 4, data (modem/p34d.h) | `NO_S`, `JA`, `UINFO`, `NO_S2`, `DIL_END`, `CPT`, `CP`, `RATE`, `B1`, `CLEARDOWN`, `CARRIER`, `HANGUP` |
+| `V92D_ERR_` | answering V.92 with PCM upstream (v92/v92_p34d.h) | `NO_RU`, `JA`, `UINFO`, `NO_SU`, `CPT`, `DESIGN`, `CPU`, `B1`, `CLEARDOWN`, `HANGUP`, `CARRIER` |
+| `P2N_ERR_` | answering V.34 Phase 2 (modem/p2ans.h) | `INFO0`, `REV`, `INFO1C`, `NO_RATE`, `TIME` |
+| `DX_ERR_` | V.34 Phases 3, 4, data, either role (modem/v34dx.h) | `CFG`, `NO_S`, `RATE`, `B1`, `CLEARDOWN`, `CARRIER`, `HANGUP` |
+| `V34A_ERR_` | answering V.34 (modem/v34ans.h) | `PHASE2`, `TRAINING` (only where Phase 2's or the training's own cause is missing), `RETRAINS`, `CLEARDOWN`, `CARRIER`, `HANGUP` |
+| `X2D_ERR_` | answering x2 (modem/x2d.h) | `CFG`, `NO_J`, `NO_S4`, `NO_MP`, `RATE`, `PAD`, `UP`, `NO_E`, `B1`, `CARRIER`, `RENEG`, `HANGUP`, `RETRAIN` |
+| `K56D_ERR_` | answering K56flex (modem/k56d.h) | `CFG`, `NO_S`, `NO_J`, `J`, `NO_MP`, `RATE`, `NO_E`, `B1`, `CARRIER`, `RENEG`, `CLEARDOWN`, `HANGUP` |
+| `P2L_ERR_` | calling V.34 / V.90 / V.92 Phase 2 (modem/p2call.h) | `INFO0`, `REV`, `INFO1A`, `NO_RATE` |
+| `V34O_ERR_` | calling V.34 (modem/v34orig.h) | `PHASE2`, `TRAINING` (as V.34 answering's), `RETRAINS`, `CLEARDOWN`, `CARRIER`, `HANGUP` |
+| `V90A_ERR_` | calling V.90 / V.92 (modem/v90a.h) | `PHASE2` (as above), `SD`, `TRAIN`, `JD`, `JDP`, `DIL`, `RI`, `PHASE4`, `B1D`, `RATE`, `CLEARDOWN`, `HANGUP`, `CARRIER`, `JP`, `CPD`, `RETRAINS` |
+| `ANS_ERR_` | the answering modem's own | `TIMEOUT` (a phase ran past its limit: the backstop of Phases 2, 3 and 4, a K56flex retrain's time), `RETRAINS` (one more retrain was due past the limit), `START` (the next engine could not start with what was agreed), `K56_RETRAIN` (the K56flex client's retrain did not take K56flex up again) |
+| `ORIG_ERR_` | the calling modem's own | `TIMEOUT` (the start-up ran past the calling modem's limit for its phase: no modulation after ANS, no Bell answerer, V.32bis, V.34, V.90) |
 
 ## Control calls
 

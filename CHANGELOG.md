@@ -10,6 +10,20 @@ this library's own answering modem, never against a real modem or server.
 
 ## 0.6.1 (unreleased)
 
+Added:
+- Start-up diagnostics, either role: `v90m_get_diag` fills a `v90m_diag`
+  with the cause of the end in the engines' own words (`error`, named by
+  `v90m_err_name`, e.g. `P2D_ERR_INFO1A`; 0 while the call goes on), the
+  phase reached (`phase`, `v90m_phase`: tone, V.8, Phases 2 to 4, the
+  start-up of the modulations without phases, data) and the modulation V.8
+  or the legacy detection chose (`selected`, a `v90m_conn`, set as soon as
+  it is chosen, whether or not training finishes). Kept after the end until
+  `v90m_reset`. The names are diagnostic text, not an enum: they do not
+  change within 0.6.x; the numbers may. A struct and function of their own
+  rather than fields appended to `v90m_state` or `v90m_stats`, so that a
+  program built against 0.6.0 still runs on 0.6.1's shared library.
+  `V90M_MEM_SIZE` and `v90m_mem_size()` are unchanged.
+
 Fixed:
 - Answering role, V.90 and V.92: a caller that lost our INFO1d and started
   Phase 2 over with INFO0a (seen on a call to an ISP) failed the call with
