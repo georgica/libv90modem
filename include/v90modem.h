@@ -352,18 +352,22 @@ void     v90m_get_state(const v90m_t *m, v90m_state *st);
 typedef struct {
     v90m_conn  modulation;
     int        tx_bps, rx_bps;
-    int        snr_db10;        /* receiver signal to error, 0.1 dB, 0..600; -1 = none (not
-                                   connected, or a modulation without the figure) */
+    int        snr_db10;        /* receiver signal to error, 0.1 dB, 0..600; -1 = none (a
+                                   modulation without the figure, or none measured yet).
+                                   Kept while data moves: after the end, and in a retrain,
+                                   the last value measured in data mode; until v90m_reset */
     int        rtd;             /* round-trip delay measured in the handshake, samples; -1 = none
                                    (answering: V.34, V.90, V.92, x2, K56flex; calling: V.32bis,
-                                   V.34, V.90, V.92) */
+                                   V.34, V.90, V.92); kept as snr_db10 is */
     int        echo_delay;      /* answering V.90 / V.92 / x2 / K56flex: in use (configured
                                    or measured) by the engine running now, during a retrain
                                    or after the end the call's; samples; -1 = none, and
                                    always -1 calling */
     unsigned   retrains;        /* begun, this call */
-    unsigned   renegotiations;  /* rate renegotiations that stopped the data, this call
-                                   (answering: V.34, V.90, V.92, x2, K56flex; calling:
+    unsigned   renegotiations;  /* rate renegotiations that stopped the data, this call:
+                                   counted when data moves again, when it becomes a retrain,
+                                   or when the call ends in it (not a cleardown's stop, ours
+                                   or the far end's) (answering: V.34, V.90, V.92, x2, K56flex; calling:
                                    V.32bis, V.34, V.90, V.92) */
 } v90m_stats;
 void     v90m_get_stats(const v90m_t *m, v90m_stats *st);

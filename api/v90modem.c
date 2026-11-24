@@ -304,7 +304,8 @@ static inline void after(v90m_t *m, int orig)
     if (!connected && !m->was_connected && !failed) return;   /* start-up: nothing to report */
     moving = moving_of(m, orig);
     rx = rx_of(m, orig);
-    if (connected && !failed && (uint8_t)(++m->meas_tick & 127) == 0) keep_measures(m, orig);
+    /* kept only while data moves: a retrain's figures are not the call's */
+    if (moving && connected && !failed && (uint8_t)(++m->meas_tick & 127) == 0) keep_measures(m, orig);
     if (connected && !m->was_connected) {
         m->was_connected = 1;
         m->was_mod = mod_of(m, orig); m->was_tx = tx_of(m, orig); m->was_rx = rx;
@@ -314,20 +315,28 @@ static inline void after(v90m_t *m, int orig)
         event(m, V90M_EV_RATES);
     }
     if (moving != m->was_moving) {
-        /* a stop that is neither a retrain nor the end is a rate renegotiation,
-         * once data moves again: a cleardown (ours or the far end's, in any
-         * engine) stops data for good and ends the call, so it never counts */
-        if (!moving) {
-            keep_measures(m, orig);
-            m->reneg_pending = connected && !retraining_of(m, orig) && !failed;
-        } else if (m->reneg_pending) {
+        /* a stop that is neither a retrain nor the end is a rate renegotiation;
+         * it counts when data moves again, or when it becomes a retrain or
+         * ends the call (below), unless that end is a cleardown, ours or the
+         * far end's, which stops data for good: a cleardown never counts */
+        if (!moving) m->reneg_pending = connected && !retraining_of(m, orig) && !failed;
+        else if (m->reneg_pending) {
             m->renegotiations++;
             m->reneg_pending = 0;
         }
         m->was_moving = moving;
         event(m, moving ? V90M_EV_DATA_MOVING : V90M_EV_DATA_STOPPED);
     }
-    if (failed) m->reneg_pending = 0;
+    if (m->reneg_pending) {
+        if (failed) {
+            v90m_end e = end_of(m);
+            if (e != V90M_END_CLEARDOWN_OURS && e != V90M_END_CLEARDOWN_FAR) m->renegotiations++;
+            m->reneg_pending = 0;
+        } else if (retraining_of(m, orig)) {
+            m->renegotiations++;     /* the renegotiation became a retrain: counted in both */
+            m->reneg_pending = 0;
+        }
+    }
     if (failed && !m->was_ended) {
         m->was_ended = 1;
         event(m, V90M_EV_ENDED);

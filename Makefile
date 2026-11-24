@@ -136,7 +136,7 @@ TESTS    := test_g711 test_noise test_filt test_resamp test_channel test_v21 tes
 # runner (check-arm) runs each case as its own job
 SPLIT_TESTS := test_p34 test_orig_v92 test_orig_seeds test_orig_bell
 # the public API, against the library as it is installed
-API_TESTS := test_api test_ec_fields
+API_TESTS := test_api test_ec_fields test_reneg
 SUBS     := v34 v90 v92 v42 v32
 
 .PHONY: test-x2-courier test-k56-sm56 test-fixtures test-examples all lib dev install uninstall clean check check-arm check-ubsan test test-arm test-all test-times test-api test-interop examples bench-v90 bench-v34 bench-v90a bench-v90c bench-v92c replay
@@ -295,6 +295,12 @@ $(BUILD)/arm_test_x2map: test/test_x2map.c $(BUILD)/arm/libtest.a tools/x2_pad.c
 # (only v90m_* visible), the simulated caller from the dev archive. Both
 # carry the modem's code; the static library's copy is local to it.
 API_INC := -Iinclude -Itest -Isim -Imodem -Iv90 -Iv92 -Iv34
+# the renegotiation test reaches the engines' handles: the development archive alone
+$(BUILD)/api_test_reneg: test/api/test_reneg.c $(DEV) include/v90modem.h api/v90modem_priv.h
+	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -Iapi -o $@ $< $(DEV) $(LDLIBS)
+$(BUILD)/arm/api_test_reneg: test/api/test_reneg.c include/v90modem.h api/v90modem_priv.h
+	$(MAKE) -s BUILD=$(BUILD)/arm CC=$(ARM_CC) $(BUILD)/arm/$(NAME)-dev.a
+	$(ARM_CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -Iapi -static -o $@ $< $(BUILD)/arm/$(NAME)-dev.a $(LDLIBS)
 $(BUILD)/api_test_%: test/api/test_%.c $(STATIC) $(DEV) include/v90modem.h api/v90modem_fields.h
 	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -o $@ $< $(STATIC) $(DEV) $(LDLIBS)
 $(BUILD)/arm/api_test_%: test/api/test_%.c include/v90modem.h api/v90modem_fields.h

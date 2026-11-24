@@ -4,6 +4,7 @@
 #include <limits.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include "v90modem.h"
@@ -544,6 +545,7 @@ static void test_originate(void)
     v90m_cfg c; v90m_state sc, sa; int err, k;
     int16_t c_rx = 0, a_rx = 0;
     char got_c[64], got_a[64]; size_t nc = 0, na = 0;
+    v90m_stats g1 = {0}, g2 = {0};               /* SNR and round trip in data mode, to compare after the end */
 
     /* what the calling side can do: V.92 with V.90 */
     v90m_cfg_default(&c); c.role = V90M_ROLE_ORIGINATE;
@@ -689,7 +691,7 @@ static void test_originate(void)
             if (k == k_rt) {
                 got_c[nc] = 0; got_a[na] = 0;
                 v90m_get_state(an.m, &sa);
-                v90m_get_stats(cl.m, &st);
+                v90m_get_stats(cl.m, &st); g1 = st; v90m_get_stats(an.m, &g2);
                 printf("  V.34: caller %d %s %d/%d bit/s (V.8 %d), answerer %d %s %d/%d; SNR %.1f dB, round trip %d samples; caller got \"%s\", answerer got \"%s\"\n",
                        sc.connected, sc.modulation == V90M_CONN_V34 ? "V.34" : "?", sc.tx_bps, sc.rx_bps, sc.used_v8,
                        sa.connected, sa.modulation == V90M_CONN_V34 ? "V.34" : "?", sa.tx_bps, sa.rx_bps,
@@ -744,10 +746,14 @@ static void test_originate(void)
         CHECK(cl.n_ev <= 8 && cl.ev[cl.n_ev - 1] == V90M_EV_ENDED);
         CHECK(an.n_ev <= 8 && an.ev[an.n_ev - 1] == V90M_EV_ENDED);
         CHECK_EQ_I(v90m_cleardown(cl.m), V90M_ESTATE);
-        /* ISP-3: the cleardown is no renegotiation; SNR and round trip outlive the call */
+        /* ISP-3: the cleardown is no renegotiation; SNR and round trip outlive the call
+         * as they were in data mode (a retrain's transients are not kept) */
         { v90m_stats e1, e2; v90m_get_stats(cl.m, &e1); v90m_get_stats(an.m, &e2);
           CHECK_EQ_I(e1.renegotiations, 0); CHECK_EQ_I(e2.renegotiations, 0);
-          CHECK(e1.snr_db10 >= 0); CHECK(e1.rtd >= 0); CHECK(e2.snr_db10 >= 0); CHECK(e2.rtd >= 0); }
+          CHECK(abs(e1.snr_db10 - g1.snr_db10) <= 60); CHECK(abs(e2.snr_db10 - g2.snr_db10) <= 60);
+          CHECK(abs(e1.rtd - g1.rtd) <= 2); CHECK(abs(e2.rtd - g2.rtd) <= 2);
+          printf("  kept after the end: caller SNR %d rtd %d (in data %d, %d); answerer SNR %d rtd %d (%d, %d)\n",
+                 e1.snr_db10, e1.rtd, g1.snr_db10, g1.rtd, e2.snr_db10, e2.rtd, g2.snr_db10, g2.rtd); }
     }
     v90m_destroy(cl.m); v90m_destroy(an.m); v90m_async_destroy(cl.a); v90m_async_destroy(an.a);
 
@@ -790,7 +796,7 @@ static void test_originate(void)
             if (k == k_cd) CHECK_EQ_I(v90m_cleardown(cl.m), V90M_OK);          /* 9.7 */
             if (k == k_rt) {
                 got_c[nc] = 0; got_a[na] = 0;
-                v90m_get_stats(cl.m, &st);
+                v90m_get_stats(cl.m, &st); g1 = st; v90m_get_stats(an.m, &g2);
                 printf("  V.90: caller %d %s %d/%d bit/s (V.8 %d), answerer %d %s %d/%d; SNR %.1f dB, round trip %d samples; caller got \"%s\", answerer got \"%s\"\n",
                        sc.connected, sc.modulation == V90M_CONN_V90 ? "V.90" : "?", sc.tx_bps, sc.rx_bps, sc.used_v8,
                        sa.connected, sa.modulation == V90M_CONN_V90 ? "V.90" : "?", sa.tx_bps, sa.rx_bps,
@@ -816,10 +822,14 @@ static void test_originate(void)
         printf("  V.90 cleardown by the caller: caller end %d, answerer end %d\n", sc.end, sa.end);
         CHECK_EQ_I(sc.end, V90M_END_CLEARDOWN_OURS); CHECK_EQ_I(sc.connected, 0);
         CHECK_EQ_I(sa.end, V90M_END_CLEARDOWN_FAR);
-        /* ISP-3: the cleardown is no renegotiation; SNR and round trip outlive the call */
+        /* ISP-3: the cleardown is no renegotiation; SNR and round trip outlive the call
+         * as they were in data mode (a retrain's transients are not kept) */
         { v90m_stats e1, e2; v90m_get_stats(cl.m, &e1); v90m_get_stats(an.m, &e2);
           CHECK_EQ_I(e1.renegotiations, 0); CHECK_EQ_I(e2.renegotiations, 0);
-          CHECK(e1.snr_db10 >= 0); CHECK(e1.rtd >= 0); CHECK(e2.snr_db10 >= 0); CHECK(e2.rtd >= 0); }
+          CHECK(abs(e1.snr_db10 - g1.snr_db10) <= 60); CHECK(abs(e2.snr_db10 - g2.snr_db10) <= 60);
+          CHECK(abs(e1.rtd - g1.rtd) <= 2); CHECK(abs(e2.rtd - g2.rtd) <= 2);
+          printf("  kept after the end: caller SNR %d rtd %d (in data %d, %d); answerer SNR %d rtd %d (%d, %d)\n",
+                 e1.snr_db10, e1.rtd, g1.snr_db10, g1.rtd, e2.snr_db10, e2.rtd, g2.snr_db10, g2.rtd); }
     }
     v90m_destroy(cl.m); v90m_destroy(an.m); v90m_async_destroy(cl.a); v90m_async_destroy(an.a);
 
@@ -837,12 +847,15 @@ static void test_originate(void)
             a_rx = c_tx; c_rx = gone ? 0 : a_tx;
             v90m_get_state(cl.m, &sc); v90m_get_state(an.m, &sa);
             if (k_rt < 0 && sc.moving && sa.moving) k_rt = k + 8000;
-            if (k == k_rt) { CHECK_EQ_I(v90m_retrain(cl.m), V90M_OK); gone = 1; }
+            if (k == k_rt) { v90m_get_stats(cl.m, &g1); CHECK_EQ_I(v90m_retrain(cl.m), V90M_OK); gone = 1; }
             if (k_rt >= 0 && sc.end != V90M_END_NONE) break;
         }
         printf("  V.90 retrain never answered: caller end %d after %d ms, last event %d\n", sc.end, (k - k_rt) / 8,
                cl.n_ev > 0 && cl.n_ev <= 8 ? cl.ev[cl.n_ev - 1] : -1);
         CHECK_EQ_I(sc.end, V90M_END_RETRAIN_FAILED); CHECK_EQ_I(sc.connected, 0);
+        { v90m_stats e; v90m_get_stats(cl.m, &e);       /* the call ended in a retrain: the figures are those of data mode */
+          CHECK(g1.rtd >= 0); CHECK(abs(e.rtd - g1.rtd) <= 2); CHECK(abs(e.snr_db10 - g1.snr_db10) <= 60);
+          CHECK_EQ_I(e.renegotiations, 0); }
         CHECK(cl.n_ev <= 8 && cl.ev[cl.n_ev - 1] == V90M_EV_ENDED);
         CHECK_EQ_I(v90m_retrain(cl.m), V90M_ESTATE);
     }
@@ -886,7 +899,7 @@ static void test_originate(void)
             if (k == k_cd) CHECK_EQ_I(v90m_cleardown(cl.m), V90M_OK);          /* 9.11/V.92 */
             if (k == k_rt) {
                 got_c[nc] = 0; got_a[na] = 0;
-                v90m_get_stats(cl.m, &st);
+                v90m_get_stats(cl.m, &st); g1 = st; v90m_get_stats(an.m, &g2);
                 printf("  V.92: caller %d %s %d/%d bit/s (V.8 %d), answerer %d %s %d/%d; SNR %.1f dB, round trip %d samples; caller got \"%s\", answerer got \"%s\"\n",
                        sc.connected, sc.modulation == V90M_CONN_V92 ? "V.92" : "?", sc.tx_bps, sc.rx_bps, sc.used_v8,
                        sa.connected, sa.modulation == V90M_CONN_V92 ? "V.92" : "?", sa.tx_bps, sa.rx_bps,
@@ -911,10 +924,14 @@ static void test_originate(void)
         printf("  V.92 cleardown by the caller: caller end %d, answerer end %d\n", sc.end, sa.end);
         CHECK_EQ_I(sc.end, V90M_END_CLEARDOWN_OURS); CHECK_EQ_I(sc.connected, 0);
         CHECK_EQ_I(sa.end, V90M_END_CLEARDOWN_FAR);
-        /* ISP-3: the cleardown is no renegotiation; SNR and round trip outlive the call */
+        /* ISP-3: the cleardown is no renegotiation; SNR and round trip outlive the call
+         * as they were in data mode (a retrain's transients are not kept) */
         { v90m_stats e1, e2; v90m_get_stats(cl.m, &e1); v90m_get_stats(an.m, &e2);
           CHECK_EQ_I(e1.renegotiations, 0); CHECK_EQ_I(e2.renegotiations, 0);
-          CHECK(e1.snr_db10 >= 0); CHECK(e1.rtd >= 0); CHECK(e2.snr_db10 >= 0); CHECK(e2.rtd >= 0); }
+          CHECK(abs(e1.snr_db10 - g1.snr_db10) <= 60); CHECK(abs(e2.snr_db10 - g2.snr_db10) <= 60);
+          CHECK(abs(e1.rtd - g1.rtd) <= 2); CHECK(abs(e2.rtd - g2.rtd) <= 2);
+          printf("  kept after the end: caller SNR %d rtd %d (in data %d, %d); answerer SNR %d rtd %d (%d, %d)\n",
+                 e1.snr_db10, e1.rtd, g1.snr_db10, g1.rtd, e2.snr_db10, e2.rtd, g2.snr_db10, g2.rtd); }
     }
     v90m_destroy(cl.m); v90m_destroy(an.m); v90m_async_destroy(cl.a); v90m_async_destroy(an.a);
 
@@ -1220,8 +1237,8 @@ static void test_x2(void)
     CHECK(data_at > 0);
     CHECK_EQ_I(st.end, V90M_END_CLEARDOWN_OURS);
     CHECK(x2_nev >= 3);
-    v90m_get_stats(m, &sx);                               /* ISP-3: kept after the end */
-    CHECK_EQ_I(sx.renegotiations, 0); CHECK(sx.snr_db10 >= 0); CHECK(sx.rtd >= 0);
+    { v90m_stats e; v90m_get_stats(m, &e);                /* ISP-3: kept after the end, as in data mode */
+      CHECK_EQ_I(e.renegotiations, 0); CHECK(abs(e.snr_db10 - sx.snr_db10) <= 60); CHECK(abs(e.rtd - sx.rtd) <= 2); }
     CHECK_EQ_I(x2_ev[0], V90M_EV_CONNECTED); CHECK_EQ_I(x2_ev[1], V90M_EV_DATA_MOVING);
     CHECK_EQ_I(x2_ev[x2_nev - 1], V90M_EV_ENDED);
     CHECK_EQ_I(v90m_cleardown(m), V90M_ESTATE);           /* over: nothing to send */
@@ -1275,7 +1292,8 @@ static void k56_call(int silent, long *data_at, v90m_state *st, v90m_stats *sx, 
     }
     v90m_get_state(m, st);
     if (!silent) CHECK_EQ_I(v90m_cleardown(m), V90M_ESTATE);    /* over: nothing to send */
-    if (!silent) { v90m_stats e; v90m_get_stats(m, &e); CHECK(e.snr_db10 >= 0); CHECK(e.rtd >= 0); }
+    if (!silent) { v90m_stats e; v90m_get_stats(m, &e); CHECK_EQ_I(e.renegotiations, 0);
+                   CHECK(abs(e.snr_db10 - sx->snr_db10) <= 60); CHECK(abs(e.rtd - sx->rtd) <= 2); }
     v90m_destroy(m);
 }
 

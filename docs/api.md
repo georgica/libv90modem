@@ -202,11 +202,11 @@ stay as they were.
 | `v90m_stats` | |
 |---|---|
 | `modulation`, `tx_bps`, `rx_bps` | as in the state |
-| `snr_db10` | receiver signal to error, 0.1 dB, 0..600; -1 = none (not connected, or a modulation without the figure) |
-| `rtd` | round-trip delay measured in the handshake, samples; -1 = none (answering: V.34, V.90, V.92, x2, K56flex; calling: V.32bis, V.34, V.90, V.92) |
+| `snr_db10` | receiver signal to error, 0.1 dB, 0..600; -1 = none (a modulation without the figure, or none measured yet); kept while data moves: after the end, and in a retrain, the last value measured in data mode, until `v90m_reset` |
+| `rtd` | round-trip delay measured in the handshake, samples; -1 = none (answering: V.34, V.90, V.92, x2, K56flex; calling: V.32bis, V.34, V.90, V.92); kept as `snr_db10` is |
 | `echo_delay` | answering V.90 / V.92 / x2 / K56flex: in use (configured or measured) by the engine running now, during a retrain or after the end the call's; samples; -1 = none, and always -1 calling |
 | `retrains` | begun, this call |
-| `renegotiations` | rate renegotiations that stopped the data, this call (answering: V.34, V.90, V.92, x2, K56flex; calling: V.32bis, V.34, V.90, V.92) |
+| `renegotiations` | rate renegotiations that stopped the data, this call: counted when data moves again, when it becomes a retrain, or when the call ends in it; a cleardown's stop, ours or the far end's, is not one (answering: V.34, V.90, V.92, x2, K56flex; calling: V.32bis, V.34, V.90, V.92) |
 
 ## Control calls
 
