@@ -51,7 +51,7 @@ enum { P2D_OK = 0, P2D_ERR_INFO0 = 1, P2D_ERR_REV, P2D_ERR_TONE_A, P2D_ERR_INFO1
 /* INFO0a again once the INFO0 exchange is behind us (9.2.1.2.1): from
  * WAIT_REV2 or RECOVER, or after our INFO1d (a caller that has lost it and
  * starts Phase 2 over); each takes us back to INFO0 with INFO0d, bit 28 set */
-#define P2D_MAX_RESTART 2       /* such returns to INFO0; the next INFO0a fails */
+#define P2D_MAX_RESTART 2       /* such returns to INFO0; a later INFO0a is ignored */
 
 /* how the call goes on after P2D_DONE (p2d_t.mode) */
 enum { P2D_MODE_V34 = 0,    /* INFO1a of Table 11/V.90: V.34 (V.90 9.2.1.1.8) */

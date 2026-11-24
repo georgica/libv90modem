@@ -88,10 +88,12 @@ void p2d_retrain_v92(p2d_t *p, int pcm_up)
 /* 9.2.1.2.1: the caller's INFO0a again (in p->rx.frame) once the INFO0
  * exchange is behind us. It has not heard us: INFO0d with bit 28 set, as
  * INFO0a came in correctly, then Tone B, and P2D_INFO0 goes on from there
- * (INFO0d again while INFO0a comes without bit 28; on Tone A, 9.2.1.1.3) */
+ * (INFO0d again while INFO0a comes without bit 28; on Tone A, 9.2.1.1.3).
+ * Past P2D_MAX_RESTART the INFO0a is ignored, as it was before 0.6.1, and
+ * the state's own time-out ends the call. */
 static void info0a_again(p2d_t *p)
 {
-    if (p->n_restart >= P2D_MAX_RESTART) { fail(p, p->state == P2D_WAIT_INFO1A ? P2D_ERR_INFO1A : P2D_ERR_REV); return; }
+    if (p->n_restart >= P2D_MAX_RESTART) return;
     p->n_restart++;
     info0a_parse(p->rx.frame, &p->info0a);
     p->got0a = 1; p->resend = 0;

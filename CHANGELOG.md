@@ -15,8 +15,10 @@ Fixed:
   Phase 2 over with INFO0a (seen on a call to an ISP) failed the call with
   `P2D_ERR_INFO1A`. We now answer as V.90 9.2.1.2.1 asks: INFO0d with bit 28
   set, then Tone B, and Phase 2 goes on; the same for INFO0a while we wait
-  for the second Tone A phase reversal. Two such restarts per Phase 2, the
-  third fails as before. Simulation and own answerer only.
+  for the second Tone A phase reversal. Two such restarts per Phase 2; a
+  third INFO0a is ignored, as every one was before. An INFO1a always wins
+  over an INFO0a that its first bits would make. Simulation and own
+  answerer only.
 
 ## 0.6.0 (2026-11-24)
 

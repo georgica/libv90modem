@@ -170,11 +170,12 @@ int dpskrx_level(const dpskrx_t *r)
     return r->carrier ? (int)isqrt_u64((uint64_t)(r->pw / 2)) : 0;
 }
 
-/* a clean frame of payload length len ending at hunter h's last bit? */
-static int frame_ends(dpskrx_t *r, int h, int len)
+/* a clean frame of payload length len that ended lag bits before hunter
+ * h's last bit? */
+static int frame_ends(dpskrx_t *r, int h, int len, int lag)
 {
     const uint8_t *hs = r->hunt[h].hist;
-    int start = r->hunt[h].pos - (8 + len), k;
+    int start = r->hunt[h].pos - (8 + len) - lag, k;
     uint8_t pl[INFO_MAX_BITS];
     for (k = 0; k < 8; k++) if (hs[(start + k) & 127] != SYNC[k]) return 0;
     if (len < 16) return 0;     /* the CRC alone is 16 (and keeps gcc sure pl is set) */
@@ -193,8 +194,14 @@ static int hunt_bit(dpskrx_t *r, int h, int bit)
     r->hunt[h].hist[r->hunt[h].pos] = (uint8_t)bit;
     r->hunt[h].pos = (r->hunt[h].pos + 1) & 127;
     if (!r->expect) return 0;
-    if (frame_ends(r, h, r->expect)) return 1;
-    return r->expect2 && frame_ends(r, h, r->expect2);
+    if (frame_ends(r, h, r->expect, 0)) return 1;
+    if (!r->expect2) return 0;
+    /* The second length is taken only where a frame of the first with the
+     * same sync would have ended, and did not: the start of a longer frame
+     * whose CRC happens to hold as a shorter one (1 in 2^16 of them) is
+     * never taken for the shorter, at the cost of the shorter's arriving
+     * (expect - expect2) bits late. */
+    return frame_ends(r, h, r->expect2, r->expect > r->expect2 ? r->expect - r->expect2 : 0);
 }
 
 int dpskrx_tick(dpskrx_t *r, int16_t x)
