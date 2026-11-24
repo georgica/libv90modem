@@ -603,12 +603,16 @@ Fixed (start-stop characters, V.14):
 
 Faster (output identical, bit for bit; ARMv5 instructions counted under
 qemu, M a second of line in data mode, 0.5.0 -> 0.6.0):
-- x2 answering: 82.6 -> <<FIG:x2>>; with V.42 at both ends:
-  <<FIG:x2-v42>>. <<FIG:per-box>>
-- V.90 answering 39.2 -> <<FIG:v90a>>; V.34 answering 40.5 ->
-  <<FIG:v34a>>; K56flex answering 39.3 -> <<FIG:k56>>.
-- V.90 calling 55.1 / 59.3 -> <<FIG:v90c>> (0 / 100 ppm); V.92 calling
-  70.0 / 74.3 -> <<FIG:v92c>>.
+- x2 answering: 82.57 -> 56.58 (32000); with our V.42 endpoint on its
+  data (`make cost-x2-v42`, new), 32000 / 56000: no compression 58.89 /
+  61.50, V.42bis 69.24 / 77.19, V.44 89.25 / 108.78. Still one x2 call
+  per box: two with V.42bis would need 2 x 77.19 = 154.37 M of about
+  122 M.
+- V.90 answering 39.20 -> 31.19; V.34 answering 40.53 -> 33.42; K56flex
+  answering 39.27 -> 32.12, a client that ignores our MP 84.43 -> 58.60.
+- V.90 calling 55.11 / 59.31 -> 46.97 / 50.95 (0 / 100 ppm); V.92
+  calling 69.95 / 74.32 -> 62.12 / 66.52. Bell 103 / 212A 9.88 / 4.66
+  (9.86 / 4.43: 212A's rise is the 64-bit products of the V.22bis fix).
 - V.42, per endpoint at 56 kbit/s both ways (before -> after the V.42
   work): no compression 7.96 -> 5.21, V.42bis 11.81 -> 9.08, V.44 12.19
   -> 9.48.

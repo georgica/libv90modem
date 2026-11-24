@@ -176,5 +176,5 @@ library's own answerer only. What a real digital modem sends in a retrain's
 Phase 2 is not known: this library's answerer sends no INFO0 there, V.92
 9.7 asks for "the full Phase 2", and the caller takes either form, tried
 only against its own answerer made to send INFO0d. One V.92 call takes
-some <<FIG:v92c-pct>> of an ARM926 at 400 MHz (qemu instruction counts);
-<<FIG:v92c-box>> More in [limits.md](limits.md).
+some 51 to 55 % of an ARM926 at 400 MHz (qemu instruction counts); two
+do not fit. More in [limits.md](limits.md).

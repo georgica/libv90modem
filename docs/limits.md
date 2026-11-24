@@ -421,10 +421,11 @@ makes it about 122 M counted instructions a second. 0.6.0's figures
 (`docs/history/audit-0.6.md`, "after Phase 3"; README, "Memory and
 CPU"); 0.5.0's in brackets:
 
-- **One V.92 call on the calling side is some <<FIG:v92c-pct>> of that
-  box** (<<FIG:v92c>> M a second at 0 / 100 ppm clock offset, data mode;
-  0.5.0: 70.0 / 74.3); V.90 calling <<FIG:v90c-pct>> (<<FIG:v90c>> M).
-  <<FIG:v92c-box>> (`docs/history/PROGRESS.md`, cpu.)
+- **One V.92 call on the calling side is some 51 to 55 % of that box**
+  (62.12 M a second at 0 ppm clock offset, 66.52 M at 100 ppm, data mode;
+  0.5.0: 69.95 / 74.32); V.90 calling 38 to 42 % (46.97 / 50.95 M). One
+  call fits with room; two V.92 calls at once (2 x 62.12 = 124.24 M) do
+  not. (`docs/history/PROGRESS.md`, cpu.)
 - The heaviest single tick of a calling V.90 / V.92 call was some 98 k
   instructions at 0.5.0 (8 % of a 10 ms block of the box), after the
   heavy designs were spread over many samples; not measured again.
@@ -433,21 +434,28 @@ CPU"); 0.5.0's in brackets:
   (21 of the 26 recorded calls that reach B1u, working ones among them)
   that is one tick of some 175 k instructions (14 % of a 10 ms block);
   14 k otherwise. Not yet spread over ticks.
-- **x2 data mode: <<FIG:x2-verdict>>** <<FIG:x2>> M instructions a second
-  (0.5.0: 82.6), against V.90 answering's <<FIG:v90a>> M measured the same
-  way (`make cost-x2`, second 15 to 16 of the call). With V.42 running at
-  both ends (`make cost-x2-v42`): <<FIG:x2-v42>> M with V.42bis and V.44.
+- **x2 data mode: one x2 call per box.** 56.58 M instructions a second
+  at 32000 (0.5.0: 82.57), about 1.8 times V.90 answering's 31.19 M
+  measured the same way (`make cost-x2`, second 15 to 16 of the call).
+  With V.42 running at both ends (`make cost-x2-v42`, our endpoint
+  counted), at 32000 / 56000:
+  58.89 / 61.50 M with no compression, 69.24 / 77.19 M with V.42bis,
+  89.25 / 108.78 M with V.44, on text that compresses far beyond real
+  traffic (a ceiling). Two x2 calls with V.42bis would need 2 x 77.19 =
+  154.37 M of about 122 M, and even without compression 2 x 61.50 =
+  123.0 M: one x2 call per box.
   The cause of the difference from V.90 is the upstream the client
   dictates: V.34 with the 64-state trellis, non-linear encoding and
   expanded shaping, which x2 gives the server no way to refuse.
   (`docs/history/PROGRESS.md`, x2 6 and x2 8; `docs/history/audit-0.6.md`.)
-- **K56flex data mode costs about what V.90's does.** <<FIG:k56>> M
-  instructions a second at 56000 (0.5.0: 39.3), against V.90 answering's
-  <<FIG:v90a>> M (`make cost-k56`, ARMv5, second 20 to 21 of the call,
+- **K56flex data mode costs about what V.90's does.** 32.12 M
+  instructions a second at 56000 (0.5.0: 39.27), against V.90 answering's
+  31.19 M (`make cost-k56`, ARMv5, second 20 to 21 of the call,
   after V.8bis). It asks the client in its MP for the upstream V.90 has
   (16 states, linear encoding, minimum shaping), and SM56 honours that. A
   client that ignores the request and sends x2's upstream is decoded (see
-  "K56flex (answering)" above) and costs what x2 does.
+  "K56flex (answering)" above) and costs what x2 does: 58.60 M (0.5.0:
+  84.43).
 - **V.42:** an endpoint at 56 kbit/s both ways costs 5.21 / 9.08 / 9.48 M a
   second with no compression / V.42bis / V.44 (`make cost-v42`; before
   0.6.0's V.42 work: 7.96 / 11.81 / 12.19).

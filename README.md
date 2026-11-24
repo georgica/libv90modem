@@ -253,22 +253,24 @@ for bit (`docs/history/audit-0.6.md`):
 
 | | M instructions per second of line, data mode (0.5.0 in brackets) | heaviest single tick, at 0.5.0 |
 |---|---|---|
-| answering, V.90 | <<FIG:v90a>> (39.2) | 87 k |
-| answering, V.34 | <<FIG:v34a>> (40.5) | not measured |
-| answering, x2 | <<FIG:x2>> (82.6) | not measured |
-| answering, x2 with V.42bis / V.44 (V.42 at both ends counted) | <<FIG:x2-v42>> | not measured |
-| answering, K56flex (56000) | <<FIG:k56>> (39.3) | not measured |
-| calling, V.90 (0 / 100 ppm clock offset) | <<FIG:v90c>> (55.1 / 59.3) | 98 k (start of Phase 2) |
-| calling, V.92 (0 / 100 ppm) | <<FIG:v92c>> (70.0 / 74.3) | 98 k |
-| calling, Bell 103 / Bell 212A | <<FIG:bell>> (9.86 / 4.43) | 2.3 k / 2.8 k |
+| answering, V.90 | 31.19 (39.20) | 87 k |
+| answering, V.34 | 33.42 (40.53) | not measured |
+| answering, x2 (32000) | 56.58 (82.57) | not measured |
+| answering, x2 with V.42 (our endpoint counted), 32000 / 56000: no compression; V.42bis; V.44 | 58.89 / 61.50; 69.24 / 77.19; 89.25 / 108.78 (text that compresses far beyond real traffic: a ceiling) | not measured |
+| answering, K56flex (56000) | 32.12 (39.27); a client that ignores our MP 58.60 (84.43) | not measured |
+| calling, V.90 (0 / 100 ppm clock offset) | 46.97 / 50.95 (55.11 / 59.31) | 98 k (start of Phase 2) |
+| calling, V.92 (0 / 100 ppm) | 62.12 / 66.52 (69.95 / 74.32) | 98 k |
+| calling, Bell 103 / Bell 212A | 9.88 / 4.66 (9.86 / 4.43) | 2.3 k / 2.8 k |
 | V.42 endpoint, 56 kbit/s both ways: none / V.42bis / V.44 | 5.21 / 9.08 / 9.48 (before the V.42 work: 7.96 / 11.81 / 12.19) | |
 
 The heaviest ticks were measured at 0.5.0 and not again; the changes of
 0.6.0 only made ticks cheaper.
 
-x2 costs <<FIG:x2-ratio>> V.90 (`make cost-x2`, which measures V.90
+x2 costs about 1.8 times V.90 (`make cost-x2`, which measures V.90
 answering the same way): the V.34 upstream the client dictates (64-state
-trellis, non-linear encoding, expanded shaping). <<FIG:per-box>> K56flex
+trellis, non-linear encoding, expanded shaping). One x2 call fits the box, with V.42bis too (77.19 M at
+56000); two do not (2 x 77.19 = 154.37 M of about 122 M; even without
+compression 2 x 61.50 = 123.0 M). K56flex
 costs about what V.90 does (`make cost-k56`), because it asks the client
 in its MP for the upstream V.90 has (16 states, linear, minimum shaping);
 a client that ignores that and sends x2's upstream costs about what x2

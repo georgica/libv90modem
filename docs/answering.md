@@ -138,8 +138,10 @@ a mu-law line: never with `alaw` set. Robbed-bit lines are not handled.
   2 link NAKs, block error rate 0; pings across PPP 90 of 90 (average 148
   ms, worst 590 ms). Not shown on a live call: a client's retrain (it ends
   the call), pads, robbed bits, another x2 modem ([limits.md](limits.md)).
-- **CPU.** x2 data mode costs <<FIG:x2-ratio>> V.90's (the upstream the
-  client dictates): <<FIG:x2-verdict>> ([limits.md](limits.md)).
+- **CPU.** x2 data mode costs about 1.8 times V.90's (56.58 M ARM
+  instructions a second against 31.19 M; the upstream the client
+  dictates): one x2 call per ARM926 box, with V.42bis too; two do not fit
+  ([limits.md](limits.md)).
 
 ## K56flex
 
@@ -224,8 +226,9 @@ answering, on a mu-law line: never with `alaw` set.
   data mode, with `V90M_END_LOST`.
 - **CPU.** K56flex data mode costs about the same as V.90's (it asks the
   client for V.90's upstream options); with a client that ignores our MP,
-  about x2's (84 M ARM instructions a second against 39 M, measured
-  before 0.6.0's CPU work, which lowered both), and up to 128 M a second
+  about x2's (58.60 M ARM instructions a second against 32.12 M; 84 M and
+  39 M before 0.6.0's CPU work), and, as measured before that work, up
+  to 128 M a second
   for the 110 ms of catching up after its B1, about the box's whole CPU:
   v90d's answers come at most 11.7 ms late, inside its
   20 ms of prefill ([limits.md](limits.md), `docs/history/audit-0.6.md`).
