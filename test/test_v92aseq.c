@@ -16,7 +16,9 @@
  *   - a CPd that leaves parts out (Table 30 bits 19:21) changes only what it
  *     carries: the parts it leaves out are kept from the CPds before it in
  *     the same Phase 4 (and a rate renegotiation's), forgotten at the start
- *     of the next. */
+ *     of the next.
+ * The CPds are made with maps the encoder can use (usable()): one that
+ * names a rate and fails v92_map_check is refused (test_v92_hostile). */
 #include <stdio.h>
 #include <string.h>
 #include "test.h"
@@ -27,7 +29,25 @@
 
 static uint8_t stream[8 * MAXB];
 
-/* a CPd of the given size: lc points in each of nset sets, ncoef taps */
+/* A map the analogue modem can encode from (v92_map_check), as the parser
+ * requires of a CPd that names a rate since it refuses the others: each Mi
+ * at most the points of a set, then the rate lowered until 2^K fits their
+ * product, or no rate (drn 0, which is not checked) where none does. No
+ * random number is drawn. */
+static void usable(v92_cpd_t *c)
+{
+    int i, lcmin = 255;
+    for (i = 0; i < 6; i++) if (c->map.lc[c->map.cidx[i]] < lcmin) lcmin = c->map.lc[c->map.cidx[i]];
+    for (i = 0; i < 12; i++) if (c->map.M[i] > lcmin) c->map.M[i] = (uint8_t)lcmin;
+    for (; c->drn > 0; c->drn--) {
+        c->map.K = (uint8_t)V92_UP_K(c->drn);
+        if (v92_map_check(&c->map) == 0) break;
+    }
+    c->map.K = 0;                       /* (the builder takes none; the parser sets it) */
+}
+
+/* a CPd of the given size: lc points in each of nset sets, ncoef taps; its
+ * map usable() */
 static void make_cpd(v92_cpd_t *c, rng_t *g, int nset, int lc, int ncoef, int ack)
 {
     int s, i;
@@ -55,6 +75,7 @@ static void make_cpd(v92_cpd_t *c, rng_t *g, int nset, int lc, int ncoef, int ac
         c->map.lc[s] = (uint8_t)lc;
         for (i = 0; i < lc; i++) c->map.pt[s][i] = (uint16_t)(1 + i * 250 + s);
     }
+    usable(c);
 }
 
 /* append a sequence (built with unit D) to the stream; returns its length */
@@ -85,7 +106,7 @@ int main(void)
             memset(&sd, 0, sizeof sd);
             memset(&sg, 0, sizeof sg);
             make_cpd(&want, &g, SZ[z][0], SZ[z][1], SZ[z][2], 0);
-            want.map.K = (uint8_t)V92_UP_K(want.drn);          /* as the parser sets it */
+            want.map.K = (uint8_t)(want.drn ? V92_UP_K(want.drn) : 0);   /* as the parser sets it */
             want2 = want; want2.ack = 1;
             /* the parser's view of the bits is the reference */
             n = v92_cpd_build(&want, D, bits);
@@ -177,6 +198,7 @@ int main(void)
         make_cpd(&B, &g, 2, 30, 60, 1);
         B.has_filt = 0; B.has_const = 0;                       /* only the moduli changed */
         B.drn = (uint8_t)(A.drn == 19 ? 18 : A.drn + 1);
+        usable(&B);
         B.filt.gain4 = (uint16_t)(A.filt.gain4 ^ 0x5A5A ? A.filt.gain4 ^ 0x5A5A : 1);
         /* a full CPd A, then B carrying the moduli only */
         pos = 0;

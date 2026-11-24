@@ -50,6 +50,7 @@ typedef struct {
     int      ev;                /* events of the frame being taken */
     uint16_t w0;                /* the header word */
     v92_cpd_t cpd;              /* the CPd being received */
+    v92_cpd_t out;              /* the stored CPd with it merged, checked before it is stored */
 } v92aseq_t;
 
 enum {                          /* v92aseq_t.has */
@@ -66,7 +67,10 @@ void v92aseq_init(v92aseq_t *s);
  * and each part carried replace what *cpd held; a part left out is kept
  * from an earlier CPd, or zero if none had it, and *cpd's has_ flags say
  * which parts it holds. A CPd that does not check out leaves *cpd as it
- * was. */
+ * was (V92AS_BAD): one whose CRC fails, and one that names an upstream
+ * rate but would leave *cpd with a map or filter that fails v92_map_check
+ * (once it holds the moduli and the constellations) or v92_filt_check
+ * (once it holds the filters). */
 int  v92aseq_frame(v92aseq_t *s, const uint8_t *bits, int n, v92_suvd_t *suvd, v92_cpd_t *cpd);
 /* The start of a Phase 4 (after Phase 3, 9.5.2): hunt afresh, nothing
  * stored. */
