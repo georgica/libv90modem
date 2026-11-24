@@ -3,6 +3,7 @@
 #include "clock.h"
 #include "sintab.h"
 #include "v34_tabs.h"
+#include "interp2.h"
 #include "fixmath.h"
 
 #define ONE24 (1 << 24)
@@ -13,6 +14,8 @@
 typedef char qrx_dense_dn_check[(int64_t)2 * QRX_REF * QRX_REF == DENSE_DN ? 1 : -1];
 /* the tap update takes two taps a pass */
 typedef char qrx_ntap_even_check[QRX_NTAP % 2 == 0 ? 1 : -1];
+/* the equaliser output takes four taps a pass */
+typedef char qrx_ntap_four_check[QRX_NTAP % 4 == 0 ? 1 : -1];
 
 void qamrx_init(qamrx_t *r, int sym_rate, int car_num, int car_den)
 {
@@ -76,9 +79,12 @@ static void eq_out(const qamrx_t *r, int32_t *yr, int32_t *yi)
     const int16_t *x = &r->x[r->xpos];
     int64_t ar = 0, ai = 0;
     int k;
-    for (k = 0; k < QRX_NTAP; k++) {
-        ar += (int64_t)r->cr[k] * x[k];
-        ai += (int64_t)r->ci[k] * x[k];
+    /* four taps a pass (QRX_NTAP is a multiple of 4), in order */
+    for (k = 0; k < QRX_NTAP; k += 4) {
+        ar += (int64_t)r->cr[k] * x[k];         ai += (int64_t)r->ci[k] * x[k];
+        ar += (int64_t)r->cr[k + 1] * x[k + 1]; ai += (int64_t)r->ci[k + 1] * x[k + 1];
+        ar += (int64_t)r->cr[k + 2] * x[k + 2]; ai += (int64_t)r->ci[k + 2] * x[k + 2];
+        ar += (int64_t)r->cr[k + 3] * x[k + 3]; ai += (int64_t)r->ci[k + 3] * x[k + 3];
     }
     *yr = (int32_t)(ar >> 20); *yi = (int32_t)(ai >> 20);
 }
@@ -93,15 +99,12 @@ static int produce(qamrx_t *r)
         int p = (f >> 19) & (V34_IP - 1);
         int32_t a = (f >> 4) & 0x7fff;              /* position between branches p and p+1, Q15 */
         const int16_t *h0 = v34_interp[p], *h1 = v34_interp[p + 1];
-        int32_t acc0 = 0, acc1 = 0, v, ph;
-        int i, idx = r->rpos - 1;
+        int32_t acc0, acc1, v, ph;
         /* 32 branches alone leave a timing granularity of 1/32 sample, which
-         * costs several dB at the band edge; interpolate between neighbours */
-        for (i = 0; i < V34_IN; i++) {
-            int32_t s = r->ring[(idx - i) & 63];
-            acc0 += s * h0[i];
-            acc1 += s * h1[i];
-        }
+         * costs several dB at the band edge; interpolate between neighbours.
+         * The newest sample is ring[(rpos - 1) & 63]; int32 sums cannot
+         * overflow (test/test_interp_bound.c) */
+        interp2_32(r->ring, r->rpos - 1, 63, h0, h1, V34_IN, &acc0, &acc1);
         acc0 >>= 14; acc1 >>= 14;
         v = (acc0 + (((acc1 - acc0) * a) >> 15)) * r->gain >> 8;
         if (v > 32767) v = 32767;

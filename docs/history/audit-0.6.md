@@ -1300,3 +1300,59 @@ x2's upstream decodes 64 states (8 subsets); the others 16 (4 classes,
 whose slicer is unchanged), so they gain from the ACS alone. The v34
 bench's decoder (`test_bench count`, armv5) per 2D symbol: 16 states
 1837 -> 1688, 32 states 5295 -> 4463, 64 states 11166 -> 8350.
+
+## Task 33: one interpolator in straight runs; the equaliser output unrolled (dsp P5, P10, P14, 3.6; call F6, P3)
+
+- `modem/interp2.h`: `interp2_32` and `interp2_64`, the two neighbouring
+  branches of a fractional-delay bank over a ring, newest sample first, in
+  the two straight runs that do not wrap (no index masking), the same
+  products into each accumulator in the same order as the plain loop. One
+  body for both widths. In each run the sample pointer walks down from one
+  past the run's newest sample, so that it never points before the ring
+  (the old runs in pcmtx and v90arx ended one before it).
+- qamrx `produce` (int32 accumulators, as before): `interp2_32`. Its sums
+  cannot overflow: the largest row sum |h| of `v34_interp` is 46728 and
+  46728 x 32768 = 1531183104 < 2^31 (`test/test_interp_bound.c`, its own
+  commit before this one), so they are exact in any order; the order is
+  kept anyway.
+- pcmtx `pcmtx_out` and v90arx `produce` (int64 accumulators, as before):
+  `interp2_64`, the same int products widened into the same int64 sums;
+  nothing about them changed but the loop.
+- qamrx `eq_out`: four taps a pass (QRX_NTAP = 72, a multiple of 4,
+  checked at compile time), the same int64 sums in the same order.
+- Four taps a pass, not two: GCC 12.3 for ARMv5 makes a two-tap pass 14
+  instructions, the same 7 a tap as one tap a pass (it does not keep the
+  post-indexed loads), so P10's and P14's two taps saved nothing. A first
+  version with two taps a pass and array indexing measured worse than
+  before in the calling modes (V.90 calling +0.47 M, V.92 calling
+  +1.10 M at 0 ppm; 8 instructions a tap in its first run). A four-tap
+  pass is 24 to 25 instructions (6 a tap), the 0 to 3 taps left of a run
+  7 each: the calling audit's P3.
+- `v34_rx`'s acs() is now handed `(const uint8_t *)rx->pred`, the whole
+  table, rather than `rx->pred[0][0]` walked past its first row (its own
+  commit; output identical).
+
+Proof: the goldens cover all three paths. `make verify`: golden 136
+identical (test_interp_bound's own is new), replay 636 identical, bench 17
+identical; ubsan, armv7hf, bigend, fixed ok; no golden file re-recorded.
+The x2 and V.90 bench transmit and received hashes (`cost-x2`) are the
+same before and after, and the same on the host and under qemu.
+
+### Costs
+
+`make cost-x2 cost-v90c cost-v92c ARM_CC=$A5 COST_TICKS=0` (armv5 uClibc,
+each in its own BUILD; build/cost-before.txt, build/cost-after.txt), M
+ARM instructions per second of line in data mode:
+
+| | before | after | change | dsp's / call's estimate |
+|---|---|---|---|---|
+| x2 answering (second 15 to 16) | 60.95 | 58.45 | -2.50 | -2.3 (P5) and -0.6 (P10) |
+| V.90 answering (`cost-x2`'s, second 15 to 16) | 35.10 | 32.60 | -2.50 | -2.3 and -0.6 |
+| V.90 calling, 0 / 100 ppm | 55.19 / 59.01 | 54.99 / 58.81 | -0.20 / -0.20 | |
+| V.92 calling, 0 / 100 ppm | 70.32 / 74.55 | 70.05 / 74.28 | -0.27 / -0.27 | -0.5 (P14); call P3 measured -0.2 |
+
+The answering modes gain from qamrx (straight runs, 10 -> 6 instructions
+a tap, and `eq_out`); the calling modes from v90arx's and pcmtx's runs
+(7 -> 6 a tap), which were straight already. P10's -0.6 M assumed 7 ->
+6 a tap from two taps a pass, which this compiler does not give; the
+four-tap pass gets part of it.

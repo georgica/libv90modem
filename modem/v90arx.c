@@ -5,6 +5,7 @@
 #include "clock.h"
 #include "divrcp.h"
 #include "v34_tabs.h"           /* the fractional delay bank, shared with qamrx */
+#include "interp2.h"
 #include "v90_pcm.h"
 #include "sintab.h"           /* the band edge's image (edge_image) */
 #include "fixmath.h"
@@ -875,12 +876,9 @@ static void produce(v90arx_t *r)
     int p = (int)(f >> 27);
     int32_t a = (int32_t)((f >> 12) & 0x7fff);  /* between branches p and p + 1, Q15 */
     const int16_t *h0 = v34_interp[p], *h1 = v34_interp[p + 1];
-    int64_t acc0 = 0, acc1 = 0, v;
-    int i, idx = (r->rpos - 1) & 63;
-    const int16_t *s = r->ring + idx;
-    /* ring[(idx - i) & 63], newest first, in the two runs that do not wrap */
-    for (i = 0; i <= idx; i++, s--) { acc0 += *s * h0[i]; acc1 += *s * h1[i]; }
-    for (s = r->ring + 63; i < V34_IN; i++, s--) { acc0 += *s * h0[i]; acc1 += *s * h1[i]; }
+    int64_t acc0, acc1, v;
+    /* ring[(rpos - 1 - i) & 63], newest first */
+    interp2_64(r->ring, r->rpos - 1, 63, h0, h1, V34_IN, &acc0, &acc1);
     v = acc0 + (((acc1 - acc0) * a) >> 15);     /* Q14 */
     process(r, sat16((v * r->gain) >> 26));
 }
