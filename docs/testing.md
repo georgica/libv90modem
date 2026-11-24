@@ -23,9 +23,13 @@ The host suite:
 - `check-symbols`: the static library defines only `v90m_*` (its
   internals renamed `v90m__i_*`) and the compiler's helpers;
 - `check-version`: the Makefile's `VERSION` is the header's
-  `V90M_VERSION_*` (`version: 0.5.0 everywhere`);
-- `check-headers`: every header under `modem/`, `v34/`, `v90/`, `v92/`,
-  `v32/`, `v42/` and `include/` compiles alone with only `-I. -Iinclude`
+  `V90M_VERSION_*`, README's "This is X" and the `.so` names of
+  [getting-started.md](getting-started.md) (`version: 0.6.0 everywhere`);
+- `check-soname`: the shared library's SONAME is
+  `libv90modem.so.MAJOR.MINOR` while MAJOR is 0 (`soname:
+  libv90modem.so.0.6`);
+- `check-headers`: every header under `api/`, `modem/`, `v34/`, `v90/`,
+  `v92/`, `v32/`, `v42/` and `include/` compiles alone with only `-I. -Iinclude`
   (each includes what it uses, by a path relative to itself);
 - the tests of the subdirectories `v34`, `v90`, `v92`, `v42` and `v32`.
 
@@ -36,6 +40,74 @@ downstream as an analogue modem's A/D has it) and `test/v90link.h` (a
 whole line between the library's analogue and digital modems). They may
 use knowledge a real modem does not have: they are a test reference, not
 code to ship (`DESIGN.md`, 5).
+
+## `make verify` and `make verify-phase`
+
+Two commands prove that a change did what it says and nothing else.
+
+**`make verify`** (`tools/verify.sh`) runs before every commit, some 6 to
+7 minutes on 16 threads. Seven stages run at once, each in a build tree of
+its own, each printing one line; then `VERIFY PASS (S s)`, or `VERIFY
+FAILED` and the end of each failed stage's log (`build/verify/log/`):
+
+| stage | what it proves |
+|---|---|
+| host | `make check`, then every program's output against its golden file (`tools/golden.sh check`) and the split programs' cases against the whole (`tools/split-check.sh`) |
+| replay | the replay proof (below) |
+| bench | the benches' transmit and received-bit hashes against `test/golden/bench.txt` (`tools/bench-hashes.sh`) |
+| ubsan | `make check-ubsan`, the fixtures included |
+| armv7hf | the short suite cross-built for armv7hf (musl) under qemu, less `tools/ports-slow.txt`, against the host's short set built with `-DTEST_FORCE_SHORT` (`tools/short-cmp.sh`) |
+| bigend | the same short suite for aarch64be (big-endian, musl) against the same host set |
+| fixed | `check-fixed` and `check-symbols` |
+
+`A7` and `BE` name the armv7hf and aarch64be compilers (default: Bootlin's
+under `../toolchains`), `RECS` the recordings.
+
+**Golden files.** `test/golden/out/<dir>/<program>.txt` holds what each
+test program printed (140 programs), filtered by `tools/out-filter.sh` (no
+CPU or wall time, no structure sizes). `make golden` runs `make check` and
+compares; `make golden-record` writes them. The rule: a golden file is
+re-recorded only when a change explains it, and the commit lists each
+file re-recorded and why. A change that should alter no output (a
+refactor, a faster form of the same arithmetic) re-records nothing; a new
+program's own golden file is not a re-record.
+
+**The replay proof** (`tools/replay-proof.sh`, `make replay-proof`). The
+106 recordings of real calls (private, never in the repository: `RECS`,
+their names and hashes in `test/golden/recordings.sha256`) go through
+`v90m-replay` in six flag sets (none, `-9`, `-x`, `-x -9`, `-k`, `-k -9`):
+636 runs, whose trace, decided bits and exit code are hashed against
+`test/golden/replay.sha256`. `check` compares, `record` writes the
+manifest, `diff REF` replays with this tree and with the tool built from a
+git REF and prints the start of each trace that differs: that is how a
+release says which recorded calls it changes, and why
+(`docs/history/audit-0.6.md`, "Replay proof against v0.5.0").
+`V90M_NO_RECS=1` skips it (the CI has no recordings).
+
+**Split programs.** On ARM the slowest programs (`SPLIT_TESTS` in the
+Makefile: `test_p34`, `test_orig_v92`, `test_orig_seeds`,
+`test_orig_bell`) run case by case in parallel (`prog --cases` says how
+many, `prog N` runs one). `tools/split-check.sh` proves that the cases,
+one after another, print what the whole program prints.
+
+**`make verify-phase`** (`tools/verify-phase.sh`) is the release proof,
+hours long: the armv5 (uClibc, the box's ABI) suite, the port matrix
+(below; the whole suites on host gcc, armv5, s390x and riscv64, QUICK on
+the rest, every target gating), the armv7hf short suite in full, the
+benches' hashes on the host against qemu, the CRd scan of the recordings
+(`make crd-scan`), and the `cost-*` counts into `build/costs.txt`; then
+`VERIFY-PHASE PASS`. Its figures go into the release's history file
+(`docs/history/audit-0.6.md` for 0.6.0).
+
+## The CI
+
+`.github/workflows/ci.yml`, on every push and pull request: host gcc and
+clang (`make check`, the golden files, the bench hashes, an install and the
+example built with pkg-config), `check-ubsan`, armv7hf under qemu against
+the host's short set, s390x (big-endian) under qemu the same way, and a
+win32 (mingw) build. Nightly, on tags and by hand: the ARMv5 suite under
+qemu. The replay proof is skipped there (`V90M_NO_RECS=1`): the recordings
+are private, so `make verify` on a machine that has them is the gate.
 
 ## `make check-arm`
 

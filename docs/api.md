@@ -38,8 +38,8 @@ NULL.
 
 | | |
 |---|---|
-| `V90M_VERSION_MAJOR`, `V90M_VERSION_MINOR`, `V90M_VERSION_PATCH` | the header's version: 0, 5, 0 |
-| `const char *v90m_version(void)` | "0.5.0": the version of the library linked in (may differ from the header) |
+| `V90M_VERSION_MAJOR`, `V90M_VERSION_MINOR`, `V90M_VERSION_PATCH` | the header's version: 0, 6, 0 |
+| `const char *v90m_version(void)` | "0.6.0": the version of the library linked in (may differ from the header) |
 
 ## Error codes
 
@@ -85,7 +85,7 @@ version; the init functions check the length given):
 | `tx_level` | transmit RMS outside PCM modes, 16-bit units, 0 .. `V90M_TX_LEVEL_MAX` (16384; else `V90M_EINVAL`); default 3000. Near the top the peaks of V.34-family signals clip: a calling V.90 modem's V.34 upstream at 15360 or 16384 goes over full scale some tens of samples a call, and whether its B1 then gets through depends on the upstream rate the answerer picks. Back to back at 16384 (mu-law) the answerer picked 26400 and B1 failed up to 0.5.0; since 0.6.0's start-up it picks 24000 and the call connects. That is luck of the measurement, not headroom: 15360 is the level tested to connect |
 | `max_tx_code` | answering, V.90 / V.92: the most downstream power the caller may ask for, -0.5 dBm0 less 0.5 dB per step, 1..31; 0 = 23 (-12 dBm0). Calling: unused (0..31 accepted) |
 | `max_down_bps`, `max_up_bps` | rate ceilings, bit/s, >= 0; 0 = none. `max_down` caps what we send, `max_up` what we receive (named from the answering, server side), in V.34, V.90 and V.92, either role: V.92's PCM upstream (up to 48000) under `max_up` answering, `max_down` calling; 33600 holds it at 33333. V.32bis (either role): one rate both ways, under the lower of the two. V.21, V.22, V.22bis, Bell: unused. With x2 or K56flex, `max_up` 1..2399 is `V90M_EINVAL` (their V.34 upstream starts at 2400) |
-| `echo_delay` | samples from a sample leaving to its echo starting back (the driver's buffering), >= 0; -1 = measure it in every start-up. Calling V.90 / V.92: never measured, used as given, 0 .. 511 (-1 taken as 0); see [line-interface.md](line-interface.md) |
+| `echo_delay` | samples from a sample leaving to its echo starting back (the driver's buffering), >= 0; -1 = measure it in every start-up. Calling V.90 / V.92: never measured, used as given, 0 .. 511 (-1 taken as 0, more as 511); see [line-interface.md](line-interface.md) |
 | `getbit` | `int (*)(void *user)`: the next bit to send, 0 or 1 |
 | `putbit` | `void (*)(void *user, int bit)`: a bit received |
 | `on_event` | `void (*)(void *user, v90m_event ev)`; may be NULL: poll `v90m_get_state()` instead |
@@ -203,7 +203,7 @@ stay as they were.
 |---|---|
 | `modulation`, `tx_bps`, `rx_bps` | as in the state |
 | `snr_db10` | receiver signal to error, 0.1 dB, 0..600; -1 = none (not connected, or a modulation without the figure) |
-| `rtd` | round-trip delay measured in the handshake, samples; -1 = none (answering: V.34, V.90, V.92, K56flex; calling: V.32bis, V.34, V.90, V.92) |
+| `rtd` | round-trip delay measured in the handshake, samples; -1 = none (answering: V.34, V.90, V.92, x2, K56flex; calling: V.32bis, V.34, V.90, V.92) |
 | `echo_delay` | answering V.90 / V.92 / x2 / K56flex: in use (configured or measured) by the engine running now, during a retrain or after the end the call's; samples; -1 = none, and always -1 calling |
 | `retrains` | begun, this call |
 | `renegotiations` | rate renegotiations that stopped the data, this call (answering: V.34, V.90, V.92, x2, K56flex; calling: V.32bis, V.34, V.90, V.92) |
@@ -220,7 +220,8 @@ stay as they were.
 Characters (1 start, 8 data LSB first, 1 stop, mark idle) on the bit pump
 of a connected modem, without error control: pass `v90m_async_getbit` and
 `v90m_async_putbit` as the modem's `getbit` / `putbit` with the object as
-`user`. Fixed 512-octet queues each way.
+`user`. Fixed 512-octet queues each way; a character received with the
+receive queue full is dropped and not counted.
 
 | | |
 |---|---|

@@ -1,6 +1,6 @@
 # Known limits
 
-What is not done, not tried, or measured in simulation only, as of 0.5.0.
+What is not done, not tried, or measured in simulation only, as of 0.6.0.
 Each item names where it is recorded.
 
 ## Not tried
@@ -372,48 +372,93 @@ spacing are given, and none of the 3 dB tables but 32000's.
   either role, is `v90m_mem_size()` octets: 106320 on x86-64, 106016 on
   ARMv5, within `V90M_MEM_SIZE` (108 KiB) on every port target. The
   calling side's state, whose modulations after V.8 share memory, is some
-  52 KiB; a smaller modem would take a smaller answering state.
+  52 KiB: shrinking the calling side further (such as a union inside the
+  V.90 / V.92 analogue modem's state, some 6 KB) no longer lowers
+  `v90m_mem_size()`; only a smaller answering state (its union of engines,
+  or the V.34 and Phase 2 state outside it) would.
   (`docs/history/audit-0.6.md`, Task 29.)
+
+## Bounds and clocks
+
+Every wait of a call is bounded, and every end of a call has an end code
+(0.6.0). The limits a program may meet, beyond each standard's own:
+
+- **Phase 2, answering** (V.90, V.92, V.34, x2, K56flex): the INFO
+  exchange ends 20 s after its start (or a restart V.34 counts), and V.90's
+  recovery (9.2.1.2.3) is tried at most 4 times. Behind those, a backstop
+  ends the call when V.90's or V.92's Phase 2 (a retrain's included) or
+  V.34's lasts 30 s, or V.90's or V.92's Phases 3 and 4 last 60 s. A normal
+  Phase 2 takes 3 to 5 s.
+- **A retrain's Phase 2, calling** (V.90, V.92, V.34): each repeated INFO0
+  of the answerer counts as one of Phase 2's 4 restarts, and a retrain's
+  Phase 2 ends after 30 s: `V90M_END_RETRAIN_FAILED`. Start-up as a whole
+  has the 60 s limit.
+- **V.22bis, both roles:** the wait for the end of a far S1 ends after 1 s
+  (S1 is 100 ms).
+- **V.92 cleardown, answering:** a caller that never acknowledges our
+  cleardown is given 3.5 s.
+- **LAPM** (`v90m_ec`): `n400` recoveries in a row with I frames
+  unacknowledged release the link (`V90M_EC_R_N400`, some 11 s with the
+  defaults); a busy peer (RNR) is not bounded, by V.42 8.4.7
+  ([error-control.md](error-control.md)).
+- **Long calls:** the sample clocks and counters wrap as unsigned values or
+  stop at their limit; the receivers bring their sample and symbol numbers
+  back every 2^30 in data mode. No call length has a limit of its own; up
+  to 0.5.0 the V.34 receiver stopped after 58 to 62 hours of data mode and
+  the V.90 calling receiver after 74.6 hours. A host that keeps calling
+  `v90m_process_*` after `V90M_EV_ENDED` meets no overflow either.
+- **What is not bounded, by ruling:** an x2 call whose upstream decodes
+  badly but holds its carrier stays up (no watchdog on x2's error rate,
+  above); V.42 with T403 off (the default) does not notice a silent peer
+  while nothing is unacknowledged: the modem's loss of carrier does.
 
 ## CPU
 
 All figures are ARM instructions counted under qemu (ARMv5, gcc -O2);
 cycles on a real ARM926 have not been measured. v90d's box, an ARM926EJ-S
-at 400 MHz, runs the answering modem's V.90 data mode at 32 % of its CPU,
-which makes it about 123 M counted instructions a second.
+at 400 MHz, ran 0.5.0's answering V.90 data mode at 32 % of its CPU, which
+makes it about 122 M counted instructions a second. 0.6.0's figures
+(`docs/history/audit-0.6.md`, "after Phase 3"; README, "Memory and
+CPU"); 0.5.0's in brackets:
 
-- **One V.92 call on the calling side is some 56 to 60 % of that box**
-  (69.4 M a second at 0 ppm clock offset, 73.9 M at 100 ppm, data mode);
-  V.90 calling 44 to 48 %. One call fits with room; two V.92 calls at once
-  do not. What is left is per-tap work of the receiver; further cuts would
-  be numeric and cost rate. (`docs/history/PROGRESS.md`, cpu; README,
-  "Memory and CPU".)
-- The heaviest single tick of a calling V.90 / V.92 call is some 98 k
-  instructions (8 % of a 10 ms block of the box), after the heavy designs
-  were spread over many samples.
+- **One V.92 call on the calling side is some 51 to 55 % of that box**
+  (62.12 M a second at 0 ppm clock offset, 66.52 M at 100 ppm, data mode;
+  0.5.0: 69.95 / 74.32); V.90 calling 38 to 42 % (46.97 / 50.95 M). One
+  call fits with room; two V.92 calls at once (2 x 62.12 = 124.24 M) do
+  not. (`docs/history/PROGRESS.md`, cpu.)
+- The heaviest single tick of a calling V.90 / V.92 call was some 98 k
+  instructions at 0.5.0 (8 % of a 10 ms block of the box), after the
+  heavy designs were spread over many samples; not measured again.
 - The answering V.92 modem measures the caller's gain once per B1u. In
   any call whose B1u does not sit well on the designed points at scale 1
   (21 of the 26 recorded calls that reach B1u, working ones among them)
   that is one tick of some 175 k instructions (14 % of a 10 ms block);
   14 k otherwise. Not yet spread over ticks.
-- **x2 data mode costs about twice V.90's: one x2 call per box.** 81.9 M
-  instructions a second at 32000 and 83.7 M at 56000, against V.90
-  answering's 38.9 M measured the same way (`make cost-x2`, second 15 to
-  16 of the call); some two thirds of the box. The cause is the upstream the
-  client dictates: V.34 with the 64-state trellis, non-linear encoding and
+- **x2 data mode: one x2 call per box.** 56.58 M instructions a second
+  at 32000 (0.5.0: 82.57), about 1.8 times V.90 answering's 31.19 M
+  measured the same way (`make cost-x2`, second 15 to 16 of the call).
+  With V.42 running at both ends (`make cost-x2-v42`, our endpoint
+  counted), at 32000 / 56000:
+  58.89 / 61.50 M with no compression, 69.24 / 77.19 M with V.42bis,
+  89.25 / 108.78 M with V.44, on text that compresses far beyond real
+  traffic (a ceiling). Two x2 calls with V.42bis would need 2 x 77.19 =
+  154.37 M of about 122 M, and even without compression 2 x 61.50 =
+  123.0 M: one x2 call per box.
+  The cause of the difference from V.90 is the upstream the client
+  dictates: V.34 with the 64-state trellis, non-linear encoding and
   expanded shaping, which x2 gives the server no way to refuse.
-  (`docs/history/PROGRESS.md`, x2 6 and x2 8.)
-- **K56flex data mode costs about what V.90's does: about a third of the
-  box.** 39.0 M instructions a second at 56000, against V.90 answering's
-  38.9 M measured the same way (`make cost-k56`, ARMv5, second 20 to 21
-  of the call, after V.8bis). It asks the client in its MP for the
-  upstream V.90 has (16 states, linear encoding, minimum shaping), and
-  SM56 honours that. A client that ignored the request and sent with 64
-  states, non-linear encoding and expanded shaping, as an x2 client
-  dictates, could not be decoded today; once the receiver followed its MP
-  instead (configuration: x2's receiver decodes that upstream), it would
-  cost what x2 does, about twice V.90's (some 82 M a second, one call per
-  box). (`docs/history/PROGRESS.md`, k56 10.)
+  (`docs/history/PROGRESS.md`, x2 6 and x2 8; `docs/history/audit-0.6.md`.)
+- **K56flex data mode costs about what V.90's does.** 32.12 M
+  instructions a second at 56000 (0.5.0: 39.27), against V.90 answering's
+  31.19 M (`make cost-k56`, ARMv5, second 20 to 21 of the call,
+  after V.8bis). It asks the client in its MP for the upstream V.90 has
+  (16 states, linear encoding, minimum shaping), and SM56 honours that. A
+  client that ignores the request and sends x2's upstream is decoded (see
+  "K56flex (answering)" above) and costs what x2 does: 58.60 M (0.5.0:
+  84.43).
+- **V.42:** an endpoint at 56 kbit/s both ways costs 5.21 / 9.08 / 9.48 M a
+  second with no compression / V.42bis / V.44 (`make cost-v42`; before
+  0.6.0's V.42 work: 7.96 / 11.81 / 12.19).
 
 ## Not implemented
 

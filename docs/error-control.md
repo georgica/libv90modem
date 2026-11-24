@@ -19,7 +19,10 @@ Characters of 1 start bit, 8 data bits LSB first and 1 stop bit, mark when
 idle. Pass `v90m_async_getbit` and `v90m_async_putbit` as the modem's
 `getbit` / `putbit`, with the object as `user` (or call them from your own
 callbacks, as `examples/call_loop.c` does). The queues are fixed at 512
-octets each way.
+octets each way, and all 512 hold an octet (up to 0.5.0 they held 511). A
+character received while the receive queue is full is dropped and not
+counted: read often enough, or use the V.42 endpoint, whose start-stop
+mode counts its overruns (`async_overruns`).
 
 | | |
 |---|---|
@@ -51,8 +54,10 @@ octets     v90m_ec_write / v90m_ec_read
 (`v42/v42.c`): detection on, start-stop fallback on, `t400_ms` 750,
 `establish_ms` 30000, `V90M_COMP_AUTO`, V.42bis and V.44 wanted both ways
 (V.42bis 2048 codewords, strings of 32; V.44 2048 codewords, strings of
-255, history 4096). `v90m_ec_create` / `v90m_ec_init` do not check the
-configuration's values; `v90m_ec_reset` restarts the endpoint with one.
+255, history 4096). `v90m_ec_create`, `v90m_ec_init` and `v90m_ec_reset`
+check every value against its range ([api.md](api.md), `v90m_ec_cfg`) and
+give `V90M_EINVAL` outside it; `v90m_ec_reset` restarts the endpoint with
+a new configuration.
 
 **When to start it.** At connection (`V90M_EV_CONNECTED`, or
 `v90m_state.connected` turning 1), with `v90m_ec_reset`. Until then

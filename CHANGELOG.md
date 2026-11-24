@@ -8,7 +8,7 @@ change is listed here. Rebuild against the new header with every version;
 "Simulation and own answerer only" means: tried against simulated lines and
 this library's own answering modem, never against a real modem or server.
 
-## 0.6.0 (unreleased)
+## 0.6.0 (2026-11-24)
 
 Security (V.92, calling role; no 0.5.x patch: upgrade to 0.6.0):
 - The V.92 analogue modem's upstream encoder could be made to divide by
@@ -43,6 +43,53 @@ Security (V.92, calling role; no 0.5.x patch: upgrade to 0.6.0):
   lengths in the encoder that could read out of bounds if the filter
   changed under it. That was never released; the trim now works on the
   encoder's own copy.
+
+An audit of the whole library, its fixes, and the same arithmetic in
+fewer instructions. Rebuild against the new header and link again: the
+SONAME is `libv90modem.so.0.6`, and `V90M_MEM_SIZE` is smaller.
+
+For a program, in short (each in detail below):
+- End codes: answering, a connection lost in data mode ends with
+  `V90M_END_LOST` (it gave `V90M_END_FAILED`, which now means only that no
+  connection was made); a retrain past the limit or one that fails with
+  `V90M_END_RETRAIN_FAILED`, and V.8 with nothing in common with
+  `V90M_END_NO_COMMON`, as on the calling side. The calling side's V.34
+  gives `V90M_END_RETRAIN_FAILED` where it gave `V90M_END_LOST`.
+  docs/calling.md now says which end code a far-end hang-up gives.
+- Callbacks: `v90m_reset` from a callback of the same modem is
+  `V90M_ESTATE`; `v90m_destroy` from one takes effect at the end of the
+  sample.
+- NULL: every function checks its object; only the four per-bit
+  functions do not.
+- Ranges: `tx_level` above `V90M_TX_LEVEL_MAX` (16384), x2 / K56flex
+  `max_up_bps` 1..2399 and every `v90m_ec_cfg` field outside its range are
+  `V90M_EINVAL`; answering Bell 212A without V.22 is `V90M_ENOTSUP`.
+- Memory: `V90M_MEM_SIZE` 108 KiB (120), `v90m_mem_size()` 106320 on
+  x86-64 (118824), 106016 on ARMv5 (118512).
+- Bounds: every wait of a call is bounded (Phase 2 and its retrains,
+  V.22bis's S1, V.92's cleardown, LAPM's recoveries with `n400`), and
+  long calls no longer overflow a clock (docs/limits.md, "Bounds and
+  clocks").
+- K56flex answering decodes a client that ignores our MP and sends x2's
+  upstream (it cost the call before), at about x2's CPU.
+- Start-stop (`v90m_async_*`): the queues hold all 512 octets (511
+  before).
+
+What has been shown:
+- The replay proof: the 106 recorded real calls replayed in six
+  configurations (636 runs) against 0.5.0's tool. 102 runs differ, and
+  every difference is one a change below explains (the end codes, the
+  upstream frames held at S delivered, the click blanking in the
+  recordings' last 72 ms, SUVd between repeated CPds after our transmit
+  left the recording); the other 534 are identical, data included
+  (`docs/history/audit-0.6.md`, "Replay proof against v0.5.0").
+- Every refactor and every CPU change below was proven byte-identical:
+  every test program's output (golden files), the 636 replays and the
+  benches' hashes unchanged, under UBSan, and on armv7hf and big-endian
+  aarch64 against the host (`make verify`, at every commit).
+- The port matrix: <<FIG:ports>>.
+- Not shown: the calling side against a real modem or server (still
+  simulation and our own answerer only); K56flex against a real modem.
 
 Added (tools):
 - `v90m-replay -s SAMPLE` starts the modem at that sample of the recording
@@ -530,18 +577,84 @@ Changed (error control, V.42 / LAPM):
 
 Changed (build and install):
 - The shared library's SONAME is `libv90modem.so.MAJOR.MINOR` while MAJOR
-  is 0 (`libv90modem.so.0.5` now, `.so.0.6` at this release; it was
-  `.so.0` for every 0.x, so a program built against 0.4 loaded 0.5 and
-  passed it structs of the old layout), `.so.MAJOR` from 1.0. The links
-  installed are `libv90modem.so` and `libv90modem.so.0.5`. Programs linked
-  against the shared library must be linked again.
+  is 0: `libv90modem.so.0.6` for this release (it was `.so.0` for every
+  0.x, so a program built against 0.4 loaded 0.5 and passed it structs of
+  the old layout), `.so.MAJOR` from 1.0. The links installed are
+  `libv90modem.so` and `libv90modem.so.0.6`. Programs linked against the
+  shared library must be linked again.
 - The static library no longer defines `v90m__answer`, `v90m__orig` and
   `v90m__ec` (internal accessors that looked like API): renamed
   `v90m__i_*` like every other internal. `make check-symbols` rejects
   them; `make check-soname` (part of `make check`) checks the SONAME.
+- Internal, not API: a host whose tests reach into the library's
+  internals must change them. In the static library `v90m__answer()` is
+  now `v90m__i_answer()` (the sources, `api/v90modem_priv.h`, keep the
+  short name), and what it points at changed: `answer_t`
+  (`modem/answer.h`) is reorganised (its schemes moved to
+  `modem/ans_*.c`; `answer_tick` and the phase names stay, the fields
+  behind them may not), and the calling side's
+  `orig_t` keeps its engines in one union (`o->e.v90`, `o->e.v34`,
+  `o->e.leg`). Nothing in `include/v90modem.h` is affected; internals may
+  change again in any version.
 - `make uninstall` also removes a `libv90modem.so.0` link left by 0.5.0 or
   earlier once it points at nothing. Packagers: the `.so.0` link is no
   longer installed.
+- `make check-version` also checks README's "This is X" and the `.so`
+  names in docs/getting-started.md; `make check-headers` covers `api/`.
+- `make verify` (per commit: the golden outputs of every test program,
+  the replay proof of the recorded calls, the bench hashes, UBSan, the
+  armv7hf and big-endian short suites, the fixed-point check) and `make
+  verify-phase` (the release proof: armv5, the port matrix, the benches
+  under qemu, the costs); `make cost-v42`, `make cost-x2-v42`.
+  docs/testing.md.
+
+Fixed (start-stop characters, V.14):
+- The queues of `v90m_async_*` hold 512 octets each way, as documented;
+  they held 511 (Will Sowerbutts). A character received with the receive
+  queue full is still dropped without a count (documented).
+
+Faster (output identical, bit for bit; ARMv5 instructions counted under
+qemu, M a second of line in data mode, 0.5.0 -> 0.6.0):
+- x2 answering: 82.57 -> 56.58 (32000); with our V.42 endpoint on its
+  data (`make cost-x2-v42`, new), 32000 / 56000: no compression 58.89 /
+  61.50, V.42bis 69.24 / 77.19, V.44 89.25 / 108.78. Still one x2 call
+  per box: two with V.42bis would need 2 x 77.19 = 154.37 M of about
+  122 M.
+- V.90 answering 39.20 -> 31.19; V.34 answering 40.53 -> 33.42; K56flex
+  answering 39.27 -> 32.12, a client that ignores our MP 84.43 -> 58.60.
+- V.90 calling 55.11 / 59.31 -> 46.97 / 50.95 (0 / 100 ppm); V.92
+  calling 69.95 / 74.32 -> 62.12 / 66.52. Bell 103 / 212A 9.88 / 4.66
+  (9.86 / 4.43: 212A's rise is the 64-bit products of the V.22bis fix).
+- V.42, per endpoint at 56 kbit/s both ways (before -> after the V.42
+  work): no compression 7.96 -> 5.21, V.42bis 11.81 -> 9.08, V.44 12.19
+  -> 9.48.
+- How: the V.34 non-linear decoder without most 64-bit divisions, the
+  Viterbi add-compare-select and the subset slicer in one pass, divisions
+  by powers of two as shifts, the interpolators in straight runs, each LMS
+  step forming the next dot product, V.42's per-bit path inline with the
+  FCS by table, and smaller exact forms (`docs/history/audit-0.6.md`,
+  Tasks 30 to 36). Each was checked against the code it replaced, by
+  exhaustive or wide random tests where the arithmetic changed, and by the
+  unchanged outputs above.
+- A compiler builtin is used only behind a C99 fallback with the same
+  result (`modem/compiler.h`); `-DV90M_NO_BUILTINS` takes the fallbacks.
+
+Refactored (no change in behaviour): the answering modem is one file per
+scheme behind a phase table (`modem/ans_*.c`); the V.34 upstream receiver
+is one (`modem/v34up`) for V.90, V.34, x2 and K56flex; the V.90 / V.92
+analogue modem is split by job (`modem/v90a_*.c`); V.42's configuration
+and status lists are generated from one table
+(`api/v90modem_fields.h`); V.42bis and V.44 behind one interface.
+DESIGN.md, section 2.
+
+Documentation: docs/api.md, the header and docs/answering.md agree on
+`rtd` and `echo_delay` (x2 and K56flex included; calling, `echo_delay`
+-1 is taken as 0 and more than 511 as 511); docs/calling.md: run V.42 when
+calling (our CM always names LAPM), and the end codes of a far-end
+hang-up; docs/answering.md: a caller that never sends CJ is served after
+5 s of JM; DESIGN.md: the implementation-defined behaviours assumed
+(arithmetic right shift of a negative value, wrapping conversion to a
+signed type); docs/limits.md: "Bounds and clocks", the 0.6.0 costs.
 
 ## 0.5.0 (2026-11-21)
 

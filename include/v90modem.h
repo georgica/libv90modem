@@ -54,9 +54,9 @@ extern "C" {
 #endif
 
 #define V90M_VERSION_MAJOR 0
-#define V90M_VERSION_MINOR 5
+#define V90M_VERSION_MINOR 6
 #define V90M_VERSION_PATCH 0
-/* "0.5.0": the version of the library linked in (may differ from the header) */
+/* "0.6.0": the version of the library linked in (may differ from the header) */
 const char *v90m_version(void);
 
 /* error codes (negative returns) */
@@ -355,7 +355,8 @@ typedef struct {
     int        snr_db10;        /* receiver signal to error, 0.1 dB, 0..600; -1 = none (not
                                    connected, or a modulation without the figure) */
     int        rtd;             /* round-trip delay measured in the handshake, samples; -1 = none
-                                   (answering: V.34, V.90, V.92; calling: V.32bis, V.34, V.90, V.92) */
+                                   (answering: V.34, V.90, V.92, x2, K56flex; calling: V.32bis,
+                                   V.34, V.90, V.92) */
     int        echo_delay;      /* answering V.90 / V.92 / x2 / K56flex: in use (configured
                                    or measured) by the engine running now, during a retrain
                                    or after the end the call's; samples; -1 = none, and
@@ -371,7 +372,8 @@ void     v90m_get_stats(const v90m_t *m, v90m_stats *st);
  * Characters (1 start, 8 data LSB first, 1 stop, mark idle) on the bit pump
  * of a connected modem, without error control: pass v90m_async_getbit and
  * v90m_async_putbit as the modem's getbit / putbit with the object as user.
- * Fixed 512-octet queues each way. */
+ * Fixed 512-octet queues each way; a character received with the receive
+ * queue full is dropped, and not counted. */
 typedef struct v90m_async v90m_async_t;
 /* create / init: NULL on failure, *err as for v90m_create / v90m_init */
 v90m_async_t *v90m_async_create(int *err);

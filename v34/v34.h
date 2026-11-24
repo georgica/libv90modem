@@ -238,7 +238,8 @@ v34_pt_t v34_slice(const v34_params_t *p, v34_pt_t r);
  * v34_nl_decode() to its equalised point before v34_rx_put(). */
 v34_pt_t v34_nl_encode(const v34_params_t *p, v34_pt_t x);
 /* (9-34): Phi in Q16 for a point of energy e (units^2 * 2^14) in a signal of
- * mean energy energy_q8 (units^2 * 256) */
+ * mean energy energy_q8 (units^2 * 256). e >= 0 (every caller passes a sum
+ * of squares): a large negative e overflows a signed product inside */
 int64_t  v34_nl_phi_q16(uint32_t energy_q8, int64_t e);
 v34_pt_t v34_nl_decode(const v34_params_t *p, v34_pt_t xp);
 
@@ -311,7 +312,8 @@ typedef struct {
     int16_t   xd[V34_XD_LEN][2]; /* inputs delayed to the decision point */
     uint8_t   xmode;         /* 1: fed through v34_rx_put (x domain) */
     uint8_t   k;             /* 0/1: position inside the 4D symbol */
-#ifdef V34_TEST_API
+#ifdef V34_TEST_API     /* the layout differs under V34_TEST_API: never link
+                           v34/test's objects with the library's */
     uint8_t   hard;          /* 1: trellis decoder bypassed (diagnostic) */
     int16_t   hard_y[2];     /* first point of the 4D symbol in that mode */
 #endif

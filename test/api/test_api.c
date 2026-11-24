@@ -27,8 +27,8 @@ static void test_cfg(void)
     static uint8_t buf[1 << 20] __attribute__((aligned(16)));
 
     /* the version: the library's string, the header's numbers, and the two agree */
-    CHECK(strcmp(v90m_version(), "0.5.0") == 0);
-    CHECK_EQ_I(V90M_VERSION_MAJOR * 10000 + V90M_VERSION_MINOR * 100 + V90M_VERSION_PATCH, 500);
+    CHECK(strcmp(v90m_version(), "0.6.0") == 0);
+    CHECK_EQ_I(V90M_VERSION_MAJOR * 10000 + V90M_VERSION_MINOR * 100 + V90M_VERSION_PATCH, 600);
     {
         char hv[32];
         snprintf(hv, sizeof hv, "%d.%d.%d", V90M_VERSION_MAJOR, V90M_VERSION_MINOR, V90M_VERSION_PATCH);
@@ -183,7 +183,10 @@ static void test_cfg(void)
     {
         /* pinned: what v90d sizes its buffers by. The answerer's state sets
          * it (K56flex's lives in its union); the caller's engines share
-         * memory since 0.6.0, at least 12000 octets less than 0.5.0's */
+         * memory since 0.6.0, at least 12000 octets less than 0.5.0's.
+         * Pinned on x86-64 and 32-bit ARM only; elsewhere both checks hold
+         * by construction (no pin), so that every target prints the same
+         * count of checks */
 #if defined(__x86_64__)
         size_t expect = 106320, was = 118824;
 #elif defined(__arm__)
