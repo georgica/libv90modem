@@ -101,11 +101,22 @@ void x2map_frame(x2map_t *m, const uint8_t *bits, uint8_t out[X2MAP_N])
     }
     /* B up to 37 bits: the number in 64 bits */
     for (k = 0; k < nb - MD; k++) x |= (uint64_t)(bits[MD + k] & 1) << k;
-    for (i = 0; i < X2MAP_N; i++) {
+    /* in 64 bits while x needs them (B > 32: the first one or two
+       positions), then in 32: the same digits */
+    for (i = 0; i < X2MAP_N && (x >> 32) != 0; i++) {
         int l = i > 0;
         uint32_t n = (uint32_t)m->c_n[l], d = (uint32_t)(x % n);
         x /= n;
         lev[i] = m->c_recv[l][d]; o[i] = m->c_sent[l][d];
+    }
+    {
+        uint32_t x32 = (uint32_t)x;
+        for (; i < X2MAP_N; i++) {
+            int l = i > 0;
+            uint32_t n = (uint32_t)m->c_n[l], d = x32 % n;
+            x32 /= n;
+            lev[i] = m->c_recv[l][d]; o[i] = m->c_sent[l][d];
+        }
     }
     f = free_pos(lev);
     for (i = 0, k = 0; i < X2MAP_N; i++) {

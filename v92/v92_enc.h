@@ -64,6 +64,12 @@ typedef struct {
     int16_t  uh[V92_MAX_LSEC];  /* u(n - 1), ... (circular) */
     int32_t  xh[V92_MAX_LSEC];  /* x(n - 1), ... */
     int32_t  vh[V92_MAX_LSEC];  /* v(n - 1), ... */
+    uint8_t  trim[4];           /* zero coefficients at the end of z1, p1,
+                                   z2(1..) and p2, up to 255 each: not summed
+                                   (taken at v92_enc_init). Four bytes that
+                                   leave v90m_mem_size() as it was: x86-64's
+                                   tail padding here, ARMv5's in the structs
+                                   around it */
 } v92_enc_t;
 
 /* Everything initialised to zero (8.7.1: "the scrambler, modulus encoder,

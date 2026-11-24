@@ -1,6 +1,8 @@
 /* Echo canceller. See ec.h. */
 #include "ec.h"
 
+typedef char ec_ntap_by_8[EC_NTAP % 8 == 0 ? 1 : -1];
+
 void ec_init(ec_t *e)
 {
     int i;
@@ -23,11 +25,16 @@ int16_t ec_tick(ec_t *e, int16_t tx, int16_t rx, int mu_shift)
     e->x[e->pos] = e->x[e->pos + EC_NTAP] = tx;
     x = &e->x[e->pos];
 
-    /* four taps a pass (EC_NTAP is a multiple of 4): the same sum */
-    for (i = 0; i < EC_NTAP; i += 4)
+    /* eight taps a pass (EC_NTAP is a multiple of 8): the same sum. On
+     * ARMv5 a tap is a load of each and a multiply-accumulate; eight a pass
+     * spread the loop's three instructions thinner than four (3.5 per tap,
+     * not 4) */
+    for (i = 0; i < EC_NTAP; i += 8)
     {
         acc += (int64_t)e->h[i] * x[i]; acc += (int64_t)e->h[i + 1] * x[i + 1];
         acc += (int64_t)e->h[i + 2] * x[i + 2]; acc += (int64_t)e->h[i + 3] * x[i + 3];
+        acc += (int64_t)e->h[i + 4] * x[i + 4]; acc += (int64_t)e->h[i + 5] * x[i + 5];
+        acc += (int64_t)e->h[i + 6] * x[i + 6]; acc += (int64_t)e->h[i + 7] * x[i + 7];
     }
     err = rx - (int32_t)((acc + (1 << 23)) >> 24);
 
