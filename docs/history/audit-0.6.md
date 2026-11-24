@@ -1097,7 +1097,10 @@ Before, `orig_t` (118712 x86-64, 118424 ARMv5) set the size; after, the
 answerer's `answer_t` does: `orig_t` lost 64960 octets (x86-64), but the
 modem takes only 12504 less (12496 on ARMv5), the gap to answer_t. The
 brief's target, at most 118824 - 12000 = 106824 (x86-64) and 106512
-(ARMv5), is met. Pins: 106320 (x86-64), 106016 (32-bit ARM).
+(ARMv5), is met. From here on, shrinking the calling side further (D16's
+deferred union inside `v90a_t`, some 6 KB) no longer lowers
+`v90m_mem_size()`; only `answer_t` (its union, or the V.34 and Phase 2
+state outside it) does. Pins: 106320 (x86-64), 106016 (32-bit ARM).
 `V90M_MEM_SIZE` (D17): the largest, 106320, + 2048 = 108368, up to a
 multiple of 4096: 110592 (108 KiB, was 120 KiB). `V90M_EC_MEM_SIZE` and
 `V90M_ASYNC_MEM_SIZE` unchanged (49792 / 1064 x86-64).
@@ -1179,7 +1182,7 @@ divisions by `energy_q8`, eight of `ep 2^28` by `(Phi^2) >> 4` and two of
   after, would be the same); a Phi alternating between two values still
   runs all eight rounds;
 - the final `x 2^17 / Phi` as `2 (a / Phi)` plus one if twice the
-  remainder reaches Phi, a = |x| 2^16 < 2^32: 32-bit divides, then the
+  remainder reaches Phi, a = |x| 2^16 <= 2^31: 32-bit divides, then the
   sign;
 - `v34_nl_phi_q16` (and so `v34_nl_encode`) divides by `div_s64_u32`
   (divlu when the quotient fits 32 bits, C's division otherwise): one
@@ -1223,7 +1226,11 @@ mode:
 
 Only x2's upstream is non-linear in these calls (v34up.c decodes each
 symbol and re-encodes its decision); the decoder and the encoder were
-measured together, -9.25 M against dsp's -10.25 M for both.
+measured together, -9.25 M against about -9.7 M expected. (Corrected
+in Task 38 from "dsp's -10.25 M for both", which counted the encoder
+twice: dsp's -9.7 M prototype already changed `v34_nl_phi_q16`, and P9's
+-0.55 M was for a reciprocal kept in `v34_params_t`, a struct field this
+task did not add.)
 
 ## Task 32: the Viterbi add-compare-select; the subset slicer in one pass (dsp P3, P3b, P6)
 
@@ -1265,8 +1272,10 @@ first noise level moves each coordinate by -1, 0 or +1 unit exactly, so
 that path metrics tie: a throwaway probe counted 1.26 M ties in 3.56 M
 compares at 16 states and 11.7 M in 56.9 M at 64 (about 35 000 and
 80 000 in the other runs). Mutations of the new code each change the
-printed hashes: `<=` for `<` in any of the four compares or in the best
-state's, a reordered pair of compares, a wrong first predecessor. The
+printed hashes: `<=` for `<` in any of the four compares (compare 2's
+checked by the task's reviewer) or in the best state's, a reordered pair
+of compares, a wrong first predecessor; in the slicer, the residue table,
+the rounding offset, the `V34_M_BIG` value. The
 slicer against eight `v34_slice_subset` calls, metric and point: all 50
 constellations without precoding (8 of 8 points or fewer) and three
 precoded (ymax 9, 47, 227), the int16 grid in steps of 40 within the

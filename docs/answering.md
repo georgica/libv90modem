@@ -90,11 +90,13 @@ first: below, "K56flex".) The menu decides:
   below). The code is the same as the calling role's for the same event.
   `V90M_END_NO_ANSWER_TONE` and `V90M_END_NO_JM` are the calling role's
   only. A caller whose V.8 sends CM but never CJ after our JM is served
-  anyway: the modulation JM selected starts.
+  anyway: JM stops after 5 s (V.8 8.2.3 leaves its length open) and the
+  modulation JM selected starts, as when CJ comes; a missed CJ does not
+  lose the call.
 
 `v90m_get_stats` adds the receiver's signal to error (`snr_db10`, 0.1 dB),
 the round-trip delay measured in the handshake (`rtd`, samples: V.34, V.90,
-V.92), the echo delay in use (V.90, V.92, x2, K56flex: that of the engine
+V.92, x2, K56flex), the echo delay in use (V.90, V.92, x2, K56flex: that of the engine
 running now; during a retrain or after the end, that of the modulation of
 the call), and the counts of retrains and of rate renegotiations that
 stopped the data (V.34, V.90, V.92, x2, K56flex).
@@ -136,8 +138,8 @@ a mu-law line: never with `alaw` set. Robbed-bit lines are not handled.
   2 link NAKs, block error rate 0; pings across PPP 90 of 90 (average 148
   ms, worst 590 ms). Not shown on a live call: a client's retrain (it ends
   the call), pads, robbed bits, another x2 modem ([limits.md](limits.md)).
-- **CPU.** x2 data mode costs about twice V.90's (the upstream the client
-  dictates): one x2 call per ARM926 box ([limits.md](limits.md)).
+- **CPU.** x2 data mode costs <<FIG:x2-ratio>> V.90's (the upstream the
+  client dictates): <<FIG:x2-verdict>> ([limits.md](limits.md)).
 
 ## K56flex
 
@@ -222,9 +224,10 @@ answering, on a mu-law line: never with `alaw` set.
   data mode, with `V90M_END_LOST`.
 - **CPU.** K56flex data mode costs about the same as V.90's (it asks the
   client for V.90's upstream options); with a client that ignores our MP,
-  about x2's (84 M ARM instructions a second against 39 M), and up to
-  128 M a second for the 110 ms of catching up after its B1, about the
-  box's whole CPU: v90d's answers come at most 11.7 ms late, inside its
+  about x2's (84 M ARM instructions a second against 39 M, measured
+  before 0.6.0's CPU work, which lowered both), and up to 128 M a second
+  for the 110 ms of catching up after its B1, about the box's whole CPU:
+  v90d's answers come at most 11.7 ms late, inside its
   20 ms of prefill ([limits.md](limits.md), `docs/history/audit-0.6.md`).
 
 ## Retrains, rate renegotiation, cleardown

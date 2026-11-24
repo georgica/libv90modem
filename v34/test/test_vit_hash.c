@@ -200,6 +200,9 @@ static void sl_point(int re, int im)
                        (unsigned long)m[s], pt[s][0], pt[s][1], (unsigned long)mr, pr[0], pr[1]);
             sl_diff++;
         }
+        /* the hash is of the eight-call reference (mr, pr), not of
+         * v34_slice_subsets' output: the one-pass slicer is held to it
+         * point by point (sl_diff == 0) */
         fnv = sl_hash;
         hash_u32(mr); hash_i16(pr[0]); hash_i16(pr[1]);
         sl_hash = fnv;

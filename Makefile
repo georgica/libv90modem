@@ -16,7 +16,8 @@
 #                        no allocation outside api/v90modem.o
 #   make check-headers   every header compiles alone with -I. -Iinclude (its includes
 #                        relative to itself); make check runs it
-#   make check-version   the Makefile's VERSION is the header's V90M_VERSION_*; make
+#   make check-version   the Makefile's VERSION is the header's V90M_VERSION_*, README's
+#                        "This is X" and docs/getting-started.md's .so names; make
 #                        check runs it
 #   make verify          per commit (tools/verify.sh): host check and golden outputs,
 #                        replay proof, bench hashes, UBSan, the armv7hf short suite
@@ -56,7 +57,7 @@
 # test peer and may use double; it is never installed.
 
 NAME     := libv90modem
-VERSION  := 0.5.0
+VERSION  := 0.6.0
 # the SONAME's version: MAJOR.MINOR while MAJOR is 0 (every 0.x changes the
 # ABI), MAJOR from 1.0
 SOVER    := $(shell echo '$(VERSION)' | awk -F. '{ print ($$1 == 0 ? $$1 "." $$2 : $$1) }')
@@ -177,7 +178,10 @@ check-soname: $(SHARED)
 	 if [ "$$got" != "$(NAME).so.$$want" ]; then echo "soname: SONAME [$$got], want $(NAME).so.$$want"; exit 1; fi; \
 	 echo "soname: $$got"
 # one version: the Makefile's VERSION (the .so, the .pc) is the header's
-# V90M_VERSION_MAJOR.MINOR.PATCH, which v90m_version() is made from
+# V90M_VERSION_MAJOR.MINOR.PATCH, which v90m_version() is made from; and
+# the two places of the documentation that name the version in force:
+# README.md's "This is X" and docs/getting-started.md's libv90modem.so.X
+# (with its .so.MAJOR.MINOR SONAME). Other mentions are history.
 .PHONY: check-version
 check-version:
 	@h=; for p in MAJOR MINOR PATCH; do \
@@ -186,11 +190,15 @@ check-version:
 	   h=$$h$${h:+.}$$n; \
 	 done; \
 	 if [ "$$h" != "$(VERSION)" ]; then echo "version: Makefile $(VERSION), include/v90modem.h $$h"; exit 1; fi; \
+	 r=$$(sed -n 's/.*This is \([0-9][0-9.]*[0-9]\);.*/\1/p' README.md); \
+	 if [ "$$r" != "$(VERSION)" ]; then echo "version: Makefile $(VERSION), README.md \"This is $$r\""; exit 1; fi; \
+	 g=$$(sed -n 's/.*`$(NAME)\.so\.\([0-9][0-9.]*[0-9]\)`.*/\1/p' docs/getting-started.md | sort -u | paste -sd ' ' -); \
+	 if [ "$$g" != "$(SOVER) $(VERSION)" ]; then echo "version: Makefile $(VERSION) (.so.$(SOVER)), docs/getting-started.md .so.$$g"; exit 1; fi; \
 	 echo "version: $(VERSION) everywhere"
-# every header of the library, its subdirectories' tests and include/
-# compiled alone with only -I. -Iinclude: each includes what it uses, by a
+# every header of the library (api/ included), its subdirectories' tests
+# and include/ compiled alone with only -I. -Iinclude: each includes what it uses, by a
 # path relative to itself
-HDR_ALONE := $(sort $(shell find modem v34 v90 v92 v32 v42 include -name '*.h'))
+HDR_ALONE := $(sort $(shell find api modem v34 v90 v92 v32 v42 include -name '*.h'))
 .PHONY: check-headers
 check-headers:
 	@mkdir -p $(BUILD)/hdr; fail=0; \
@@ -243,7 +251,7 @@ uninstall:
 	rm -f $(DESTDIR)$(INCDIR)/v90modem.h $(DESTDIR)$(LIBDIR)/$(NAME).a $(DESTDIR)$(LIBDIR)/$(NAME).so \
 	      $(DESTDIR)$(LIBDIR)/$(NAME).so.$(SOVER) $(DESTDIR)$(LIBDIR)/$(NAME).so.$(VERSION) \
 	      $(DESTDIR)$(PCDIR)/$(NAME).pc $(DESTDIR)$(BINDIR)/v90m-replay
-	@# the .so.0 link of 0.5.0 and earlier, when it now points at nothing
+	@# the .so.0 link the 0.x versions up to 0.5 installed, when it now points at nothing
 	@l=$(DESTDIR)$(LIBDIR)/$(NAME).so.0; if [ -L "$$l" ] && [ ! -e "$$l" ]; then rm -f "$$l"; echo "removed $$l"; fi
 
 # ---- tests: T_SRC compiled once (T_CFLAGS) into $(BUILD)/libtest.a, and
