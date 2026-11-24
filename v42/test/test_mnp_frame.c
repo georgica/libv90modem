@@ -44,6 +44,13 @@ static void crc_vectors(void)
     CHECK_EQ_I(a, 0xBB3D);
     CHECK_EQ_I(ref_crc(0, s, 9), 0xBB3D);
     CHECK_EQ_I(x, 0x906E);
+    /* the good-frame residue: the register after "123456789" and 6E 90 */
+    {
+        uint8_t fr[11];
+        memcpy(fr, s, 9);
+        fr[9] = (uint8_t)(x & 0xFFu); fr[10] = (uint8_t)(x >> 8);
+        CHECK_EQ_I(v42_fcs16(V42_FCS16_INIT, fr, 11), 0xF0B8);
+    }
     /* in pieces = whole */
     CHECK_EQ_I(mnp_crc16(mnp_crc16(0xFFFFu, s, 4), s + 4, 5), ref_crc(0xFFFFu, s, 9));
     printf("crc_vectors: CRC-16/ARC %04X, FCS-16 sent %02X %02X\n",
@@ -146,6 +153,37 @@ static void mode2_frame(void)
     CHECK_EQ_I(feed(&r, line, nl, &frames, &bads), MNP2_RX_NONE);
     CHECK_EQ_I(frames, 0);
     CHECK_EQ_I(bads, 1);
+
+    /* a frame cut off (its end lost), then a good one, with and without
+     * idle FF between: the next start flag ends the cut one (one BAD) and
+     * starts the good one (one FRAME) */
+    {
+        int idle, cut;
+        for (idle = 0; idle <= 3; idle += 3)
+            for (cut = 4; cut <= 12; cut += 8) {
+                int n = 0;
+                memcpy(noisy, line, (size_t)cut);
+                n = cut;
+                for (i = 0; i < idle; i++) noisy[n++] = 0xFF;
+                memcpy(noisy + n, line, (size_t)nl);
+                n += nl;
+                mnp2_rx_init(&r, MNP_MAX_BODY);
+                res = feed(&r, noisy, n, &frames, &bads);
+                CHECK_EQ_I(res, MNP2_RX_FRAME);
+                CHECK_EQ_I(frames, 1);
+                CHECK_EQ_I(bads, 1);
+                CHECK(r.len == (int)sizeof body && same(r.buf, body, (int)sizeof body));
+            }
+        /* cut just after a body DLE: the DLE then SYN DLE STX */
+        memcpy(noisy, line, 10);
+        memcpy(noisy + 10, line, (size_t)nl);
+        mnp2_rx_init(&r, MNP_MAX_BODY);
+        res = feed(&r, noisy, 10 + nl, &frames, &bads);
+        CHECK_EQ_I(res, MNP2_RX_FRAME);
+        CHECK_EQ_I(frames, 1);
+        CHECK_EQ_I(bads, 1);
+        printf("mode2_frame: a cut-off frame then a good one: 1 BAD, 1 FRAME\n");
+    }
 
     /* two frames back to back */
     memcpy(noisy, line, (size_t)nl);
@@ -251,6 +289,16 @@ static void layouts(void)
         CHECK_EQ_I(mnp_hdr_parse(t3, (int)sizeof t3, MNP_LAYOUT_STD, -1, &p), MNP_PARSE_UNKNOWN);
         CHECK_EQ_I(mnp_hdr_parse(t9, (int)sizeof t9, MNP_LAYOUT_STD, -1, &p), MNP_PARSE_UNKNOWN);
         CHECK_EQ_I(mnp_hdr_parse(t9, 1, MNP_LAYOUT_STD, -1, &p), -1);
+        CHECK_EQ_I(mnp_hdr_parse(t9, 0, MNP_LAYOUT_STD, -1, &p), -1);
+    }
+    /* LI 255 (an extended length): malformed */
+    {
+        uint8_t big[260];
+        memset(big, 0, sizeof big);
+        big[0] = 0xFF; big[1] = MNP_LA;
+        CHECK_EQ_I(mnp_hdr_parse(big, (int)sizeof big, MNP_LAYOUT_STD, -1, &p), -1);
+        big[1] = MNP_LR;
+        CHECK_EQ_I(mnp_hdr_parse(big, (int)sizeof big, MNP_LAYOUT_STD, -1, &p), -1);
     }
 }
 
@@ -334,6 +382,29 @@ static void courier_lr(void)
     memcpy(f, courier, sizeof courier);
     f[14] = 0x0A;
     CHECK_EQ_I(mnp_lr_parse(f, (int)sizeof courier, &lr), -1);
+    /* no constant parameter 2 (A.7.1.5.2: always present) */
+    memcpy(f, courier, sizeof courier);
+    f[3] = 0x0A;
+    CHECK_EQ_I(mnp_lr_parse(f, (int)sizeof courier, &lr), -1);
+    /* LI 255 and a zero-length frame */
+    memcpy(f, courier, sizeof courier);
+    f[0] = 0xFF;
+    CHECK_EQ_I(mnp_lr_parse(f, (int)sizeof courier, &lr), -1);
+    CHECK_EQ_I(mnp_lr_parse(courier, 0, &lr), -1);
+    /* N401 in one octet is taken; in three, or none, is malformed */
+    memcpy(f, courier, sizeof courier);
+    f[18] = 0x01; f[19] = 0x20;
+    f[0] = 19;
+    CHECK_EQ_I(mnp_lr_parse(f, 20, &lr), 0);
+    CHECK_EQ_I(lr.n401, 32);
+    memcpy(f, courier, sizeof courier);
+    f[18] = 0x03; f[21] = 0x00;
+    f[0] = 21;
+    CHECK_EQ_I(mnp_lr_parse(f, 22, &lr), -1);
+    memcpy(f, courier, sizeof courier);
+    f[18] = 0x00;
+    f[0] = 18;
+    CHECK_EQ_I(mnp_lr_parse(f, 19, &lr), -1);
 }
 
 static mnp_lr_t lrv(int framing, int k, int n401, int have_opt, int opt)
@@ -368,6 +439,13 @@ static void merge(void)
     theirs = lrv(3, 8, 64, 1, 0xFE);
     CHECK_EQ_I(mnp_lr_merge(&ours, &theirs, 0, &reply), 0);
     CHECK(reply.have_opt == 1 && reply.opt == 2 && reply.framing == 3);
+
+    /* the reply's N401 never above MNP_MAX_N401 */
+    ours = lrv(3, 8, 1000, 1, 3);
+    theirs = lrv(3, 8, 1000, 1, 3);
+    CHECK_EQ_I(mnp_lr_merge(&ours, &theirs, 0, &reply), 0);
+    CHECK_EQ_I(reply.n401, MNP_MAX_N401);
+    ours = lrv(3, 8, 64, 1, 2);
 
     /* no common framing mode, k 0, N401 0: incompatible */
     theirs = lrv(1, 8, 64, 0, 0);

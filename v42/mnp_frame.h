@@ -81,7 +81,10 @@ void mnp2_rx_init(mnp2_rx_t *r, int max_len);
  * DLE STX. Returns MNP2_RX_FRAME when a frame with a good FCS has ended
  * (its body in r->buf, r->len, valid until the next call), MNP2_RX_BAD
  * when one was dropped (bad FCS, too long, empty, a DLE followed by
- * anything but DLE or ETX), else MNP2_RX_NONE. */
+ * anything but DLE or ETX), else MNP2_RX_NONE. A DLE STX inside a body
+ * is the next frame's start flag (the frame under way lost its end): that
+ * one is dropped and the new one collected; a body DLE followed by SYN
+ * drops the frame and looks for DLE STX next. */
 int  mnp2_rx_octet(mnp2_rx_t *r, uint8_t c);
 
 /* ------------------------------------------------------- frame headers */
@@ -136,14 +139,18 @@ typedef struct {
  * its length, or -1 (max too small, a value out of range). */
 int mnp_lr_build(uint8_t *out, int max, const mnp_lr_t *lr);
 /* Read an LR body. Returns 0, MNP_LR_BAD_CONST1, or -1 (not an LR, an LI
- * past the end or extended, a parameter past the header, no framing mode
- * or no k). Unknown parameters are skipped, so are a parameter 8 or 0xC0
- * of the wrong length; with no parameter 4, n401 is 64 [OURS]; the
- * reserved bits of parameter 8 (3 to 8) are dropped. */
+ * past the end or extended, a parameter past the header, no constant
+ * parameter 2 (A.7.1.5.2: always present), no framing mode, no k, a
+ * parameter 4 of length 0 or 3 and more). Parameter 4 is two octets,
+ * little-endian; one octet is taken as N401 too [OURS]. Unknown
+ * parameters are skipped, so are a parameter 8 or 0xC0 of the wrong
+ * length; with no parameter 4, n401 is 64 [OURS]; the reserved bits of
+ * parameter 8 (3 to 8) are dropped. */
 int mnp_lr_parse(const uint8_t *f, int len, mnp_lr_t *lr);
 /* Our reply to their LR (A.7.1.5): the lower framing mode, the lower k,
  * the smaller N401; parameter 8 only if they sent it, as the AND of both
- * maps; no 0xC0 yet (hst_profile is not used yet). Returns 0, or -1 when the
+ * maps; no 0xC0 yet (hst_profile is not used yet). N401 is never above
+ * MNP_MAX_N401. Returns 0, or -1 when the
  * parameters cannot be agreed (framing mode below 2, k or N401 of 0): LD
  * reason 3. */
 int mnp_lr_merge(const mnp_lr_t *ours, const mnp_lr_t *theirs, int hst_profile, mnp_lr_t *reply);

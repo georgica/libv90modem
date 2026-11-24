@@ -143,7 +143,16 @@ int mnp2_rx_octet(mnp2_rx_t *r, uint8_t c)
             r->state = RX_FCS0;
             return MNP2_RX_NONE;
         }
-        return rx_bad(r);
+        if (c == STX) {
+            /* a start flag: the frame under way lost its end (DLE STX
+             * cannot occur in a body, its DLE would be doubled) */
+            rx_bad(r);
+            r->state = RX_BODY;
+            return MNP2_RX_BAD;
+        }
+        rx_bad(r);
+        if (c == SYN) r->state = RX_SYN;  /* the next start flag may follow */
+        return MNP2_RX_BAD;
     case RX_FCS0:
         r->fcs0 = c;
         r->state = RX_FCS1;
@@ -324,7 +333,7 @@ int mnp_lr_build(uint8_t *out, int max, const mnp_lr_t *lr)
 
 int mnp_lr_parse(const uint8_t *f, int len, mnp_lr_t *lr)
 {
-    int li, i, end, have_framing = 0, have_k = 0;
+    int li, i, end, have_c2 = 0, have_framing = 0, have_k = 0;
 
     memset(lr, 0, sizeof *lr);
     lr->n401 = 64;
@@ -342,19 +351,21 @@ int mnp_lr_parse(const uint8_t *f, int len, mnp_lr_t *lr)
         switch (t) {
         case 2: if (l == 1) { lr->framing = v[0]; have_framing = 1; } break;
         case 3: if (l == 1) { lr->k = v[0]; have_k = 1; } break;
+        case 1: have_c2 = 1; break;
         case 4:
             if (l == 2) lr->n401 = v[0] | (v[1] << 8);
             else if (l == 1) lr->n401 = v[0];
+            else return -1;
             break;
         case 8: if (l == 1) { lr->opt = v[0] & 3; lr->have_opt = 1; } break;
         case 0xC0:
             if (l == 2) { lr->c0_flags = v[0]; lr->c0_rates = v[1]; lr->have_c0 = 1; }
             break;
-        default: break;   /* constant parameter 2, and the unknown */
+        default: break;   /* the unknown */
         }
         i += 2 + l;
     }
-    if (!have_framing || !have_k) return -1;
+    if (!have_c2 || !have_framing || !have_k) return -1;
     return lr->const1 == 2 ? 0 : MNP_LR_BAD_CONST1;
 }
 
@@ -370,7 +381,7 @@ int mnp_lr_merge(const mnp_lr_t *ours, const mnp_lr_t *theirs, int hst_profile, 
     reply->const1 = 2;
     reply->framing = imin(ours->framing, theirs->framing);
     reply->k = imin(ours->k, theirs->k);
-    reply->n401 = imin(ours->n401, theirs->n401);
+    reply->n401 = imin(imin(ours->n401, theirs->n401), MNP_MAX_N401);
     if (theirs->have_opt) {
         reply->have_opt = 1;
         reply->opt = (ours->have_opt ? ours->opt : 0) & theirs->opt & 3;

@@ -1,5 +1,6 @@
 crc_vectors: CRC-16/ARC BB3D, FCS-16 sent 6E 90
 mode2_frame: 104 single-bit errors, 96 end in BAD, 0 frames
+mode2_frame: a cut-off frame then a good one: 1 BAD, 1 FRAME
 mode2_frame: 16 line octets: 16 10 02 04 04 01 01 05 41 10 10 42 10 03 8B 7A
 layouts: LT      04 04 01 01 07 41 42 43
 layouts: LA      07 05 01 01 07 02 01 08
@@ -11,4 +12,4 @@ layouts: opt LT  02 04 07 41 42 43
 layouts: opt LA  03 05 07 08
 courier_lr: const1 2 framing 3 k 8 n401 64 opt 0 c0 0
 merge: framing 2 k 4 n401 64 opt 1/2
-test_mnp_frame: 193 checks, 0 failures
+test_mnp_frame: 225 checks, 0 failures

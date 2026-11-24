@@ -3978,3 +3978,19 @@ New `v42/mnp_frame.[ch]`, registered in `V42_SRC` and in `v42/Makefile`'s
     make check-headers                                     -> headers: 106 compile alone
     make verify                                            -> VERIFY PASS (log: build/verify-task2b.log)
     test/golden/out/v42/test_mnp_frame.txt                 -> new (a new program; nothing re-recorded)
+
+Review fixes (round 1):
+
+- The mode 2 receiver takes a DLE STX inside a body as the next frame's start
+  flag. The cut-off frame counts as one BAD and the new one is collected. A
+  body DLE followed by SYN drops the frame and looks for DLE STX next. Before
+  this fix, a frame that lost its end also cost the good frame after it.
+- An LR without constant parameter 2 is malformed (A.7.1.5.2). A parameter 4
+  of 1 octet is taken [OURS]; one of 0 or 3 or more octets is malformed.
+- The merged N401 is never above `MNP_MAX_N401`.
+- New checks: the X.25 residue 0xF0B8, a zero-length frame, LI 255, a cut-off
+  frame then a good one (with and without idle FF).
+
+    v42/build/test_mnp_frame  -> test_mnp_frame: 225 checks, 0 failures
+    make verify               -> VERIFY PASS (log: build/verify-task2c.log)
+    test/golden/out/v42/test_mnp_frame.txt  -> one new line, and the count line
