@@ -64,8 +64,8 @@ What the answerer does, and what we do:
 | BinModem's caller treats the tone as present after 400 ms and as over after 30 ms of absence; a shorter burst resets the count. | BF §1 | [BM] |
 | BinModem's caller sends its LR on the back channel at 450 bit/s whatever back speed it wants in the end. | BF §1, §3 | [BM] |
 | BinModem picks HST only on `AT+MS=HST` or `HST96`: no automode, no fallback to V.32, V.32bis, V.22bis or V.21. | BF §1 | [BM] |
-| BinModem's result codes: `CONNECT <rate>/ARQ/HST` ("what a Courier said"); plain `CONNECT` at X0. | BF §1 | [BM] |
-| BinModem gives up with no MNP link 60 s after going off hook (`NO ANSWER` if no tone was heard, else `NO CARRIER`). | BF §1 | [BM] |
+| BinModem's result codes: `CONNECT <rate>/ARQ/HST` (BinModem says the format copies a Courier's); plain `CONNECT` at X0. | BF §1 | [BM] |
+| BinModem ends the call if MNP is not up 60 s after it goes off hook (`NO ANSWER` if no tone was heard, else `NO CARRIER`). | BF §1 | [BM] |
 | Front panel: AA goes out at the answering end while the channels are reversed; HS is off during link negotiation. | PS §1.4 item 7; BF §4 | [PUB] |
 | We keep ANSam (2100 Hz with reversals) for every caller, after V.8 and the existing CM and AA listening; we send no plain 2100 Hz and no 2225 Hz tone. Reason: the box answers every caller on one number, and V.8 callers must be untouched. | SPEC D9 | [OURS] |
 | We assume a Courier caller accepts ANSam as an answer tone (Couriers call V.34 answerers, which send ANSam). If wrong, an HST caller never starts its back channel and the call goes V.22bis as in 0.6.0: nothing is lost. | spec "Conflicts" row 1 | [OURS] |
@@ -86,8 +86,9 @@ firmware's DSP (BF §3).
 | fast | 0x6AAA | 6 of 72 taps | 300/s | 150 baud | 375 Hz | 450 bit/s | BF §3 | [FW] |
 | slow | 0x638E | 4 of 72 taps | 200/s | 100 baud | 350 Hz | 300 bit/s | BF §3 | [FW] |
 
-- Tribit to phase step, in eighths of a turn, from the constant 0x43705261
-  read a nibble at a time from the low end (BF §3). [FW]
+- Phase step for each tribit, in eighths of a turn. The firmware keeps the
+  eight steps packed in the 32-bit constant 0x43705261, one nibble each,
+  lowest nibble first (BF §3). [FW]
 
   | tribit t | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
   |---|---|---|---|---|---|---|---|---|
@@ -95,8 +96,8 @@ firmware's DSP (BF §3).
 
 - New phase = (phase + step) mod 8; the signal points sit at 22.5 degrees +
   45 degrees x k, k = 0..7 (BF §3). [FW]
-- Every other tick carries a zero, so the symbol rate is half the tick rate
-  (BF §3). [FW]
+- The DSP's tick rate is twice the symbol rate: alternate ticks are zeros, so
+  a symbol takes two ticks (BF §3). [FW]
 - Bits are sent least significant bit first everywhere on the Courier (BF §0,
   §3). [FW]
 - Within a tribit the first bit sent is the tribit's least significant bit:
@@ -104,7 +105,7 @@ firmware's DSP (BF §3).
 - Scrambler 1 + x^-14 + x^-17, self-synchronising: output = input XOR
   out[n-14] XOR out[n-17]; the descrambler uses the received history (BF §3).
   [FW]
-- The shaping filter has 72 taps and the start is "17 ticks"; coefficients and
+- The shaping filter has 72 taps and its start-up lasts 17 ticks; coefficients and
   contents are unknown (BF §3). [FW]
 - Carriers by role: originate-mode transmitter 375 Hz (450 bit/s) or 350 Hz
   (300 bit/s), answer-mode transmitter 1800 Hz; the receiver table is the
@@ -170,19 +171,19 @@ firmware's DSP (BF §3).
   | 7 | 16800 | 256-point set (V.32terbo's, published); not implemented |
 
 - Mapper: the V.32bis signal sets, 8-state trellis encoder and differential
-  encoding, with the same index arithmetic as the firmware's V.32 transmitter
-  (BF §2). [FW]
+  encoding, looked up by the same tables and indices as the firmware's V.32
+  transmitter uses (BF §2). [FW]
 - Trellis coding at 7200 and above, none at 4800 ("TCM" listed for 7200 and
   above; 4800 "QAM" alone) (PS §1.1; P2 "Receiver 103 routines"). [PUB]
 - Scrambler 1 + x^-18 + x^-23 (V.32's calling-modem polynomial, "GPC"), the
-  same in both directions because only one end transmits on the forward
-  channel at a time (BF §2). [FW]
+  same polynomial whichever end sends, since the forward channel carries one
+  transmitter at a time (BF §2). [FW]
 - Bit order: least significant bit first (BF §2). [FW]
 - Pulse: flat out to 1100 Hz from the carrier, -3 dB at 1200 Hz from the
   carrier, -36 dB at 1400 Hz from the carrier (BF §2). [FW]
 - So the forward channel fills about 600 to 3000 Hz and leaves the band below
-  about 450 Hz clear for the back channel; there is no echo canceller, the
-  channels are split by frequency (BF §2, §0). [FW]
+  about 450 Hz free for the back channel; the two channels are kept apart by
+  frequency alone, with no echo canceller (BF §2, §0). [FW]
 - Classic HST has no echo cancellation: "an echo cancellation mechanism is not
   necessary" (PS §1.3; P3 background). [PUB]
 - The DSP sample rate is 7200 Hz (BF §0). [FW]
@@ -212,12 +213,13 @@ firmware's DSP (BF §3).
 
 ## Training
 
-- The Courier's forward start-up is "180 + 72 + 200 or 3096 symbols". The
-  contents of the segments and the rule that picks the 200 or the 3096 form
+- The Courier's forward start-up is 180 symbols, then 72, then either 200
+  or 3096 (written 180 + 72 + 200 or 3096). The contents of the segments and the rule that picks the 200 or the 3096 form
   are not known (BF §2; BF "Open questions" 1). [FW]
 - There is no in-band rate signal: the rates are agreed in the LR's 0xC0
   before the forward retrain, unlike V.32's R sequences (BF §2). [BM]
-- The Courier changes bits per symbol without retraining (BF §2, §6). [FW]
+- In the firmware, a change of rate alters the bits sent per symbol with no
+  new training (BF §2, §6). [FW]
 - HST.bis (later, different) trains with `wink 64 Tf`, `AB 72 Tf`, `CD 8 Tf`,
   `TRN1 N1 Tf` (N1 = 1600 symbols, for a 16-point eye at 3200 baud), and has
   quick and full retrains and "quick turnaround" with stored echo canceller
@@ -302,7 +304,7 @@ the long train only.
   the residue by computation. [FW]
 - Idle: flags in mode 3, mark in mode 2, mark before the protocol is known
   (V.42 7.2.1.3, as today) (spec "Framings"). [PUB]
-- HST runs MNP class 3, "the synchronous class"; MNP's own start-stop framing
+- HST runs MNP class 3, the synchronous class; MNP's own start-stop framing
   is not used on HST (BF §5). [FW]
 - BinModem sends its LR in HDLC only (BF §5). [BM]
 - An answerer leaves detection "on receipt of continuous flags, or of an LAPM
@@ -368,7 +370,8 @@ is the type. From the firmware's receive path 8FBB:1892 and frame builders at
   parameter form, not the Courier (BF §5). [BM]
 - We send streamlined layouts when HST is agreed and both LRs carry a non-zero
   parameter 8; otherwise standard, or Annex A's optimised ones if parameter 8
-  says so (BinModem's rule, needed to talk to it; BF §5). [BM]
+  says so. The rule is BinModem's (BF §5) and we follow it to talk to it.
+  [OURS]
 - We receive every layout: standard when octet 0 is a consistent LI and octet
   1 a known type; streamlined when octet 0 is a known type and the length
   fits; when both fit the agreed layout wins and the expected N(S) breaks a
@@ -405,8 +408,9 @@ is the type. From the firmware's receive path 8FBB:1892 and frame builders at
 - A CRC-valid frame with an unknown first octet is counted (`rx_unknown`,
   `rx_unknown_id`, the first octet only) and dropped, unacknowledged (spec
   "HST profile"). [OURS]
-- BinModem does not implement the "acknowledgement variant", data with a
-  piggybacked acknowledgement, short data frames or MNP 5 (BF §5). [BM]
+- BinModem leaves out four things: USR's acknowledgement-variant frame, a
+  data frame that also acknowledges, the short data frames, and MNP 5 (BF §5).
+  [BM]
 - Back-channel data frames are at most 64 octets (P1:416). [PUB]
 
 ## LR and 0xC0
@@ -441,14 +445,16 @@ LI  LR  c1  p1: len 6 "1,0,0,0,0,255"  p2: 3  p3: k = 8  p4: N401 = 0x0040 = 64
 - We offer k = 8; N401 = 64 (256 only if the host sets `n401` 256 and `opt`
   bit 1); parameter 8 = bit 2 only; framing mode 3 (SPEC D23; spec
   "Establishment"). [OURS]
-- The USR parameter is `C0 02 flags rates`; the firmware builds it at 0x85A82
-  and parses it at 0x85422 (BF §5). [FW]
+- The USR parameter is `C0 02 flags rates`. The firmware routine that
+  assembles it is at 0x85A82 and the one that reads it at 0x85422 (BF §5).
+  [FW]
 - flags: bit 0 (0x01) is HST; bit 3 (0x08) is the 300 bit/s back channel; any
   other bits are unknown (BF §5). [FW]
 - rates: a bit mask, bit n set when rate code n (2400 x n bit/s) is acceptable,
   n = 2..7. Examples: 7200 to 14400 is 0x78; 9600 only is 0x10; all six rates
   0xFC (BF §5). [FW]
-- "The responder keeps only the rates both ends allow" (BF §5). [FW]
+- The answering end's reply carries the intersection of the two rate masks
+  (BF §5). [FW]
 - Merge details: HST is agreed only if both ends set bit 0; the agreed flags
   are the AND plus the OR of the 300 bit/s bits (if either end wants 300 the
   call gets 300); the agreed rates are the AND of both masks, then AND 0xFC;
@@ -553,8 +559,8 @@ As responder (we answer), from Annex A.7.1 (PS §3.1):
 - While a reversal or a rate change is pending, only control frames (LA, LN,
   LNA, LD) go out, never an LT, until the pump reports the new state (spec
   "HST profile"). [OURS]
-- BinModem sends control frames only while a handover or rate change is
-  pending (BF §4). [BM]
+- BinModem sends no LT frame while a handover or rate change is waiting to
+  finish (BF §4). [BM]
 - HST session defaults: window 8, max data 64, class 3 (BF §5). [BM]
 
 ## Timers
@@ -613,10 +619,10 @@ As responder (we answer), from Annex A.7.1 (PS §3.1):
 - At the start the answerer holds the forward channel and the caller the back
   channel (BF §4). [FW]
 - The back-channel end asks for the forward channel with an LN, attention
-  0x1R; the holder answers with an LNA, then drops the forward carrier and
-  moves to the back channel (firmware event 0x73); the requester, on the LNA,
-  drops the back channel and trains the forward channel (firmware event 0x76)
-  (BF §4). [FW]
+  0x1R; the holder answers with an LNA and then stops sending the forward
+  carrier and takes up the back channel instead (firmware event 0x73); the
+  requester, once the LNA is in, stops its back channel and starts forward
+  training (firmware event 0x76) (BF §4). [FW]
 - Both ends reset their HDLC encoder and decoder at the switch; the new
   forward holder restarts its back-channel receivers (BF §4). [BM]
 - The patent's rule: the direction reverses "whenever the modem currently
@@ -673,7 +679,8 @@ As responder (we answer), from Annex A.7.1 (PS §3.1):
   frame being sent, a 15 ms sustained mark at the current speed, then a 15 ms
   constant mark at the newly requested speed; marks are not otherwise sent,
   fill characters of a unique value fill the gaps (P2:561). [PUB]
-- The Courier changes bits per symbol without retraining (BF §2, §6). [FW]
+- In the firmware a rate change needs no new training: only the bits per
+  symbol change (BF §2, §6). [FW]
 - Our 0x3R as holder: finish the frame; 15 ms (36 symbols) of ones at the old
   rate; switch the encoder's rate index (scrambler, differential and trellis
   states continue); 15 ms of ones at the new rate; resume (spec "Rate
