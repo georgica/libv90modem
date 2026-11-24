@@ -298,13 +298,17 @@ API_INC := -Iinclude -Itest -Isim -Imodem -Iv90 -Iv92 -Iv34
 # the renegotiation test reaches the engines' handles: the development archive alone
 $(BUILD)/api_test_reneg: test/api/test_reneg.c $(DEV) include/v90modem.h api/v90modem_priv.h
 	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -Iapi -o $@ $< $(DEV) $(LDLIBS)
-$(BUILD)/arm/api_test_reneg: test/api/test_reneg.c include/v90modem.h api/v90modem_priv.h
-	$(MAKE) -s BUILD=$(BUILD)/arm CC=$(ARM_CC) $(BUILD)/arm/$(NAME)-dev.a
+# the cross-built libraries, built once per make run, before any test program
+# that links them (several of those at once, each building the same library,
+# raced under -j)
+.PHONY: arm-api-libs
+arm-api-libs:
+	@$(MAKE) -s BUILD=$(BUILD)/arm CC=$(ARM_CC) $(BUILD)/arm/$(NAME).a $(BUILD)/arm/$(NAME)-dev.a check-symbols
+$(BUILD)/arm/api_test_reneg: test/api/test_reneg.c include/v90modem.h api/v90modem_priv.h | arm-api-libs
 	$(ARM_CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -Iapi -static -o $@ $< $(BUILD)/arm/$(NAME)-dev.a $(LDLIBS)
 $(BUILD)/api_test_%: test/api/test_%.c $(STATIC) $(DEV) include/v90modem.h api/v90modem_fields.h
 	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -o $@ $< $(STATIC) $(DEV) $(LDLIBS)
-$(BUILD)/arm/api_test_%: test/api/test_%.c include/v90modem.h api/v90modem_fields.h
-	$(MAKE) -s BUILD=$(BUILD)/arm CC=$(ARM_CC) $(BUILD)/arm/$(NAME).a $(BUILD)/arm/$(NAME)-dev.a check-symbols
+$(BUILD)/arm/api_test_%: test/api/test_%.c include/v90modem.h api/v90modem_fields.h | arm-api-libs
 	$(ARM_CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -static -o $@ $< $(BUILD)/arm/$(NAME).a $(BUILD)/arm/$(NAME)-dev.a $(LDLIBS)
 
 test: $(addprefix $(BUILD)/,$(TESTS))
