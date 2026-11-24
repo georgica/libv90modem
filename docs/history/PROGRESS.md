@@ -3950,3 +3950,31 @@ the PDF text layer (Task 15 uses the long train only).
 
 The owner's R1 procedure is handed to the controller as
 `.superpowers/sdd/2026-11-24-hst-mnp/r1-for-owner.md` (not in the repository).
+
+## hst 2: MNP framing mode 2, frame layouts, LR parse and merge (2026-11-24)
+
+New `v42/mnp_frame.[ch]`, registered in `V42_SRC` and in `v42/Makefile`'s
+`SRC`, `HDR` and `TESTS`. From `docs/history/hst-facts.md` (`MNP framing`,
+`MNP frames`, `LR and 0xC0`) and V.42 Annex A.3, A.6, A.7.1.5:
+
+- `mnp_crc16`: x^16 + x^15 + x^2 + 1, reflected, bit at a time
+  (CRC-16/ARC from 0: "123456789" -> 0xBB3D).
+- Framing mode 2: `mnp2_tx_t` sends SYN DLE STX, the body with each DLE
+  doubled, DLE ETX, the FCS over body and ETX; `mnp2_rx_t` hunts for SYN DLE
+  STX, undoes the doubling, checks the FCS. The FCS's initial value and
+  octet order sit behind `MNP_FCS2` (default `MNP_FCS2_ARC_LO`, [OURS]; the
+  test passes with each of the four variants).
+- Headers: standard LT, LA, LN, LNA, LD (with or without the user code),
+  optimised LT and LA; parse takes both layouts by their LI, skips unknown
+  parameters, returns `MNP_PARSE_UNKNOWN` for a frame of an unknown type.
+- LR: build (parameters 1, 2, 3, 4, then 8 and 0xC0 if present) gives the
+  Courier template back byte for byte; parse reads N401 little-endian,
+  flags constant parameter 1 != 2, requires parameters 2 and 3, takes N401
+  64 when parameter 4 is absent [OURS]; merge gives the lower framing mode,
+  k and N401 and parameter 8 (the AND) only if the caller sent it.
+
+    make -s -C v42 build/test_mnp_frame (before the code)  -> mnp_frame.h: No such file or directory
+    v42/build/test_mnp_frame                               -> test_mnp_frame: 193 checks, 0 failures
+    make check-headers                                     -> headers: 106 compile alone
+    make verify                                            -> VERIFY PASS (log: build/verify-task2b.log)
+    test/golden/out/v42/test_mnp_frame.txt                 -> new (a new program; nothing re-recorded)

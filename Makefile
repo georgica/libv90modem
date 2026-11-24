@@ -95,7 +95,7 @@ SPANDSP  ?= $(CURDIR)/../peers/spandsp
 INC      := -Iinclude -Iapi -Imodem -Iv90 -Iv92 -Iv34 -Iv32 -Iv42 -Isim
 
 # ---- the library ----
-V42_SRC  := $(addprefix v42/,v42_hdlc.c v42_detect.c v42_comp.c v44_comp.c v42_lapm.c v42.c)
+V42_SRC  := $(addprefix v42/,v42_hdlc.c v42_detect.c v42_comp.c v44_comp.c v42_lapm.c v42.c mnp_frame.c)
 CORE_SRC := $(wildcard modem/*.c) $(wildcard v90/*.c) $(wildcard v34/*.c) $(wildcard v32/*.c) $(wildcard v92/*.c) $(V42_SRC)
 API_SRC  := api/v90modem.c
 LIB_SRC  := $(API_SRC) $(CORE_SRC)
