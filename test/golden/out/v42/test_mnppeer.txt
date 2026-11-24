@@ -1,0 +1,13 @@
+loop_mode3: connected at 169/211 ms, 65536 octets each way intact in 263310 ms, LT 1024/1024, retx 0/0, bad 0/0
+loop_mode2: connected at 234/296 ms, 65536 octets each way intact in 341659 ms, LT 1024/1024, retx 0/0, bad 0/0
+loop_loss: connected at 169/211 ms, 65536 octets each way intact in 278855 ms, LT 1061/1082, retx 73/47, bad 0/0
+loop_corrupt: connected at 234/296 ms, 65536 octets each way intact in 360192 ms, LT 1061/1049, retx 33/50, bad 15/15
+loop_negotiate: framing 2 k 4 n401 32 layout 0/0
+loop_negotiate: parameter 8 both 3&2: layout 1; caller only: layout 0
+loop_negotiate: parameter 8 both 3: n401 256, 8192 octets in 32 LTs
+loop_ld: release -> LD reason 255 at the other end, both ways
+loop_ln: 3 codes delivered once each, in order
+loop_zero_credit: 0 octets before the credit, then 8192 intact
+loop_no_lr: 3 LRs, gave up at 1503 ms
+wire: LR and LA octets as written out, mode 3 FCS F9 08, mode 2 FCS 45 10
+test_mnppeer: 100 checks, 0 failures

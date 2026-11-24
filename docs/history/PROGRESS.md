@@ -3994,3 +3994,43 @@ Review fixes (round 1):
     v42/build/test_mnp_frame  -> test_mnp_frame: 225 checks, 0 failures
     make verify               -> VERIFY PASS (log: build/verify-task2c.log)
     test/golden/out/v42/test_mnp_frame.txt  -> one new line, and the count line
+
+## hst 3: sim/mnppeer, an MNP peer written from Annex A and the facts (2026-11-24)
+
+New `sim/mnppeer.[ch]`, in `SIM_SRC` and in `v42/Makefile`'s `T_SRC` (and
+`T_HDR`); new program `v42/test/test_mnppeer.c` in `v42/Makefile`'s `TESTS`.
+The peer includes no library header (`grep -n 'v42\|mnp_frame'
+sim/mnppeer.[ch]` finds nothing): its own CRC-16/X.25 and mode 2 FCS
+(CRC-16/ARC by default; `MNPP_FCS2`, numbered as the facts number
+`MNP_FCS2` and following it when a build defines it), HDLC bit layer,
+start-stop characters, headers and link procedure (A.7.1 to A.7.4). The
+HST fields of `mnp_peer_cfg` (`c0`, `c0_flags`, `c0_rates`, `unknown_ids`)
+are declared and have no effect yet (pre-flight ruling F13; Task 8).
+
+Choices where Annex A is silent [OURS]: T401 2000 ms in establishment and
+4000 ms in data (Table A.9, N401 64 at 2400), T404 3000 ms, N400 12; an LR
+missing the framing mode, k or N401 is refused with LD 3; the responder that
+runs out of LR tries sends LD 4; the confirming LA goes in the establishment
+framing, in the layout the responder's LR set (A.6.4.2); after the LRs each
+end hears only the agreed framing (the originator also the establishment one
+until it hears the responder in the agreed one); a frame starts only after a
+whole idle flag.
+
+test_mnppeer, two peers on a bit loop at 2400 bit/s, 1 ms ticks: modes 3
+and 2 connect in 169/211 and 234/296 ms and move 64 KiB each way intact
+(FNV-1a) with no retransmission; 1 % of frames lost (mode 3) or with a bit
+inverted (mode 2), still intact; negotiation (lower framing, k, N401;
+parameter 8 only when both send it; bit 1 gives N401 256); release gives
+LD 255 at the other end, both ways; three LN codes delivered once each, in
+order, under 1 % loss; 3 s of zero credit; no reply LR (N400 3, T401 500 ms:
+gives up at 1503 ms, no LD); and the originator's LR and confirming LA,
+decoded off its bits by a decoder in the test, against octets written out
+(the Courier template, `07 05 01 01 00 02 01 08`) with CRCs written in the
+test and checked against 0x906E and 0xBB3D.
+
+    make -s -C v42 build/test_mnppeer (before the code)  -> No rule to make target 'build/tobj/up/sim/mnppeer.o'
+                                                            (test alone: undefined reference to mnppeer_init ...)
+    v42/build/test_mnppeer                               -> test_mnppeer: 100 checks, 0 failures (0.9 s; 1.7 s under qemu-arm)
+    -DMNP_FCS2=1, 2, 3                                   -> 100 checks, 0 failures each
+    test/golden/out/v42/test_mnppeer.txt                 -> new (a new program; nothing re-recorded)
+    make verify                                          -> VERIFY PASS (461 s; golden 143 identical; log: build/verify-task3.log)
