@@ -858,8 +858,11 @@ out, against the 102: nothing differs that no commit explains).
 | Task 20 | 807d828 | 42 | ab_cc_v34, ab_cl_v34, v34c, x2b, x2r1, x2r3, x2r4 (all six) | the blanking fires on the hang-up click in the recordings' last 54-72 ms; identical up to it; no .bits change |
 | T21.2 | 5aca43d | 39 | cxb, cxd, cxf, cxg, f4, pd_36000, pd_37333, usr1, usr2, usr4, usr5, usr_c33333, usr_c36000 (v92, x2-v92, k56-v92) | SUVd between repeated CPds, 22-26 s in, after our transmit already left the recording; pd_36000 now reaches data mode (its .bits) |
 | T21.3, T21.8 | 596817b, 42e1c67 | 0 net | cxe, h1-h4 (the three V.92 sets) | T21.3 changed 15 traces after the recordings' end (our echo residual read as Ru); T21.8 put them back: they are identical to v0.5.0 |
+| ISP-3 | 83eb991, 793f293 | 0 new | v34b, x2r2 (all six); usr7 (v92, x2-v92, k56-v92) | the end-of-call summary line only: renegotiations (a cleardown no longer counted as one), SNR and round trip kept after the call instead of -1; 15 traces, all already in Task 7's 21 |
 
-21 + 42 + 39 = 102; the three groups do not overlap.
+21 + 42 + 39 = 102; the three groups do not overlap. (The ISP-3 row was
+added after this gate, at the rc1 fix wave: it re-recorded traces that
+already differed, so the count stays 102.)
 
 ### Costs after Phase 1
 

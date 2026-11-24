@@ -32,7 +32,11 @@ NULL a function returning `int` returns `V90M_EINVAL`, one returning
 `size_t` or `unsigned long` 0, a `void` one does nothing. Except the four
 called for every bit, `v90m_ec_tx_bit`, `v90m_ec_rx_bit`,
 `v90m_async_getbit` and `v90m_async_putbit`: their object must not be
-NULL.
+NULL. `V90M_EINVAL` is -1, which is true in C: the functions read as yes
+or no, `v90m_ec_tx_idle`, `v90m_ec_tx_busy` and `v90m_ec_get_break`, say
+yes for NULL, and a loop `while (v90m_ec_get_break(e, &o, &l))` with a
+NULL `e` never ends and leaves `o` and `l` unset. Compare with 1, or check
+the object first.
 
 ## Version
 

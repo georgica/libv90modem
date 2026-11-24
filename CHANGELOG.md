@@ -8,7 +8,7 @@ change is listed here. Rebuild against the new header with every version;
 "Simulation and own answerer only" means: tried against simulated lines and
 this library's own answering modem, never against a real modem or server.
 
-## 0.6.0 (2026-11-24)
+## 0.6.0-rc1 (2026-11-24)
 
 Security (V.92, calling role; no 0.5.x patch: upgrade to 0.6.0):
 - The V.92 analogue modem's upstream encoder could be made to divide by
@@ -34,11 +34,14 @@ Security (V.92, calling role; no 0.5.x patch: upgrade to 0.6.0):
   - A later CPd that names an upstream rate and fails those checks is
     refused, as a CPd whose CRC fails is.
 - Behaviour change for such a CPd (no valid CPd is affected):
-  - Before, the call ended with `V90A_ERR_CPD` when the upstream started
-    on it. Now the CPd is ignored, and the call ends with
-    `V90A_ERR_PHASE4` once Phase 4 has not reached B1d 20 s after INFO1a.
+  - Before, the call ended with `V90M_END_FAILED` (in a retrain
+    `V90M_END_RETRAIN_FAILED`; inside the calling modem `V90A_ERR_CPD`)
+    when the upstream started on it. Now the CPd is ignored, and the call
+    ends with the same public end code (inside, `V90A_ERR_PHASE4`) once
+    Phase 4 has not reached B1d 20 s after INFO1a.
   - The caller goes on acknowledging after a refused CPd, so the upstream
-    fails until the call ends.
+    that CPd would have set up never starts: the call ends at that 20 s
+    Phase 4 limit.
 - During the 0.6.0 work, a trim of zero filter taps briefly cached
   lengths in the encoder that could read out of bounds if the filter
   changed under it. That was never released; the trim now works on the
@@ -81,13 +84,17 @@ What has been shown:
   every difference is one a change below explains (the end codes, the
   upstream frames held at S delivered, the click blanking in the
   recordings' last 72 ms, SUVd between repeated CPds after our transmit
-  left the recording); the other 534 are identical, data included
+  left the recording, the end-of-call summary's renegotiations and the
+  SNR and round trip kept after the call); the other 534 are identical,
+  data included
   (`docs/history/audit-0.6.md`, "Replay proof against v0.5.0").
 - Every refactor and every CPU change below was proven byte-identical:
   every test program's output (golden files), the 636 replays and the
   benches' hashes unchanged, under UBSan, and on armv7hf and big-endian
   aarch64 against the host (`make verify`, at every commit).
-- The port matrix: <<FIG:ports>>.
+- The port matrix (riscv64, Windows, clang, and the rest) runs in the
+  release proof for 0.6.0 final; this rc has passed the x86-64 and ARMv5
+  suites. <!-- ports: filled at 0.6.0 final -->
 - Not shown: the calling side against a real modem or server (still
   simulation and our own answerer only); K56flex against a real modem.
 
@@ -154,6 +161,8 @@ dropped call should look at `V90M_END_LOST`):
 - `v90m_stats.echo_delay` is that of the engine running now: after a V.92
   retrain that withdrew PCM upstream, V.90's (it gave V.92's figure until
   V.90 data mode); during a retrain and after the end, the call's.
+  Answering, after a V.90 retrain that settled on V.34, it is -1: V.34
+  as the call's modem has no echo delay figure.
 - Phase 2 is bounded whatever the caller does: one that repeats its INFO0
   (V.90, V.92, V.34, x2, K56flex) or, in V.90 and V.92, reverses Tone A
   once but never twice kept the answering modem in Phase 2 for as long as
@@ -190,8 +199,9 @@ Changed (calling role):
   no round trip: a digital modem may wait 500 ms after a whole Ja, so on a
   round trip of about 0.9 s or more one that follows the text cannot meet
   1500 ms; a live server answered about 2 s after Ja on a VoIP path). A
-  call with no Sd now begins its retrain (or ends, `V90A_ERR_SD` inside
-  the calling modem) 500 ms later; nothing changes when Sd comes.
+  call with no Sd now begins its retrain (or ends: `V90M_END_FAILED`, or
+  `V90M_END_RETRAIN_FAILED` in a retrain; `V90A_ERR_SD` inside the
+  calling modem) 500 ms later; nothing changes when Sd comes.
 - V.90 and V.92: the DIL asks for Ucodes 0 to 100 only, the loudest at or
   under a third of full scale in either law (V.90 8.4.1 leaves the DIL's
   contents to the analogue modem); it asked for 0 to 119. A softphone's
