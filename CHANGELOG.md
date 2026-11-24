@@ -335,6 +335,11 @@ Fixed:
   between 0 and its clamp (6 dB). A robustness fix against hostile audio,
   with no memory-safety impact; every call computes as it did, the
   recorded calls' hang-up clicks included.
+- Answering role, V.92: an echo estimate past about 3.1 M (canceller
+  taps at their limit, as the hostile caller above can make them) wrapped
+  the design's noise term, so that the line read as quiet and the design
+  picked too dense a constellation for the caller's upstream. The term now
+  saturates. Only the hostile caller's own call was affected.
 - Answering role, a V.21 caller without V.8 (three ISP calls,
   2026-11-23): it answers ANSam with its mark, a steady 980 Hz, sends no
   CM and waits for our 1650 Hz. We went on to V.22 and fell back to V.21

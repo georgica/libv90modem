@@ -194,6 +194,22 @@ int main(void)
     v92_dsn_start(&d, &cfg);
     while ((r = v92_dsn_step(&d)) == 0) ;
     CHECK_EQ_I(r, V92_DSN_ERR_RATE);
+    /* An echo estimate past 96 * 65535 (linear A/D, whose divisor is 96;
+     * canceller taps at their limit, security pass M1): the noise term
+     * saturates, so the design is as hopeless as with a little less echo,
+     * and does not wrap to a quiet line and a dense constellation */
+    {
+        uint32_t er[2] = { 96u * 65535u, 96u * 65536u };
+        int i;
+        for (i = 0; i < 2; i++) {
+            memset(&cfg, 0, sizeof cfg);
+            cfg.h[V92_CH_LEAD] = 4000 * 256; cfg.noise = 9; cfg.q_quiet = 3; cfg.res = 600; cfg.q_trn = 300;
+            cfg.echo_rms = er[i]; cfg.rates = all; cfg.rx_linear = 1;
+            v92_dsn_start(&d, &cfg);
+            while ((r = v92_dsn_step(&d)) == 0) ;
+            CHECK_EQ_I(r, V92_DSN_ERR_RATE);
+        }
+    }
     /* A channel estimate with a long low-pass tail (a ramp from 10^6 down
      * to 0), the noise and training figures of an ordinary call: the
      * design's vectors grow past 32 bits. It ends with an end code, in a

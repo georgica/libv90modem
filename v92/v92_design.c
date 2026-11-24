@@ -326,8 +326,13 @@ int v92_dsn_step(v92_dsn_t *d)
 #ifndef V92_DSN_ECHO_DIV_LIN
 #define V92_DSN_ECHO_DIV_LIN 96
 #endif
-            uint32_t e = c->echo_rms / (c->rx_linear ? V92_DSN_ECHO_DIV_LIN : 48);
-            n0 += e * e + c->res / 64;
+            /* in 64 bits and saturated: an echo estimate past about 3.1 M
+             * (canceller taps at their limit, security pass M1) would wrap
+             * e * e, and the noise read as small gave too dense a
+             * constellation */
+            uint64_t e = c->echo_rms / (c->rx_linear ? V92_DSN_ECHO_DIV_LIN : 48);
+            uint64_t s = (uint64_t)n0 + e * e + c->res / 64;
+            n0 = s > UINT32_MAX ? UINT32_MAX : (uint32_t)s;
         }
         /* first with x(n) taken as white, then with what the first trial
          * measured: x(n) is not white, and the residual of g is strongest

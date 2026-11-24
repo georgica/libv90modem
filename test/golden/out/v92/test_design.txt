@@ -17,4 +17,4 @@
   ramp from tap 30, 40 taps: end -1 after 17 steps
   ramp from tap 40, 56 taps: end -1 after 15 steps
   peak in the last tap: end -2 after 5829 steps
-design: 201 checks, 0 failures
+design: 203 checks, 0 failures
