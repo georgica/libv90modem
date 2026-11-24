@@ -741,6 +741,10 @@ static void test_originate(void)
         CHECK(cl.n_ev <= 8 && cl.ev[cl.n_ev - 1] == V90M_EV_ENDED);
         CHECK(an.n_ev <= 8 && an.ev[an.n_ev - 1] == V90M_EV_ENDED);
         CHECK_EQ_I(v90m_cleardown(cl.m), V90M_ESTATE);
+        /* ISP-3: the cleardown is no renegotiation; SNR and round trip outlive the call */
+        { v90m_stats e1, e2; v90m_get_stats(cl.m, &e1); v90m_get_stats(an.m, &e2);
+          CHECK_EQ_I(e1.renegotiations, 0); CHECK_EQ_I(e2.renegotiations, 0);
+          CHECK(e1.snr_db10 >= 0); CHECK(e1.rtd >= 0); CHECK(e2.snr_db10 >= 0); CHECK(e2.rtd >= 0); }
     }
     v90m_destroy(cl.m); v90m_destroy(an.m); v90m_async_destroy(cl.a); v90m_async_destroy(an.a);
 
@@ -809,6 +813,10 @@ static void test_originate(void)
         printf("  V.90 cleardown by the caller: caller end %d, answerer end %d\n", sc.end, sa.end);
         CHECK_EQ_I(sc.end, V90M_END_CLEARDOWN_OURS); CHECK_EQ_I(sc.connected, 0);
         CHECK_EQ_I(sa.end, V90M_END_CLEARDOWN_FAR);
+        /* ISP-3: the cleardown is no renegotiation; SNR and round trip outlive the call */
+        { v90m_stats e1, e2; v90m_get_stats(cl.m, &e1); v90m_get_stats(an.m, &e2);
+          CHECK_EQ_I(e1.renegotiations, 0); CHECK_EQ_I(e2.renegotiations, 0);
+          CHECK(e1.snr_db10 >= 0); CHECK(e1.rtd >= 0); CHECK(e2.snr_db10 >= 0); CHECK(e2.rtd >= 0); }
     }
     v90m_destroy(cl.m); v90m_destroy(an.m); v90m_async_destroy(cl.a); v90m_async_destroy(an.a);
 
@@ -900,6 +908,10 @@ static void test_originate(void)
         printf("  V.92 cleardown by the caller: caller end %d, answerer end %d\n", sc.end, sa.end);
         CHECK_EQ_I(sc.end, V90M_END_CLEARDOWN_OURS); CHECK_EQ_I(sc.connected, 0);
         CHECK_EQ_I(sa.end, V90M_END_CLEARDOWN_FAR);
+        /* ISP-3: the cleardown is no renegotiation; SNR and round trip outlive the call */
+        { v90m_stats e1, e2; v90m_get_stats(cl.m, &e1); v90m_get_stats(an.m, &e2);
+          CHECK_EQ_I(e1.renegotiations, 0); CHECK_EQ_I(e2.renegotiations, 0);
+          CHECK(e1.snr_db10 >= 0); CHECK(e1.rtd >= 0); CHECK(e2.snr_db10 >= 0); CHECK(e2.rtd >= 0); }
     }
     v90m_destroy(cl.m); v90m_destroy(an.m); v90m_async_destroy(cl.a); v90m_async_destroy(an.a);
 
@@ -1205,6 +1217,8 @@ static void test_x2(void)
     CHECK(data_at > 0);
     CHECK_EQ_I(st.end, V90M_END_CLEARDOWN_OURS);
     CHECK(x2_nev >= 3);
+    v90m_get_stats(m, &sx);                               /* ISP-3: kept after the end */
+    CHECK_EQ_I(sx.renegotiations, 0); CHECK(sx.snr_db10 >= 0); CHECK(sx.rtd >= 0);
     CHECK_EQ_I(x2_ev[0], V90M_EV_CONNECTED); CHECK_EQ_I(x2_ev[1], V90M_EV_DATA_MOVING);
     CHECK_EQ_I(x2_ev[x2_nev - 1], V90M_EV_ENDED);
     CHECK_EQ_I(v90m_cleardown(m), V90M_ESTATE);           /* over: nothing to send */
@@ -1258,6 +1272,7 @@ static void k56_call(int silent, long *data_at, v90m_state *st, v90m_stats *sx, 
     }
     v90m_get_state(m, st);
     if (!silent) CHECK_EQ_I(v90m_cleardown(m), V90M_ESTATE);    /* over: nothing to send */
+    if (!silent) { v90m_stats e; v90m_get_stats(m, &e); CHECK(e.snr_db10 >= 0); CHECK(e.rtd >= 0); }
     v90m_destroy(m);
 }
 

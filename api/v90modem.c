@@ -58,8 +58,11 @@ struct v90m {
     uint8_t  was_connected, was_moving, was_ended;
     uint8_t  busy;              /* inside v90m_process_*: a callback may be running */
     uint8_t  dead;              /* v90m_destroy came from a callback: stop after this sample */
+    uint8_t  reneg_pending;     /* data stopped, neither a retrain nor the end: counts when it moves again */
+    uint8_t  meas_tick;         /* samples since the SNR and round trip were last kept */
     int      was_mod, was_tx, was_rx;
     unsigned renegotiations;
+    int16_t  last_snr, last_rtd;    /* the last measured while connected; -1 before the first */
     union { answer_t a; orig_t o; } u;     /* by cfg.role */
 };
 
@@ -143,6 +146,7 @@ static void setup(v90m_t *m, const v90m_cfg *cfg)
     memset(m, 0, sizeof *m);
     m->owned = owned;
     m->cfg = *cfg;
+    m->last_snr = m->last_rtd = -1;
     if (ORIGINATING(m)) {
         orig_cfg oc;
         memset(&oc, 0, sizeof oc);
@@ -275,6 +279,24 @@ static v90m_end end_of(const v90m_t *m)
 
 static void event(v90m_t *m, v90m_event ev) { if (m->cfg.on_event && !m->dead) m->cfg.on_event(m->cfg.user, ev); }
 
+/* the SNR and the round trip as the engine says (-1: not known now) */
+static int snr_of(const v90m_t *m, int orig)
+{
+    return orig ? orig_snr_db10(&m->u.o) : m->u.a.connected ? answer_snr_db10(&m->u.a) : -1;
+}
+static int rtd_of(const v90m_t *m, int orig)
+{
+    return orig ? orig_rtd(&m->u.o) : m->u.a.connected ? answer_rtd(&m->u.a) : -1;
+}
+/* keep what is measured while connected, for the status after the end of the call */
+static void keep_measures(v90m_t *m, int orig)
+{
+    int v = snr_of(m, orig);
+    if (v >= 0) m->last_snr = v;
+    v = rtd_of(m, orig);
+    if (v >= 0) m->last_rtd = v;
+}
+
 /* after each sample: only reads the modem, on the side orig says */
 static inline void after(v90m_t *m, int orig)
 {
@@ -282,6 +304,7 @@ static inline void after(v90m_t *m, int orig)
     if (!connected && !m->was_connected && !failed) return;   /* start-up: nothing to report */
     moving = moving_of(m, orig);
     rx = rx_of(m, orig);
+    if (connected && !failed && (uint8_t)(++m->meas_tick & 127) == 0) keep_measures(m, orig);
     if (connected && !m->was_connected) {
         m->was_connected = 1;
         m->was_mod = mod_of(m, orig); m->was_tx = tx_of(m, orig); m->was_rx = rx;
@@ -291,11 +314,20 @@ static inline void after(v90m_t *m, int orig)
         event(m, V90M_EV_RATES);
     }
     if (moving != m->was_moving) {
-        /* a stop that is neither a retrain nor the end: a rate renegotiation */
-        if (!moving && connected && !retraining_of(m, orig) && !failed) m->renegotiations++;
+        /* a stop that is neither a retrain nor the end is a rate renegotiation,
+         * once data moves again: a cleardown (ours or the far end's, in any
+         * engine) stops data for good and ends the call, so it never counts */
+        if (!moving) {
+            keep_measures(m, orig);
+            m->reneg_pending = connected && !retraining_of(m, orig) && !failed;
+        } else if (m->reneg_pending) {
+            m->renegotiations++;
+            m->reneg_pending = 0;
+        }
         m->was_moving = moving;
         event(m, moving ? V90M_EV_DATA_MOVING : V90M_EV_DATA_STOPPED);
     }
+    if (failed) m->reneg_pending = 0;
     if (failed && !m->was_ended) {
         m->was_ended = 1;
         event(m, V90M_EV_ENDED);
@@ -400,6 +432,7 @@ void v90m_get_stats(const v90m_t *m, v90m_stats *st)
     st->tx_bps = tx_of(m, orig);
     st->rx_bps = rx_of(m, orig);
     st->renegotiations = m->renegotiations;
+    /* the last measured while connected stays after the call, until the next one */
     if (orig) {
         const orig_t *o = &m->u.o;
         st->snr_db10 = orig_snr_db10(o);
@@ -413,6 +446,8 @@ void v90m_get_stats(const v90m_t *m, v90m_stats *st)
         st->echo_delay = answer_echo_delay(a);
         st->retrains = (unsigned)a->retrains;
     }
+    if (st->snr_db10 < 0) st->snr_db10 = m->last_snr;
+    if (st->rtd < 0) st->rtd = m->last_rtd;
 }
 
 answer_t *v90m__answer(v90m_t *m) { return &m->u.a; }

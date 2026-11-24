@@ -70,6 +70,18 @@ Added (tools):
   `test/fixtures/replay-opts.sh` on a simulated V.34 call with V.42 on
   both sides (`rec_orig v34 OUT ec`, new).
 
+Fixed (API, either role):
+- A cleardown, ours (`v90m_cleardown`) or the far end's, no longer counts as
+  a rate renegotiation: a call that ended by cleardown ended with
+  `v90m_stats.renegotiations` 1 (data stopped while still connected). A
+  data stop now counts as a renegotiation when data moves again; a stop
+  that ends the call, in any engine, never does. Real renegotiations
+  (V.34, V.90, V.92, x2, K56flex) are counted as before.
+- `v90m_stats.snr_db10` and `rtd` keep the last value measured while
+  connected through the cleardown and after the end of the call, until
+  `v90m_reset`; they read -1 only before the first measurement (they read
+  -1 as soon as the call was over, so an end-of-call log carried none).
+
 Changed (answering role; a host that matched on `V90M_END_FAILED` for a
 dropped call should look at `V90M_END_LOST`):
 - A connection lost in data mode (V.21, Bell 103, V.22, V.22bis, Bell 212A,
