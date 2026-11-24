@@ -1627,3 +1627,105 @@ and V.92 0.36 M against 0.5 M.
 The x2 and V.90 bench hashes are the same before and after: tx 37c3e5f5
 / 8e3136e9, rx af8dfaea / 4bebb9be. Under qemu, x2's tx and rx hashes and
 V.90's transmit hash and bits received match the host.
+
+## Task 37: x2 with V.42 counted; the two-calls verdict (D18); Phase 3 figures
+
+### x2 data mode with V.42
+
+`make cost-x2-v42` (new) counts x2 data mode as `cost-x2` does (second 15
+to 16 of the call, ARM instructions under qemu), with our V.42 endpoint on
+the answerer's data bits. `tools/rec_x2` takes a fifth argument, `none`,
+`v42bis` or `v44`: both ends then run a `v42ec_t` on their modem's getbit
+and putbit (`rig/ec_side.h`), started when that modem reports data mode,
+ticked every millisecond and kept full of an English sentence ("the quick
+brown fox jumps over the lazy dog. "). `rig/bench_v90 -e none|v42bis|v44`
+replays the recording with the same answerer-side code, so its V.42
+endpoint is in the count; the client's is not (it is the far modem). The
+compression parameters are `v42ec_cfg_default`'s: V.42 bis 2048 codewords,
+strings of 32; V.44 2048 / 255 / 4096. `none` is V.42 with neither
+offered. Each mode is recorded at 32000 (rate index 1, as `cost-x2`)
+and at 56000 (index 15). `cost-x2-v42` checks that the host's and qemu's
+tx / rx hashes and V.42 lines (state, octets received, their hash) agree,
+and that the host's transmit hash is the recorder's. Every call is
+in data mode from 10.73 s, x2 down and 24000 up, and V.42 is connected
+(state 2) at both ends to the end of the 40 s. `bench-x2` passes
+`X2_ARGS` (`"INDEX [none|v42bis|v44]"`) to `rec_x2`, and `-e` to the
+bench when an EC is named. Without it, `bench-x2`, `cost-x2` and the bench
+hashes are as before.
+
+`make cost-x2-v42 cost-x2 ARM_CC=$A5` (armv5 uClibc), M ARM instructions
+per second of line in data mode (second 15 to 16):
+
+| | 32000 | 56000 |
+|---|---|---|
+| x2 alone (`cost-x2`, its LCG data; 32000) | 56.58 | |
+| x2 with V.42, no compression | 58.89 | 61.50 |
+| x2 with V.42 bis (2048/32) | 69.24 | 77.19 |
+| x2 with V.44 (2048/255/4096) | 89.25 | 108.78 |
+
+x2 alone is 56.58 M, inside the plan's target of 55-60 M (82.57 M at the
+baseline).
+
+What the V.42 rows cost over x2 alone depends on the data's compression.
+The sentence repeats every 45 octets, so it compresses far beyond real
+traffic. Over the 29.3 s of data mode, the answerer's encoder took in
+about these octets per second:
+- 32000: 85 k (V.42 bis), 185 k (V.44)
+- 56000: 149 k (V.42 bis), 324 k (V.44)
+
+Its decoder gave out 64 k (V.42 bis) and 139 k (V.44) octets per second
+from the 24000 upstream. With no compression it is 3.8 k down at 32000,
+6.6 k at 56000 and 2.8 k up. So the V.42 bis and V.44 rows are a
+throughput ceiling for text, not what a typical PPP stream costs. The
+no-compression row is the floor: +2.3 M at 32000, +4.9 M at 56000. That
+matches `cost-v42`'s 5.21 M per endpoint for 56 kbit/s both ways.
+
+### The verdict (D18)
+
+two x2 calls with V.42bis per box: no (2 × 77.19 M = 154.37 M of about 122 M)
+
+The worse V.42 bis figure is 56000's. Even with no compression, two x2
+calls would need 2 × 61.50 = 123.0 M, beyond the 110 M bound. The docs
+keep "one x2 call per box" and give the measured figures.
+
+### Costs after Phase 3
+
+`make cost-x2-v42 cost-x2 cost-k56 cost-v34 cost-v90a cost-v90c cost-v92c
+cost-bell cost-v42 ARM_CC=$A5 COST_TICKS=0`, plus `cost-k56
+K56_ARGS=heavy` (armv5 uClibc, gcc -O2, at 3ef1c00 with this task's bench
+changes; the library is 3ef1c00's; each run in its own BUILD). M ARM
+instructions per second of line in data mode:
+
+| | baseline | after Phase 1 | after Phase 2 | after Phase 3 | change from baseline |
+|---|---|---|---|---|---|
+| x2 answering (second 15 to 16) | 82.57 | 82.85 | 82.79 | 56.58 | -25.99 (-31 %) |
+| x2 + V.42, no compression, 32000 / 56000 | | | | 58.89 / 61.50 | new |
+| x2 + V.42 bis (2048/32), 32000 / 56000 | | | | 69.24 / 77.19 | new |
+| x2 + V.44 (2048/255/4096), 32000 / 56000 | | | | 89.25 / 108.78 | new |
+| V.90 answering (`cost-x2`'s, second 15 to 16) | 39.20 | 39.40 | 39.46 | 31.19 | -8.01 (-20 %) |
+| K56flex answering (second 20 to 21) | 39.27 | 39.64 | 39.54 | 32.12 | -7.15 (-18 %) |
+| K56flex, the heavy client (Task 19, second 20 to 21) | 84.43 | 84.54 | | 58.60 | -25.83 (-31 %) |
+| V.34 answering (second 10 to 11) | 40.53 | 40.71 | 40.51 | 33.42 | -7.11 (-18 %) |
+| V.90 downstream receiver, 0 / 100 ppm | 44.62 / 48.97 | 44.57 / 48.92 | | 36.46 / 40.92 | -8.16 / -8.05 |
+| V.90 calling, 0 / 100 ppm | 55.11 / 59.31 | 55.06 / 58.89 | 55.19 / 59.01 | 46.97 / 50.95 | -8.14 / -8.36 |
+| V.92 calling, 0 / 100 ppm | 69.95 / 74.32 | 70.16 / 74.39 | 70.32 / 74.55 | 62.12 / 66.52 | -7.83 / -7.80 |
+| Bell 103 / Bell 212A calling (first second) | 9.86 / 4.43 | 9.87 / 4.69 | | 9.88 / 4.66 | **+0.02 / +0.23** |
+| V.42 per endpoint, 56 kbit/s both ways (`cost-v42`): none / V.42 bis / V.44 | 7.96 / 11.81 / 12.19 (Task 36's before) | | | 5.21 / 9.08 / 9.48 | -2.75 / -2.73 / -2.71 |
+
+An empty cell was not measured at that gate. Only the Bell rows went up
+from the baseline. Both are Phase 1's: Task 13's v22rx products in 64
+bits (+0.23 M for 212A, measured there; above). No Phase 3 task touched
+the Bell paths, and 212A is 0.03 M under its Phase 1 figure. Every other
+row fell by 7 to 26 M. x2 and the heavy K56flex client fell most: their
+64-state non-linear upstream had the most of Tasks 31 and 32 in it. The
+figures agree with the last task that touched each row:
+- x2 56.58 and V.90 answering 31.19: Task 35.
+- V.90 / V.92 calling: Task 35 after Task 34.
+- V.42: Task 36, to the instruction.
+
+`make verify` (TMPDIR=build/tmp) on this task's tree: **VERIFY PASS**
+(442 s). Golden 140 identical, split ok; replay 636 identical; bench
+hashes 17 identical; ubsan, armv7hf and bigend (short-cmp 129 identical)
+ok; fixed ok. No golden, replay or bench file re-recorded. `make
+verify-phase` (the ports and the costs again) is left to the release
+proof (Task 39), as the owner decided.

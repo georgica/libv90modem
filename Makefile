@@ -32,6 +32,7 @@
 #   make bench-v90       record a simulated V.90 call, replay it on the host and
 #                        under qemu, through the internals and the public API
 #   make bench-x2        the same for x2 (a call of the simulated client); cost-x2 counts
+#                        (X2_ARGS="INDEX [none|v42bis|v44]": rate index, V.42 on the bits)
 #   make bench-k56       the same for K56flex (the simulated client at 56000); cost-k56 counts
 #                        (K56_ARGS=heavy: a client ignoring our MP, x2's upstream)
 #   make bench-v90a      the same for the V.90 analogue modem's downstream receiver
@@ -40,6 +41,7 @@
 #   make prof-v90c       per tick and per function ARM instruction counts (prof-v92c, PPM=)
 #   make bench-bell      the calling modem in Bell 103 and Bell 212A; cost-bell counts
 #   make cost-v42        V.42's ARM instructions per endpoint per second (rig/bench_v42.c)
+#   make cost-x2-v42     x2 data mode with our V.42 (none, V.42 bis, V.44; 32000 and 56000)
 #   make test-interop    against spandsp (SPANDSP=its install prefix), host only
 #   make test-x2-courier an emulated USR Courier calls our answerer (COURIER_EMU=courier-emu
 #                        checkout, PAD=0|3|6, MODS=x2, STRICT_RENEG=1; tools/x2-peer/README.md),
@@ -92,8 +94,8 @@ SPANDSP  ?= $(CURDIR)/../peers/spandsp
 INC      := -Iinclude -Iapi -Imodem -Iv90 -Iv92 -Iv34 -Iv32 -Iv42 -Isim
 
 # ---- the library ----
-CORE_SRC := $(wildcard modem/*.c) $(wildcard v90/*.c) $(wildcard v34/*.c) $(wildcard v32/*.c) $(wildcard v92/*.c) \
-            $(addprefix v42/,v42_hdlc.c v42_detect.c v42_comp.c v44_comp.c v42_lapm.c v42.c)
+V42_SRC  := $(addprefix v42/,v42_hdlc.c v42_detect.c v42_comp.c v44_comp.c v42_lapm.c v42.c)
+CORE_SRC := $(wildcard modem/*.c) $(wildcard v90/*.c) $(wildcard v34/*.c) $(wildcard v32/*.c) $(wildcard v92/*.c) $(V42_SRC)
 API_SRC  := api/v90modem.c
 LIB_SRC  := $(API_SRC) $(CORE_SRC)
 LIB_HDR  := include/v90modem.h api/v90modem_priv.h api/v90modem_fields.h $(wildcard modem/*.h v90/*.h v34/*.h v32/*.h v92/*.h v42/*.h)
@@ -472,12 +474,13 @@ bench-v90: $(BUILD)/rec_v90 $(BUILD)/bench_v90 $(BUILD)/bench_v90.arm $(BUILD)/b
 $(BUILD)/rec_v90: tools/rec_v90.c $(SIM_SRC) $(MODEM_SRC) $(HDRS)
 	@mkdir -p $(BUILD)
 	$(CC) $(T_CFLAGS) -o $@ tools/rec_v90.c $(SIM_SRC) $(MODEM_SRC) $(LDLIBS)
-$(BUILD)/bench_v90: rig/bench_v90.c $(MODEM_SRC) $(HDRS)
+# bench_v90 and rec_x2 have V.42 for -e and EC (rig/ec_side.h)
+$(BUILD)/bench_v90: rig/bench_v90.c rig/ec_side.h $(MODEM_SRC) $(V42_SRC) $(HDRS) $(wildcard v42/*.h)
 	@mkdir -p $(BUILD)
-	$(CC) $(T_CFLAGS) -o $@ rig/bench_v90.c $(MODEM_SRC) $(LDLIBS)
-$(BUILD)/bench_v90.arm: rig/bench_v90.c $(MODEM_SRC) $(HDRS)
+	$(CC) $(T_CFLAGS) -Iv42 -o $@ rig/bench_v90.c $(MODEM_SRC) $(V42_SRC) $(LDLIBS)
+$(BUILD)/bench_v90.arm: rig/bench_v90.c rig/ec_side.h $(MODEM_SRC) $(V42_SRC) $(HDRS) $(wildcard v42/*.h)
 	@mkdir -p $(BUILD)
-	$(ARM_CC) $(T_CFLAGS) -static -o $@ rig/bench_v90.c $(MODEM_SRC) $(LDLIBS)
+	$(ARM_CC) $(T_CFLAGS) -Iv42 -static -o $@ rig/bench_v90.c $(MODEM_SRC) $(V42_SRC) $(LDLIBS)
 	$(dir $(ARM_CC))arm-linux-strip $@
 $(BUILD)/bench_api: rig/bench_api.c $(STATIC)
 	$(CC) $(CFLAGS) -Iinclude -o $@ $< $(STATIC) $(LDLIBS)
@@ -491,13 +494,18 @@ $(BUILD)/bench_api.arm: rig/bench_api.c include/v90modem.h
 # (tools/rec_x2, replayed by bench_v90 -x); cost-x2 counts ARM instructions
 # per second of data mode for x2 and for V.90, as cost-v34 does ----
 X2_REC := $(BUILD)/x2_call.rec
+# rec_x2's arguments after its file: INDEX (1: 32000, 15: 56000) and EC
+# (none|v42bis|v44: V.42 on the data bits, which bench_v90 then replays
+# with -e), e.g. X2_ARGS="15 v42bis"
+X2_ARGS ?=
+X2_EC = $(filter none v42bis v44,$(X2_ARGS))
 bench-x2: $(BUILD)/rec_x2 $(BUILD)/bench_v90 $(BUILD)/bench_v90.arm
-	$(abspath $(BUILD))/rec_x2 40 0 $(X2_REC) | tail -2
-	$(abspath $(BUILD))/bench_v90 -x $(X2_REC)
-	$(QEMU) $(abspath $(BUILD))/bench_v90.arm -x $(X2_REC)
-$(BUILD)/rec_x2: tools/rec_x2.c $(SIM_SRC) $(MODEM_SRC) $(HDRS)
+	$(abspath $(BUILD))/rec_x2 40 0 $(X2_REC) $(X2_ARGS) | tail -3
+	$(abspath $(BUILD))/bench_v90 -x $(if $(X2_EC),-e $(X2_EC)) $(X2_REC)
+	$(QEMU) $(abspath $(BUILD))/bench_v90.arm -x $(if $(X2_EC),-e $(X2_EC)) $(X2_REC)
+$(BUILD)/rec_x2: tools/rec_x2.c rig/ec_side.h $(SIM_SRC) $(MODEM_SRC) $(V42_SRC) $(HDRS) $(wildcard v42/*.h)
 	@mkdir -p $(BUILD)
-	$(CC) $(T_CFLAGS) -o $@ tools/rec_x2.c $(SIM_SRC) $(MODEM_SRC) $(LDLIBS)
+	$(CC) $(T_CFLAGS) -Iv42 -o $@ tools/rec_x2.c $(SIM_SRC) $(MODEM_SRC) $(V42_SRC) $(LDLIBS)
 .PHONY: bench-x2 cost-x2
 cost-x2: bench-x2 bench-v90
 	@head -c $$((8000 * 15)) $(X2_REC) > $(BUILD)/x2_a.rec; head -c $$((8000 * 16)) $(X2_REC) > $(BUILD)/x2_b.rec; \
@@ -510,6 +518,31 @@ cost-x2: bench-x2 bench-v90
 	 echo "x2 data mode: $$((b - a)) ARM instructions per second of line (second 15 to 16 of the call)"; \
 	 echo "V.90 data mode: $$((d - c)) ARM instructions per second of line (second 15 to 16 of the call)"; \
 	 echo "ratio x2 / V.90: $$(( (b - a) * 100 / (d - c) )) %"
+
+# cost-x2-v42 counts x2 data mode as cost-x2 does (second 15 to 16), with
+# our V.42 endpoint on the answerer's data bits (rig/ec_side.h): no
+# compression, V.42 bis, V.44, at 32000 (cost-x2's rate) and 56000. The
+# client writes an English sentence both ways; its recordings are its own
+# (x2e_INDEX_EC.rec), and the host's and target's replays must agree ----
+.PHONY: cost-x2-v42
+cost-x2-v42: $(BUILD)/rec_x2 $(BUILD)/bench_v90 $(BUILD)/bench_v90.arm
+	@for i in 1 15; do for e in none v42bis v44; do \
+	   r=$(BUILD)/x2e_$${i}_$$e; \
+	   $(abspath $(BUILD))/rec_x2 40 0 $$r.rec $$i $$e > $$r.log || { cat $$r.log; exit 1; }; \
+	   h=$$($(abspath $(BUILD))/bench_v90 -x -e $$e $$r.rec | sed -n '/^[tr]x hash\|^V.42/p'); \
+	   t=$$($(QEMU) $(abspath $(BUILD))/bench_v90.arm -x -e $$e $$r.rec | sed -n '/^[tr]x hash\|^V.42/p'); \
+	   [ "$$h" = "$$t" ] || { echo "bench_v90 -x -e $$e ($$i): host '$$h', target '$$t'"; exit 1; }; \
+	   grep -q "^transmit hash $$(echo "$$h" | sed -n 's/^tx hash //p')," $$r.log || { echo "bench_v90 -x -e $$e ($$i): not the recorder's transmit hash"; exit 1; }; \
+	   head -c $$((8000 * 15)) $$r.rec > $$r.a; head -c $$((8000 * 16)) $$r.rec > $$r.b; \
+	 done; done; \
+	 for i in 1 15; do for e in none v42bis v44; do for p in a b; do \
+	   r=$(BUILD)/x2e_$${i}_$$e; \
+	   ( $(CNT) $(abspath $(BUILD))/bench_v90.arm -x -e $$e $$r.$$p 2>&1 | grep -c '^Trace' > $$r.$$p.cnt ) & \
+	 done; done; done; wait; \
+	 for i in 1 15; do for e in none v42bis v44; do \
+	   r=$(BUILD)/x2e_$${i}_$$e; a=$$(cat $$r.a.cnt); b=$$(cat $$r.b.cnt); \
+	   echo "x2 data mode at $$(sed -n 's/^x2 \([0-9]*\) down.*/\1/p' $$r.log), V.42 $$e: $$((b - a)) ARM instructions per second of line (second 15 to 16 of the call)"; \
+	 done; done
 
 # ---- K56flex answering: the same with a call of the simulated K56flex
 # client (tools/rec_k56, 56000 down, replayed by bench_v90 -k); cost-k56
@@ -763,7 +796,6 @@ $(BUILD)/bench_v90c.arm: rig/bench_v90c.c $(MODEM_SRC) $(HDRS)
 # 56000 more line bits each way (one second at 56 kbit/s), the difference of
 # two runs, halved: per endpoint, for no compression, V.42 bis and V.44 (the
 # harness's loop included). The host's output and the target's must agree ----
-V42_SRC := $(addprefix v42/,v42_hdlc.c v42_detect.c v42_comp.c v44_comp.c v42_lapm.c v42.c)
 .PHONY: cost-v42
 cost-v42: $(BUILD)/bench_v42 $(BUILD)/bench_v42.arm
 	@for c in 0 1 2; do \
