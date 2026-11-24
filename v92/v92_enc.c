@@ -30,14 +30,6 @@ void v92_rm_k(const uint8_t M[V92_DFRAME], int prime, uint8_t k[V92_DFRAME])
 
 /* ---- encoder ------------------------------------------------------------- */
 
-/* the zero coefficients at the end of c[0..n-1], at most 255 */
-static uint8_t zeros_at_end(const int16_t *c, unsigned n)
-{
-    unsigned z = 0;
-    while (z < n && z < 255 && c[n - 1 - z] == 0) z++;
-    return (uint8_t)z;
-}
-
 int v92_enc_init(v92_enc_t *e, const v92_map_t *map, const v92_filt_t *filt,
                  v92_getbit_fn get, void *user)
 {
@@ -46,14 +38,6 @@ int v92_enc_init(v92_enc_t *e, const v92_map_t *map, const v92_filt_t *filt,
     if (filt && v92_filt_check(filt) != 0) return V92_ERR_RANGE;
     e->map = map;
     e->filt = filt;
-    if (filt) {
-        /* a server may pad its sections with zeros: they add nothing */
-        const int16_t *z1 = filt->coef, *p1 = z1 + filt->lz1, *z2 = p1 + filt->lp1, *p2 = z2 + filt->lz2;
-        e->trim[0] = zeros_at_end(z1, filt->lz1);
-        e->trim[1] = zeros_at_end(p1, filt->lp1);
-        e->trim[2] = zeros_at_end(z2 + 1, filt->lz2 - 1u);      /* lz2 >= 1: checked */
-        e->trim[3] = zeros_at_end(p2, filt->lp2);
-    }
     e->get = get;
     e->user = user;
     v90_scr_init(&e->scr);
@@ -155,8 +139,8 @@ int32_t v92_enc_symbol(v92_enc_t *e, v92_sym_t *s)
         int64_t acc = 0;                    /* Q(XQ + 14) */
         const int16_t *z1 = f->coef, *p1 = z1 + f->lz1;
         /* Q0 * Q15, one bit down; XQ * Q14 */
-        acc += hdot16(e->uh, e->hp, z1, f->lz1 - e->trim[0]) * (1 << (V92_XQ - 1));
-        acc += hdot32(e->xh, e->hp, p1, f->lp1 - e->trim[1]);
+        acc += hdot16(e->uh, e->hp, z1, f->lz1) * (1 << (V92_XQ - 1));
+        acc += hdot32(e->xh, e->hp, p1, f->lp1);
         fb = rnd_shift(acc, 14);
     }
 
@@ -188,8 +172,8 @@ int32_t v92_enc_symbol(v92_enc_t *e, v92_sym_t *s)
         int64_t xs = (int64_t)u * (1 << V92_XQ) + fb;
         x = xs > INT32_MAX ? INT32_MAX : xs < -INT32_MAX ? -INT32_MAX : (int32_t)xs;
         acc += (int64_t)x * z2[0];
-        if (f->lz2 - 1u > e->trim[2]) acc += hdot32(e->xh, e->hp, z2 + 1, f->lz2 - 1u - e->trim[2]);
-        acc += hdot32(e->vh, e->hp, p2, f->lp2 - e->trim[3]) * 2;    /* XQ * Q14, one bit up */
+        if (f->lz2 > 1) acc += hdot32(e->xh, e->hp, z2 + 1, f->lz2 - 1u);
+        acc += hdot32(e->vh, e->hp, p2, f->lp2) * 2;    /* XQ * Q14, one bit up */
         v = rnd_shift(acc, 15);
         /* G = gain4 / 2^18; result in Q14 */
         out = rnd_shift((int64_t)v * f->gain4, V92_XQ + 18 - 14);

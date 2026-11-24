@@ -64,19 +64,15 @@ typedef struct {
     int16_t  uh[V92_MAX_LSEC];  /* u(n - 1), ... (circular) */
     int32_t  xh[V92_MAX_LSEC];  /* x(n - 1), ... */
     int32_t  vh[V92_MAX_LSEC];  /* v(n - 1), ... */
-    uint8_t  trim[4];           /* zero coefficients at the end of z1, p1,
-                                   z2(1..) and p2, up to 255 each: not summed
-                                   (taken at v92_enc_init). Four bytes that
-                                   leave v90m_mem_size() as it was: x86-64's
-                                   tail padding here, ARMv5's in the structs
-                                   around it */
 } v92_enc_t;
 
 /* Everything initialised to zero (8.7.1: "the scrambler, modulus encoder,
  * convolutional encoder, precoder and prefilter memories are initialized to
  * zero prior to transmitting B1u"); the first symbol returned is data frame
  * interval 0 and n = 0 of the filter equations. map and filt must outlive
- * the encoder. B1u is then 48 data frames (V92_B1U_FRAMES) of binary ones
+ * the encoder, which reads them at every symbol: an owner that changes one
+ * keeps it valid (v92_map_check, v92_filt_check) and should give the
+ * encoder a copy that only it writes (v90a: encf, v92_filt_trim). B1u is then 48 data frames (V92_B1U_FRAMES) of binary ones
  * from get(), and data follows without any re-initialisation.
  * Returns 0, or V92_ERR_RANGE if v92_map_check() or v92_filt_check() fail. */
 int  v92_enc_init(v92_enc_t *e, const v92_map_t *map, const v92_filt_t *filt,

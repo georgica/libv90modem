@@ -13,9 +13,11 @@
  *   - the x2 mapper (x2map_frame) against its 64-bit form, random frames in
  *     every bank, and a run whose bank changes every few frames;
  *   - the echo canceller (ec_tick), every return value and its whole state;
- *   - the V.92 precoder and prefilter (v92_enc_symbol) with sections padded
- *     by zero coefficients, up to more than 255 of them, against the same
- *     filter without the padding.
+ *   - the V.92 precoder and prefilter (v92_enc_symbol) on a filter whose
+ *     sections are padded by zero coefficients, up to more than 255 of
+ *     them, against the same filter less the padding (v92_filt_trim);
+ *   - the same encoder when its filter changes under it without
+ *     v92_enc_init, against 347caac's v92_enc_symbol.
  * The program prints one line per part; any difference fails. */
 #include <stdio.h>
 #include <stdint.h>
@@ -29,6 +31,7 @@
 #include "../modem/x2tab.h"
 #include "../modem/ec.h"
 #include "v92_enc.h"
+#include "v34_priv.h"
 
 #ifdef TEST_SHORT
 #define N_RCP     5000      /* random cur per Mi */
@@ -397,7 +400,7 @@ static void test_v92_trim(void)
 {
     static const uint8_t M[12] = { 8, 8, 8, 4, 8, 8, 8, 4, 8, 8, 8, 4 };
     static v92_map_t map;
-    static v92_filt_t fc, fp;
+    static v92_filt_t fc, fp, ft, fct;
     static v92_enc_t ea, eb;
     long syms = 0, differ = 0;
     int c, e, s, over255 = 0;
@@ -439,7 +442,12 @@ static void test_v92_trim(void)
             }
             ap += pad[s];               /* fp's zeros */
         }
-        CHECK_EQ_I(v92_enc_init(&ea, &map, &fc, get_a, NULL), 0);
+        /* the padded filter trimmed is the unpadded one trimmed, and
+           encodes as the padded one does */
+        v92_filt_trim(&ft, &fp);
+        v92_filt_trim(&fct, &fc);
+        if (memcmp(&ft, &fct, sizeof ft) != 0) differ++;
+        CHECK_EQ_I(v92_enc_init(&ea, &map, &ft, get_a, NULL), 0);
         CHECK_EQ_I(v92_enc_init(&eb, &map, &fp, get_b, NULL), 0);
         bit_seed[0] = bit_seed[1] = rnd32();
         for (e = 0; e < 1200; e++, syms++) {
@@ -457,6 +465,194 @@ static void test_v92_trim(void)
            N_FILT, over255, syms, differ);
 }
 
+/* ---------------- reference copy of v92/v92_enc.c's v92_enc_symbol (347caac) ---------------- */
+static int32_t ref_rnd_shift(int64_t v, int sh)
+{
+    int64_t h = (int64_t)1 << (sh - 1);
+    int64_t r = v >= 0 ? (v + h) >> sh : -((-v + h) >> sh);
+    if (r > INT32_MAX) return INT32_MAX;
+    if (r < -INT32_MAX) return -INT32_MAX;
+    return (int32_t)r;
+}
+static int64_t ref_hdot16(const int16_t *hist, int hp, const int16_t *c, unsigned n)
+{
+    int64_t acc = 0;
+    unsigned k = 0, n1 = (unsigned)hp < n ? (unsigned)hp : n;
+    const int16_t *h = hist + hp - 1;
+    for (; k < n1; k++, h--) acc += (int32_t)*h * c[k];
+    for (h = hist + V92_MAX_LSEC - 1; k < n; k++, h--) acc += (int32_t)*h * c[k];
+    return acc;
+}
+static int64_t ref_hdot32(const int32_t *hist, int hp, const int16_t *c, unsigned n)
+{
+    int64_t acc = 0;
+    unsigned k = 0, n1 = (unsigned)hp < n ? (unsigned)hp : n;
+    const int32_t *h = hist + hp - 1;
+    for (; k + 4 <= n1; k += 4, h -= 4) {
+        acc += (int64_t)h[0] * c[k]; acc += (int64_t)h[-1] * c[k + 1];
+        acc += (int64_t)h[-2] * c[k + 2]; acc += (int64_t)h[-3] * c[k + 3];
+    }
+    for (; k < n1; k++, h--) acc += (int64_t)*h * c[k];
+    for (h = hist + V92_MAX_LSEC - 1; k + 4 <= n; k += 4, h -= 4) {
+        acc += (int64_t)h[0] * c[k]; acc += (int64_t)h[-1] * c[k + 1];
+        acc += (int64_t)h[-2] * c[k + 2]; acc += (int64_t)h[-3] * c[k + 3];
+    }
+    for (; k < n; k++, h--) acc += (int64_t)*h * c[k];
+    return acc;
+}
+
+static int32_t ref_enc_symbol(v92_enc_t *e, v92_sym_t *s)
+{
+    const v92_map_t *m = e->map;
+    const v92_filt_t *f = e->filt;
+    int i = e->i, k = i % V92_TFRAME;
+    int lc = v92_lc(m, i);
+    int r, period, first, eta, n;
+    int32_t fb = 0, u, x, v, out;
+
+    if (i == 0) {
+        if (e->forced) {
+            memcpy(e->ki, e->kf, V92_DFRAME);
+            e->forced = 0;
+        } else {
+            uint8_t bits[V92_MAX_K];
+            for (n = 0; n < m->K; n++)
+                bits[n] = (uint8_t)v90_scramble_gpa(&e->scr, e->get(e->user) & 1);
+            v92_mod_encode(&e->mod, bits, e->ki);
+        }
+    }
+    if (k == 0) e->y0 = (uint8_t)v34_conv_y0(m->trellis, e->conv);
+
+    if (k < 3) {
+        r = e->ki[i];
+        period = m->M[i];
+    } else {
+        int par = (e->eta[0] + e->eta[1] + e->eta[2] + e->y0) % 2 != 0;
+        r = 2 * e->ki[i] + par;
+        period = 2 * m->M[i];
+    }
+    first = -lc + (r + lc) % period;
+
+    if (f) {
+        int64_t acc = 0;
+        const int16_t *z1 = f->coef, *p1 = z1 + f->lz1;
+        acc += ref_hdot16(e->uh, e->hp, z1, f->lz1) * (1 << (V92_XQ - 1));
+        acc += ref_hdot32(e->xh, e->hp, p1, f->lp1);
+        fb = ref_rnd_shift(acc, 14);
+    }
+
+    if (e->pick) {
+        int16_t cand[2 * V92_MAX_LC];
+        for (n = 0, eta = first; eta < lc; eta += period) cand[n++] = (int16_t)eta;
+        n = e->pick(e->pick_user, i, cand, n);
+        eta = cand[n];
+    } else {
+        int64_t best = -1;
+        int e1, best_eta = first;
+        for (e1 = first; e1 < lc; e1 += period) {
+            int64_t xa = (int64_t)v92_point(m, i, e1) * (1 << V92_XQ) + fb;
+            if (xa < 0) xa = -xa;
+            if (best < 0 || xa <= best) { best = xa; best_eta = e1; }
+        }
+        eta = best_eta;
+    }
+    u = v92_point(m, i, eta);
+    e->eta[k] = (int16_t)eta;
+
+    if (f) {
+        int64_t acc = 0;
+        const int16_t *z2 = f->coef + f->lz1 + f->lp1, *p2 = z2 + f->lz2;
+        int64_t xs = (int64_t)u * (1 << V92_XQ) + fb;
+        x = xs > INT32_MAX ? INT32_MAX : xs < -INT32_MAX ? -INT32_MAX : (int32_t)xs;
+        acc += (int64_t)x * z2[0];
+        if (f->lz2 > 1) acc += ref_hdot32(e->xh, e->hp, z2 + 1, f->lz2 - 1u);
+        acc += ref_hdot32(e->vh, e->hp, p2, f->lp2) * 2;
+        v = ref_rnd_shift(acc, 15);
+        out = ref_rnd_shift((int64_t)v * f->gain4, V92_XQ + 18 - 14);
+    } else {
+        x = u * (1 << V92_XQ);
+        v = x;
+        out = u;
+    }
+    e->uh[e->hp] = (int16_t)u;
+    e->xh[e->hp] = x;
+    e->vh[e->hp] = v;
+    e->hp = (uint16_t)(e->hp + 1 == V92_MAX_LSEC ? 0 : e->hp + 1);
+
+    if (s) {
+        s->i = (uint8_t)i;
+        s->ki = e->ki[i];
+        s->y0 = e->y0;
+        s->eta = (int16_t)eta;
+        s->u = u;
+        s->x = x;
+        s->v = v;
+    }
+
+    if (k == 3)
+        e->conv = (uint8_t)v34_conv_next(m->trellis, e->conv, v92_inverse_map(e->eta));
+    e->i = (uint8_t)(i + 1 == V92_DFRAME ? 0 : i + 1);
+    return out;
+}
+
+/* a random filter: sections of up to 40 taps (z2 at least 1), small taps,
+ * some of them zero, and up to 40 zeros at the end of each section */
+static void random_filt(v92_filt_t *f)
+{
+    unsigned len[4], s, k, at = 0;
+    memset(f, 0, sizeof *f);
+    for (s = 0; s < 4; s++) len[s] = rnd_below(41);
+    if (len[2] == 0) len[2] = 1;
+    f->lz1 = (uint16_t)len[0]; f->lp1 = (uint16_t)len[1]; f->lz2 = (uint16_t)len[2]; f->lp2 = (uint16_t)len[3];
+    f->gain4 = (uint16_t)(0x4000 + rnd_below(0x8000));
+    for (s = 0; s < 4; s++) {
+        unsigned z = rnd_below(len[s] + 1);          /* the last z are zero */
+        for (k = 0; k < len[s]; k++, at++)
+            f->coef[at] = (k >= len[s] - z || rnd_below(6) == 0) ? 0 : (int16_t)((int32_t)rnd_below(4001) - 2000);
+    }
+}
+
+/* The filter changed under a running encoder, without v92_enc_init (its
+ * lengths below the zeros counted at init among the changes): the library
+ * reads no more than the filter it is given, as 347caac did, and gives
+ * what 347caac gave */
+static void test_v92_live(void)
+{
+    static const uint8_t M[12] = { 8, 8, 8, 4, 8, 8, 8, 4, 8, 8, 8, 4 };
+    static v92_map_t map;
+    static v92_filt_t fa, fb;
+    static v92_enc_t ea, eb;
+    long syms = 0, changes = 0, differ = 0;
+    int c, e;
+    memset(&map, 0, sizeof map);
+    map.K = 33;
+    memcpy(map.M, M, 12);
+    map.lc[0] = 8;
+    for (e = 0; e < 8; e++) map.pt[0][e] = (uint16_t)((2 * e + 1) * 50);
+    for (c = 0; c < N_FILT; c++) {
+        random_filt(&fa);
+        fb = fa;
+        CHECK_EQ_I(v92_enc_init(&ea, &map, &fa, get_a, NULL), 0);
+        CHECK_EQ_I(v92_enc_init(&eb, &map, &fb, get_b, NULL), 0);
+        bit_seed[0] = bit_seed[1] = rnd32();
+        for (e = 0; e < 1200; e++, syms++) {
+            v92_sym_t sa, sb;
+            int32_t oa, ob;
+            if (e % 97 == 50) { random_filt(&fa); fb = fa; changes++; }
+            oa = v92_enc_symbol(&ea, &sa);
+            ob = ref_enc_symbol(&eb, &sb);
+            if (oa != ob || sa.i != sb.i || sa.ki != sb.ki || sa.y0 != sb.y0 || sa.eta != sb.eta
+                || sa.u != sb.u || sa.x != sb.x || sa.v != sb.v) {
+                if (differ++ < 3) printf("  v92 live filter %d, symbol %d: %ld, want %ld\n", c, e, (long)oa, (long)ob);
+                break;
+            }
+        }
+    }
+    CHECK_EQ_I(differ, 0);
+    printf("  v92_enc_symbol, the filter changed without v92_enc_init: %d filters, %ld changes, %ld symbols: %ld differ\n",
+           N_FILT, changes, syms, differ);
+}
+
 int main(int argc, char **argv)
 {
     int full = argc > 1 && strcmp(argv[1], "full") == 0;
@@ -471,5 +667,6 @@ int main(int argc, char **argv)
     test_x2map();
     test_ec();
     test_v92_trim();
+    test_v92_live();
     T_REPORT("test_small_exact");
 }
