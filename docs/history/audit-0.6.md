@@ -1467,3 +1467,57 @@ re-recorded.
   47.43 / 51.39, V.92 calling 62.48 / 66.86 (0 / 100 ppm). That is +0.05 M
   on the table above, so the changes against Task 33 are -7.56 / -7.42 and
   -7.58 / -7.42.
+
+## Task 36: V.42's per-bit path inline; FCS by table (v42 perf 0, 1)
+
+V.42 runs per line bit on the box's CPU, beside the modem, and is not in
+the modem's cost figures. `make cost-v42` (new) counts it: `rig/bench_v42`
+runs two endpoints back to back with both directions kept full of text
+(30000 line bits to set up the link, then 56000 more each way); the count
+is the difference of the two runs, halved: per endpoint, per second at 56
+kbit/s both ways, the harness's loop (about 0.7 M) included. The host's
+output and the target's (state, octets received, their hash) must agree.
+
+What changed, output identical by construction:
+
+- `v42hdlc_tx_need_frame`, `v42hdlc_tx_bit` and `v42hdlc_rx_bit` are
+  `static inline` in `v42_hdlc.h`. Each inline function takes only the
+  common case: the next bit of the octet being sent; a received bit with
+  fewer than five ones before it. Every other case goes to
+  `v42hdlc_tx_bit_full` / `v42hdlc_rx_bit_full`, which are the old
+  functions whole, so they give the same answer for any state.
+- `hdlc_bit` (v42.c) calls `hdlc_next` (the `orig_wait` countdown and the
+  `stopped` / next-frame test, as before, in the same order) only when
+  `orig_wait > 0` or the transmitter could take a frame. Otherwise both
+  did nothing before.
+- `v42ec_rx_bit` tests for the plain-HDLC states (establishing,
+  connected, releasing) before the switch on the others.
+- `v42_fcs16` and `v42_fcs32` work an octet at a time from two `const`
+  tables (256 × uint16 and 256 × uint32, 1.5 KB). `rx_resync`'s bitwise
+  steps stay: they work at bit offsets.
+- No field was added to `v42ec_t` (`v90m_ec_mem_size()` unchanged).
+
+The net: `v42/test/test_fcs` (its own commit and golden file, before the
+change) compares both FCS functions with the bitwise definition, from
+every octet and 10^5 random states. The V.42 goldens and replays are
+unchanged. `bench_v42`'s output (states, octets received and their hash)
+is the same before and after, and the same on the host and under qemu.
+
+### Costs
+
+`make cost-v42 ARM_CC=$A5` (armv5 uClibc, each run in its own BUILD), in M
+ARM instructions per endpoint per second at 56 kbit/s both ways:
+
+| | before | after | change |
+|---|---|---|---|
+| no compression | 7.96 | 5.21 | -2.75 (-35 %) |
+| V.42 bis (2048/32) | 11.81 | 9.08 | -2.73 |
+| V.44 (2048/255/4096) | 12.19 | 9.48 | -2.71 |
+
+With no compression, the per-bit path alone gives 6.05 (-1.91 M). That
+was measured with the old bitwise FCS put back into this code. The FCS
+tables give the other -0.84 M. Leave out the harness's ~0.7 M and the
+framing falls from ~7.3 M to ~4.5 M, about 38 %. The audit estimated
+20-30 % for the per-bit path; it gives 26 %, and the tables add the rest.
+
+The v42 audit's figures, from its scratch bench, were 7.9 / 11.6 / 12.2.

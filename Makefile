@@ -39,6 +39,7 @@
 #   make bench-v92c      ... and for it in V.92 (PCM upstream); cost-v92c counts
 #   make prof-v90c       per tick and per function ARM instruction counts (prof-v92c, PPM=)
 #   make bench-bell      the calling modem in Bell 103 and Bell 212A; cost-bell counts
+#   make cost-v42        V.42's ARM instructions per endpoint per second (rig/bench_v42.c)
 #   make test-interop    against spandsp (SPANDSP=its install prefix), host only
 #   make test-x2-courier an emulated USR Courier calls our answerer (COURIER_EMU=courier-emu
 #                        checkout, PAD=0|3|6, MODS=x2, STRICT_RENEG=1; tools/x2-peer/README.md),
@@ -757,6 +758,30 @@ $(BUILD)/bench_v90c: rig/bench_v90c.c $(MODEM_SRC) $(HDRS)
 $(BUILD)/bench_v90c.arm: rig/bench_v90c.c $(MODEM_SRC) $(HDRS)
 	@mkdir -p $(BUILD)
 	$(ARM_CC) $(T_CFLAGS) -static -o $@ rig/bench_v90c.c $(MODEM_SRC) $(LDLIBS)
+# ---- V.42 on the target: rig/bench_v42 runs two endpoints back to back,
+# both directions full of text; cost-v42 counts the ARM instructions of
+# 56000 more line bits each way (one second at 56 kbit/s), the difference of
+# two runs, halved: per endpoint, for no compression, V.42 bis and V.44 (the
+# harness's loop included). The host's output and the target's must agree ----
+V42_SRC := $(addprefix v42/,v42_hdlc.c v42_detect.c v42_comp.c v44_comp.c v42_lapm.c v42.c)
+.PHONY: cost-v42
+cost-v42: $(BUILD)/bench_v42 $(BUILD)/bench_v42.arm
+	@for c in 0 1 2; do \
+	   h=$$($(abspath $(BUILD))/bench_v42 56000 $$c); a=$$($(QEMU) $(abspath $(BUILD))/bench_v42.arm 56000 $$c); \
+	   [ "$$h" = "$$a" ] || { echo "bench_v42 $$c: host '$$h', target '$$a'"; exit 1; }; \
+	   ( $(CNT) $(abspath $(BUILD))/bench_v42.arm 0 $$c 2>&1 | grep -c '^Trace' > $(BUILD)/v42_$${c}_a.cnt ) & \
+	   ( $(CNT) $(abspath $(BUILD))/bench_v42.arm 56000 $$c 2>&1 | grep -c '^Trace' > $(BUILD)/v42_$${c}_b.cnt ) & \
+	   wait; \
+	   a=$$(cat $(BUILD)/v42_$${c}_a.cnt); b=$$(cat $(BUILD)/v42_$${c}_b.cnt); \
+	   case $$c in 0) n="no compression";; 1) n="V.42 bis";; *) n="V.44";; esac; \
+	   echo "V.42, $$n: $$(( (b - a) / 2 )) ARM instructions per endpoint per second at 56 kbit/s both ways ($$h)"; \
+	 done
+$(BUILD)/bench_v42: rig/bench_v42.c $(V42_SRC) $(wildcard v42/*.h)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(EXTRA_CPPFLAGS) -Iv42 -o $@ rig/bench_v42.c $(V42_SRC) $(LDLIBS)
+$(BUILD)/bench_v42.arm: rig/bench_v42.c $(V42_SRC) $(wildcard v42/*.h)
+	@mkdir -p $(BUILD)
+	$(ARM_CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(EXTRA_CPPFLAGS) -Iv42 -static -o $@ rig/bench_v42.c $(V42_SRC) $(LDLIBS)
 # a simulated call of the library's caller, recorded at the answerer as v90d
 # records real ones (tools/rec_orig.c; host only)
 $(BUILD)/rec_orig: tools/rec_orig.c $(SIM_SRC) $(MODEM_SRC) api/v90modem.c $(HDRS) test/v90link.h test/line34.h
