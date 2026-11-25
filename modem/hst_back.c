@@ -40,7 +40,7 @@ void hst_btx_init(hst_btx_t *t, int bps, int level, v32_getbit_fn getbit, void *
         L->left = 0;
         L->cph = 0;
         L->dph = (uint32_t)(((uint64_t)(uint32_t)lanes[l].fc << 32) / 8000u);
-        L->gain = (int32_t)(((int64_t)level << 12) / rms_q12[l]);
+        L->gain = (int32_t)((int64_t)(level > 0 ? level : 0) * 4096 / rms_q12[l]);
     }
     t->bps = t->want = bps == 300 ? 300 : 450;
     t->mode = HST_BTX_SILENT;
@@ -77,12 +77,13 @@ void hst_btx_set_speed(hst_btx_t *t, int bps) { t->want = bps == 300 ? 300 : 450
 
 void hst_btx_stop(hst_btx_t *t) { t->mode = HST_BTX_SILENT; }
 
-/* the next symbol of the speed being sent: 0 when silent */
-static void next_symbol(hst_btx_t *t, int32_t *si, int32_t *sq)
+/* the next symbol of the speed being sent: returns 0 (and a zero symbol)
+ * when silent, 1 when a symbol is sent */
+static int next_symbol(hst_btx_t *t, int32_t *si, int32_t *sq)
 {
     int b, tri = 0, idx;
     int32_t g = t->lane[lane_of(t->bps)].gain;
-    if (t->mode == HST_BTX_SILENT) { *si = *sq = 0; return; }
+    if (t->mode == HST_BTX_SILENT) { *si = *sq = 0; return 0; }
     for (b = 0; b < 3; b++) {                       /* the tribit's LSB first */
         int di = t->mode == HST_BTX_PREAMBLE ? 1 : t->getbit(t->user) & 1;
         tri |= scr17_scramble(&t->scr, di) << b;
@@ -92,6 +93,7 @@ static void next_symbol(hst_btx_t *t, int32_t *si, int32_t *sq)
     idx = SIN_N / 16 + t->phase * (SIN_N / 8);      /* 22.5 + 45 k degrees */
     *si = (int32_t)(((int64_t)g * sintab[(idx + SIN_N / 4) & SIN_MASK]) >> 15);
     *sq = (int32_t)(((int64_t)g * sintab[idx & SIN_MASK]) >> 15);
+    return 1;
 }
 
 int16_t hst_btx_tick(hst_btx_t *t)
@@ -109,7 +111,7 @@ int16_t hst_btx_tick(hst_btx_t *t)
                 int32_t si = 0, sq = 0;
                 L->acc -= lanes[l].P;
                 for (j = HST_BL - 1; j > 0; j--) { L->si[j] = L->si[j - 1]; L->sq[j] = L->sq[j - 1]; }
-                if (l == act) { next_symbol(t, &si, &sq); t->newsym = 1; }
+                if (l == act) t->newsym = next_symbol(t, &si, &sq);
                 L->si[0] = si; L->sq[0] = sq;
                 if (si || sq) L->left = HST_BL; else if (L->left > 0) L->left--;
             }

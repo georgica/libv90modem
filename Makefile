@@ -393,7 +393,7 @@ check: test-all test-api test-examples test-fixtures check-symbols check-soname 
 NPROC := $(shell nproc 2>/dev/null || echo 4)
 .PHONY: golden golden-record print-golden bench-hashes replay-proof
 golden golden-record:
-	@unset V92_VERBOSE V32_DEBUG; $(MAKE) -s check PAR=$(or $(PAR),$(NPROC)) BUILD=$(BUILD)
+	@unset V92_VERBOSE V32_DEBUG HST_VERBOSE; $(MAKE) -s check PAR=$(or $(PAR),$(NPROC)) BUILD=$(BUILD)
 	@tools/golden.sh $(if $(filter golden,$@),check,record) $(BUILD)
 print-golden:
 	@for t in $(TESTS); do echo $$t $(abspath $(BUILD))/$$t; done

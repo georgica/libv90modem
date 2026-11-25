@@ -14,6 +14,14 @@
 #include "hst_tabs.h"
 #include "../v32/v32.h"
 
+/* ---------------- the back channel's receivers (Task 12) ----------------
+ * hst_bbpf (hst_tabs.h, 243 taps) is meant to be evaluated only at the
+ * receiver's 1600 Hz instants (every 5th sample), shared by both
+ * receivers: at 8000 Hz it would cost some 2 M multiply-adds a second. Its
+ * >= 50 dB stop band at 600 Hz and above is what folds into 250-500 Hz at
+ * 1600 Hz. hst_hbpf (189 taps) serves the detector's power ratio only, so
+ * it can be evaluated at a sub-sampled rate. */
+
 /* ---------------- the back channel's transmitter ---------------- */
 #define HST_BTX_PRE_MS 300            /* preamble: scrambled ones [OURS] */
 
@@ -24,25 +32,27 @@ typedef enum { HST_BTX_SILENT, HST_BTX_PREAMBLE, HST_BTX_DATA } hst_btx_mode;
  * symbols of the old one ring out on their own pulse and carrier. */
 typedef struct {
     int32_t  si[HST_BL], sq[HST_BL];  /* symbol x gain, line units */
-    int      acc;                     /* pulse phase, 0 .. HST_Bxxx_P */
-    int      left;                    /* symbols until no sent symbol is left in the pulse */
+    int32_t  acc;                     /* pulse phase, 0 .. HST_Bxxx_P */
+    int32_t  left;                    /* symbols until no sent symbol is left in the pulse */
     uint32_t cph, dph;                /* carrier phase, and its step a sample */
     int32_t  gain;                    /* symbol amplitude for the line level */
 } hst_blane_t;
 
 typedef struct {
     hst_blane_t  lane[2];             /* 0: 450 bit/s, 1: 300 bit/s */
-    int          bps;                 /* speed of the symbols being sent */
-    int          want;                /* speed asked for: from the next symbol */
-    hst_btx_mode mode;
-    int          phase;               /* differential phase, eighths of a turn */
-    int          npre;                /* preamble symbols still to send */
-    int          newsym;              /* the sample just produced began a symbol of `bps` */
+    int32_t      bps;                 /* speed of the symbols being sent */
+    int32_t      want;                /* speed asked for: from the next symbol */
+    int32_t      mode;                /* hst_btx_mode */
+    int32_t      phase;               /* differential phase, eighths of a turn */
+    int32_t      npre;                /* preamble symbols still to send */
+    int32_t      newsym;              /* the sample just produced began a symbol sent at `bps`
+                                       * (never while silent) */
     scr_t        scr;
     v32_getbit_fn getbit; void *user;
 } hst_btx_t;
 
-/* bps 450 or 300; level = RMS of the line signal (16-bit sample units).
+/* bps 450 or 300; level = RMS of the line signal (16-bit sample units;
+ * a negative level is taken as 0).
  * Silent until hst_btx_preamble. */
 void    hst_btx_init(hst_btx_t *t, int bps, int level, v32_getbit_fn getbit, void *user);
 /* HST_BTX_PRE_MS of scrambled ones, phase and scrambler from 0, then the
