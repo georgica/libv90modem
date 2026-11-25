@@ -10,4 +10,10 @@ mixtures: 12 inputs (dial tone, hum, 375 Hz, busy tone; noise 0, 3 and 6 dB belo
   never fires: pass
 v22bis: 9 s of a V.22bis call, as the answerer hears it, connected
   never fires: pass
-test_hst_det: 7 checks, 0 failures
+impaired_450: 8 lines with a dropout early in the preamble (20 and 40 ms), 8 with a 3 dB fade (5 and 10 Hz)
+  a dropout: the right speed within 450 ms on every line: pass
+  a fade: the right speed within 450 ms on every line: pass
+impaired_300: 8 lines with a dropout early in the preamble (20 and 40 ms), 8 with a 3 dB fade (5 and 10 Hz)
+  a dropout: the right speed within 650 ms on every line: pass
+  a fade: the right speed within 650 ms on every line: pass
+test_hst_det: 11 checks, 0 failures

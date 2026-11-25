@@ -169,6 +169,8 @@ static int32_t fir_fold(const int16_t *h, int32_t n, const int16_t *w)
 #define CD_OFF_PW 4970                /* -47 dBm0 */
 #define CD_BLKS   3                   /* blocks over the threshold for on */
 #define CD_OFF_BLKS 6                 /* and under it for off: a lost 50 ms packet keeps the carrier */
+#define HOLD_BLKS 6                   /* blocks 9 dB under the mean the AGC holds its gain through */
+#define HOLD_SYMS 8                   /* symbols 9 dB under the mean the symbol power's mean holds through */
 #define AGC_RMS   4096                /* the band's RMS after the AGC */
 #define GAIN0     ((int32_t)((AGC_RMS * 65536LL) / 1577))   /* until a carrier: -20 dBm0 */
 #define DEG12     143165577u          /* 12 degrees, 2^32 a turn */
@@ -263,7 +265,7 @@ static void rx_acquire(hst_brx_t *r)
     r->okhist = 0; r->locked = 0; r->grid_ok = 0;
     r->e2 = 0;
     r->nest = 0; r->wait = 0; r->nchk = 0; r->nalias = 0;
-    r->qbad = r->nfade = 0; rx_window_clear(r);
+    r->qbad = r->nfade = r->nweak = 0; rx_window_clear(r);
     r->ndly = r->pdly = 0; r->conf = r->nconf = 0;
     scr_init(&r->scr);
 }
@@ -288,12 +290,16 @@ static void rx_block(hst_brx_t *r)
     r->bpw = 0;
     if (!r->cd) {
         r->cnt = p >= CD_ON_PW ? r->cnt + 1 : 0;
-        if (r->cnt >= CD_BLKS) { r->cd = 1; r->cnt = 0; r->ps = p; rx_acquire(r); }
+        if (r->cnt >= CD_BLKS) { r->cd = 1; r->cnt = 0; r->ps = p; r->nhold = 0; rx_acquire(r); }
     } else {
         r->cnt = p < CD_OFF_PW ? r->cnt + 1 : 0;
         if (r->cnt >= CD_OFF_BLKS) { r->cd = 0; r->cnt = 0; r->locked = 0; r->grid_ok = 0; }
-        else if (r->locked) r->ps += (p - r->ps) / 8;
-        else r->ps += (p - r->ps) / 2;
+        else if (p * 8 < r->ps && r->nhold < HOLD_BLKS) r->nhold++;    /* a dropout: the gain held */
+        else {
+            r->nhold = 0;
+            if (r->locked) r->ps += (p - r->ps) / 8;
+            else r->ps += (p - r->ps) / 2;
+        }
     }
     if (r->cd) {
         int32_t rms = r->ps <= 0 ? 0 : r->ps <= (int64_t)UINT32_MAX ? (int32_t)isqrt_u32((uint32_t)r->ps) : isqrt_s64(r->ps);
@@ -336,18 +342,22 @@ static void rot14(int32_t x, int32_t y, int32_t c, int32_t s, int64_t *re, int64
 /* the last HST_BRX_WIN decisions: steps of variety (4 different at least,
  * none in more than 8), and an RMS error under HST_BRX_RMS_HOLD degrees to
  * hold a lock (qhold); under HST_BRX_RMS, and the symbols' power steady
- * (its variance at most 1/6 of its squared mean), to win one and for
- * grid_ok (qacq) */
+ * from one symbol to the next, to win one and for grid_ok (qacq) */
 static void rx_window(hst_brx_t *r)
 {
-    int i, distinct = 0, most = 0;
-    int64_t s1 = r->wp1;
+    int i, distinct = 0, most = 0, steady;
+    int64_t s1 = r->wp1, n = r->wpn;
     r->qacq = r->qhold = 0;
     if (r->nwin < HST_BRX_WIN) return;
     for (i = 0; i < 8; i++) { distinct += r->wn[i] > 0; if (r->wn[i] > most) most = r->wn[i]; }
     if (!(distinct >= 4 && most <= 8)) return;
     r->qhold = r->wsum <= RMS_SQ(HST_BRX_RMS_HOLD);
-    r->qacq = r->wsum <= RMS_SQ(HST_BRX_RMS) && 6 * (HST_BRX_WIN * r->wp2 - s1 * s1) <= s1 * s1;
+    /* the symbols' power steady: its mean squared change from one
+     * symbol to the next at most a quarter of its squared mean, over the
+     * symbols not left out (12 at least) */
+    steady = n >= HST_BRX_WIN - 4 && r->wdn >= HST_BRX_WIN / 2
+          && 4 * r->wds * n * n <= (int64_t)r->wdn * s1 * s1;
+    r->qacq = r->wsum <= RMS_SQ(HST_BRX_RMS) && steady;
 }
 
 /* the window emptied */
@@ -356,7 +366,8 @@ static void rx_window_clear(hst_brx_t *r)
     int i;
     r->wpos = r->nwin = 0;
     for (i = 0; i < 8; i++) r->wn[i] = 0;
-    r->wsum = r->wp1 = r->wp2 = 0;
+    r->wsum = r->wp1 = r->wds = 0;
+    r->wpn = r->wdn = 0;
     r->qacq = r->qhold = 0;
 }
 
@@ -376,23 +387,28 @@ static int32_t rx_decide(hst_brx_t *r, uint32_t d, int count, int32_t pw)
     int32_t de = sangle(d - ((uint32_t)step << 29)), dq = de / 65536, tri, b, ok;
     ok = de <= (int32_t)DEG12 && de >= -(int32_t)DEG12;
     if (count) {
-        int32_t sq = dq * dq / 16, p = pw < 0 ? 0 : pw > 65535 ? 65535 : pw;
+        /* a symbol 9 dB under the mean (a dropout, a lost packet) is left
+         * out of the power's sums, before the lock as after it */
+        int32_t sq = dq * dq / 16, p = pw < 32 ? 0 : pw > 4095 ? 4095 : pw, prev, d2 = -1;
         r->okhist = (r->okhist << 1) | (uint32_t)ok;
+        prev = r->nwin > 0 ? r->wpw[(r->wpos + HST_BRX_WIN - 1) % HST_BRX_WIN] : 0;
         if (r->nwin == HST_BRX_WIN) {                       /* the oldest leaves the sums */
-            int32_t o = r->wpw[r->wpos];
+            int32_t o = r->wpw[r->wpos], od = r->wd2[r->wpos];
             r->wn[r->wstep[r->wpos]]--;
             r->wsum -= r->wsq[r->wpos];
-            r->wp1 -= o;
-            r->wp2 -= (int64_t)o * o;
+            if (o) { r->wp1 -= o; r->wpn--; }
+            if (od >= 0) { r->wds -= od; r->wdn--; }
         } else
             r->nwin++;
+        if (p && prev) d2 = (p - prev) * (p - prev);
         r->wstep[r->wpos] = (uint8_t)step;
         r->wsq[r->wpos] = sq;
         r->wpw[r->wpos] = (uint16_t)p;
+        r->wd2[r->wpos] = d2;
         r->wn[step]++;
         r->wsum += sq;
-        r->wp1 += p;
-        r->wp2 += (int64_t)p * p;
+        if (p) { r->wp1 += p; r->wpn++; }
+        if (d2 >= 0) { r->wds += d2; r->wdn++; }
         if (++r->wpos == HST_BRX_WIN) r->wpos = 0;
         rx_window(r);
     }
@@ -557,15 +573,20 @@ static int rx_symbol(hst_brx_t *r, int32_t yr, int32_t yi)
     int64_t pw = (int64_t)yr * yr + (int64_t)yi * yi, e, adj, lim;
     uint32_t a = v34_angle(yr, yi), d;
     int32_t de, dq, pd;
-    int fade, psh;
+    int fade, weak, psh;
 
     /* a fade: the symbol 9 dB under the mean. fade_lose in a row lose the
      * lock (a dropout under the carrier detect), and the bits held back
      * with them; fewer (a lost 20 ms packet) keep it, and their bits go
      * out with the rest */
-    fade = r->locked && pw * 8 < r->pref;
+    weak = pw * 8 < r->pref;
+    fade = r->locked && weak;
     r->nfade = fade ? r->nfade + 1 : 0;
-    r->pref = r->pref ? r->pref + (pw - r->pref) / 16 : pw;
+    r->nweak = weak ? r->nweak + 1 : 0;
+    /* the mean held through a dropout (HOLD_SYMS symbols at most: a level
+     * that really fell is then followed), so that the symbols after it are
+     * not measured against a mean the dropout pulled down */
+    if (!weak || r->nweak > HOLD_SYMS) r->pref = r->pref ? r->pref + (pw - r->pref) / 16 : pw;
     if (r->pref < 1) r->pref = 1;
     pd = qden(r->pref, &psh);                               /* the divisions by it below, in 32 bits */
     if (r->nsym > 0 && !fade) {

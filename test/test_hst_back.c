@@ -641,7 +641,11 @@ static void score_epochs(long nrx, long nlog, int bps, run_t *o)
  * -40 dB at 400 Hz and below. eband 1 models that: V.32's signal through a
  * high-pass (255 taps, Blackman, -6 dB at 550 Hz: -74 dB at 464 Hz and
  * below), with 1 % of the unfiltered signal added back (a floor 40 dB
- * down, the HST pulse's); the filter in integers, Q15. */
+ * down, the HST pulse's); the filter in integers, Q15. The stand-in is
+ * slightly optimistic, not conservative: at 0 dB ERL it gives no error
+ * where hst-c's real forward transmitter gives 17 in 160000 (Task 13
+ * review); Task 19 asserts the corner with the real transmitter and must
+ * not relax anything to match this model. */
 #define EHPN 255
 typedef struct {
     v32tx_t  t;

@@ -77,11 +77,15 @@
  * of the grid; at least 4 different steps, none in more than 8 (a tone, or
  * dial tone, or hum, steps the same way every symbol: a scrambled signal
  * uses all eight); an RMS error under HST_BRX_RMS degrees (noise that falls
- * on the grid by chance does not); the symbols' power steady, its spread
- * (variance over the squared mean) at most 1/6 (8-DPSK through the matched
- * filter is of constant modulus: its spread stays under 0.13 down to 6 dB;
- * two tones that beat, which can step the phase in a varied way, spread
- * 0.24 and more); and the alias check, on the last
+ * on the grid by chance does not); the symbols' power steady from one
+ * symbol to the next: the mean squared change at most a quarter of the
+ * squared mean power, over the window's symbols less those 9 dB under the
+ * mean (a dropout), 12 at least (8-DPSK through the matched filter is of
+ * constant modulus; two tones that beat can step the phase in a varied way
+ * but their power swings from symbol to symbol, and stayed under 1 grid_ok
+ * in 30 over 3978 pairs; a slow fade, 3 dB at 10 Hz, changes the power
+ * little from one symbol to the next, and is let through: a spread over
+ * the window, Task 13's first rule, was not); and the alias check, on the last
  * HST_BRX_EST strobes, preferring the turn in use to r +- 45 by 2:1. When
  * it prefers r +- 45 instead, the carrier is estimated again from those
  * strobes. A second check on two fresh windows of 10 symbols after the
@@ -103,7 +107,11 @@
  * `locked` for up to 0.2 s now and then (6 runs in 1910 minutes of the
  * Task 12 review's set); the second check ends it, no bit given.
  *
- * A symbol 9 dB under the mean is a fade: about 75 ms of them in a row (11
+ * A symbol 9 dB under the mean leaves the mean of the symbols' power as it
+ * was (for 8 symbols), and a 10 ms block 9 dB under leaves the AGC's gain
+ * (for 6 blocks), so that the symbols after a dropout are not measured
+ * against a level the dropout pulled down. Locked, such a symbol is a
+ * fade: about 75 ms of them in a row (11
  * symbols at 450, 8 at 300) lose the lock. A shorter fade (a lost 20 ms
  * packet or two) keeps the lock, and its symbols' bits go out with the
  * rest, a few of them wrong: the stream has no gap. Faded symbols move
@@ -145,6 +153,7 @@ typedef struct {
     /* carrier detect and AGC, on the band's power */
     int64_t  bpw, ps;                 /* this block's sum of squares; the smoothed block power */
     int32_t  nblk, cnt, cd;
+    int32_t  nhold, nweak;            /* blocks, symbols 9 dB under the mean in a row (a dropout) */
     int32_t  gain;                    /* Q16 */
     /* NCO */
     uint32_t ph, dph, dph0;
@@ -167,11 +176,13 @@ typedef struct {
     /* the last HST_BRX_WIN decisions: their steps and squared errors */
     uint8_t  wstep[HST_BRX_WIN];
     int32_t  wsq[HST_BRX_WIN];        /* (error in turns Q16)^2 / 16 */
-    uint16_t wpw[HST_BRX_WIN];        /* symbol power, Q8 of the mean (at most 255.99) */
+    uint16_t wpw[HST_BRX_WIN];        /* symbol power, Q8 of the mean, 1 .. 4095; 0: left out (9 dB under) */
+    int32_t  wd2[HST_BRX_WIN];        /* its squared change from the decision before; -1: none */
     int32_t  wpos, nwin, qbad;        /* ring place; decisions in it; symbols of bad quality in a row */
     int32_t  qacq, qhold;             /* the window's quality to win a lock (and grid_ok), to hold one */
     int32_t  wn[8];                   /* the window's decisions of each step */
-    int64_t  wsum, wp1, wp2;          /* its sums: squared errors, powers, squared powers */
+    int64_t  wsum, wp1, wds;          /* its sums: squared errors; powers, squared changes */
+    int32_t  wpn, wdn;                /* the powers and the changes counted in them */
     int32_t  nfade;                   /* locked symbols 9 dB under the mean in a row */
     uint8_t  dly[HST_BRX_DLY];        /* the last decisions' bits while locked, a ring (bit b: bits[b]) */
     int32_t  ndly, pdly;              /* bits held back: symbols, the ring's place */
@@ -267,7 +278,11 @@ void    hst_btx_stop(hst_btx_t *t);
  *    average (3 and 5 in turn, so that a tone at a multiple of 1000 Hz is
  *    not sampled at one phase; the power of a sub-sampled output is the
  *    output's power). The spec's -43 dBm0 is the weakest back channel to be
- *    found: the threshold sits 2 dB under it [OURS].
+ *    found; the threshold is -45 dBm0 [OURS, ruled in the Task 13 review]
+ *    but never binds: the lock stage needs the receivers' carrier detect,
+ *    on at -44 dBm0, so the floor is -44, 1 dB under the spec's -43
+ *    (measured: -43 fires at 416 / 576 ms at 450 / 300, -44 at 516 and
+ *    1166-1326 ms, -44.5 and under never).
  * 2. Lock: on the 450 (or the 300) receiver, both on one band-pass, 24 of
  *    the last 30 decisions grid_ok (hst_brx_grid_ok: on the grid, with the
  *    lock's window conditions, and only after the carrier's estimate). A

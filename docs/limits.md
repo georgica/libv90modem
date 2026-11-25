@@ -485,14 +485,19 @@ CPU"); 0.5.0's in brackets:
   0.6.0's V.42 work: 7.96 / 11.81 / 12.19).
 - **HST's back channel (not yet a call; 0.7.0 work):** the two back
   receivers (450 and 300) on one band-pass, as the pump runs them while it
-  holds the forward channel, cost 1.87 M instructions a second with the
-  caller at 450 and 1.86 M at 300 (`make cost-hst-back`, the third second
-  of `rig/bench_hst`'s recording, its own loop of 0.11 M taken off; 1.98 M
+  holds the forward channel, cost 1.89 M instructions a second with the
+  caller at 450 and 1.88 M at 300 (`make cost-hst-back`, the third second
+  of `rig/bench_hst`'s recording, its own loop of 0.11 M taken off; 2.00 M
   with it); the target was 2.0 M, the spec's "about 1 M a second each".
-  Task 12's receivers, with a 243-tap band-pass, were 3.70 M. The
-  detector of ANS_HST_WAIT (the two receivers, its 250-500 Hz band and
-  the 189-tap 600-3400 Hz band at every 4th sample) is 3.68 M, for at most
-  W (700 ms) when nothing else runs; its high band is about 1.3 M of that.
+  The worst case is not the locked one: echo (our forward signal at
+  -16 dBm0) or noise at -30 dBm0 holding the carrier detect on with no
+  back channel keeps both receivers acquiring, 1.90 / 1.91 M net (2.02 M
+  with the loop; the Task 13 review's recordings). Task 12's receivers,
+  with a 243-tap band-pass, were 3.70 M (some 1.1 M of that the bench
+  reading its file inside the counted second). The detector of
+  ANS_HST_WAIT (the two receivers, its 250-500 Hz band and the 189-tap
+  600-3400 Hz band at every 4th sample) is 3.70 M, for at most W (700 ms)
+  when nothing else runs; its high band is 1.26 M of that.
 
 ## Not implemented
 

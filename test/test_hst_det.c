@@ -1,9 +1,10 @@
 /* The HST back channel's detector (hst_det, modem/hst_back.c; the spec's
  * "Detecting the caller's back channel"): the answerer's ANS_HST_WAIT
  * listens for the caller's back channel after ANSam. It fires when both
- * stages hold: the 250-500 Hz band over -43 dBm0 and 10 dB above 600-3400
- * Hz for 100 ms, and 24 of 30 decisions in a row on the grid on that
- * speed's receiver.
+ * stages hold: the 250-500 Hz band over -45 dBm0 (the receivers' carrier
+ * detect, on at -44, is the floor that binds) and 10 dB above 600-3400 Hz
+ * over 100 ms, and 24 of 30 decisions in a row on the grid on that speed's
+ * receiver.
  *
  *   pos_450, pos_300  our transmitter (preamble, then random data) at -9,
  *                -26 and -43 dBm0, through a line of sim/resamp (+-100
@@ -21,6 +22,9 @@
  *   mixtures     3 s each, never fires: dial tone, hum and the 375 Hz tone
  *                each with white noise 0, 3 and 6 dB below it; the busy
  *                tone (480 + 620 Hz) with noise
+ *   impaired_450, impaired_300  a 20 ms and a 40 ms dropout early in the
+ *                preamble, and a +-3 dB fade at 5 and 10 Hz: detected within
+ *                the same budgets
  *   v22bis       a V.22bis caller (sim/callpeer, no V.8) against the
  *                library's answerer: 9 s of what the answerer hears (the
  *                echo of its ANSam, then the caller's start-up and data,
@@ -111,32 +115,48 @@ static int chan_push(chan_t *ch, double x, int16_t *out)
 /* ---- positives ---- */
 static const struct { double hz, ppm; } offs[4] = { { 7, 100 }, { 7, -100 }, { -7, 100 }, { -7, -100 } };
 
+/* one line: our transmitter at dbm0 through the line; optionally the
+ * signal off for drop_len s from drop_at s after its start (a lost VoIP
+ * packet), and a slow fade of +-am_db dB at am_hz. What fired (0 none),
+ * and when, in samples from the preamble's arrival */
+static int detect_line(int bps, double dbm0, int c, uint32_t seed, double drop_at, double drop_len,
+                       double am_hz, double am_db, long *at)
+{
+    static chan_t ch;
+    static hst_det_t d;
+    hst_btx_t tx;
+    long n = 0, arrive = HILN / 2 + 1;
+    int got = 0;
+    double level = rms_of(dbm0);
+    prbs = seed;
+    hst_btx_init(&tx, bps, (int)lrint(level), prbs_bit, NULL);
+    hst_btx_preamble(&tx);
+    chan_init(&ch, offs[c].hz, offs[c].ppm, level / 10, seed * 7u + 1u);
+    hst_det_init(&d);
+    *at = -1;
+    while (n < 2 * FS && !got) {
+        int16_t y[4];
+        double t = n / (double)FS, v = hst_btx_tick(&tx);
+        int k, m;
+        if (drop_len > 0 && t >= drop_at && t < drop_at + drop_len) v = 0;
+        if (am_db > 0) v *= pow(10, am_db / 20 * sin(2 * PI * am_hz * t));
+        m = chan_push(&ch, v, y);
+        for (k = 0; k < m && !got; k++, n++)
+            if ((got = hst_det_tick(&d, y[k])) != 0) *at = n - arrive;
+    }
+    return got;
+}
+
 static void positive(int bps)
 {
     static const double lv[3] = { -9, -26, -43 };
-    static chan_t ch;
-    static hst_det_t d;
     const int want = bps == 450 ? HST_DET_450 : HST_DET_300;
     const long lim = (bps == 450 ? 450L : 650L) * FS / 1000;
-    long worst = 0;
-    int l, c, bad = 0, wrong = 0;
+    long worst = 0, at;
+    int l, c, bad = 0, wrong = 0, got;
     for (l = 0; l < 3; l++)
         for (c = 0; c < 4; c++) {
-            hst_btx_t tx;
-            long n = 0, at = -1, arrive = HILN / 2 + 1;
-            int got = 0;
-            double level = rms_of(lv[l]);
-            prbs = (uint32_t)(0xDE7 + 100 * bps + 10 * l + c);
-            hst_btx_init(&tx, bps, (int)lrint(level), prbs_bit, NULL);
-            hst_btx_preamble(&tx);
-            chan_init(&ch, offs[c].hz, offs[c].ppm, level / 10, (uint32_t)(0xDE70 + 100 * bps + 10 * l + c));
-            hst_det_init(&d);
-            while (n < 2 * FS && !got) {
-                int16_t y[4];
-                int k, m = chan_push(&ch, hst_btx_tick(&tx), y);
-                for (k = 0; k < m && !got; k++, n++)
-                    if ((got = hst_det_tick(&d, y[k])) != 0) at = n - arrive;
-            }
+            got = detect_line(bps, lv[l], c, (uint32_t)(0xDE7 + 100 * bps + 10 * l + c), 0, 0, 0, 0, &at);
             if (got != want) wrong += got != 0;
             if (got != want || at > lim) bad++;
             if (got && at > worst) worst = at;
@@ -150,6 +170,42 @@ static void positive(int bps)
     bound("never the other speed", wrong == 0);
     bound(bps == 450 ? "the right speed within 450 ms on every line" : "the right speed within 650 ms on every line",
           bad == 0);
+}
+
+/* a lost VoIP packet or two (20 ms and 40 ms) early in the preamble (60 ms
+ * at 450, 100 ms at 300 after its start), and a slow fade of +-3 dB at 5
+ * and at 10 Hz: four lines each (+-7 Hz, +-100 ppm) at -26 dBm0, detected
+ * with the right speed within the budget. A dropout later, in the
+ * acquisition (140-180 ms at either speed; near the carrier's arrival at
+ * 450) or while the detector's window fills after the lock (400 ms at
+ * 300), costs a second acquisition or a refill of the window: past the
+ * budget on some lines, with the power rule or without it (PROGRESS "hst
+ * 13", fix round 1). */
+static void impaired(int bps)
+{
+    const int want = bps == 450 ? HST_DET_450 : HST_DET_300;
+    const long lim = (bps == 450 ? 450L : 650L) * FS / 1000;
+    const double drop_at = bps == 450 ? 0.06 : 0.1;
+    static const double am[2] = { 5, 10 };
+    int i, c, bad_drop = 0, bad_am = 0, got;
+    long at, worst_drop = 0, worst_am = 0;
+    for (i = 0; i < 2; i++)
+        for (c = 0; c < 4; c++) {
+            got = detect_line(bps, -26, c, (uint32_t)(0xD80 + 100 * bps + 10 * i + c), drop_at, i ? 0.04 : 0.02, 0, 0, &at);
+            if (got != want || at > lim) bad_drop++;
+            if (at > worst_drop || !got) worst_drop = got ? at : 1L << 30;
+            got = detect_line(bps, -26, c, (uint32_t)(0xA30 + 100 * bps + 10 * i + c), 0, 0, am[i], 3, &at);
+            if (got != want || at > lim) bad_am++;
+            if (at > worst_am || !got) worst_am = got ? at : 1L << 30;
+        }
+    printf("impaired_%d: 8 lines with a dropout early in the preamble (20 and 40 ms), 8 with a 3 dB fade (5 and 10 Hz)\n", bps);
+    if (verbose)
+        printf("  (latest detection: %.1f ms with a dropout, %.1f ms with a fade)\n",
+               worst_drop * 1000.0 / FS, worst_am * 1000.0 / FS);
+    bound(bps == 450 ? "a dropout: the right speed within 450 ms on every line"
+                     : "a dropout: the right speed within 650 ms on every line", bad_drop == 0);
+    bound(bps == 450 ? "a fade: the right speed within 450 ms on every line"
+                     : "a fade: the right speed within 650 ms on every line", bad_am == 0);
 }
 
 /* ---- negatives ---- */
@@ -284,15 +340,19 @@ static void v22bis(void)
 
 static void pos_450(void) { positive(450); }
 static void pos_300(void) { positive(300); }
+static void imp_450(void) { impaired(450); }
+static void imp_300(void) { impaired(300); }
 
 int main(int argc, char **argv)
 {
-    int only = t_case_arg(argc, argv, 5);
+    int only = t_case_arg(argc, argv, 7);
     verbose = getenv("HST_VERBOSE") != NULL;
     if (T_CASE(only, 1)) pos_450();
     if (T_CASE(only, 2)) pos_300();
     if (T_CASE(only, 3)) quiet();
     if (T_CASE(only, 4)) mixtures();
     if (T_CASE(only, 5)) v22bis();
+    if (T_CASE(only, 6)) imp_450();
+    if (T_CASE(only, 7)) imp_300();
     T_REPORT("test_hst_det");
 }

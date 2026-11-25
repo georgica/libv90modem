@@ -4714,3 +4714,58 @@ Second commit, Task 13:
     make verify -> VERIFY PASS (see the commit)
     milestone 3: verify-phase deferred to the merge of the tracks (a port
       matrix was running in ~/hst-wt; owner's controller ruling)
+
+Review fixes (round 1).
+- I1: the steady-power rule voided grid_ok for a whole window after any
+  dip before the lock (a lost VoIP packet), and a 3 dB fade at 5-10 Hz
+  blocked detection outright. Now:
+  - the rule measures the symbol-to-symbol change of the power (the mean
+    squared change at most a quarter of the squared mean), not its spread
+    over the window: a slow fade changes little from one symbol to the
+    next, two tones that beat change a lot;
+  - symbols 9 dB under the mean are left out of the power's sums before
+    the lock as after it (12 of 16 needed);
+  - through a dropout the symbol power's mean holds (8 symbols at most)
+    and so does the AGC's gain (6 blocks at most): the symbols after the
+    dropout were measured against a level it had pulled down (the first
+    came out 6 times the mean).
+  - On 216 positive lines (both speeds, +-7 Hz, dropouts of 20 and 40 ms
+    at 100-400 ms, fades of 2 and 3 dB at 0.5-10 Hz, -43 dBm0) the rule
+    now costs nothing: the same 15 lines late with it as without it, all
+    dropouts in the acquisition (below). The reviewer's 3978 tone pairs: 0
+    of 30 grid_ok at most (a quarter; at a half, 3; at 1, 17), 0 fired;
+    the 72 modem signals: 3 of 30 at most, 0 fired; 12000 random mixtures:
+    1 of 30, 0 fired; the recordings: 2 of 30, 0 fired (make hst-scan:
+    106 recordings, 0 detections); 1910 tone and noise runs: 0 locks;
+    7800 hard starts: no alias epoch, and now no wrong bit within +-12 Hz;
+    3500 clean starts: unchanged.
+  - Not fixed, and not the rule's (the same with it off): a dropout
+    during the acquisition (140-180 ms after the preamble's start at
+    either speed, about 40 ms at 450, where it lands on the timing's
+    estimate) costs a second acquisition, and one while the detector's
+    window fills after the lock (400 ms at 300) a refill of the window:
+    detection then past the budget on some lines (up to 816 and 876 ms).
+    Re-acquiring at once at a dropout's end was tried and is worse (every
+    such line late).
+  - test_hst_det (11 checks): impaired_450 and impaired_300, a 20 and a
+    40 ms dropout early in the preamble (60 ms at 450, 100 ms at 300) and
+    a +-3 dB fade at 5 and 10 Hz, within 450 / 650 ms. The fade case fails
+    at 91a765f; the early dropouts pass there too.
+- Threshold (controller's ruling): -45 dBm0 stays. It never binds: the
+  lock stage needs the receivers' carrier detect, on at -44 dBm0, so the
+  floor is -44, 1 dB under the spec's -43 (hst.h says so; the review's
+  "2 dB margin" wording is gone, and test_hst_det's header says -45).
+- M3: docs/limits.md carries the worst case: echo or noise holding the
+  carrier on with no back channel, 1.90-1.91 M net (2.02 M with the
+  bench's loop); locked 1.89 / 1.88 M (2.00 M).
+- M4: the two unused 8000 Hz inputs of hst_det_t's receivers (316
+  octets) stay: removing them means splitting hst_brx_t's front end out of
+  it, an interface change for the merge (sizeof(hst_det_t) 4504 against
+  v92d_t's).
+- M5: test_hst_back's echo comment says the high-passed V.32 stand-in is
+  slightly optimistic (0 errors at 0 dB ERL where hst-c's forward
+  transmitter gives 17 in 160000): Task 19 asserts with the real one.
+- M1, for Tasks 18/19: a 300 Hz line-edge high-pass (2nd order Q 1.2 at
+  350 Hz, or 4th order at 300 Hz) then +7 Hz makes 300 detect at 836-856
+  ms, past W, with the rule or without it (-7 Hz: 566-576 ms); 450 at
+  436-446 ms, 4 ms inside its budget. A real-line profile should carry it.
