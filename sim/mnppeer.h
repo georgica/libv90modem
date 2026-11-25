@@ -50,11 +50,13 @@
  *    full: it is counted (`ln_rx_full`), not taken and not acknowledged, so
  *    the sender brings it again. mnppeer_send_ln says when its queue is
  *    full. The LN's type octet is passed through as `code`. Type 1, the
- *    destructive break, follows Tables 4 and 5 and their note a: sent,
- *    the write and read queues are emptied, no LT goes and what comes is
- *    discarded until the LNA, then every LT/LA state variable goes back
- *    to its start; received, the same queues are emptied and the state
- *    reset when the LN is taken, then the LNA. `resets` counts them.
+ *    destructive break, follows Tables 4 and 5 and their note a: asked
+ *    for (mnppeer_send_ln), the write and read queues are emptied, no LT
+ *    goes and what comes is discarded until its LNA, then every LT/LA
+ *    state variable goes back to its start; received, the same queues
+ *    are emptied and the state reset when the LN is taken, then the LNA,
+ *    except during our own destructive break, whose LNA resets once.
+ *    `resets` counts them.
  *    Types 2 and 3 do nothing to data.
  *
  * Layouts: standard, or Annex A's optimised LT and LA when both LRs carry

@@ -24,10 +24,13 @@
  * variable but V(SA) and V(RA) to its initial value, stored LTs and the
  * held LT discarded. Sent: at once LTs are dropped, nothing goes and what
  * comes is discarded until the LNA, then the reset. Received: the reset
- * when the LN is taken, then the LNA. Each reset counts in `resets`
- * (compare with a remembered copy, as v42lapm_t's): the caller flushes
- * what it holds for and from the far end at that moment, and from its
- * own mnp_send_ln(1) until the reset holds what the user sends.
+ * when the LN is taken, then the LNA; if our own LN 1 is waiting for its
+ * LNA, only that LNA resets (both ends broke at once: one reset). Each
+ * reset counts in `resets` (compare with a remembered copy, as
+ * v42lapm_t's): the caller flushes what it holds for and from the far end
+ * at each change. From its own mnp_send_ln(1) until the LNA (ln_code < 0)
+ * it holds what the user sends (Table 4: "hold data until receive
+ * acknowledgement"), and flushes nothing it took after the reset.
  *
  * The facts, each with its source, are in docs/history/hst-facts.md,
  * sections `MNP frames`, `LR and 0xC0`, `Establishment`, `Data and

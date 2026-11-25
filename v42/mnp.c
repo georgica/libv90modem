@@ -173,9 +173,13 @@ int mnp_accept_lr(mnp_t *m, const uint8_t *f, int len, int framing_in)
 }
 
 /* our LR again (A.7.1.3) on T401 or a bad frame; after one such resend,
- * the next T401 expiry or bad frame rejects the connection (A.7.1.4) */
+ * the next T401 expiry or bad frame rejects the connection (A.7.1.4).
+ * A failure while the resend it asked for has not gone yet counts for
+ * nothing: rejection comes only "after resending". A resend for a
+ * repeated LR does not count as that resend (the lenient reading). */
 static void lr_failure(mnp_t *m)
 {
+    if (m->lr_due) return;
     if (m->est_fail >= 1) { finish(m, LD_NO_LR, MNP_R_N400); return; }
     m->est_fail++;
     m->lr_due = 1;
@@ -287,8 +291,9 @@ static void on_ln(mnp_t *m, int nsa, int code)
         m->attn_rx = code;
         /* Table 5, destructive: what has not gone and what is not
          * delivered is discarded, the sequences start again; the LNA
-         * follows (A.6.7.1.4) */
-        if (code == MNP_LN_DESTRUCTIVE) brk_reset(m);
+         * follows (A.6.7.1.4). While our own LN 1 waits for its LNA, that
+         * LNA's reset is the one (Table 4): one reset per break. */
+        if (code == MNP_LN_DESTRUCTIVE && !m->brk_wait) brk_reset(m);
     }
     m->lna_due = 1;
     m->lna_nr = (uint8_t)nsa;
@@ -441,14 +446,11 @@ int mnp_tx_frame(mnp_t *m, uint8_t *f)
         return mnp_lr_build(f, MNP_MAX_BODY, &m->lr);
     }
     if (m->state != MNP_S_CONNECTED) return 0;
-    if (m->lna_due) {
-        m->lna_due = 0;
-        h.type = MNP_LNA;
-        h.nr = m->lna_nr;
-        return build(f, MNP_LAYOUT_STD, &h);
-    }
-    /* expedited LNs at once; a non-expedited one once the LTs pending at
-     * its request are acknowledged (A.7.4.1) */
+    /* expedited LNs at once, "immediately following the transmission in
+     * progress", ahead of an LNA too: when both ends break at once each
+     * LN then meets the other end's break still waiting, one reset each;
+     * a non-expedited one once the LTs pending at its request are
+     * acknowledged (A.7.4.1) */
     if (m->ln_send && m->ln_code >= 0 && (m->ln_code != MNP_LN_INSEQ || stored(m) == 0)) {
         m->ln_send = 0;
         m->ln_tries++;
@@ -457,6 +459,12 @@ int mnp_tx_frame(mnp_t *m, uint8_t *f)
         h.type = MNP_LN;
         h.ns = m->vsa;
         h.code = m->ln_code;
+        return build(f, MNP_LAYOUT_STD, &h);
+    }
+    if (m->lna_due) {
+        m->lna_due = 0;
+        h.type = MNP_LNA;
+        h.nr = m->lna_nr;
         return build(f, MNP_LAYOUT_STD, &h);
     }
     {

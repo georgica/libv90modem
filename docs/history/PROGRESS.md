@@ -4147,3 +4147,33 @@ Review fixes (round 1):
     qemu-arm armv5 (0.9 s, 1.9 s), clang, -DMNP_FCS2=1,2,3 -> identical outputs, 0 failures
     sizeof(mnp_t)                                     -> 3264 (x86-64), 3204 (ARMv5)
     make verify                                       -> VERIFY PASS (597 s; golden 144 identical; log: build/verify-task4-fix1.log)
+
+Review fixes (round 2):
+
+- `lr_failure` counts nothing while the resend it asked for has not gone
+  (`lr_due`). A.7.1.3 rejects only on a failure "after resending", so two
+  bad frames before our resend no longer end establishment.
+- One reset per break. A received LN 1 does not reset while our own LN 1
+  waits for its LNA, since that LNA's reset is the one. An expedited LN
+  (types 1 and 2) now goes ahead of an LNA owed, "immediately following the
+  transmission in progress" (A.7.4.1). So when both ends break at once, each
+  LN meets the other end's break still pending. The `mnp.h` contract now
+  says: hold the user's data until the LNA (Table 4), and flush on each
+  `resets` change.
+- `sim/mnppeer`, written from the Table 4 text: the destructive break takes
+  effect when it is asked for (`mnppeer_send_ln`), with the write and read
+  queues emptied and data held and discarded until its acknowledgement. A
+  received LN 1 during that wait does not reset. Its LN also goes before an
+  LNA owed (A.7.4.1).
+- Tests: LR, bad frame, bad frame, our LR, then the LA connects (and a bad
+  frame after the resend rejects); a frame-level break collision; LN 1 from
+  both ends in the same millisecond, against the peer and between two peers,
+  with exactly one reset at each end. That case runs without loss, because
+  a lost LN 1 arrives after the other end's break has finished and is a
+  second break.
+
+    test_mnp, test_mnppeer against 72df3dd's mnp.c / mnppeer.c -> 7 and 2 failures (LD 1 after two bad frames; resets 2)
+    v42/build/test_mnp                                       -> test_mnp: 486 checks, 0 failures
+    v42/build/test_mnppeer                                   -> test_mnppeer: 200 checks, 0 failures
+    qemu-arm armv5, clang, -DMNP_FCS2=1,2,3                   -> identical outputs, 0 failures
+    make verify                                              -> VERIFY PASS (695 s; golden 144 identical; log: build/verify-task4-fix2.log)

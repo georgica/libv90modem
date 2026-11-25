@@ -301,29 +301,14 @@ static void next_frame(mnppeer_t *p)
         p->layout = lay;
         return;
     }
-    if (p->lna_due) {
-        b[0] = 4; b[1] = T_LNA; b[2] = 1; b[3] = 1; b[4] = p->lna_nr;
-        p->lna_due = 0;
-        put_frame(p, b, 5, p->framing);
-        return;
-    }
+    /* an LN goes "immediately following the transmission in progress"
+     * (A.7.4.1, expedited), before an LNA owed */
     if (p->ln_code < 0 && p->lnq_n > 0) {
         p->ln_code = p->lnq[0];
         memmove(p->lnq, p->lnq + 1, (size_t)(p->lnq_n - 1) * sizeof p->lnq[0]);
         p->lnq_n--;
         p->ln_send = 1;
         p->ln_tries = 0;
-        /* Table 4, destructive: what has not gone is discarded, nothing
-         * more goes and what comes is discarded until the LNA; data not
-         * yet delivered is discarded */
-        if (p->ln_code == 1) {
-            p->brk_wait = 1;
-            p->txq_n = 0;
-            p->rxq_n = 0;
-            p->t401 = 0;
-            p->unacked = 0;
-            p->la_now = 0;
-        }
     }
     if (p->ln_send) {
         b[0] = 7; b[1] = T_LN; b[2] = 1; b[3] = 1; b[4] = p->vsa; b[5] = 2; b[6] = 1; b[7] = (uint8_t)p->ln_code;
@@ -331,6 +316,12 @@ static void next_frame(mnppeer_t *p)
         p->ln_tries++;
         p->ln_t = t401_data(p);
         put_frame(p, b, 8, p->framing);
+        return;
+    }
+    if (p->lna_due) {
+        b[0] = 4; b[1] = T_LNA; b[2] = 1; b[3] = 1; b[4] = p->lna_nr;
+        p->lna_due = 0;
+        put_frame(p, b, 5, p->framing);
         return;
     }
     {
@@ -654,7 +645,11 @@ static void on_frame(mnppeer_t *p, const uint8_t *b, int n, int framing)
             }
             p->lnr[p->lnr_n++] = b[7];
             p->vra++;
-            if (b[7] == 1) brk_reset(p);                 /* Table 5, destructive */
+            /* Table 5, destructive; but during our own destructive break
+             * (Table 4: data held and discarded "until receive
+             * acknowledgement") the reset waits for that acknowledgement,
+             * so a break from both ends resets once */
+            if (b[7] == 1 && !p->brk_wait) brk_reset(p);
         }
         p->lna_due = 1;
         p->lna_nr = b[4];
@@ -663,11 +658,16 @@ static void on_frame(mnppeer_t *p, const uint8_t *b, int n, int framing)
         if (li != 4 || n != 5 || b[2] != 1 || b[3] != 1) { bad_frame(p, framing); return; }
         if (p->phase != PH_DATA || p->ln_code < 0) return;
         if (b[4] == p->vsa) {                            /* A.7.4.6 */
+            int was = p->ln_code, i;
             p->vsa++;
             p->ln_code = -1;
             p->ln_send = 0;
             p->ln_t = 0;
-            if (p->brk_wait) { p->brk_wait = 0; brk_reset(p); }   /* Table 4 note a */
+            if (was == 1 && p->brk_wait) {               /* Table 4 note a */
+                p->brk_wait = 0;
+                brk_reset(p);
+                for (i = 0; i < p->lnq_n; i++) if (p->lnq[i] == 1) p->brk_wait = 1;   /* the next break */
+            }
         } else {
             p->ln_send = 1;                              /* A.7.4.7 */
         }
@@ -891,6 +891,17 @@ int mnppeer_send_ln(mnppeer_t *p, int code)
 {
     if (p->lnq_n == MNPP_LNQ) return 0;
     p->lnq[p->lnq_n++] = code & 0xFF;
+    /* Table 4, destructive, on the break's arrival: data not yet sent and
+     * data not yet delivered are discarded; nothing more goes and what
+     * comes is discarded until the acknowledgement */
+    if ((code & 0xFF) == 1 && p->state == MNPP_CONNECTED) {
+        p->brk_wait = 1;
+        p->txq_n = 0;
+        p->rxq_n = 0;
+        p->t401 = 0;
+        p->unacked = 0;
+        p->la_now = 0;
+    }
     return 1;
 }
 

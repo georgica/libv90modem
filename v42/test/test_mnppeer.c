@@ -664,21 +664,26 @@ static void raw_lr_on_bad(void)
 static void loop_break(void)
 {
     int from;
-    for (from = 0; from < 2; from++) {
+    for (from = 0; from < 3; from++) {
         mnp_peer_cfg a = cfg(1, 3), b = cfg(0, 3);
         loop_t l;
         mnppeer_t *s;
         uint8_t junk[256];
         long i, end;
         int vs_before;
-        a.lose_ppm = b.lose_ppm = 10000;
+        /* both at once: no loss, so each LN 1 meets the other end's own
+         * break (a lost one would arrive after it, a second break) */
+        a.lose_ppm = b.lose_ppm = from == 2 ? 0 : 10000;
         loop_init(&l, &a, &b);
         (void)loop_data(&l, (size_t)1 << 24, 3000);
-        s = from ? &l.b : &l.a;
+        /* 0 the originator, 1 the responder, 2 both in the same millisecond */
+        s = from == 1 ? &l.b : &l.a;
         vs_before = s->vs;
         CHECK(l.ab.got > 0 && l.ba.got > 0);
-        CHECK_EQ_I(mnppeer_send_ln(s, 1), 1);
-        for (i = 0; i < 60000 && !(l.a.resets == 1 && l.b.resets == 1 && s->ln_code < 0 && s->lnq_n == 0); i++) {
+        if (from != 1) CHECK_EQ_I(mnppeer_send_ln(&l.a, 1), 1);
+        if (from != 0) CHECK_EQ_I(mnppeer_send_ln(&l.b, 1), 1);
+        for (i = 0; i < 60000 && !(l.a.resets >= 1 && l.b.resets >= 1 && l.a.ln_code < 0 && l.b.ln_code < 0
+                                   && l.a.lnq_n == 0 && l.b.lnq_n == 0); i++) {
             loop_ms(&l);
             while (mnppeer_read(&l.a, junk, sizeof junk) > 0) {}
             while (mnppeer_read(&l.b, junk, sizeof junk) > 0) {}
@@ -691,7 +696,8 @@ static void loop_break(void)
         }
         CHECK_EQ_I(l.a.resets, 1);
         CHECK_EQ_I(l.b.resets, 1);
-        CHECK_EQ_I(mnppeer_get_ln(from ? &l.a : &l.b), 1);
+        if (from != 1) { CHECK_EQ_I(mnppeer_get_ln(&l.b), 1); CHECK_EQ_I(mnppeer_get_ln(&l.b), -1); }
+        if (from != 0) { CHECK_EQ_I(mnppeer_get_ln(&l.a), 1); CHECK_EQ_I(mnppeer_get_ln(&l.a), -1); }
         CHECK(vs_before > 1);
         stream_init(&l.ab, 0x5555u);
         stream_init(&l.ba, 0xAAAAu);
@@ -702,8 +708,8 @@ static void loop_break(void)
         CHECK_EQ_I(mnppeer_state(&l.b), MNPP_CONNECTED);
         CHECK_EQ_I(l.a.rx_over_credit, 0);
         CHECK_EQ_I(l.b.rx_over_credit, 0);
-        printf("loop_break: LN 1 from the %s: one reset each end, then 16 KiB each way %s\n",
-               from ? "responder" : "originator",
+        printf("loop_break: LN 1 from %s: one reset each end, then 16 KiB each way %s\n",
+               from == 0 ? "the originator" : from == 1 ? "the responder" : "both ends at once",
                (l.ab.h_out == l.ab.h_in && l.ba.h_out == l.ba.h_in) ? "intact" : "DAMAGED");
     }
 }

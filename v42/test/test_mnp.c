@@ -837,6 +837,28 @@ static void t_repeated_lr(void)
     CHECK(n == 5 && f[1] == 2 && f[4] == 1);
     CHECK_EQ_I(m.reason, MNP_R_N400);
 
+    /* two bad frames before our resend has gone: one resend, no
+     * rejection; the LA connects. A bad frame after the resend rejects. */
+    mnp_init(&m, &c);
+    CHECK_EQ_I(mnp_accept_lr(&m, courier_lr, sizeof courier_lr, 3), 0);
+    CHECK_EQ_I(mnp_tx_frame(&m, f), (int)sizeof courier_lr);
+    mnp_rx_bad(&m);
+    mnp_rx_bad(&m);
+    CHECK_EQ_I(m.state, MNP_S_CONFIRMING);
+    CHECK_EQ_I(mnp_tx_frame(&m, f), (int)sizeof courier_lr);
+    CHECK_EQ_I(mnp_tx_frame(&m, f), 0);
+    n = la_std(f, 0, 8);
+    mnp_rx_frame(&m, f, n);
+    CHECK_EQ_I(m.state, MNP_S_CONNECTED);
+    mnp_init(&m, &c);
+    CHECK_EQ_I(mnp_accept_lr(&m, courier_lr, sizeof courier_lr, 3), 0);
+    CHECK_EQ_I(mnp_tx_frame(&m, f), (int)sizeof courier_lr);
+    mnp_rx_bad(&m);
+    CHECK_EQ_I(mnp_tx_frame(&m, f), (int)sizeof courier_lr);
+    mnp_rx_bad(&m);
+    n = mnp_tx_frame(&m, f);
+    CHECK(n == 5 && f[1] == 2 && f[4] == 1);
+
     /* the caller's LR repeated forever: at most N400 of ours, then LD 1 */
     mnp_init(&m, &c);
     CHECK_EQ_I(mnp_accept_lr(&m, courier_lr, sizeof courier_lr, 3), 0);
@@ -952,7 +974,22 @@ static void t_destructive(void)
     n = lt_std(f, 1, (const uint8_t *)"W", 1);
     mnp_rx_frame(&m, f, n);
     CHECK_EQ_I(mnp_rx_avail(&m, NULL), 1);
-    printf("destructive: LN 1 received or sent: stored and held data dropped, one reset, N(S) 1 both ways after\n");
+
+    /* both ends at once: the far end's LN 1 while ours waits for its LNA
+     * gets its LNA and no reset; our LNA resets, once */
+    fl_connect(&m, &c);
+    CHECK_EQ_I(mnp_send_ln(&m, 1), 0);
+    n = mnp_tx_frame(&m, f);
+    CHECK(n == 8 && f[1] == 6 && f[7] == 1);
+    mnp_rx_frame(&m, ln, 8);
+    CHECK_EQ_I(m.resets, 0);
+    CHECK_EQ_I(mnp_get_ln(&m, &code), 1);
+    n = mnp_tx_frame(&m, f);
+    CHECK(n == 5 && memcmp(f, lna, 5) == 0);
+    mnp_rx_frame(&m, lna, 5);
+    CHECK_EQ_I(m.resets, 1);
+    CHECK_EQ_I(mnp_can_send(&m), 64);
+    printf("destructive: LN 1 received or sent: stored and held data dropped, one reset, N(S) 1 both ways after; both at once: one reset\n");
 }
 
 /* LN 1 mid-transfer against the peer, from either end, 1 % lost both
@@ -960,7 +997,7 @@ static void t_destructive(void)
 static void t_destructive_peer(void)
 {
     int from;
-    for (from = 0; from < 2; from++) {
+    for (from = 0; from < 3; from++) {
         mnp_cfg_t c;
         mnp_peer_cfg pc = peer_cfg(3);
         uint8_t junk[MNP_MAX_N401];
@@ -968,15 +1005,18 @@ static void t_destructive_peer(void)
         long i, end;
         int a, ok, code = -1;
         mnp_cfg_default(&c);
-        pc.lose_ppm = 10000;
+        /* both at once: no loss, so each LN 1 meets the other end's own
+         * break (a lost one would arrive after it, a second break) */
+        pc.lose_ppm = from == 2 ? 0 : 10000;
         rig_init(&R, &c, &pc, 9600);
-        R.lose_ppm = 10000;
+        R.lose_ppm = pc.lose_ppm;
         ok = rig_connect(&R, 10000);
         CHECK(ok);
         while (ok && R.ms < 3000) { rig_ms(&R); rig_data(&R, (size_t)1 << 24); }
         CHECK(R.up.got > 0 && R.down.got > 0);
-        if (from == 0) CHECK_EQ_I(mnp_send_ln(&R.m, 1), 0);
-        else CHECK_EQ_I(mnppeer_send_ln(&R.p, 1), 1);
+        /* 0 ours, 1 the peer, 2 both in the same millisecond */
+        if (from != 1) CHECK_EQ_I(mnp_send_ln(&R.m, 1), 0);
+        if (from != 0) CHECK_EQ_I(mnppeer_send_ln(&R.p, 1), 1);
         for (i = 0; i < 60000; i++) {
             rig_ms(&R);
             while (mnppeer_read(&R.p, junk, sizeof junk) > 0) {}
@@ -991,8 +1031,8 @@ static void t_destructive_peer(void)
         }
         CHECK_EQ_I(R.m.resets, 1);
         CHECK_EQ_I(R.p.resets, 1);
-        if (from == 0) CHECK_EQ_I(mnppeer_get_ln(&R.p), 1);
-        else { CHECK_EQ_I(mnp_get_ln(&R.m, &code), 1); CHECK_EQ_I(code, 1); }
+        if (from != 1) { CHECK_EQ_I(mnppeer_get_ln(&R.p), 1); CHECK_EQ_I(mnppeer_get_ln(&R.p), -1); }
+        if (from != 0) { CHECK_EQ_I(mnp_get_ln(&R.m, &code), 1); CHECK_EQ_I(code, 1); CHECK_EQ_I(mnp_get_ln(&R.m, &code), 0); }
         stream_init(&R.up, 0x5555u);
         stream_init(&R.down, 0xAAAAu);
         ok = rig_transfer(&R, 16384, R.ms + 300000);
@@ -1002,7 +1042,7 @@ static void t_destructive_peer(void)
         CHECK_EQ_I(mnppeer_state(&R.p), MNPP_CONNECTED);
         peer_clean(&R);
         printf("destructive_peer: LN 1 from %s mid-transfer: one reset each end, then 16 KiB each way %s\n",
-               from ? "the peer" : "ours", intact(&R, 16384) ? "intact" : "DAMAGED");
+               from == 0 ? "ours" : from == 1 ? "the peer" : "both ends at once", intact(&R, 16384) ? "intact" : "DAMAGED");
     }
 }
 
