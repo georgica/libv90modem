@@ -365,10 +365,13 @@ int  hst_det_energy(const hst_det_t *d);
 #define HST_OPEN_CODE   3    /* 7200 (BinModem's); provisional: Task 20 / R1 */
 #define HST_LONG_V17    1    /* every training, long or short, is V.17's long train */
 #define HST_3R_TRAINS   1    /* a 0x3R rate request is carried out with a training */
+#define HST_FMF_BM      1    /* the forward receiver starts from BinModem's pulse's matched
+                              * filter (hst_fmf_bm), not hst_fpulse's */
 #else
 #define HST_OPEN_CODE   4    /* 9600 before MNP agreement; provisional: Task 20 / R1 */
 #define HST_LONG_V17    0
 #define HST_3R_TRAINS   0
+#define HST_FMF_BM      0
 #endif
 
 /* samples from the tick that begins a symbol to the centre of its pulse on
@@ -459,6 +462,9 @@ int16_t hst_gf_tick(hst_gf_t *g, int16_t in);
  *          from the phase between the two tones, and the equaliser and
  *          carrier frequency kept (hst_frx_restore, or a carrier lost) or
  *          else the transmit pulse's matched filter and the tones' own turn
+ *          (the BinModem profile, HST_FMF_BM: BinModem's pulse's, its 560
+ *          Hz high-pass in it, hst_fmf_bm; from ours the receiver never
+ *          trained on BinModem's training, the error after AB some -4 dB)
  *   TRAIN  decision-directed on the 4 points A..D, fast steps (until the
  *          error has stayed under -20 dB for HST_FRX_HOLD symbols, in
  *          training or data), then tracking
