@@ -4519,3 +4519,30 @@ Review fixes (task-7-review.md):
     re-recorded: v42/test_mnp_frame.txt, v42/test_mnppeer.txt (new lines and the count only)
     new golden: v42/test_ec_hst.txt
     make verify                        -> VERIFY PASS (457 s; golden 149 identical, bench 17, ubsan, a7, big-endian, fixed)
+
+Review fixes (task-8-review.md):
+
+- I1: the receive layout (HST, no parameter 8 from both) is learned from
+  the caller's first frame that settles it once connected: one read only
+  one way, or an LT with exactly one reading in sequence (closing the
+  window at its first in-sequence LT). Until then a frame read two ways
+  as two types, neither an LT in sequence, is not acted on (an LA asks
+  again). The "LA/LN/LNA read only one way" comment was wrong (a standard
+  LNA is also a streamlined LT 7) and is gone. `test_ec_hst layout_learn`:
+  A (LT 4 lost, then LT 5), C (LT 2 again as `01 01 30`, a false LD), D
+  (a standard LNA at V(R) 7) fail on cfa6bc4 (6 failures: 7 octets
+  delivered, LD 48 and the call ended, 9 octets) and pass.
+- Minor: `gb_nr` cleared when T401 fires (a repeated N(R) may go back
+  again after a T401 resend).
+- m1 (a standard LD from a streamlined caller is missed) recorded in the
+  spec; m5: `attn_out` also checks our LN and our LD during a hold; m6: an
+  R2 line for the empty-mask reply; m2, m3 needed nothing; m7 noted (the
+  peer's T401 helper is shaped like ours; its pinned values were worked by
+  hand in the facts).
+- Decision 27: HST keeps N401 64 (decision 23 stands), with the
+  reviewer's T401 figures.
+- For Task 22: `rate_order` is read by role (holding back it is the far
+  holder's own 0x2R/0x3R, for the receiver to follow), and the pump must
+  bump `epoch` once it has followed one, or our back-channel LTs stay held
+  up to 12 s (`MNP_HST_HOLD_MAX_MS`).
+    make verify (fix round 1)          -> VERIFY PASS (461 s; golden 149 identical, replay 636, bench, ubsan, a7, big-endian, fixed); re-recorded: v42/test_ec_hst.txt (its own)

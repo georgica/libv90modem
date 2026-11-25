@@ -40,9 +40,13 @@
  * `hst` is 1 and:
  *  - we send the streamlined layouts when both LRs carry a non-zero
  *    parameter 8 (`streamlined`); we read every layout, the agreed one
- *    winning a tie, or with no parameter 8, the one the caller's last LA,
- *    LN or LNA came in (until one has come, the expected N(S) breaks a
- *    tie) [OURS];
+ *    winning a tie; with no parameter 8 from both, the caller's layout is
+ *    learned from its first frame that settles it once connected: one
+ *    that reads only one way, or an LT with exactly one reading in
+ *    sequence. Until then a tie of two types, neither an LT in sequence,
+ *    is not acted on (an LA asks again), and the expected N(S) breaks the
+ *    others. A standard LD from a caller sending streamlined reads as an
+ *    LT (the formats collide), so its LD is missed [OURS];
  *  - LN codes are attention codes, never breaks: as forward holder we
  *    grant 0x1R (a reversal: the LNA, and the endpoint reports when its
  *    closing flag has gone) and take 0x2R and 0x3R as orders for the pump;

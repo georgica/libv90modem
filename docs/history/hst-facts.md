@@ -378,6 +378,10 @@ is the type. From the firmware's receive path 8FBB:1892 and frame builders at
   tie. Reason: the Courier's LR template has no parameter 8, yet the patent
   streamlines all frames, so which one a Courier sends is unknown (spec "HST
   profile"). [OURS]
+- Before the caller's layout is known (no parameter 8 from both), it is
+  learned from its first frame that settles it, an in-sequence LT
+  included; a frame read two ways as two types, neither an LT in
+  sequence, is not acted on (spec "HST profile", review of Task 8). [OURS]
 - Frame lengths for T401 (Lf the frame overhead, Llt the LT header, Lla the LA
   header): octet-oriented Lf 7, bit-oriented Lf 4; non-optimised Llt 5 and Lla
   8; optimised Llt 3 and Lla 4 (A.7.5.1). [PUB]
@@ -848,6 +852,7 @@ training are recorded: they precede any frame.
 | the back channel's pulse, preamble, start and tribit order | 4 | after a reversal (c) | yes | |
 | the other 0xC0 bits; parameter 8; which layout a Courier sends | 5 | the Courier's reply LR, if BinModem's back channel gets through | yes | |
 | the IDs and layouts of NAK, LTA, LT1-3, LTR, LTDR | 6 | | `rx_unknown_id`; FIG. 5 read by a person | |
+| how a Courier takes a reply 0xC0 with an empty rate mask (`C0 02 01 00`, its offer 16800 only) | 5 | | a run with the Courier's rates set to 16800 only, if it allows | |
 | the rate change on the line (marks, trellis and scrambler continuity); reversal timing | 7 | after a reversal (c) | a long call with a forced shift, from status timestamps | |
 | the mode 2 FCS's initial value and octet order; how soon MNP callers send their LR (is T400 = 750 ms enough?) | 8 | | | yes |
 | when a Courier moves to the 300 back channel | 9 | (d) | `S15` bit 2 | |

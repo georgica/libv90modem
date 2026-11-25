@@ -162,6 +162,7 @@ be tested earlier, and the design is safer against HST's unknowns.
 | 24 | `v90m_ec_mem_size` is re-pinned at the measured value; no "+16 octets" bound. | controller |
 | 25 | W may grow up to 700 ms, only when HST is offered; sized in simulation. | controller |
 | 26 | A failed establishment (our LR unconfirmed after its one resend, A.7.1.3 and A.7.1.4) ends with LD reason 1 and `V90M_EC_R_N400`, not LD 4: Annex A gives the responder only code 1 (Table A.5: codes 1 to 3 are the establishment failures, 3 the initiator's only, 4 to 254 reserved), A.7.2.2 asks for an LD once protocol messages were received, and the Courier's S17 4 ("remote modem retry timeout") names a data-phase failure, which is where we send 4. **[OURS]** | controller (Task 8) |
+| 27 | HST keeps N401 64 by default (decision 23 stands); 256 only as the host configures it. A Courier can never agree it (its LR has no parameter 8, so the reply carries none), so 96 % would be BinModem's only; and N401 256 applies both ways, stretching T401 (with the HST extra) from 2.9 to 7.2 s holding forward at 14400/450, 3.9 to 10.3 s at 9600/300, 11.0 to 38.4 s holding back at 450 and 16.0 to 57.1 s at 300, so N400 x T401 to a dead link grows to 7.7-11.4 minutes, and one lost back-channel LT costs 4.7-7 s. | controller (Task 8 review) |
 
 ## The answering sequence
 
@@ -503,10 +504,19 @@ nibble is the rate code **[FW]**):
   rate up to `max_up_bps` is passed to the pump (its receiver follows);
   above it: an LNA, a count and our 0x2R at the cap **[OURS]**.
 - **The receive layout** when HST is agreed without a parameter 8 from
-  both (the Courier's template): the layout of the caller's last LA, LN
-  or LNA (which read only one way), and before one has come, the expected
-  N(S) breaks a tie, else standard **[OURS]**. With a layout agreed it wins
-  every tie, as above; plain MNP reads Annex A's layouts only.
+  both (the Courier's template) **[OURS]**: learned, once connected, from
+  the caller's first frame that settles it: one that reads only one way
+  (a standard LA, a streamlined LNA, ...), or an LT with exactly one of
+  its two readings in sequence (N(S) = V(R)), which every caller's first
+  in-sequence LT is. Before that, a frame read two ways as two types,
+  neither an LT in sequence (a standard LNA is also a streamlined LT 7; a
+  streamlined LT 2 with data `01 01 x` is also a standard LD), is not
+  acted on: an LA asks for it again. Otherwise the expected N(S) breaks a
+  tie, else standard. With a layout agreed it wins every tie, as above;
+  plain MNP reads Annex A's layouts only. Inherent to the formats: a
+  caller agreed streamlined that sends a standard LD (`04 02 01 01 r`) is
+  read as an LT 2 out of sequence, so its LD is missed and the call ends
+  by N400 or carrier loss.
 - **Go-back on HST** **[OURS]**: a repeated N(R) sends us back once per
   N(R) value. On the slow back channel the LAs that one lost LT draws (one
   per LT behind it, A.7.3.3 b) arrive one after another, each a go-back
@@ -520,8 +530,8 @@ nibble is the rate code **[FW]**):
   shorter than the round trip through the caller's LA at 450 bit/s and
   its hold-back, so a clean line carries about 76 % of the forward rate
   (simulation, Task 8; 91 % without the hold-back). N401 256 (parameter 8
-  bit 1, which BinModem offers) would carry 96 %, but decision 23 keeps
-  64 by default.
+  bit 1, which BinModem offers) would carry 96 %, but stays off by
+  default (decision 27).
 
 **Reversal policy (decision 14)** **[PUB, US 5,008,901]**: while we hold
 the back channel, we ask for the forward channel when our backlog (queued

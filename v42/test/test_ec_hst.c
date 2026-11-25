@@ -377,7 +377,7 @@ static void attn_in(void)
 static void attn_out(void)
 {
     unsigned long n0, la0;
-    int code = -1, t, held, lna_ok;
+    int code = -1, t, held, lna_ok, c16, at16;
     hst_setup(peer_bm(0x01), 14400, 450, 127, 0x7C, 6);
     CHECK(connect(5000) > 0);
     data_reset();
@@ -390,6 +390,8 @@ static void attn_out(void)
     CHECK_EQ_I(code, 0x16);
     CHECK_EQ_I(S.L.ln_req, 0);
     CHECK_EQ_I(st().attn_tx, 0x16);
+    c16 = code;
+    at16 = st().attn_tx;
     run(1000);                           /* its LNA comes back */
     CHECK_EQ_I(S.L.rev_lna_rx, 1);
     CHECK_EQ_I(S.L.rev_code, 6);
@@ -405,11 +407,24 @@ static void attn_out(void)
     lna_ok = peer_ln(0x24, 3000);        /* an LNA goes */
     CHECK(lna_ok);
     S.L.rate_order = 0;
+    S.L.ln_req = 0x25;                   /* an LN of ours goes too */
+    for (t = 0, code = -1; t < 3000 && code < 0; t++) { step(); code = mnppeer_get_ln(&P); }
+    CHECK_EQ_I(code, 0x25);
+    CHECK(lts() == n0);
     S.L.epoch++;
     run(300);
     CHECK(lts() > n0);
+    /* and our LD, an attention pending */
+    S.L.ln_req = 0x16;                   /* once 0x25's LNA is in, behind the caller's LT */
+    run(3000);
+    CHECK_EQ_I(S.L.ln_req, 0);
+    CHECK_EQ_I(E.l.mnp.attn_hold, 1);
+    v42ec_release(&E);
+    run(500);
+    CHECK_EQ_I(P.rx_ld_reason, 255);
     printf("attn_out: ln_req 16: LN %02X sent, attn_tx %02X, rev_lna_rx %d; LTs held %d, LAs %lu, the peer's LN answered %d; "
-           "LTs after the epoch\n", code, st().attn_tx, S.L.rev_lna_rx, held, E.l.mnp.tx_la - la0, lna_ok);
+           "LTs after the epoch; our LN and LD during a hold %s\n", c16, at16, S.L.rev_lna_rx, held,
+           E.l.mnp.tx_la - la0, lna_ok, P.rx_ld_reason == 255 && code == 0x25 ? "out" : "MISSING");
 }
 
 /* a pump that never reports the new state: the hold on our LTs ends after
@@ -434,6 +449,118 @@ static void hold_bound(void)
     CHECK(t_free >= MNP_HST_HOLD_MAX_MS && t_free <= MNP_HST_HOLD_MAX_MS + 100);
     CHECK_EQ_I(v42ec_state(&E), V42EC_CONNECTED);
     printf("hold_bound: no epoch: LTs again %d ms after the LN was asked for\n", t_free);
+}
+
+/* ---- frames straight into our receiver: HDLC with its own CRC ---- */
+static uint16_t crc16(const uint8_t *d, int n)
+{
+    uint16_t crc = 0xFFFFu;
+    int i, b;
+    for (i = 0; i < n; i++)
+        for (b = 0; b < 8; b++) {
+            unsigned x = (crc ^ (unsigned)(d[i] >> b)) & 1u;
+            crc = (uint16_t)(x ? (crc >> 1) ^ 0x8408u : crc >> 1);
+        }
+    return (uint16_t)(crc ^ 0xFFFFu);
+}
+
+static void rx_flag(void)
+{
+    int i;
+    for (i = 0; i < 8; i++) v42ec_rx_bit(&E, (0x7E >> i) & 1);
+}
+
+/* flag, body and FCS with zeros inserted, flag */
+static void inject(const uint8_t *body, int n)
+{
+    uint8_t f[300];
+    uint16_t c = crc16(body, n);
+    int i, b, ones = 0;
+    memcpy(f, body, (size_t)n);
+    f[n] = (uint8_t)(c & 0xFF);
+    f[n + 1] = (uint8_t)(c >> 8);
+    rx_flag();
+    for (i = 0; i < n + 2; i++)
+        for (b = 0; b < 8; b++) {
+            int x = (f[i] >> b) & 1;
+            v42ec_rx_bit(&E, x);
+            ones = x ? ones + 1 : 0;
+            if (ones == 5) { v42ec_rx_bit(&E, 0); ones = 0; }
+        }
+    rx_flag();
+}
+
+/* connected to a caller with no parameter 8 (we send standard), the line
+ * then stopped: the caller's layout not yet known, frames ours to give */
+static int any_setup(mnp_peer_cfg pc)
+{
+    hst_setup(pc, 14400, 450, 0, 0x7C, 6);
+    CHECK(connect(5000) > 0);
+    clock_on = 0;
+    return E.l.mnp.rx_layout;
+}
+
+static int read_all(uint8_t *b, int max)
+{
+    int n = 0, k;
+    while (n < max && (k = (int)v42ec_read(&E, b + n, (size_t)(max - n))) > 0) n += k;
+    return n;
+}
+
+/* Review I1: before the caller's layout is known, a frame read two ways
+ * must not deliver wrong octets nor end the call. A: standard LTs 1-3,
+ * LT 4 lost, standard LT 5 (also a streamlined LT 4); C: streamlined LTs
+ * 1, 2, then LT 2 again with data 01 01 30 (also a standard LD); D:
+ * standard LTs 1-6, then a standard LNA (also a streamlined LT 7) */
+static void layout_learn(void)
+{
+    mnp_peer_cfg std = peer_bm(0x01), str = peer_courier();
+    uint8_t b[64];
+    int la, lc, ld, na, nc, nd, i, st_c, ok_a, ok_d;
+    std.send_opt = 0; std.opt = 0;
+
+    la = any_setup(std);
+    CHECK_EQ_I(la, MNP_LAYOUT_ANY);
+    {
+        uint8_t lt[] = { 0x04, 0x04, 0x01, 0x01, 0x01, 0x61 };
+        for (i = 1; i <= 3; i++) { lt[4] = (uint8_t)i; lt[5] = (uint8_t)(0x60 + i); inject(lt, 6); }
+        lt[4] = 5; lt[5] = 0x65;
+        inject(lt, 6);
+    }
+    na = read_all(b, (int)sizeof b);
+    ok_a = na == 3 && b[0] == 0x61 && b[1] == 0x62 && b[2] == 0x63;
+    CHECK(ok_a);
+    CHECK_EQ_I(E.l.mnp.vr, 4);
+
+    lc = any_setup(str);
+    CHECK_EQ_I(lc, MNP_LAYOUT_ANY);
+    {
+        static const uint8_t l1[] = { 0x04, 0x01, 0x61 }, l2[] = { 0x04, 0x02, 0x62 };
+        static const uint8_t l2d[] = { 0x04, 0x02, 0x01, 0x01, 0x30 };
+        inject(l1, 3); inject(l2, 3); inject(l2d, 5);
+    }
+    nc = read_all(b, (int)sizeof b);
+    st_c = v42ec_state(&E);
+    CHECK_EQ_I(st_c, V42EC_CONNECTED);
+    CHECK_EQ_I(st().peer_ld_reason, 0);
+    CHECK(nc == 2 && b[0] == 0x61 && b[1] == 0x62);
+
+    ld = any_setup(std);
+    CHECK_EQ_I(ld, MNP_LAYOUT_ANY);
+    {
+        uint8_t lt[] = { 0x04, 0x04, 0x01, 0x01, 0x01, 0x78 };
+        static const uint8_t lna[] = { 0x04, 0x07, 0x01, 0x01, 0x01 };
+        for (i = 1; i <= 6; i++) { lt[4] = (uint8_t)i; inject(lt, 6); }
+        inject(lna, 5);
+    }
+    nd = read_all(b, (int)sizeof b);
+    ok_d = nd == 6;
+    for (i = 0; i < nd; i++) ok_d = ok_d && b[i] == 0x78;
+    CHECK(ok_d);
+    CHECK_EQ_I(E.l.mnp.vr, 7);
+    printf("layout_learn: A: LT 4 lost, then LT 5: %d octets, %s; C: LT 2 again as 01 01 30: state %d, %d octets; "
+           "D: a standard LNA at V(R) 7: %d octets, %s\n",
+           na, ok_a ? "right" : "WRONG", st_c, nc, nd, ok_d ? "right" : "WRONG");
 }
 
 /* a frame of an unknown id: counted, dropped, unacknowledged; its data
@@ -641,6 +768,7 @@ int main(void)
     attn_in();
     attn_out();
     hold_bound();
+    layout_learn();
     unknown();
     reversal_policy();
     max_up();

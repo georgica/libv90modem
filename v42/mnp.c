@@ -411,14 +411,47 @@ void mnp_rx_bad(mnp_t *m)
     else if (m->state == MNP_S_CONNECTED) m->la_due = 1;  /* A.7.3.3 a */
 }
 
+/* HST, the caller's layout not known (rx_layout MNP_LAYOUT_ANY): both
+ * readings of a frame. One fits: the caller's layout is that one's. Both
+ * fit: if exactly one is an LT in sequence (N(S) = V(R)) the layout is
+ * that one's and so is the frame; if they are of different types and
+ * neither is, the frame is not acted on (-1: an LA asks for it again),
+ * so a standard LNA is never data and a streamlined LT never an LD;
+ * else the tie rule of mnp_hdr_parse (no LT in sequence either way). An
+ * LR teaches nothing (always standard). Only once connected (V(R)). */
+static int parse_learn(mnp_t *m, const uint8_t *f, int len, mnp_hdr_t *h)
+{
+    mnp_hdr_t a, s;
+    int r = mnp_hdr_parse(f, len, MNP_LAYOUT_ANY, m->state == MNP_S_CONNECTED ? m->vr : 1, h);
+    int ra, rs, fa, fs, ain, sin;
+    if (m->state != MNP_S_CONNECTED || r != 0 || h->type == MNP_LR) return r;
+    ra = mnp_hdr_parse(f, len, m->layout | MNP_RX_ALL, -1, &a);
+    rs = mnp_hdr_parse(f, len, MNP_LAYOUT_STREAM, -1, &s);
+    fa = ra == 0 && a.layout != MNP_LAYOUT_STREAM;          /* the standard reading fits */
+    fs = rs == 0 && s.layout == MNP_LAYOUT_STREAM;          /* the streamlined one does */
+    if (fa != fs) {
+        m->rx_layout = fs ? MNP_LAYOUT_STREAM : (m->layout | MNP_RX_ALL);
+        return r;
+    }
+    ain = a.type == MNP_LT && a.ns == m->vr;
+    sin = s.type == MNP_LT && s.ns == m->vr;
+    if (ain != sin) {
+        m->rx_layout = sin ? MNP_LAYOUT_STREAM : (m->layout | MNP_RX_ALL);
+        *h = sin ? s : a;
+        return 0;
+    }
+    return a.type != s.type ? -1 : r;
+}
+
 void mnp_rx_frame(mnp_t *m, const uint8_t *f, int len)
 {
     mnp_hdr_t h;
     int r;
     if (m->state != MNP_S_CONFIRMING && m->state != MNP_S_CONNECTED) return;
     /* plain MNP: Annex A's layouts only; HST: every layout (mnp.h) */
-    r = mnp_hdr_parse(f, len, m->hst ? m->rx_layout : m->layout,
-                      m->state == MNP_S_CONNECTED ? m->vr : 1, &h);
+    if (m->hst && m->rx_layout == MNP_LAYOUT_ANY) r = parse_learn(m, f, len, &h);
+    else r = mnp_hdr_parse(f, len, m->hst ? m->rx_layout : m->layout,
+                           m->state == MNP_S_CONNECTED ? m->vr : 1, &h);
     if (r == MNP_PARSE_UNKNOWN) {
         /* counted and dropped, unacknowledged (`MNP frames`) */
         m->rx_unknown++;
@@ -426,11 +459,6 @@ void mnp_rx_frame(mnp_t *m, const uint8_t *f, int len)
         return;
     }
     if (r < 0) { mnp_rx_bad(m); return; }
-    /* HST, no layout agreed: the caller's, from a frame that cannot be
-     * read two ways (an LT can) */
-    if (m->hst && !m->streamlined && m->state == MNP_S_CONNECTED
-        && (h.type == MNP_LA || h.type == MNP_LN || h.type == MNP_LNA))
-        m->rx_layout = h.layout == MNP_LAYOUT_STREAM ? MNP_LAYOUT_STREAM : (m->layout | MNP_RX_ALL);
     /* our destructive LN is out: data from the far end is discarded, and
      * its LAs speak of the sequences about to start again (Table 4) */
     if (m->brk_wait && (h.type == MNP_LT || h.type == MNP_LA)) {
@@ -670,6 +698,7 @@ void mnp_tick(mnp_t *m, unsigned ms)
     if (m->state != MNP_S_CONNECTED) return;
     if (timer_run(&m->t401, t)) {                         /* A.7.3.5 b */
         m->t401_expiries++;
+        m->gb_nr = -1;                                    /* a repeated N(R) may go back again */
         if (stored(m) > 0) {
             if (m->credit > 0) {
                 /* again from the first unacknowledged LT; N400 of them (A.7.3.6) */
