@@ -16,6 +16,8 @@
 #                        no allocation outside api/v90modem.o
 #   make check-headers   every header compiles alone with -I. -Iinclude (its includes
 #                        relative to itself); make check runs it
+#   make check-diag-names  every engine error has its name in v90m_err_name, and every phase and modulation in its name helper
+#                        (tools/check-diag-names.sh); make check runs it
 #   make check-version   the Makefile's VERSION is the header's V90M_VERSION_*, README's
 #                        "This is X" and docs/getting-started.md's .so names; make
 #                        check runs it
@@ -59,7 +61,7 @@
 # test peer and may use double; it is never installed.
 
 NAME     := libv90modem
-VERSION  := 0.6.0
+VERSION  := 0.6.1
 # the SONAME's version: MAJOR.MINOR while MAJOR is 0 (every 0.x changes the
 # ABI), MAJOR from 1.0
 SOVER    := $(shell echo '$(VERSION)' | awk -F. '{ print ($$1 == 0 ? $$1 "." $$2 : $$1) }')
@@ -97,9 +99,9 @@ INC      := -Iinclude -Iapi -Imodem -Iv90 -Iv92 -Iv34 -Iv32 -Iv42 -Isim
 # ---- the library ----
 V42_SRC  := $(addprefix v42/,v42_hdlc.c v42_detect.c v42_comp.c v44_comp.c v42_lapm.c v42.c)
 CORE_SRC := $(wildcard modem/*.c) $(wildcard v90/*.c) $(wildcard v34/*.c) $(wildcard v32/*.c) $(wildcard v92/*.c) $(V42_SRC)
-API_SRC  := api/v90modem.c
+API_SRC  := api/v90modem.c api/v90modem_diag.c
 LIB_SRC  := $(API_SRC) $(CORE_SRC)
-LIB_HDR  := include/v90modem.h api/v90modem_priv.h api/v90modem_fields.h $(wildcard modem/*.h v90/*.h v34/*.h v32/*.h v92/*.h v42/*.h)
+LIB_HDR  := include/v90modem.h api/v90modem_priv.h api/v90modem_fields.h api/v90modem_diag.h $(wildcard modem/*.h v90/*.h v34/*.h v32/*.h v92/*.h v42/*.h)
 LIB_OBJ  := $(patsubst %.c,$(BUILD)/obj/%.o,$(LIB_SRC))
 PIC_OBJ  := $(patsubst %.c,$(BUILD)/pic/%.o,$(LIB_SRC))
 
@@ -136,7 +138,7 @@ TESTS    := test_g711 test_noise test_filt test_resamp test_channel test_v21 tes
 # runner (check-arm) runs each case as its own job
 SPLIT_TESTS := test_p34 test_orig_v92 test_orig_seeds test_orig_bell
 # the public API, against the library as it is installed
-API_TESTS := test_api test_ec_fields test_reneg
+API_TESTS := test_api test_ec_fields test_reneg test_diag
 SUBS     := v34 v90 v92 v42 v32
 
 .PHONY: test-x2-courier test-k56-sm56 test-fixtures test-examples all lib dev install uninstall clean check check-arm check-ubsan test test-arm test-all test-times test-api test-interop examples bench-v90 bench-v34 bench-v90a bench-v90c bench-v92c replay
@@ -298,17 +300,24 @@ API_INC := -Iinclude -Itest -Isim -Imodem -Iv90 -Iv92 -Iv34
 # the renegotiation test reaches the engines' handles: the development archive alone
 $(BUILD)/api_test_reneg: test/api/test_reneg.c $(DEV) include/v90modem.h api/v90modem_priv.h
 	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -Iapi -o $@ $< $(DEV) $(LDLIBS)
+# every error an engine's header defines has a name (tools/check-diag-names.sh)
+.PHONY: check-diag-names
+check-diag-names: $(BUILD)/api_test_diag tools/check-diag-names.sh
+	@tools/check-diag-names.sh $(abspath $(BUILD))/api_test_diag
 # the cross-built libraries, built once per make run, before any test program
 # that links them (several of those at once, each building the same library,
-# raced under -j)
+# raced under -j). The archives are targets of their own, made by that one
+# run, so a test program is linked again when one of them changed.
 .PHONY: arm-api-libs
 arm-api-libs:
 	@$(MAKE) -s BUILD=$(BUILD)/arm CC=$(ARM_CC) $(BUILD)/arm/$(NAME).a $(BUILD)/arm/$(NAME)-dev.a check-symbols
-$(BUILD)/arm/api_test_reneg: test/api/test_reneg.c include/v90modem.h api/v90modem_priv.h | arm-api-libs
+ARM_API_LIBS := $(BUILD)/arm/$(NAME).a $(BUILD)/arm/$(NAME)-dev.a
+$(ARM_API_LIBS): arm-api-libs ;
+$(BUILD)/arm/api_test_reneg: test/api/test_reneg.c include/v90modem.h api/v90modem_priv.h $(ARM_API_LIBS)
 	$(ARM_CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -Iapi -static -o $@ $< $(BUILD)/arm/$(NAME)-dev.a $(LDLIBS)
-$(BUILD)/api_test_%: test/api/test_%.c $(STATIC) $(DEV) include/v90modem.h api/v90modem_fields.h
+$(BUILD)/api_test_%: test/api/test_%.c $(STATIC) $(DEV) include/v90modem.h api/v90modem_fields.h api/v90modem_diag.h
 	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -o $@ $< $(STATIC) $(DEV) $(LDLIBS)
-$(BUILD)/arm/api_test_%: test/api/test_%.c include/v90modem.h api/v90modem_fields.h | arm-api-libs
+$(BUILD)/arm/api_test_%: test/api/test_%.c include/v90modem.h api/v90modem_fields.h api/v90modem_diag.h $(ARM_API_LIBS)
 	$(ARM_CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -static -o $@ $< $(BUILD)/arm/$(NAME).a $(BUILD)/arm/$(NAME)-dev.a $(LDLIBS)
 
 test: $(addprefix $(BUILD)/,$(TESTS))
@@ -367,7 +376,7 @@ endif
 test-times:
 	@tools/par-run.sh --merge $(BUILD)/test-times.txt tools/test-times.txt && echo "tools/test-times.txt: from $(BUILD)/test-times.txt"
 
-check: test-all test-api test-examples test-fixtures check-symbols check-soname check-version check-headers
+check: test-all test-api test-examples test-fixtures check-symbols check-soname check-version check-headers check-diag-names
 	@echo "ALL HOST CHECKS PASS"
 # Golden outputs (tools/golden.sh): every program of make check, its output
 # (less host timing) against test/golden/out/<dir>/<prog>.txt. golden runs
@@ -834,6 +843,6 @@ $(BUILD)/bench_v42.arm: rig/bench_v42.c $(V42_SRC) $(wildcard v42/*.h)
 	$(ARM_CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(EXTRA_CPPFLAGS) -Iv42 -static -o $@ rig/bench_v42.c $(V42_SRC) $(LDLIBS)
 # a simulated call of the library's caller, recorded at the answerer as v90d
 # records real ones (tools/rec_orig.c; host only)
-$(BUILD)/rec_orig: tools/rec_orig.c $(SIM_SRC) $(MODEM_SRC) api/v90modem.c $(HDRS) test/v90link.h test/line34.h
+$(BUILD)/rec_orig: tools/rec_orig.c $(SIM_SRC) $(MODEM_SRC) $(API_SRC) api/v90modem_diag.h $(HDRS) test/v90link.h test/line34.h
 	@mkdir -p $(BUILD)
-	$(CC) $(T_CFLAGS) -Iinclude -Iapi -o $@ tools/rec_orig.c api/v90modem.c $(SIM_SRC) $(MODEM_SRC) $(addprefix v42/,v42_hdlc.c v42_detect.c v42_comp.c v44_comp.c v42_lapm.c v42.c) $(LDLIBS)
+	$(CC) $(T_CFLAGS) -Iinclude -Iapi -o $@ tools/rec_orig.c $(API_SRC) $(SIM_SRC) $(MODEM_SRC) $(addprefix v42/,v42_hdlc.c v42_detect.c v42_comp.c v44_comp.c v42_lapm.c v42.c) $(LDLIBS)

@@ -8,6 +8,53 @@ change is listed here. Rebuild against the new header with every version;
 "Simulation and own answerer only" means: tried against simulated lines and
 this library's own answering modem, never against a real modem or server.
 
+## 0.6.1 (2026-11-24)
+
+Added:
+- Start-up diagnostics, either role: `v90m_get_diag` fills a `v90m_diag`
+  with the cause of the end in the engines' own words (`error`, named by
+  `v90m_err_name`, e.g. `P2D_ERR_INFO1A`; 0 while the call goes on and
+  after an orderly cleardown once data mode was reached), the furthest
+  phase reached (`phase`, `v90m_phase`: tone, V.8, Phases 2 to 4, the
+  start-up of the modulations without phases, data; a retrain does not
+  take it back), the modulation chosen
+  (`selected`, a `v90m_conn`: set from V.8's JM or the legacy detection as
+  soon as it is chosen, whether or not training finishes, and then
+  following the call to the modulation in force) and whether data mode
+  was reached (`data_reached`). The start-up failed if, and only if, the
+  call ended with `data_reached` 0. `v90m_phase_name` and
+  `v90m_conn_name` give short names for a log line. Kept after the end
+  until `v90m_reset`. The names are diagnostic text, not an enum: they do
+  not change within 0.6.x; the numbers may. A struct and function of
+  their own rather than fields appended to `v90m_state` or `v90m_stats`,
+  so that a program built against 0.6.0 still runs on 0.6.1's shared
+  library; `v90m_diag` keeps its size within 0.6 likewise.
+  `V90M_MEM_SIZE` and `v90m_mem_size()` are unchanged. `make check` now
+  fails when an engine's error has no name (`check-diag-names`).
+
+Fixed:
+- Answering role, V.90 and V.92: a caller that lost our INFO1d and started
+  Phase 2 over with INFO0a (seen on a call to an ISP) failed the call with
+  `P2D_ERR_INFO1A`. We now answer as V.90 9.2.1.2.1 asks: INFO0d with bit 28
+  set, then Tone B, and Phase 2 goes on; the same for INFO0a while we wait
+  for the second Tone A phase reversal. Two such restarts per Phase 2; a
+  third INFO0a is ignored, as every one was before. An INFO1a always wins
+  over an INFO0a that its first bits would make. Simulation and own
+  answerer only.
+
+Build:
+- The cross-built API test programs (`make test-api-arm`, `check-arm`) are
+  linked again when `libv90modem.a` or its `-dev` archive changes; they
+  were left stale before. The libraries are still built once per run.
+- `make check` also fails when a phase or modulation of the public enums
+  has no name in `v90m_phase_name` / `v90m_conn_name`.
+
+CPU (ARMv5, qemu instruction trace counts of the answering V.90 call through
+the API, `bench_api.arm`, against 1c778a6, before the diagnostics): data
+mode costs 72 k instructions more per second of line (31 981 009 to
+32 053 009, +0.2 %; the diagnostics' tracking is skipped while data
+moves); Phase 2 costs 224 k more per second (+4 %), start-up only.
+
 ## 0.6.0 (2026-11-24)
 
 Security (V.92, calling role; no 0.5.x patch: upgrade to 0.6.0):
