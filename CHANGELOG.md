@@ -8,7 +8,7 @@ change is listed here. Rebuild against the new header with every version;
 "Simulation and own answerer only" means: tried against simulated lines and
 this library's own answering modem, never against a real modem or server.
 
-## 0.6.1 (unreleased)
+## 0.6.1 (2026-11-24)
 
 Added:
 - Start-up diagnostics, either role: `v90m_get_diag` fills a `v90m_diag`
@@ -41,6 +41,19 @@ Fixed:
   third INFO0a is ignored, as every one was before. An INFO1a always wins
   over an INFO0a that its first bits would make. Simulation and own
   answerer only.
+
+Build:
+- The cross-built API test programs (`make test-api-arm`, `check-arm`) are
+  linked again when `libv90modem.a` or its `-dev` archive changes; they
+  were left stale before. The libraries are still built once per run.
+- `make check` also fails when a phase or modulation of the public enums
+  has no name in `v90m_phase_name` / `v90m_conn_name`.
+
+CPU (ARMv5, qemu instruction trace counts of the answering V.90 call through
+the API, `bench_api.arm`, against 1c778a6, before the diagnostics): data
+mode costs 72 k instructions more per second of line (31 981 009 to
+32 053 009, +0.2 %; the diagnostics' tracking is skipped while data
+moves); Phase 2 costs 224 k more per second (+4 %), start-up only.
 
 ## 0.6.0 (2026-11-24)
 
