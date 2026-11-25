@@ -52,8 +52,9 @@
  *    receivers afresh; GAP, HST_REV_GAP_MS; then TRAIN, our short training
  *    at R (the far receiver kept its equaliser) and its HST_ONES_N ones
  *    (getbit not called), then epoch.
- * At each switch tx and rx exchange (RATES), `reversals` counts it, and
- * data does not stop (moving stays 1); the taking back is also a retrain.
+ * At each switch tx and rx exchange (RATES) and data does not stop
+ * (moving stays 1); `reversals` counts the agreed ones. The taking back is
+ * a retrain only (data stops; the far end never switched).
  * Rate changes are Task 22, the other watchdogs and the far end's
  * cleardown Task 23. */
 #include <string.h>
@@ -174,7 +175,11 @@ static int back_bps(const hst_t *h) { return h->link.back300 ? 300 : 450; }
 /* holding forward, our LNA granting a 0x1R drained 20 ms ago, between
  * frames: the forward carrier stops; the back receivers' held bits are
  * given and the receivers left (the far end stops its back channel on our
- * LNA, by which time we send there ourselves); our back transmitter
+ * LNA, by which time we send there ourselves: what it sends between our
+ * switch and its stop, control frames only while the reversal is pending,
+ * is lost, which is why the endpoint acknowledges anew at the epoch; both
+ * back channels share one band, and listening on would be under our own
+ * back channel's echo; Task 21 review M2); our back transmitter
  * starts (its preamble), and the forward receiver, from the equaliser
  * kept from our last time on it (spec "Channel reversal", steps 2 and 4) */
 static void to_back(answer_t *a)
@@ -207,7 +212,10 @@ static void to_back(answer_t *a)
  * once, the forward receiver's equaliser kept, the back receivers start
  * afresh (the far end's back channel begins at its switch). Our training
  * follows (`rev`: GAP, 200 ms, then the short one; TRAIN at once, taking
- * the forward channel back unasked) */
+ * the forward channel back unasked). The endpoint's HDLC transmitter is
+ * not reset (spec step 4): a frame the stop cut goes on, after our
+ * training, without its opening flag, and the far receiver drops it; the
+ * endpoint resends what it carried (Task 21 review M4) */
 static void to_fwd(answer_t *a, int rev)
 {
     hst_t *h = &a->u.hst;
@@ -222,7 +230,8 @@ static void to_fwd(answer_t *a, int rev)
     h->link.fwd_code = h->code;
     a->bitrate = h->link.tx_bps = 2400 * h->code;
     a->rx_bitrate = h->link.rx_bps = lane_bps(h->lane);
-    h->reversals++;
+    if (rev == HST_REV_GAP) h->reversals++;   /* taking it back unasked is a retrain only: the
+                                                 far end never switched (Task 21 review M1) */
     h->rev = rev; h->rt = 0;
     if (rev == HST_REV_TRAIN) {
         h->next = h->code; h->ones = 0;

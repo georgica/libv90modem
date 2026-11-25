@@ -5871,3 +5871,30 @@ Sizes: `hstcall_t` 165712 octets (x86-64), test side only. Host run 33 s
 - `make check`: ALL HOST CHECKS PASS (x86-64; ARM, verify-phase and ports
   not run, the owner's rule until the release).
 
+### hst 21, review fixes 1 (2026-11-25)
+
+- **I1:** the BinModem profile's API path works; the base "failure" was
+  the test's: built without `-DHST_PROFILE_BM` itself (the API rule took
+  no EXTRA_CPPFLAGS) and with a caller that did not train as BinModem.
+  `test_answer_hst` is profile-aware (`hc_defaults` sets `bm_training`;
+  the S3 shown, the switch window 20 ms + 32 symbols: 33-36 ms; ms of ones
+  from the host's last bit to the switch, 13-15 under the profile, 0-1
+  without), and runs `rates` and `rev_caller` in `make check-hst-bm`
+  (`HST_BM_TESTS` += api_test_answer_hst; new golden
+  test/golden/out/bm/api_test_answer_hst.txt): the 11 calls reach data
+  intact, the reversal switches 34 ms after the LNA drained, 13 ms after
+  the host's last bit. With the turn-off disabled both bounds fail (21 ms,
+  0 ms).
+- **I2 (controller's ruling, D14 amended):** the reversal request counts
+  untransmitted (queued) octets only, as the patent; our LA first after a
+  reversal stays; hstcall's is an option, `la_after_rev`, off by default.
+  With the old count and that caller rev_ours made 4 reversals; now 2
+  (rev_back300 2), and the new `rev_ours_la` (the option on) 2. Spec D14,
+  hst-facts `Reversal`, v42/mnp.h say so, tagged [OURS].
+- **M1:** taking the forward channel back unasked is a retrain only;
+  rev_lost pins reversals 2 (that switch and the caller's later one), the
+  caller's 1, retrains 2. M2, M4: comments by `to_back` and `to_fwd`. M3,
+  M6 left for Task 23. M5: the forward receiver's SNR reads 1.2 dB under
+  the line's on the loop4 line (0.6 on a flat one): a known gap.
+- rev_many now 23 reversals once drained (was 25); 20 by the same bound.
+

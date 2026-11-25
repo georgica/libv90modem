@@ -665,9 +665,14 @@ As responder (we answer), from Annex A.7.1 (PS §3.1):
   least a predetermined minimum (for example 2 seconds). The LN is "a type 4
   LN" sent by the back channel; "a LNA is sent at the current speed, and then
   the reversal takes place" (P1:416, P1:466; PS §1.5). [PUB]
-- Our policy: ask when the backlog (queued plus unacknowledged) is over 64
-  octets, the far end has held the forward channel at least 2 s, and no other
-  attention is outstanding (SPEC D14, from the patent). [OURS]
+- Our policy: ask when the backlog of untransmitted (queued) octets is over
+  64, the far end has held the forward channel at least 2 s, and no other
+  attention is outstanding (SPEC D14, from the patent). [OURS] Amended in
+  Task 21's review (controller's ruling): D14 first counted unacknowledged
+  octets too; an LA lost at a reversal's switch then kept the backlog over
+  64 until T401 and asked for a needless reversal 2 s on, against a far end
+  that does not acknowledge anew after a reversal (4 reversals for 2 in
+  rev_ours, 6 at 300). [OURS]
 - BinModem's policy: backlog over 256 octets, at least 3000 ms since the last
   switch, link up, nothing pending (BF §4). [BM]
 - Our steps: the holder, once its LNA and closing flag have left, plus 20 ms,
@@ -677,12 +682,13 @@ As responder (we answer), from Annex A.7.1 (PS §3.1):
   (spec "Channel reversal"). [OURS]
 - BinModem's: the holder waits until its encoder and queue are empty plus 120
   ms; the requester waits 400 ms (BF §4). [BM]
-- Each end sends an LA as its first frame on its new channel once the
-  reversal is done (our endpoint at the pump's epoch; sim/hstcall at its
-  switch): the LAs in flight at the switch are lost by construction (the
-  holder stops listening at its switch, the requester stops at once on the
-  LNA), and the LTs they acknowledged would otherwise count in the backlog
-  until T401, asking for a needless reversal 2 s on (Task 21). [OURS]
+- Our endpoint sends an LA as its first frame on its new channel once the
+  reversal is done (at the pump's epoch): the LAs in flight at the switch
+  are lost by construction (the holder stops listening at its switch, the
+  requester stops at once on the LNA), and a far end whose policy counts
+  unacknowledged octets would ask for a needless reversal before its T401
+  (Task 21). sim/hstcall does the same only with `la_after_rev` set (off by
+  default: nothing says a Courier does). [OURS]
 - At the holder's switch our back receivers' held bits are given, and a back
   receiver losing a lock gives its held bits but for the faded symbols', so
   a frame sent just before a far carrier stop arrives whole (Task 21). [OURS]

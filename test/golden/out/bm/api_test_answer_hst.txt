@@ -1,0 +1,99 @@
+test_answer_hst: the HST answering branch through the API, the BinModem profile (W 650 ms)
+rates: code 2, back 450, start 450
+  connected: HST 1, tx 7200 rx 450; now tx 4800 rx 450; retrains 1, reversals 0; MNP hst 1 rates 0x04 back300 0
+  data: 16384 of 16384 octets to the caller, 16384 of 16384 to us, 0 wrong
+  CONNECTED as HST at the opening rate: pass
+  in data at the best agreed rate and the back speed: pass
+  the post-agreement retrain: DATA_STOPPED, then DATA_MOVING: pass
+  RATES with the best agreed rate: pass
+  the data both ways, intact: pass
+rates: code 2, back 300, start 450
+  connected: HST 1, tx 7200 rx 450; now tx 4800 rx 300; retrains 1, reversals 0; MNP hst 1 rates 0x04 back300 1
+  data: 16384 of 16384 octets to the caller, 16384 of 16384 to us, 0 wrong
+  CONNECTED as HST at the opening rate: pass
+  in data at the best agreed rate and the back speed: pass
+  the post-agreement retrain: DATA_STOPPED, then DATA_MOVING: pass
+  RATES with the best agreed rate: pass
+  the data both ways, intact: pass
+rates: code 3, back 450, start 450
+  connected: HST 1, tx 7200 rx 450; now tx 7200 rx 450; retrains 1, reversals 0; MNP hst 1 rates 0x0C back300 0
+  data: 16384 of 16384 octets to the caller, 16384 of 16384 to us, 0 wrong
+  CONNECTED as HST at the opening rate: pass
+  in data at the best agreed rate and the back speed: pass
+  the post-agreement retrain: DATA_STOPPED, then DATA_MOVING: pass
+  the data both ways, intact: pass
+rates: code 3, back 300, start 450
+  connected: HST 1, tx 7200 rx 450; now tx 7200 rx 300; retrains 1, reversals 0; MNP hst 1 rates 0x0C back300 1
+  data: 16384 of 16384 octets to the caller, 16384 of 16384 to us, 0 wrong
+  CONNECTED as HST at the opening rate: pass
+  in data at the best agreed rate and the back speed: pass
+  the post-agreement retrain: DATA_STOPPED, then DATA_MOVING: pass
+  the data both ways, intact: pass
+rates: code 4, back 450, start 450
+  connected: HST 1, tx 7200 rx 450; now tx 9600 rx 450; retrains 1, reversals 0; MNP hst 1 rates 0x1C back300 0
+  data: 16384 of 16384 octets to the caller, 16384 of 16384 to us, 0 wrong
+  CONNECTED as HST at the opening rate: pass
+  in data at the best agreed rate and the back speed: pass
+  the post-agreement retrain: DATA_STOPPED, then DATA_MOVING: pass
+  RATES with the best agreed rate: pass
+  the data both ways, intact: pass
+rates: code 4, back 300, start 450
+  connected: HST 1, tx 7200 rx 450; now tx 9600 rx 300; retrains 1, reversals 0; MNP hst 1 rates 0x1C back300 1
+  data: 16384 of 16384 octets to the caller, 16384 of 16384 to us, 0 wrong
+  CONNECTED as HST at the opening rate: pass
+  in data at the best agreed rate and the back speed: pass
+  the post-agreement retrain: DATA_STOPPED, then DATA_MOVING: pass
+  RATES with the best agreed rate: pass
+  the data both ways, intact: pass
+rates: code 5, back 450, start 450
+  connected: HST 1, tx 7200 rx 450; now tx 12000 rx 450; retrains 1, reversals 0; MNP hst 1 rates 0x3C back300 0
+  data: 16384 of 16384 octets to the caller, 16384 of 16384 to us, 0 wrong
+  CONNECTED as HST at the opening rate: pass
+  in data at the best agreed rate and the back speed: pass
+  the post-agreement retrain: DATA_STOPPED, then DATA_MOVING: pass
+  RATES with the best agreed rate: pass
+  the data both ways, intact: pass
+rates: code 5, back 300, start 450
+  connected: HST 1, tx 7200 rx 450; now tx 12000 rx 300; retrains 1, reversals 0; MNP hst 1 rates 0x3C back300 1
+  data: 16384 of 16384 octets to the caller, 16384 of 16384 to us, 0 wrong
+  CONNECTED as HST at the opening rate: pass
+  in data at the best agreed rate and the back speed: pass
+  the post-agreement retrain: DATA_STOPPED, then DATA_MOVING: pass
+  RATES with the best agreed rate: pass
+  the data both ways, intact: pass
+rates: code 6, back 450, start 450
+  connected: HST 1, tx 7200 rx 450; now tx 14400 rx 450; retrains 1, reversals 0; MNP hst 1 rates 0x7C back300 0
+  data: 16384 of 16384 octets to the caller, 16384 of 16384 to us, 0 wrong
+  CONNECTED as HST at the opening rate: pass
+  in data at the best agreed rate and the back speed: pass
+  the post-agreement retrain: DATA_STOPPED, then DATA_MOVING: pass
+  RATES with the best agreed rate: pass
+  the data both ways, intact: pass
+rates: code 6, back 300, start 450
+  connected: HST 1, tx 7200 rx 450; now tx 14400 rx 300; retrains 1, reversals 0; MNP hst 1 rates 0x7C back300 1
+  data: 16384 of 16384 octets to the caller, 16384 of 16384 to us, 0 wrong
+  CONNECTED as HST at the opening rate: pass
+  in data at the best agreed rate and the back speed: pass
+  the post-agreement retrain: DATA_STOPPED, then DATA_MOVING: pass
+  RATES with the best agreed rate: pass
+  the data both ways, intact: pass
+rates: code 6, back 300, start 300
+  connected: HST 1, tx 7200 rx 300; now tx 14400 rx 300; retrains 1, reversals 0; MNP hst 1 rates 0x7C back300 1
+  data: 16384 of 16384 octets to the caller, 16384 of 16384 to us, 0 wrong
+  CONNECTED as HST at the opening rate: pass
+  in data at the best agreed rate and the back speed: pass
+  the post-agreement retrain: DATA_STOPPED, then DATA_MOVING: pass
+  RATES with the best agreed rate: pass
+  the data both ways, intact: pass
+rev_caller: the caller's backlog: its 0x1R, our LNA, its training
+  switches 1; the caller's training S3 64 at code 6
+  one reversal: to the back channel: pass
+  to the back channel 20 ms and V.17's turn-off after our LNA drained: pass
+  ones, no host bit, from the cut to the switch: pass
+  there our forward carrier stops, our back transmitter starts at the agreed speed: pass
+  RATES with tx and rx exchanged: pass
+  the caller trains forward at the rate in force, the long training: pass
+  reversals 1 (the caller's 1), retrains 1, renegotiations 0; data 2048 of 2048 to the caller, 2048 of 2048 to us, 0 wrong
+  data never stopped after the post-agreement retrain: pass
+  the data both ways, intact: pass
+test_answer_hst: 187 checks, 0 failures

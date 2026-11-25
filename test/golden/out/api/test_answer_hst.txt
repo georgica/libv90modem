@@ -179,6 +179,7 @@ rev_caller: the caller's backlog: its 0x1R, our LNA, its training
   switches 1; the caller's training S3 3096 at code 6
   one reversal: to the back channel: pass
   to the back channel 20 ms after our LNA drained: pass
+  ones, no host bit, from the cut to the switch: pass
   there our forward carrier stops, our back transmitter starts at the agreed speed: pass
   RATES with tx and rx exchanged: pass
   the caller trains forward at the rate in force, the long training: pass
@@ -189,6 +190,7 @@ rev_ours: then our backlog: our 0x1R, its LNA, our training
   switches 2; our 0x1R 0x16; the caller's receiver from its kept equaliser on 1 of 1 of our trainings
   two reversals: to the back channel and back: pass
   to the back channel 20 ms after our LNA drained: pass
+  ones, no host bit, from the cut to the switch: pass
   there our forward carrier stops, our back transmitter starts at the agreed speed: pass
   RATES with tx and rx exchanged: pass
   to the forward channel at the caller's LNA: our back transmitter stopped: pass
@@ -203,6 +205,7 @@ rev_back300: the same, the back channel at 300
   switches 2; our 0x1R 0x16; the caller's receiver from its kept equaliser on 1 of 1 of our trainings
   two reversals: to the back channel and back: pass
   to the back channel 20 ms after our LNA drained: pass
+  ones, no host bit, from the cut to the switch: pass
   there our forward carrier stops, our back transmitter starts at the agreed speed: pass
   RATES with tx and rx exchanged: pass
   to the forward channel at the caller's LNA: our back transmitter stopped: pass
@@ -214,16 +217,32 @@ rev_back300: the same, the back channel at 300
   data never stopped after the post-agreement retrain: pass
   the data both ways, intact: pass
 rev_many: both ends behind, 20 reversals
-  20 reversals (the caller's 20) within 120 s; the caller's trainings 13, the long one first 1, short after 1
+  20 reversals (the caller's 20) within 120 s; the caller's trainings 12, the long one first 1, short after 1
   the caller's trainings: long the first time, short after: pass
-  then: reversals 25 (the caller's 25); data 11776 octets to the caller, 9728 to us, 0 wrong
+  then: reversals 23 (the caller's 23); data 11008 octets to the caller, 10944 to us, 0 wrong
   then the data delivered, intact; both ends count the same: pass
   data never stopped after the post-agreement retrain: pass
 rev_lost: the caller never trains after our LNA
   switches 3: to the back channel, then the forward one taken back within 3 s
   the forward channel taken back within 3 s of the switch: pass
   then the data both ways, intact: pass
+  reversals 2 (the caller's 1), retrains 2
 snr: holding the back channel, the forward receiver's SNR
   holding the back channel: yes
   v90m_stats.snr_db10 within 1 dB of the line's SNR: pass
-test_answer_hst: 484 checks, 0 failures
+rev_ours_la: rev_ours, the caller sending an LA first after each switch
+  switches 2; our 0x1R 0x16; the caller's receiver from its kept equaliser on 1 of 1 of our trainings
+  two reversals: to the back channel and back: pass
+  to the back channel 20 ms after our LNA drained: pass
+  ones, no host bit, from the cut to the switch: pass
+  there our forward carrier stops, our back transmitter starts at the agreed speed: pass
+  RATES with tx and rx exchanged: pass
+  to the forward channel at the caller's LNA: our back transmitter stopped: pass
+  200 ms on, our forward training, the short one: pass
+  RATES with tx and rx exchanged: pass
+  our 0x1R at the forward rate in force: pass
+  the caller's receiver started from its kept equaliser: pass
+  reversals 2 (the caller's 2), retrains 1, renegotiations 0; data 4096 of 4096 to the caller, 2048 of 2048 to us, 0 wrong
+  data never stopped after the post-agreement retrain: pass
+  the data both ways, intact: pass
+test_answer_hst: 513 checks, 0 failures

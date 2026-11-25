@@ -320,7 +320,7 @@ $(BUILD)/api_test_ec_hstlink: test/api/test_ec_hstlink.c $(DEV) include/v90modem
 # the HST answering branch against sim/hstcall and the legacy callers,
 # reading the modem's phases (api/v90modem_priv.h): the development archive alone
 $(BUILD)/api_test_answer_hst: test/api/test_answer_hst.c $(DEV) include/v90modem.h api/v90modem_priv.h $(HDRS)
-	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -Iapi -o $@ $< $(DEV) $(LDLIBS)
+	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(EXTRA_CPPFLAGS) $(API_INC) -Iapi -o $@ $< $(DEV) $(LDLIBS)
 # every error an engine's header defines has a name (tools/check-diag-names.sh)
 .PHONY: check-diag-names
 check-diag-names: $(BUILD)/api_test_diag tools/check-diag-names.sh
@@ -411,8 +411,9 @@ check: test-all test-api test-examples test-fixtures check-symbols check-soname 
 # HST's BinModem profile (-DHST_PROFILE_BM; docs/history/hst-facts.md
 # "Training"), a test build only: HST_BM_TESTS, library code and all, built
 # with it in $(BUILD)/bm and run there; their logs in $(BUILD)/log/bm, their
-# golden files test/golden/out/bm/<program>.txt
-HST_BM_TESTS := test_hst_fwd test_hstcall
+# golden files test/golden/out/bm/<program>.txt. api_test_answer_hst runs
+# its `rates` and `rev_caller` cases there (its BinModem set; Task 21)
+HST_BM_TESTS := test_hst_fwd test_hstcall api_test_answer_hst
 .PHONY: check-hst-bm
 check-hst-bm:
 	@$(MAKE) -s BUILD=$(BUILD)/bm EXTRA_CPPFLAGS="$(strip $(EXTRA_CPPFLAGS) -DHST_PROFILE_BM)" $(addprefix $(BUILD)/bm/,$(HST_BM_TESTS))
