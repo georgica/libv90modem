@@ -317,38 +317,72 @@ a Rockwell or Lucent modem.
 reversals, rate changes and the other watchdogs come later in the plan.
 Measured against `sim/hstcall` only; no real HST modem has called it yet.
 
-- **W, the wait after ANSam, is 700 ms, and up to 1500 ms while the back
+- **W, the wait after ANSam, is 650 ms, and up to 2000 ms while the back
   channel's band holds energy** (`HST_W_MS`, `HST_W_MAX_MS` in
-  `modem/hst.h`; decision 25 and the Task 13 ruling). `make hst-wsize`
-  (`rig/hst_wsize.c`) runs `sim/hstcall` against the answerer and times
-  the detector of ANS_HST_WAIT from the wait's start (the caller starts
-  its back channel 30-45 ms after our answer tone stops):
+  `modem/hst.h`; decision 25 and the Task 13 ruling, the cap raised from
+  that ruling's 1500 ms to the controller's ceiling of 2000 in Task 18's
+  fix round). `make hst-wsize` (`rig/hst_wsize.c`) runs `sim/hstcall`
+  against the answerer and times the detector of ANS_HST_WAIT from the
+  wait's start. hstcall starts its back channel 30-45 ms after our answer
+  tone stops; the firmware's caller starts "once the tone has stopped" (BF
+  §1, [FW]) with no figure. What reaches us later than that is the
+  caller's turn-around plus the round trip of our tone and its back
+  channel: a VoIP path's jitter buffers, and the host's block latency (a
+  host that processes 4000-sample blocks adds 500 ms, as
+  `test_answer_hst` `block_size` does). So each line runs again with the
+  caller 50 to 500 ms later [OURS: the bound]. The lines: 450 and 300 bit/s
+  at -9 / -26 / -43 dBm0, +-7 Hz, +-100 ppm (24 a speed); one 20 or 40 ms
+  dropout 100-300 ms into the preamble at +-7 Hz (84 a speed); a 300 Hz
+  4th-order high-pass, a line's lower edge (4 a speed): 1568 lines. The
+  latest detections, ms from the wait's start:
 
-  | lines | latest detection | missed at W 400 / 600 / 650 / 700 | missed with the extension |
-  |---|---|---|---|
-  | 450, -9 / -26 / -43 dBm0, +-7 Hz +-100 ppm, 24 | 430 ms | 16 / 0 / 0 / 0 | 0 at any W |
-  | 300, the same, 24 | 690 ms | 24 / 4 / 4 / 0 | 0 at any W |
-  | 450, one 20 or 40 ms dropout 100-300 ms into the preamble, +-7 Hz, 84 | 690 ms | 84 / 5 / 3 / 0 | 0 at any W |
-  | 300, the same, 84 | 1440 ms | 84 / 64 / 49 / 27 | 0 at any W |
-  | 450, a 300 Hz 4th-order high-pass (a line's lower edge), 4 | 860 ms | 2 / 2 / 2 / 2 | 0 at any W |
-  | 300, the same, 4 | 580 ms | 4 / 0 / 0 / 0 | 0 at any W |
+  | caller later by | 450 levels | 300 levels | 450 dropout | 300 dropout | 450 edge | 300 edge |
+  |---|---|---|---|---|---|---|
+  | 0 ms | 430 | 690 | 690 | 1440 | 860 | 580 |
+  | 50 ms | 940 | 1400 | 740 | 1060 | 900 | 630 |
+  | 100 ms | 650 | 1400 | 790 | 1110 | 940 | 700 |
+  | 200 ms | 690 | 970 | 890 | 1220 | 1060 | 800 |
+  | 300 ms | 1230 | 1040 | 990 | 1740 | 1140 | 880 |
+  | 400 ms | 950 | 1400 | 1090 | 1410 | 1260 | 980 |
+  | 500 ms | 950 | 1850 | 1190 | 1510 | 1360 | 1080 |
 
-  So a W of 700 ms alone finds every clean line at both speeds, and the
-  extension finds the rest: a dropout in a 300 bit/s caller's acquisition
-  (27 of those 84 lines, 32 %, past 700 ms; the Task 13 review's figure for
-  1-2 % packet loss without redundancy was 1-3 % of 300 bit/s calls) and a
-  450 bit/s caller behind a 300 Hz line edge. None was missed with the
-  extension. The extension would also find every line here with W at 400
-  ms; 700 is kept so that a clean caller does not depend on the energy
-  stage holding unbroken for up to 300 ms at -43 dBm0.
+  (A lock lost and won again in the acquisition makes the latest jump: it
+  is not monotonic in the delay.) The slack of a line is the time from its
+  detection to the end of the wait that would have applied to it: the
+  first ms from W on without the energy stage, or the cap. Lines with less
+  than 100 ms of slack (missed included), of 1568:
+
+  | cap | W 400 | W 450 | W 500 | W 550 | W 600 | W 650 ... 1000 | least slack at W 650 |
+  |---|---|---|---|---|---|---|---|
+  | 1500 | 466 | 450 | 249 | 233 | 36 | 20 | -350 (missed) |
+  | 1600 | 465 | 449 | 241 | 225 | 28 | 12 | -250 (missed) |
+  | 1700 | 465 | 449 | 241 | 225 | 19 | 3 | -150 (missed) |
+  | 1800 | 465 | 449 | 241 | 225 | 19 | 3 | -50 (missed) |
+  | 1900 | 464 | 448 | 240 | 224 | 18 | 2 | 50 |
+  | 2000 | 464 | 448 | 240 | 224 | 16 | 0 | 150 |
+
+  W 650 with a cap of 2000 ms is the least pair that leaves every line
+  100 ms or more; the least is 150 ms (the 300 bit/s caller at -26 dBm0 500
+  ms late, found at 1850 ms). The cap is at the ceiling the controller set
+  (2000 ms): a caller slower than 500 ms, or a dropout later in a slow
+  start, can still meet it. With the caller at most 300 ms late, W 450 and
+  a cap of 1900 would do (least slack 160 ms; the earlier sweep); W 400
+  leaves lines short at any cap, since their energy stage is not yet there
+  when the wait ends. With this task's first choice, 700 and 1500, the
+  slack was 10 ms on the clean 300 bit/s lines and 60 ms under the cap
+  with the caller on time, and a later caller fell to V.22bis. Every line
+  here is found through the extension once past W: the energy stage holds
+  while the back channel is there, and a dropout of up to 40 ms never
+  broke it.
 - **W's cost to callers without V.8:** a V.22bis, V.21 or Bell 103 caller
   is answered up to W later than without HST, only where the host offers
   HST and has linked an endpoint (`test_answer_hst` `legacy_unchanged`:
-  the same modulation, rates and data, connected 700, 670 and 700 ms
-  later; with W at 400 ms they were 400, 370 and 400 ms later). None of
-  them puts energy in 250-500 Hz, so none waits past 700 ms; a caller with
-  dial tone or hum on its line might, up to 1500 ms. Callers that send CM
-  or AA are answered sample for sample as without HST.
+  the same modulation, rates and data, connected 650, 620 and 650 ms
+  later; with W at 700 ms it was 700, 670 and 700, at 450 ms 450, 420 and
+  450, at 400 ms 400, 370 and 400). None of them puts energy in 250-500
+  Hz, so none waits past W; a caller with dial tone or hum on its line
+  might, up to 2000 ms. Callers that send CM or AA are answered sample for
+  sample as without HST.
 - **The forward channel sends 48 symbols of scrambled ones after each of
   our trainings before the first data bit** (`HST_ONES_N`, [OURS], V.17's
   segment 4 length): `sim/hstcall`'s receiver enters data only on random
@@ -549,8 +583,8 @@ CPU"); 0.5.0's in brackets:
   with a 243-tap band-pass, were 3.70 M (some 1.1 M of that the bench
   reading its file inside the counted second). The detector of
   ANS_HST_WAIT (the two receivers, its 250-500 Hz band and the 189-tap
-  600-3400 Hz band at every 4th sample) is 3.70 M, for at most W (700 ms,
-  1500 ms while the band holds energy) when nothing else runs; its high
+  600-3400 Hz band at every 4th sample) is 3.70 M, for at most W (650 ms,
+  2000 ms while the band holds energy) when nothing else runs; its high
   band is 1.26 M of that. In ANS_HST the detector's receivers carry on
   without its two bands (`hst_det_rx`): the 1.89 M above.
 

@@ -5780,3 +5780,28 @@ Sizes: `hstcall_t` 165712 octets (x86-64), test side only. Host run 33 s
   forward transmitter 200 / 184, forward receiver 3880, stored equaliser
   584); the union stays `v92d_t`'s 45096 / 45008; `v90m_mem_size()` 106320
   / 106016 and `v90m_ec_mem_size()` 50448 / 50200 unchanged.
+
+### hst 18, review fixes 1 (2026-11-25)
+
+- **I1 (W's slack):** at 700 / 1500 ms the clean 300 bit/s lines had 10 ms
+  of slack under W and the 300 dropout lines 60 ms under the cap, with
+  hstcall starting 30-45 ms after our tone; a slower caller would fall to
+  V.22bis. `rig/hst_wsize.c` now runs every line again with the caller 50,
+  100, 200, 300, 400 and 500 ms later (1568 lines, 220 s; 500 ms is the
+  bound: turn-around plus a VoIP round trip, or a host's 500 ms blocks),
+  and prints, for W 400..1000 and caps 1500..2000, the lines with under
+  100 ms between their detection and the end of the wait that would apply
+  to them, and the least such slack. The least pair with none under 100
+  ms: **W 650, cap 2000** (least slack 150 ms, the 300 bit/s caller 500 ms
+  late found at 1850 ms). W 600 leaves 16 lines short; a cap of 1900, two.
+  With a 300 ms bound the pair would be 450 / 1900 (least slack 160): set
+  first, it lost `block_size`'s call (a 4000-sample block is 500 ms of
+  latency; the caller's band came after the wait had ended), which is what
+  moved the bound to 500. `HST_W_MS` 650, `HST_W_MAX_MS` 2000 (the Task
+  13 ruling's 1500 raised to the controller's 2000 ceiling: no slack left
+  under it beyond 150 ms for a 500 ms-late 300 bit/s caller). Legacy
+  callers without V.8 now 650 / 620 / 650 ms later (V.22bis, V.21, Bell
+  103), from 700 / 670 / 700. docs/limits.md has both tables; the
+  header's V90M_MOD_HST comment says 650 ms and 2 s.
+- `test_answer_hst`'s golden re-recorded: its first line prints W (650);
+  every other line the same.

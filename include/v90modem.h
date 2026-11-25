@@ -182,8 +182,8 @@ typedef enum {
  * side. Offered only when an MNP endpoint is linked to the modem with
  * v90m_ec_link_hst before it decides (the end of ANSam); a modem without
  * the link answers as without HST. A caller that sends neither CM nor AA
- * during our answer tone is listened to for its back channel for 700 ms
- * after it (up to 1.5 s while 250-500 Hz energy is there): heard, HST
+ * during our answer tone is listened to for its back channel for 650 ms
+ * after it (up to 2 s while 250-500 Hz energy is there): heard, HST
  * (V90M_CONN_HST: tx_bps 9600 at CONNECTED, the best rate both ends agree
  * after MNP's LRs from the retrain that follows, rx_bps 450 or 300); not
  * heard, V.22bis or V.21 as without HST, that much later. Callers that send

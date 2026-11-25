@@ -22,8 +22,20 @@
  *   edge      the caller's signal through a 300 Hz 4th-order Butterworth
  *             high-pass (a line's lower edge; the Task 13 review's M1), at
  *             +-7 Hz, -26 dBm0, two seeds
- * Prints, per group and speed, the latest detection and, for W from 400 to
- * 700 ms in 50 ms steps, the lines missed without and with the extension. */
+ * Every line again with the caller 50, 100, 200, 300, 400 and 500 ms
+ * slower to start (its signal delayed). hstcall itself starts 30-45 ms
+ * after our tone stops; the firmware's caller starts "once the tone has
+ * stopped" (BF §1 [FW]), with no figure. What reaches us later than that
+ * is the caller's own turn-around plus the round trip our tone and its
+ * back channel take, a VoIP path's jitter buffers and the host's block
+ * latency included (a host processing 4000-sample blocks adds 500 ms):
+ * 500 ms is our bound [OURS].
+ * Prints, per delay, group and speed, the latest detection and, for W from
+ * 400 to 700 ms in 50 ms steps, the lines missed without and with the
+ * extension; then, for W 400..1000 and caps 1500..2000, the lines with less
+ * than 100 ms between their detection and the window that would end them
+ * (the first ms from W on without the energy stage, or the cap), and the
+ * least such slack. */
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -32,12 +44,15 @@
 #include "../sim/v32line.h"
 
 #define PI 3.14159265358979323846
-#define LISTEN_MS 2000
+#define LISTEN_MS 2600
+#define DMAX (500 * 8)                  /* the longest extra start delay, samples */
 
 typedef struct {
     int bps; double dbm0, hz, ppm; uint32_t seed;
     int drop_at, drop_len;            /* ms after the preamble's start; 0: none */
     int hp;                           /* the 300 Hz high-pass */
+    int delay;                        /* ms the caller's signal reaches us later than hstcall's
+                                         own start (30-45 ms after our tone): a slower caller */
 } line_t;
 
 typedef struct { double b0, b1, b2, a1, a2, x1, x2, y1, y2; } biq_t;
@@ -59,7 +74,7 @@ static hstcall_t HC;
 static answer_t A;
 static v32line_t L;
 static hst_det_t D;
-typedef struct { const line_t *ln; long n, back_at; biq_t hp[2]; } peer_t;
+typedef struct { const line_t *ln; long n, back_at; biq_t hp[2]; double dl[DMAX + 1]; } peer_t;
 static peer_t P;
 
 static int16_t sat16(double v) { long q = lrint(v); return (int16_t)(q > 32767 ? 32767 : q < -32768 ? -32768 : q); }
@@ -73,6 +88,13 @@ static double peer(void *u, double rx)
     if (p->ln->drop_len && p->back_at >= 0) {
         long t = p->n - p->back_at;
         if (t >= p->ln->drop_at * 8L && t < (p->ln->drop_at + p->ln->drop_len) * 8L) y = 0;
+    }
+    if (p->ln->delay > 0) {
+        /* the caller's signal, delay ms late (it hears our tone on time) */
+        long d = p->ln->delay * 8L, k = p->n % (DMAX + 1);
+        double o = p->dl[(p->n - d + (DMAX + 1)) % (DMAX + 1)];
+        p->dl[k] = y;
+        y = p->n >= d ? o : 0;
     }
     return y;
 }
@@ -112,7 +134,7 @@ static int run_line(const line_t *ln, uint8_t *e)
         atx = 0;
         if (hst_det_tick(&D, rx) && fired < 0) fired = (int)((n - w0) / 8);
         if ((n - w0) % 8 == 7) e[(n - w0) / 8] = (uint8_t)hst_det_energy(&D);
-        if (fired >= 0 || n - w0 >= 8L * LISTEN_MS - 1) break;
+        if (n - w0 >= 8L * LISTEN_MS + 7) break;
     }
     return fired;
 }
@@ -120,9 +142,25 @@ static int run_line(const line_t *ln, uint8_t *e)
 #define NW 7
 typedef struct { int lines, latest, never, miss[NW], miss_ext[NW]; } tally_t;
 
+/* every line's detection and energy, for the slack table */
+#define NLINES 1600
+static int16_t fired_of[NLINES];
+static uint8_t e_of[NLINES][LISTEN_MS + 1];
+static int nlines;
+
+/* the window that would end a line under (w, cap): the wait leaves at the
+ * first ms from w on where the energy stage does not hold, or at cap */
+static int end_of(const uint8_t *e, int w, int cap)
+{
+    int t;
+    for (t = w; t < cap && t <= LISTEN_MS; t++) if (!e[t]) return t;
+    return cap;
+}
+
 static void count(tally_t *t, int fired, const uint8_t *e)
 {
     int k;
+    if (nlines < NLINES) { fired_of[nlines] = (int16_t)fired; memcpy(e_of[nlines], e, LISTEN_MS + 1); nlines++; }
     t->lines++;
     if (fired < 0) t->never++;
     if (fired > t->latest) t->latest = fired;
@@ -151,51 +189,94 @@ static void report(const char *what, int bps, const tally_t *t)
     fflush(stdout);
 }
 
+static void slack_table(void)
+{
+    int w, cap, k;
+    printf("slack: every line, the window that would end it (the first ms from W on without the energy\n"
+           "stage, or the cap) less its detection; lines under 100 ms of slack (missed included), and\n"
+           "the least slack\n");
+    for (cap = 1500; cap <= 2000; cap += 100) {
+        printf("  cap %4d  W:", cap);
+        for (w = 400; w <= 1000; w += 50) printf(" %5d", w);
+        printf("\n    under 100   ");
+        for (w = 400; w <= 1000; w += 50) {
+            int bad = 0;
+            for (k = 0; k < nlines; k++) {
+                int f = fired_of[k];
+                if (f < 0 || end_of(e_of[k], w, cap) - f < 100) bad++;
+            }
+            printf(" %5d", bad);
+        }
+        printf("\n    least slack ");
+        for (w = 400; w <= 1000; w += 50) {
+            int least = 1 << 30;
+            for (k = 0; k < nlines; k++) {
+                int f = fired_of[k], sl = f < 0 ? -1 : end_of(e_of[k], w, cap) - f;
+                if (sl < least) least = sl;
+            }
+            printf(" %5d", least);
+        }
+        printf("\n");
+    }
+}
+
 int main(void)
 {
     static const struct { double hz, ppm; } offs[4] = { { 7, 100 }, { -7, -100 }, { 7, -100 }, { -7, 100 } };
     static const double lv[3] = { -9, -26, -43 };
+    static const int delays[7] = { 0, 50, 100, 200, 300, 400, 500 };
     static uint8_t e[LISTEN_MS + 1];
-    int b, i, j, s, len, at;
-    for (b = 0; b < 2; b++) {
-        int bps = b ? 300 : 450;
-        tally_t t;
-        memset(&t, 0, sizeof t);
-        for (i = 0; i < 3; i++) for (j = 0; j < 4; j++) for (s = 0; s < 2; s++) {
-            line_t ln;
-            memset(&ln, 0, sizeof ln);
-            ln.bps = bps; ln.dbm0 = lv[i]; ln.hz = offs[j].hz; ln.ppm = offs[j].ppm; ln.seed = 1000u + (uint32_t)(i * 8 + j * 2 + s);
-            memset(e, 0, sizeof e);
-            count(&t, run_line(&ln, e), e);
+    int b, i, j, s, len, at, di;
+    char what[32];
+    for (di = 0; di < 7; di++) {
+        int dly = delays[di];
+        printf("== the caller %d ms later ==\n", dly);
+        for (b = 0; b < 2; b++) {
+            int bps = b ? 300 : 450;
+            tally_t t;
+            memset(&t, 0, sizeof t);
+            for (i = 0; i < 3; i++) for (j = 0; j < 4; j++) for (s = 0; s < 2; s++) {
+                line_t ln;
+                memset(&ln, 0, sizeof ln);
+                ln.bps = bps; ln.dbm0 = lv[i]; ln.hz = offs[j].hz; ln.ppm = offs[j].ppm; ln.seed = 1000u + (uint32_t)(i * 8 + j * 2 + s);
+                ln.delay = dly;
+                memset(e, 0, sizeof e);
+                count(&t, run_line(&ln, e), e);
+            }
+            snprintf(what, sizeof what, "levels +%d", dly);
+            report(what, bps, &t);
         }
-        report("levels", bps, &t);
-    }
-    for (b = 0; b < 2; b++) {
-        int bps = b ? 300 : 450;
-        tally_t t;
-        memset(&t, 0, sizeof t);
-        for (len = 20; len <= 40; len += 20) for (at = 100; at <= 300; at += 10) for (j = 0; j < 2; j++) {
-            line_t ln;
-            memset(&ln, 0, sizeof ln);
-            ln.bps = bps; ln.dbm0 = -26; ln.hz = j ? -7 : 7; ln.seed = 2000u + (uint32_t)(at + len + j);
-            ln.drop_at = at; ln.drop_len = len;
-            memset(e, 0, sizeof e);
-            count(&t, run_line(&ln, e), e);
+        for (b = 0; b < 2; b++) {
+            int bps = b ? 300 : 450;
+            tally_t t;
+            memset(&t, 0, sizeof t);
+            for (len = 20; len <= 40; len += 20) for (at = 100; at <= 300; at += 10) for (j = 0; j < 2; j++) {
+                line_t ln;
+                memset(&ln, 0, sizeof ln);
+                ln.bps = bps; ln.dbm0 = -26; ln.hz = j ? -7 : 7; ln.seed = 2000u + (uint32_t)(at + len + j);
+                ln.drop_at = at; ln.drop_len = len; ln.delay = dly;
+                memset(e, 0, sizeof e);
+                count(&t, run_line(&ln, e), e);
+            }
+            snprintf(what, sizeof what, "dropout +%d", dly);
+            report(what, bps, &t);
         }
-        report("dropout", bps, &t);
-    }
-    for (b = 0; b < 2; b++) {
-        int bps = b ? 300 : 450;
-        tally_t t;
-        memset(&t, 0, sizeof t);
-        for (j = 0; j < 2; j++) for (s = 0; s < 2; s++) {
-            line_t ln;
-            memset(&ln, 0, sizeof ln);
-            ln.bps = bps; ln.dbm0 = -26; ln.hz = j ? -7 : 7; ln.seed = 3000u + (uint32_t)(j * 2 + s); ln.hp = 1;
-            memset(e, 0, sizeof e);
-            count(&t, run_line(&ln, e), e);
+        for (b = 0; b < 2; b++) {
+            int bps = b ? 300 : 450;
+            tally_t t;
+            memset(&t, 0, sizeof t);
+            for (j = 0; j < 2; j++) for (s = 0; s < 2; s++) {
+                line_t ln;
+                memset(&ln, 0, sizeof ln);
+                ln.bps = bps; ln.dbm0 = -26; ln.hz = j ? -7 : 7; ln.seed = 3000u + (uint32_t)(j * 2 + s); ln.hp = 1;
+                ln.delay = dly;
+                memset(e, 0, sizeof e);
+                count(&t, run_line(&ln, e), e);
+            }
+            snprintf(what, sizeof what, "edge +%d", dly);
+            report(what, bps, &t);
         }
-        report("edge", bps, &t);
     }
+    slack_table();
     return 0;
 }

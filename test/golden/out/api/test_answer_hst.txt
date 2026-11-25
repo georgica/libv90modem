@@ -1,4 +1,4 @@
-test_answer_hst: the HST answering branch through the API (W 700 ms)
+test_answer_hst: the HST answering branch through the API (W 650 ms)
 rates: code 2, back 450, start 450
   connected: HST 1, tx 9600 rx 450; now tx 4800 rx 450; retrains 1, reversals 0; MNP hst 1 rates 0x04 back300 0
   data: 16384 of 16384 octets to the caller, 16384 of 16384 to us, 0 wrong

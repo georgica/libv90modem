@@ -560,12 +560,16 @@ int  hst_frx_snr(const hst_frx_t *r, int64_t *num, int64_t *den);
  * W (decision 25, sized in Task 18: docs/limits.md): ANS_HST_WAIT listens
  * HST_W_MS after ANSam, and on to HST_W_MAX_MS only while the detector's
  * energy stage holds (250-500 Hz present, 10 dB over 600-3400 Hz), which
- * no V.22bis, V.21 or Bell caller gives (the Task 13 ruling). */
+ * no V.22bis, V.21 or Bell caller gives (the Task 13 ruling). Both are the
+ * least that leave every line of `make hst-wsize` (levels, dropouts, a
+ * line's edge, the caller 0 to 500 ms slower to start) at least 100 ms
+ * between its detection and the end of the wait (least 150 ms; W 600
+ * leaves 16 lines short, a cap of 1900 two; Task 18 fix round 1). */
 #include "../v42/hst_link.h"
 #ifndef HST_W_MS
-#define HST_W_MS     700
+#define HST_W_MS     650
 #endif
-#define HST_W_MAX_MS 1500
+#define HST_W_MAX_MS 2000
 #define HST_FAIL_MS  15000            /* ANS_HST: no MNP link this long: V90M_END_HST_FAILED */
 #define HST_LOST_MS  5000             /* holding forward: no back carrier this long: lost */
 #define HST_ONES_N   160              /* samples of scrambled ones after each training of ours
