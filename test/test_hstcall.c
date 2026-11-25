@@ -23,18 +23,20 @@
  *                 2..6, its short one at 6 and V.17's long train at 3 and 6:
  *                 our hst_frx reaches data, no bit in error
  *   marks_self    hstcall's forward transmitter and receiver, 6 -> 5 and
- *                 4 -> 6 by marks (0x3R): the receiver follows, no bit lost
- *                 outside the 72 mark symbols' neighbourhood
+ *                 4 -> 6 by marks (0x3R), the receiver armed 36 ms after the
+ *                 marks began (the line, and an LNA's decoding): it
+ *                 follows, no bit lost outside the 72 mark symbols'
+ *                 neighbourhood
  *   coexist       our forward transmitter (14400, -10 dBm0) and hstcall's
  *                 back transmitter (450 and 300) at once, the back channel
  *                 at -33 dBm0 at our side, our echo 6 dB under our signal (6
  *                 dB ERL) and hstcall's own the same, -54 dBm0 of noise each
  *                 way: on a linear line each receiver's SNR within 1 dB of
  *                 its SNR with no echo; with G.711 at our side hstcall's
- *                 within 1 dB and ours within 2 dB (G.711's quantising noise
- *                 on our -16 dBm0 echo, which arrives with the back channel,
- *                 costs it 0.5 to 1.5 dB: 16 lines, task 17's report); no
- *                 bit in error either way
+ *                 within 1 dB and ours within 2 dB (G.711 costs it 0.5 to
+ *                 1.5 dB over 16 lines, task 17's report: our transmit's own
+ *                 coding noise comes back in the echo, and the echo is coded
+ *                 again with the back channel); no bit in error either way
  *   link          a test answerer made of our pieces and an mnppeer
  *                 responder: the tone, hstcall's LR at 450, our long training
  *                 at the opening code, MNP up, our short training at the
@@ -43,6 +45,22 @@
  *   reversal      the same, hstcall's backlog over 64 octets: its 0x1R, our
  *                 LNA, our forward off and back on, hstcall's long training
  *                 at 6; data intact, reversals 1
+ *   stored_eq     our short training into hstcall's receiver starting from
+ *                 the equaliser it kept as our carrier faded: code 6, 24 dB,
+ *                 and -7 Hz -100 ppm, no bit in error
+ *   holder_rates  reversed, hstcall holding the forward channel takes our
+ *                 0x35 (marks) and 0x24 (a short training), each after its
+ *                 LNA has gone; our side arms or sets its code on that LNA
+ *                 (with hstcall's receiver: our hst_frx follows marks only
+ *                 from Task 22); data intact
+ *   turn_back     reversed, our 0x16: hstcall back on the back channel, our
+ *                 short training at 6 met by the equaliser hstcall kept when
+ *                 it left that role; data intact, reversals 2
+ *   forced_twice  two forced requests in one call (0x24, then 0x25)
+ *   rev_lost      ignore_lna: hstcall's 0x1R acknowledged, and it never
+ *                 trains
+ *   knobs         lr_delay_ms (no frame before it); ld_hold_ms, 1000 by
+ *                 default and 3000 (the carrier held that long after the LD)
  *
  * Under make check-hst-bm (HST_PROFILE_BM) only fwd_from_ours runs.
  *
@@ -169,7 +187,6 @@ static void line(double loss, double near, double cnear, double na, double nc, d
 
 /* ====================== tone ====================== */
 static hstcall_t HC;
-static double hc_peer(void *u, double rx) { return hstcall_tick((hstcall_t *)u, sat16(rx)); }
 
 /* samples of ANSam-like tone (on) or silence, through hstcall alone; the
  * first sample it sends, -1 none */
@@ -258,12 +275,10 @@ static void back_to_ours_one(int bps, double hz, double ppm, long nb_want, uint3
     bound("no loss of lock", lost == 0);
 }
 
-static void back_to_ours(void)
+static void back_to_ours(int bps)
 {
-    back_to_ours_one(450, 0, 0, NB_BACK, 11u);
-    back_to_ours_one(300, 0, 0, NB_BACK, 12u);
-    back_to_ours_one(450, 7, 100, NB_OFF, 13u);
-    back_to_ours_one(300, -7, -100, NB_OFF, 14u);
+    if (bps == 450) { back_to_ours_one(450, 0, 0, NB_BACK, 11u); back_to_ours_one(450, 7, 100, NB_OFF, 13u); }
+    else { back_to_ours_one(300, 0, 0, NB_BACK, 12u); back_to_ours_one(300, -7, -100, NB_OFF, 14u); }
 }
 
 typedef struct { hst_btx_t t; src_t s; } ob_peer_t;
@@ -286,7 +301,7 @@ static void back_from_ours_one(int bps, double hz, double ppm, long nb_want, uin
     P.s.r = seed;
     hst_btx_init(&P.t, bps, (int)lvl, src_bit, &P.s);
     hc_brx_init(&HB, bps);
-    line(6, 300, 300, -300, dbm0_of(arrive) - 20, hz, ppm, seed);
+    line(6, 300, 300, -300, dbm0_of(arrive) - 24, hz, ppm, seed);
     nrx = 0;
     nmax = (long)((nb_want + 3000) / bps + 3) * FS;
     for (n = 0; n < nmax && nrx < nb_want + 600; n++) {
@@ -299,12 +314,10 @@ static void back_from_ours_one(int bps, double hz, double ppm, long nb_want, uin
     bound("no bit in error", o.found && o.cmp >= nb_want && o.errs == 0);
 }
 
-static void back_from_ours(void)
+static void back_from_ours(int bps)
 {
-    back_from_ours_one(450, 0, 0, NB_BACK, 21u);
-    back_from_ours_one(300, 0, 0, NB_BACK, 22u);
-    back_from_ours_one(450, -7, 100, NB_OFF, 23u);
-    back_from_ours_one(300, 7, -100, NB_OFF, 24u);
+    if (bps == 450) { back_from_ours_one(450, 0, 0, NB_BACK, 21u); back_from_ours_one(450, -7, 100, NB_OFF, 23u); }
+    else { back_from_ours_one(300, 0, 0, NB_BACK, 22u); back_from_ours_one(300, 7, -100, NB_OFF, 24u); }
 }
 
 /* ====================== the forward channel ====================== */
@@ -411,7 +424,7 @@ static void marks_one(int from, int to, uint32_t seed)
 {
     static hcf_peer_t P;
     double arrive = FLEVEL * pow(10, -6 / 20.0) * band_gain(600, 3000);
-    long n, nmax = 12L * FS, sw_rx = -1, sent_at_sw = 0, d;
+    long n, nmax = 12L * FS, sw_rx = -1, sent_at_sw = 0, d, arm_at = -1;
     cmp_t a, b;
     memset(&P, 0, sizeof P);
     P.s.r = seed;
@@ -424,10 +437,12 @@ static void marks_one(int from, int to, uint32_t seed)
         int16_t x;
         if (n == FS / 5) hc_ftx_train(&P.t, from, 1, 0);
         if (sw_rx < 0 && P.s.n >= 30000) {
-            hc_frx_arm(&FR, to);
             hc_ftx_marks(&P.t, to);
-            sent_at_sw = P.s.n; sw_rx = nrx;
+            sent_at_sw = P.s.n; sw_rx = nrx; arm_at = n + 288;
         }
+        /* armed as an LNA just before the marks would arm it: the line's 25
+         * ms and some 11 ms of decoding later, inside the old rate's 15 ms */
+        if (n == arm_at) hc_frx_arm(&FR, to);
         if (sw_rx >= 0 && P.s.n >= sent_at_sw + 30000) break;
         x = v32line_tick(&L, 0, hcf_tx, &P);
         nb = hc_frx_tick(&FR, x);
@@ -553,36 +568,116 @@ static void coexist(void)
     coexist_one(300, 1, 74u);
 }
 
-/* ====================== the call: a test answerer of our pieces ====================== */
+/* ====================== the call: a test answerer of our pieces ======================
+ * Holding the forward channel: hst_ftx, both hst_brx (450 preferred while
+ * locked), an mnppeer responder with 0xC0. It retrains at the best agreed
+ * code on MNP's link-up; carries out 0x1R (its LNA gone + 20 ms: forward
+ * off, back on) and 0x2R (its LNA gone + 20 ms: a short training).
+ * Holding the back channel: hst_btx and hst_frx (or, with `hcrx`, hstcall's
+ * own receiver, which follows marks: our hst_frx learns that in Task 22).
+ * It sends the LN `send_code` at `send_at` ms; on its LNA, 0x3R arms the
+ * receiver, 0x2R sets its code, 0x1R stops the back transmitter and, 200
+ * ms on, trains forward (short). */
 typedef struct {
     hst_ftx_t ftx;
     hst_brx_t b450, b300;
     hst_btx_t btx;
     hst_frx_t frx;
+    hc_frx    hfrx;
     mnppeer_t m;
+    int  hcrx;           /* holding back: hstcall's receiver for ours */
     int  role;           /* 0: we hold forward, 1: back */
     int  started, linked, retrained, best;
     int  ln;             /* 0x1R taken, our LNA to go */
+    int  ln2;            /* 0x2R taken, our LNA to go */
     int  lna_going; long lna_done;
+    int  send_code; long send_at;   /* our own LN, and when */
+    int  my_ln, my_out;
+    long turn_at; int turn_code;
+    int  lns_taken;
     long ms;
 } ans_t;
 static ans_t A;
-static int ans_bit(void *u) { return mnppeer_tx_bit(&((ans_t *)u)->m); }
 static int best_code(int rates)
 {
     int k;
     for (k = 6; k >= 2; k--) if (rates & (1 << k)) return k;
     return HST_OPEN_CODE;
 }
+/* the answerer's bit source, watching its LNA go */
+static int ans_bit(void *u)
+{
+    ans_t *a = (ans_t *)u;
+    int due = a->m.lna_due, b = mnppeer_tx_bit(&a->m);
+    if (due && !a->m.lna_due) { a->lna_going = 1; a->lna_done = -1; }
+    if (a->lna_going && a->m.line_framing == 0) { a->lna_going = 0; a->lna_done = a->ms; }
+    return b;
+}
+
+static void ans_every_ms(ans_t *a)
+{
+    int code;
+    a->ms++;
+    mnppeer_tick(&a->m, 1);
+    if (mnppeer_state(&a->m) == MNPP_CONNECTED && !a->linked) {
+        a->linked = 1;
+        if (a->m.hst) { a->best = best_code(a->m.hst_rates & 0x7C); hst_ftx_train(&a->ftx, a->best, 0); a->retrained = 1; }
+        else a->best = HST_OPEN_CODE;
+    }
+    while ((code = mnppeer_get_ln(&a->m)) >= 0) {
+        a->lns_taken++;
+        if (a->role != 0) continue;
+        if ((code & 0xF0) == 0x10) a->ln = code;
+        else if ((code & 0xF0) == 0x20) a->ln2 = code;
+        else continue;
+        if (a->m.lna_due || a->lna_going) a->lna_done = -1;
+    }
+    if (a->ln2 && a->lna_done >= 0 && a->ms >= a->lna_done + 20) {
+        hst_ftx_train(&a->ftx, a->ln2 & 0x0F, 0);
+        a->ln2 = 0;
+    }
+    if (a->ln && a->lna_done >= 0 && a->ms >= a->lna_done + 20) {
+        /* the holder's switch: forward off, back on, the forward receiver listening */
+        hst_ftx_stop(&a->ftx);
+        hst_btx_init(&a->btx, a->m.back300 ? 300 : 450, (int)v32line_rms(-16), ans_bit, a);
+        hst_btx_preamble(&a->btx);
+        hst_frx_init(&a->frx);
+        hst_frx_set_code(&a->frx, a->ln & 0x0F);
+        hc_frx_init(&a->hfrx, a->ln & 0x0F);
+        a->role = 1; a->ln = 0;
+    }
+    /* our own LN, holding back */
+    if (a->send_code && a->ms >= a->send_at && a->role == 1 && a->my_ln < 0) {
+        mnppeer_send_ln(&a->m, a->send_code);
+        a->my_ln = a->send_code; a->my_out = 0; a->send_code = 0;
+    }
+    if (a->my_ln >= 0) {
+        if (a->m.ln_code == a->my_ln) a->my_out = 1;
+        else if (a->my_out && a->m.ln_code < 0) {
+            int r = a->my_ln & 0x0F;
+            switch (a->my_ln & 0xF0) {
+            case 0x30: hc_frx_arm(&a->hfrx, r); hst_frx_set_code(&a->frx, r); break;
+            case 0x20: hc_frx_set_code(&a->hfrx, r); hst_frx_set_code(&a->frx, r); break;
+            case 0x10: hst_btx_stop(&a->btx); a->turn_at = a->ms + 200; a->turn_code = r; break;
+            default: break;
+            }
+            a->my_ln = -1;
+        }
+    }
+    if (a->turn_at && a->ms >= a->turn_at) {
+        a->turn_at = 0;
+        a->role = 0;
+        hst_brx_init(&a->b450, 450);
+        hst_brx_init(&a->b300, 300);
+        hst_ftx_train(&a->ftx, a->turn_code, 0);
+    }
+}
 
 static int16_t ans_tick(ans_t *a, int16_t rx, long n)
 {
     int16_t tx = 0;
     int k, nb;
-    if (n < FS) {
-        double x = v32line_rms(-12) * sqrt(2.0) * sin(2 * PI * 2100 * n / FS);
-        tx = sat16(x);
-    }
+    if (n < FS) tx = sat16(v32line_rms(-12) * sqrt(2.0) * sin(2 * PI * 2100 * n / FS));
     if (a->role == 0) {
         int n4 = hst_brx_tick(&a->b450, rx), n3 = hst_brx_tick(&a->b300, rx);
         if (!a->started && (hst_brx_locked(&a->b450) || hst_brx_locked(&a->b300))) {
@@ -595,108 +690,106 @@ static int16_t ans_tick(ans_t *a, int16_t rx, long n)
         }
         if (n >= FS) tx = hst_ftx_tick(&a->ftx);
     } else {
-        nb = hst_frx_tick(&a->frx, rx);
-        for (k = 0; k < nb; k++) mnppeer_rx_bit(&a->m, a->frx.bits[k]);
-        tx = hst_btx_tick(&a->btx);
-    }
-    if (n % 8 == 0 && a->started) {
-        int code;
-        a->ms++;
-        mnppeer_tick(&a->m, 1);
-        if (mnppeer_state(&a->m) == MNPP_CONNECTED && !a->linked) {
-            a->linked = 1;
-            if (a->m.hst) { a->best = best_code(a->m.hst_rates & 0x7C); hst_ftx_train(&a->ftx, a->best, 0); a->retrained = 1; }
-            else a->best = HST_OPEN_CODE;
+        if (a->hcrx) {
+            nb = hc_frx_tick(&a->hfrx, rx);
+            for (k = 0; k < nb; k++) mnppeer_rx_bit(&a->m, a->hfrx.bits[k]);
+            (void)hst_frx_tick(&a->frx, rx);
+        } else {
+            nb = hst_frx_tick(&a->frx, rx);
+            for (k = 0; k < nb; k++) mnppeer_rx_bit(&a->m, a->frx.bits[k]);
         }
-        while ((code = mnppeer_get_ln(&a->m)) >= 0)
-            if ((code & 0xF0) == 0x10 && a->role == 0) { a->ln = code; if (a->m.lna_due || a->lna_going) a->lna_done = -1; }
-        if (a->ln && a->lna_done >= 0 && a->ms >= a->lna_done + 20) {
-            /* the holder's switch: forward off, back on, the forward receiver listening */
-            hst_ftx_stop(&a->ftx);
-            hst_btx_init(&a->btx, a->m.back300 ? 300 : 450, (int)v32line_rms(-16), ans_bit, a);
-            hst_btx_preamble(&a->btx);
-            hst_frx_init(&a->frx);
-            hst_frx_set_code(&a->frx, a->ln & 0x0F);
-            a->role = 1; a->ln = 0;
-        }
+        tx = (int16_t)(hst_btx_tick(&a->btx) + hst_ftx_tick(&a->ftx));
     }
+    if (n % 8 == 0 && a->started) ans_every_ms(a);
     return tx;
-}
-/* the answerer's bit source, watching its LNA go */
-static int ans_fbit(void *u)
-{
-    ans_t *a = (ans_t *)u;
-    int due = a->m.lna_due, b = mnppeer_tx_bit(&a->m);
-    if (due && !a->m.lna_due) { a->lna_going = 1; a->lna_done = -1; }
-    if (a->lna_going && a->m.line_framing == 0) { a->lna_going = 0; a->lna_done = a->ms; }
-    return b;
 }
 
 static void ans_init(ans_t *a)
 {
     mnp_peer_cfg m;
     memset(a, 0, sizeof *a);
-    hst_ftx_init(&a->ftx, (int)v32line_rms(-12), ans_fbit, a);
+    hst_ftx_init(&a->ftx, (int)v32line_rms(-12), ans_bit, a);
     hst_brx_init(&a->b450, 450);
     hst_brx_init(&a->b300, 300);
     memset(&m, 0, sizeof m);
     m.originator = 0; m.framing = 3; m.c0 = 1; m.c0_flags = 1; m.c0_rates = 0x7C;
     m.layout_rx_any = 1; m.t401_ms = 3000; m.n400 = 15; m.seed = 99u;
     mnppeer_init(&a->m, &m);
-    a->lna_done = -1;
+    a->lna_done = -1; a->my_ln = -1;
 }
 
 static uint8_t pat(uint32_t seed, long i) { return (uint8_t)((seed * 2654435761u + (uint32_t)i * 40503u) >> 13); }
 
-typedef struct { long to_hc, to_ans; long got_hc, got_ans; int bad; } xfer_t;
+/* a call in steps: data written at both ends once both are linked, up to
+ * the totals asked so far; run_to runs until `upto` samples, or until all
+ * of it has arrived (with `done`) */
+typedef struct {
+    long n, w_hc, w_ans;           /* samples; octets written */
+    long to_hc, to_ans;            /* octets to write */
+    long got_hc, got_ans; int bad; /* octets read, wrong */
+    int16_t ax;
+    long hc_first_tx, hc_last_tx;  /* hstcall's first and last sample not zero */
+} xfer_t;
+static xfer_t X;
 
-/* the call: the answerer at the network side of the line, hstcall at the
- * other; data written at both ends once both are linked */
-static void call(hstcall_t *c, long secs, long n_to_hc, long n_to_ans, xfer_t *x)
+static void call_start(hstcall_t *c, const hstcall_cfg *cfg, uint32_t seed)
+{
+    hstcall_init(c, cfg);
+    ans_init(&A);
+    line(6, 300, 300, -60, -60, 0, 0, seed);
+    memset(&X, 0, sizeof X);
+    X.hc_first_tx = X.hc_last_tx = -1;
+}
+static double hc_peer_watch(void *u, double rx)
+{
+    int16_t y = hstcall_tick((hstcall_t *)u, sat16(rx));
+    if (y != 0) { if (X.hc_first_tx < 0) X.hc_first_tx = X.n; X.hc_last_tx = X.n; }
+    return y;
+}
+static void run_to(hstcall_t *c, long upto, int done)
 {
     static uint8_t buf[256];
-    long n, w_hc = 0, w_ans = 0;
-    int16_t ax = 0;
-    memset(x, 0, sizeof *x);
-    for (n = 0; n < secs * FS; n++) {
-        int16_t rx = v32line_tick(&L, ax, hc_peer, c);
+    for (; X.n < upto; X.n++) {
+        int16_t rx = v32line_tick(&L, X.ax, hc_peer_watch, c);
         size_t k, got;
-        ax = ans_tick(&A, rx, n);
-        if (n % 80) continue;
+        X.ax = ans_tick(&A, rx, X.n);
+        if (X.n % 80) continue;
         if (A.linked && c->linked) {
-            while (w_ans < n_to_hc) {
-                uint8_t b = pat(1u, w_ans);
+            while (X.w_ans < X.to_hc) {
+                uint8_t b = pat(1u, X.w_ans);
                 if (mnppeer_write(&A.m, &b, 1) != 1) break;
-                w_ans++;
+                X.w_ans++;
             }
-            while (w_hc < n_to_ans) {
-                uint8_t b = pat(2u, w_hc);
+            while (X.w_hc < X.to_ans) {
+                uint8_t b = pat(2u, X.w_hc);
                 if (hstcall_write(c, &b, 1) != 1) break;
-                w_hc++;
+                X.w_hc++;
             }
         }
         got = hstcall_read(c, buf, sizeof buf);
-        for (k = 0; k < got; k++, x->got_hc++) if (buf[k] != pat(1u, x->got_hc)) x->bad++;
+        for (k = 0; k < got; k++, X.got_hc++) if (buf[k] != pat(1u, X.got_hc)) X.bad++;
         got = mnppeer_read(&A.m, buf, sizeof buf);
-        for (k = 0; k < got; k++, x->got_ans++) if (buf[k] != pat(2u, x->got_ans)) x->bad++;
-        if (x->got_hc >= n_to_hc && x->got_ans >= n_to_ans) break;
+        for (k = 0; k < got; k++, X.got_ans++) if (buf[k] != pat(2u, X.got_ans)) X.bad++;
+        if (done && X.got_hc >= X.to_hc && X.got_ans >= X.to_ans) { X.n++; break; }
     }
-    x->to_hc = n_to_hc; x->to_ans = n_to_ans;
+}
+static int intact(void) { return X.got_hc == X.to_hc && X.got_ans == X.to_ans && X.bad == 0; }
+static void data_line(const char *what)
+{
+    printf("%s: %ld of %ld octets to hstcall, %ld of %ld to us, %d wrong\n", what, X.got_hc, X.to_hc, X.got_ans, X.to_ans, X.bad);
 }
 
 static void link_one(int back, uint32_t seed)
 {
     hstcall_cfg cfg;
-    xfer_t x;
+    char what[64];
     hstcall_defaults(&cfg);
     cfg.back_bps = back;
-    if (back == 300) cfg.flags |= 0x08;
-    hstcall_init(&HC, &cfg);
-    ans_init(&A);
-    line(6, 300, 300, -60, -60, 0, 0, seed);
-    call(&HC, 40, 4096, 300, &x);
-    printf("link, back %d: hstcall code %d back %d; %ld of %ld octets to hstcall, %ld of %ld to us, %d wrong\n", back,
-           HC.fwd_code, HC.back_bps, x.got_hc, x.to_hc, x.got_ans, x.to_ans, x.bad);
+    call_start(&HC, &cfg, seed);
+    X.to_hc = 4096; X.to_ans = 300;
+    run_to(&HC, 40L * FS, 1);
+    snprintf(what, sizeof what, "link, back %d: hstcall code %d back %d", back, HC.fwd_code, HC.back_bps);
+    data_line(what);
     if (verbose)
         printf("  (hstcall: receiver state %d code %d, frames %d in, %d bad, %d LT sent, %d again; us: frames %d in, %d bad, %d LT sent, %d again)\n",
                hc_frx_state(&HC.frx), HC.frx.d.code, HC.mnp.rx_frames, HC.mnp.rx_bad, HC.mnp.tx_lt, HC.mnp.tx_retx,
@@ -704,7 +797,7 @@ static void link_one(int back, uint32_t seed)
     bound("MNP up at both ends", HC.linked && A.linked);
     bound("HST agreed, our retrain at the best code", A.retrained && A.best == 6);
     bound("hstcall at code 6 and the back speed it asked for", HC.fwd_code == 6 && HC.back_bps == back);
-    bound("the data both ways, intact", x.got_hc == x.to_hc && x.got_ans == x.to_ans && x.bad == 0);
+    bound("the data both ways, intact", intact());
 }
 
 static void link_case(void)
@@ -713,21 +806,200 @@ static void link_case(void)
     link_one(300, 82u);
 }
 
+/* a call reversed by hstcall's backlog: hstcall then holds the forward
+ * channel (code 6), we the back */
+static int reversed_call(hstcall_t *c, hstcall_cfg *cfg, int hcrx, uint32_t seed)
+{
+    cfg->rev_backlog = 64;
+    call_start(c, cfg, seed);
+    A.hcrx = hcrx;
+    X.to_hc = 1024; X.to_ans = 3000;
+    run_to(c, 40L * FS, 1);
+    return c->role == HC_ROLE_FWD && c->reversals == 1 && A.role == 1;
+}
+
 static void reversal(void)
 {
     hstcall_cfg cfg;
-    xfer_t x;
+    int ok;
     hstcall_defaults(&cfg);
-    cfg.rev_backlog = 64;
-    hstcall_init(&HC, &cfg);
-    ans_init(&A);
-    line(6, 300, 300, -60, -60, 0, 0, 91u);
-    call(&HC, 40, 1024, 3000, &x);
-    printf("reversal: hstcall role %d code %d, reversals %d; %ld of %ld octets to hstcall, %ld of %ld to us, %d wrong\n",
-           HC.role, HC.fwd_code, HC.reversals, x.got_hc, x.to_hc, x.got_ans, x.to_ans, x.bad);
-    bound("hstcall holds the forward channel, once reversed", HC.role == HC_ROLE_FWD && HC.reversals == 1 && A.role == 1);
+    ok = reversed_call(&HC, &cfg, 0, 91u);
+    printf("reversal: hstcall role %d code %d, reversals %d\n", HC.role, HC.fwd_code, HC.reversals);
+    data_line("reversal");
+    bound("hstcall holds the forward channel, once reversed", ok);
     bound("our forward receiver in data", hst_frx_state(&A.frx) == HST_FRX_DATA);
-    bound("the data both ways, intact", x.got_hc == x.to_hc && x.got_ans == x.to_ans && x.bad == 0);
+    bound("the data both ways, intact", intact());
+}
+
+/* hstcall holding the forward channel takes our 0x35 (marks) and then our
+ * 0x24 (a short training), each from the frame boundary after its LNA: our
+ * side arms (sets its code) on that LNA, and the data goes on intact */
+static void holder_rates(void)
+{
+    hstcall_cfg cfg;
+    int ok;
+    hstcall_defaults(&cfg);
+    ok = reversed_call(&HC, &cfg, 1, 92u);
+    A.send_code = 0x35; A.send_at = A.ms + 500;
+    X.to_hc += 1000; X.to_ans += 6000;
+    run_to(&HC, X.n + 8L * FS, 0);
+    printf("holder_rates: after 0x35 hstcall code %d, ours %d\n", HC.fwd_code, A.hfrx.d.code);
+    bound("reversed first", ok);
+    bound("0x35: hstcall at code 5 by marks, our receiver followed, in data",
+          HC.fwd_code == 5 && A.hfrx.d.code == 5 && hc_frx_state(&A.hfrx) == HC_FRX_DATA && !A.hfrx.armed);
+    run_to(&HC, X.n + 30L * FS, 1);
+    bound("the data both ways, intact", intact());
+    A.send_code = 0x24; A.send_at = A.ms + 500;
+    X.to_hc += 1000; X.to_ans += 6000;
+    run_to(&HC, X.n + 8L * FS, 0);
+    printf("holder_rates: after 0x24 hstcall code %d, ours %d\n", HC.fwd_code, A.hfrx.d.code);
+    bound("0x24: hstcall trained at code 4, our receiver in data at 4",
+          HC.fwd_code == 4 && A.hfrx.d.code == 4 && hc_frx_state(&A.hfrx) == HC_FRX_DATA);
+    run_to(&HC, X.n + 30L * FS, 1);
+    data_line("holder_rates");
+    bound("the data both ways, intact", intact());
+}
+
+/* hstcall holding the forward channel takes our 0x16: its LNA, 20 ms, its
+ * back channel; our short training at 6 meets the equaliser it kept when it
+ * left the back role */
+static void turn_back(void)
+{
+    hstcall_cfg cfg;
+    int ok;
+    hstcall_defaults(&cfg);
+    ok = reversed_call(&HC, &cfg, 0, 93u);
+    A.send_code = 0x16; A.send_at = A.ms + 500;
+    X.to_hc += 6000; X.to_ans += 300;
+    run_to(&HC, X.n + 30L * FS, 1);
+    printf("turn_back: hstcall role %d code %d, reversals %d, receiver code %d\n", HC.role, HC.fwd_code, HC.reversals,
+           HC.frx.d.code);
+    data_line("turn_back");
+    bound("reversed first", ok);
+    bound("hstcall back on the back channel, reversals 2, its receiver in data at 6",
+          HC.role == HC_ROLE_BACK && HC.reversals == 2 && hc_frx_state(&HC.frx) == HC_FRX_DATA && HC.frx.d.code == 6);
+    bound("the data both ways, intact", intact());
+}
+
+/* hstcall's two forced requests (0x24, then 0x25) in one call: we hold the
+ * forward channel and retrain at each */
+static void forced_twice(void)
+{
+    hstcall_cfg cfg;
+    hstcall_defaults(&cfg);
+    cfg.force_rate_code = 4; cfg.force_kind = 0x20; cfg.force_rate_at_ms = 6000;
+    cfg.force_more[0].code = 5; cfg.force_more[0].kind = 0x20; cfg.force_more[0].at_ms = 9000;
+    call_start(&HC, &cfg, 94u);
+    X.to_hc = 8000; X.to_ans = 300;
+    run_to(&HC, 14L * FS, 0);
+    run_to(&HC, 40L * FS, 1);
+    printf("forced_twice: %d LNs taken by us, hstcall code %d, its receiver at %d\n", A.lns_taken, HC.fwd_code, HC.frx.d.code);
+    data_line("forced_twice");
+    bound("both requests taken, hstcall and its receiver at code 5",
+          A.lns_taken == 2 && HC.fwd_code == 5 && HC.frx.d.code == 5 && hc_frx_state(&HC.frx) == HC_FRX_DATA);
+    bound("the data both ways, intact", intact());
+}
+
+/* ignore_lna: hstcall's 0x1R is acknowledged, our forward stops, and
+ * hstcall never trains (Task 21's rev_lost) */
+static void rev_lost(void)
+{
+    hstcall_cfg cfg;
+    hstcall_defaults(&cfg);
+    cfg.ignore_lna = 1;
+    cfg.rev_backlog = 64;
+    call_start(&HC, &cfg, 95u);
+    X.to_hc = 300; X.to_ans = 3000;
+    run_to(&HC, 20L * FS, 0);
+    printf("rev_lost: hstcall role %d phase %d reversals %d; us role %d, our receiver state %d\n", HC.role, HC.phase,
+           HC.reversals, A.role, hst_frx_state(&A.frx));
+    bound("we turned on the LN; hstcall stayed on the back channel and never trained",
+          A.role == 1 && HC.role == HC_ROLE_BACK && HC.reversals == 0 && hst_frx_state(&A.frx) != HST_FRX_DATA);
+}
+
+/* lr_delay_ms: no frame before it; ld_hold_ms: the carrier held that long
+ * after the LD (1000 by default) */
+static void knobs(void)
+{
+    hstcall_cfg cfg;
+    long first = -1, t = 0, end, n;
+    int i;
+    hstcall_defaults(&cfg);
+    cfg.lr_delay_ms = 2000;
+    hstcall_init(&HC, &cfg);
+    t = tone_feed(t, FS, 1, &first);
+    end = t;
+    for (n = 0; n < 3L * FS; n++, t++) {
+        (void)hstcall_tick(&HC, 0);
+        if (n == 2L * FS - 200) bound("lr_delay_ms 2000: no frame 1.95 s after the back channel's start", HC.mnp.tx_frames == 0);
+    }
+    printf("knobs: lr_delay_ms 2000, %d frames by 3 s\n", HC.mnp.tx_frames > 0 ? 1 : 0);
+    bound("lr_delay_ms 2000: the LR by 3 s", HC.mnp.tx_frames > 0);
+    (void)end;
+    for (i = 0; i < 2; i++) {
+        long ld_gone = -1, hold = i ? 3000 : 1000;
+        hstcall_defaults(&cfg);
+        cfg.ld_at_ms = 9000;
+        if (i) cfg.ld_hold_ms = 3000;
+        call_start(&HC, &cfg, 96u + (uint32_t)i);
+        while (X.n < 16L * FS) {
+            run_to(&HC, X.n + 8, 0);
+            if (ld_gone < 0 && HC.ld_sent && HC.ld_off >= 0) ld_gone = X.n;
+        }
+        printf("knobs: ld_hold_ms %ld, the LD out, then the carrier\n", hold);
+        if (verbose) printf("  (the carrier stopped %.1f ms after the LD had gone)\n", (X.hc_last_tx - ld_gone) / 8.0);
+        bound("the LD received", A.m.rx_ld_reason == 255);
+        /* the last pulses ring out 4 symbols (27 ms at 450) after the stop */
+        bound("the carrier held for ld_hold_ms after the LD, then off within 60 ms",
+              ld_gone > 0 && X.hc_last_tx >= ld_gone + hold * 8 && X.hc_last_tx <= ld_gone + hold * 8 + 480
+              && hstcall_state(&HC) == HC_DROPPED);
+    }
+}
+
+/* our short training into hstcall's receiver with its equaliser kept from
+ * a long one (kept as the carrier fades, 1 s of silence): code 6, 24 dB,
+ * and at -7 Hz -100 ppm, no error in 2 x 10^4. 24 dB: 14400's 1e-5 point
+ * (hst-facts `Rate changes`, BinModem's working 27 dB less 3); at 20 dB
+ * even the long training gives some 3e-3 */
+static void stored_one(double hz, double ppm, uint32_t seed)
+{
+    static hst_ftx_t T;
+    static src_t S;
+    double arrive = FLEVEL * pow(10, -6 / 20.0) * band_gain(600, 3000);
+    long n, nmax;
+    int was_data;
+    cmp_t o;
+    memset(&S, 0, sizeof S);
+    S.r = seed;
+    hst_ftx_init(&T, (int)FLEVEL, src_bit, &S);
+    hc_frx_init(&FR, 6);
+    line(6, 300, 300, -300, dbm0_of(arrive) - 24, hz, ppm, seed);
+    nrx = 0; fdata_at = -1;
+    n = 0;
+    for (; n < 6L * FS; n++) {
+        if (n == FS / 5) hst_ftx_train(&T, 6, 1);
+        (void)v32line_tick(&L, hst_ftx_tick(&T), fr_rx, &n);
+    }
+    was_data = hc_frx_state(&FR) == HC_FRX_DATA;
+    hc_frx_keep(&FR);
+    hst_ftx_stop(&T);
+    for (nmax = n + FS; n < nmax; n++) (void)v32line_tick(&L, hst_ftx_tick(&T), fr_rx, &n);
+    nrx = 0; S.n = 0; fdata_at = -1;
+    hst_ftx_train(&T, 6, 0);
+    for (nmax = n + (NB_OFF + 4000) / 14400 * FS + 2 * FS; n < nmax && S.n < NB_OFF + 2000; n++)
+        (void)v32line_tick(&L, hst_ftx_tick(&T), fr_rx, &n);
+    o = compare(S.n, 300);
+    printf("stored_eq, code 6, 24 dB, %+d Hz %+d ppm: short training data mode %s; %ld errors\n", (int)hz, (int)ppm,
+           fdata_at >= 0 ? "reached" : "NOT reached", o.errs);
+    if (verbose) printf("  (%ld compared; SNR %.1f dB)\n", o.cmp, hc_frx_snr(&FR));
+    bound("in data after the long training, the equaliser kept", was_data && FR.stored);
+    bound("the short training reaches data, no bit in error", fdata_at >= 0 && o.found && o.cmp >= NB_OFF && o.errs == 0);
+}
+
+static void stored_eq(void)
+{
+    stored_one(0, 0, 51u);
+    stored_one(-7, -100, 52u);
 }
 
 int main(int argc, char **argv)
@@ -738,19 +1010,28 @@ int main(int argc, char **argv)
     if (T_CASE(only, 1)) fwd_from_ours();
     /* the rest do not depend on the profile: run in the default build only */
     (void)tone; (void)back_to_ours; (void)back_from_ours; (void)fwd_to_ours;
-    (void)marks_self; (void)coexist; (void)link_case; (void)reversal;
+    (void)marks_self; (void)coexist; (void)link_case; (void)reversal; (void)stored_eq;
+    (void)holder_rates; (void)turn_back; (void)forced_twice; (void)rev_lost; (void)knobs;
 #else
-    int only = t_case_arg(argc, argv, 9);
+    int only = t_case_arg(argc, argv, 19);
     verbose = getenv("HST_VERBOSE") != NULL;
     if (T_CASE(only, 1)) tone();
-    if (T_CASE(only, 2)) back_to_ours();
-    if (T_CASE(only, 3)) back_from_ours();
-    if (T_CASE(only, 4)) fwd_from_ours();
-    if (T_CASE(only, 5)) fwd_to_ours();
-    if (T_CASE(only, 6)) marks_self();
-    if (T_CASE(only, 7)) coexist();
-    if (T_CASE(only, 8)) link_case();
-    if (T_CASE(only, 9)) reversal();
+    if (T_CASE(only, 2)) back_to_ours(450);
+    if (T_CASE(only, 3)) back_to_ours(300);
+    if (T_CASE(only, 4)) back_from_ours(450);
+    if (T_CASE(only, 5)) back_from_ours(300);
+    if (T_CASE(only, 6)) fwd_from_ours();
+    if (T_CASE(only, 7)) fwd_to_ours();
+    if (T_CASE(only, 8)) marks_self();
+    if (T_CASE(only, 9)) coexist();
+    if (T_CASE(only, 10)) link_case();
+    if (T_CASE(only, 11)) reversal();
+    if (T_CASE(only, 12)) stored_eq();
+    if (T_CASE(only, 13)) holder_rates();
+    if (T_CASE(only, 14)) turn_back();
+    if (T_CASE(only, 15)) forced_twice();
+    if (T_CASE(only, 16)) rev_lost();
+    if (T_CASE(only, 17)) knobs();
 #endif
     T_REPORT("test_hstcall");
 }

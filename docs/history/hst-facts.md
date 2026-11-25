@@ -485,8 +485,9 @@ LI  LR  c1  p1: len 6 "1,0,0,0,0,255"  p2: 3  p3: k = 8  p4: N401 = 0x0040 = 64
   reversal (SPEC D20). [OURS]
 - No 0xC0, or an empty agreed mask: plain MNP over the HST channels, the pump
   staying at the opening rate (spec "HST profile"). [OURS]
-- BinModem's HST96 (the 1986 unit as it models it) is rates 0x10 and flags
-  0x08, so an HST96 end meets a later HST at 9600/300; whether the 1986 unit
+- BinModem's HST96 (the 1986 unit as it models it) is rates 0x10 with the
+  0x08 back-300 flag set on top of HST's 0x01 (flags 0x09), so an HST96 end
+  meets a later HST at 9600/300; whether the 1986 unit
   shares the LR, 0xC0, framing or training is not established (BF §7). [BM]
 - The Courier's setting for "disable 450 bps back channel" is S15 bit 2 (value
   4) (PS §2.1). [PUB]

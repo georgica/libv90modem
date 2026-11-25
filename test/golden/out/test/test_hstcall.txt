@@ -9,11 +9,11 @@ back_to_ours 450, +0 Hz +0 ppm: 100000 bits wanted, 0 errors
   our hst_brx locks: pass
   no bit in error: pass
   no loss of lock: pass
-back_to_ours 300, +0 Hz +0 ppm: 100000 bits wanted, 0 errors
+back_to_ours 450, +7 Hz +100 ppm: 20000 bits wanted, 0 errors
   our hst_brx locks: pass
   no bit in error: pass
   no loss of lock: pass
-back_to_ours 450, +7 Hz +100 ppm: 20000 bits wanted, 0 errors
+back_to_ours 300, +0 Hz +0 ppm: 100000 bits wanted, 0 errors
   our hst_brx locks: pass
   no bit in error: pass
   no loss of lock: pass
@@ -23,9 +23,9 @@ back_to_ours 300, -7 Hz -100 ppm: 20000 bits wanted, 0 errors
   no loss of lock: pass
 back_from_ours 450, +0 Hz +0 ppm: 100000 bits wanted, 0 errors
   no bit in error: pass
-back_from_ours 300, +0 Hz +0 ppm: 100000 bits wanted, 0 errors
-  no bit in error: pass
 back_from_ours 450, -7 Hz +100 ppm: 20000 bits wanted, 0 errors
+  no bit in error: pass
+back_from_ours 300, +0 Hz +0 ppm: 100000 bits wanted, 0 errors
   no bit in error: pass
 back_from_ours 300, +7 Hz -100 ppm: 20000 bits wanted, 0 errors
   no bit in error: pass
@@ -100,18 +100,53 @@ coexist 14400 / 300, 6 dB ERL, G.711: 0 errors back, 0 forward
   hstcall's forward receiver within 1 dB of its echo-free SNR: pass
   our back receiver within 2 dB of its echo-free SNR (G.711's noise on the echo): pass
   no bit in error either way: pass
-link, back 450: hstcall code 6 back 450; 4096 of 4096 octets to hstcall, 300 of 300 to us, 0 wrong
+link, back 450: hstcall code 6 back 450: 4096 of 4096 octets to hstcall, 300 of 300 to us, 0 wrong
   MNP up at both ends: pass
   HST agreed, our retrain at the best code: pass
   hstcall at code 6 and the back speed it asked for: pass
   the data both ways, intact: pass
-link, back 300: hstcall code 6 back 300; 4096 of 4096 octets to hstcall, 300 of 300 to us, 0 wrong
+link, back 300: hstcall code 6 back 300: 4096 of 4096 octets to hstcall, 300 of 300 to us, 0 wrong
   MNP up at both ends: pass
   HST agreed, our retrain at the best code: pass
   hstcall at code 6 and the back speed it asked for: pass
   the data both ways, intact: pass
-reversal: hstcall role 1 code 6, reversals 1; 1024 of 1024 octets to hstcall, 3000 of 3000 to us, 0 wrong
+reversal: hstcall role 1 code 6, reversals 1
+reversal: 1024 of 1024 octets to hstcall, 3000 of 3000 to us, 0 wrong
   hstcall holds the forward channel, once reversed: pass
   our forward receiver in data: pass
   the data both ways, intact: pass
-test_hstcall: 81 checks, 0 failures
+stored_eq, code 6, 24 dB, +0 Hz +0 ppm: short training data mode reached; 0 errors
+  in data after the long training, the equaliser kept: pass
+  the short training reaches data, no bit in error: pass
+stored_eq, code 6, 24 dB, -7 Hz -100 ppm: short training data mode reached; 0 errors
+  in data after the long training, the equaliser kept: pass
+  the short training reaches data, no bit in error: pass
+holder_rates: after 0x35 hstcall code 5, ours 5
+  reversed first: pass
+  0x35: hstcall at code 5 by marks, our receiver followed, in data: pass
+  the data both ways, intact: pass
+holder_rates: after 0x24 hstcall code 4, ours 4
+  0x24: hstcall trained at code 4, our receiver in data at 4: pass
+holder_rates: 3024 of 3024 octets to hstcall, 15000 of 15000 to us, 0 wrong
+  the data both ways, intact: pass
+turn_back: hstcall role 0 code 6, reversals 2, receiver code 6
+turn_back: 7024 of 7024 octets to hstcall, 3300 of 3300 to us, 0 wrong
+  reversed first: pass
+  hstcall back on the back channel, reversals 2, its receiver in data at 6: pass
+  the data both ways, intact: pass
+forced_twice: 2 LNs taken by us, hstcall code 5, its receiver at 5
+forced_twice: 8000 of 8000 octets to hstcall, 300 of 300 to us, 0 wrong
+  both requests taken, hstcall and its receiver at code 5: pass
+  the data both ways, intact: pass
+rev_lost: hstcall role 0 phase 1 reversals 0; us role 1, our receiver state 0
+  we turned on the LN; hstcall stayed on the back channel and never trained: pass
+  lr_delay_ms 2000: no frame 1.95 s after the back channel's start: pass
+knobs: lr_delay_ms 2000, 1 frames by 3 s
+  lr_delay_ms 2000: the LR by 3 s: pass
+knobs: ld_hold_ms 1000, the LD out, then the carrier
+  the LD received: pass
+  the carrier held for ld_hold_ms after the LD, then off within 60 ms: pass
+knobs: ld_hold_ms 3000, the LD out, then the carrier
+  the LD received: pass
+  the carrier held for ld_hold_ms after the LD, then off within 60 ms: pass
+test_hstcall: 102 checks, 0 failures

@@ -32,15 +32,29 @@
  *    plus 20 ms: forward off, back preamble, forward receiver listening),
  *    0x2R (a short training at R) and 0x3R (by marks: 15 ms of ones at the
  *    old rate, the new rate, 15 ms of ones; with `bm_training` a short
- *    training instead).
- *  - Forced: at `force_rate_at_ms` it sends LN (`force_kind` | code); on
- *    its LNA, for 0x2R it expects a training at the code, for 0x3R the
- *    marks (or, with `bm_training`, a training).
- *  - `ld_at_ms`: LD 255 then, and its carrier stops 100 ms after the LD
- *    has gone; `drop_at_ms`: every transmitter stops then, at once.
+ *    training instead), each once its LNA has gone: the frame being sent
+ *    finishes [PUB, P2:561], the LNA goes, then from the next symbol the
+ *    marks ([OURS], `Rate changes`), or 20 ms later the training (as our
+ *    reversal waits [OURS]: a receiver starting again on the training would
+ *    lose the LNA's end, still in its decoder).
+ *  - Forced: at `force_rate_at_ms` (and each `force_more`) it sends LN
+ *    (`force_kind` | code: 0x10, 0x20 or 0x30); on its LNA, for 0x2R it
+ *    expects a training at the code, for 0x3R the marks (or, with
+ *    `bm_training`, a training), for 0x1R it reverses.
+ *  - `ld_at_ms`: LD 255 then, and its carrier stops `ld_hold_ms` (1000
+ *    [BM]) after the LD has gone; `drop_at_ms`: every transmitter stops
+ *    then, at once.
  * Times are from hstcall_init, in ms.
  *
- * No allocation and no global state: two in one process are independent. */
+ * Simplifications [BM, OURS] that MNP recovers from: no HDLC reset at a
+ * switch, and LTs not held back while a reversal or rate change of ours is
+ * pending (the frame in flight is cut). Holding the forward channel it
+ * hears the back channel at one speed only, the agreed one (BinModem
+ * listens for both).
+ *
+ * No allocation and no global state: two in one process are independent.
+ * hstcall_t is about 150 KB: keep it static or on the heap, never on a
+ * stack (Windows' and musl's thread stacks are small). */
 #ifndef V90D_SIM_HSTCALL_H
 #define V90D_SIM_HSTCALL_H
 #include <stddef.h>
@@ -102,6 +116,7 @@ double hc_btx_tick(hc_btx *t);
 #define HC_BLP   161                      /* the low-pass's taps at 8000 Hz */
 #define HC_BZN   256                      /* the 1600 Hz baseband ring */
 #define HC_BMF_R 32                       /* the matched pulse's table: steps a 1600 Hz sample */
+#define HC_BMFN  (2 * HC_BSPAN * 16 * HC_BMF_R + 1)   /* +-4 symbols at 300 (16 samples) */
 
 typedef struct {
     int      bps;
@@ -113,7 +128,7 @@ typedef struct {
     long     n;
     double   zr[HC_BZN], zi[HC_BZN];
     long     zn;                          /* 1600 Hz samples made */
-    double   mf[2 * 6 * 16 * HC_BMF_R + 1];   /* +-6 symbols at 300 (16 samples), any speed */
+    double   mf[HC_BMFN];                 /* the matched pulse, +-4 symbols */
     int      mfh;                         /* its half span, 1600 Hz samples */
     /* carrier detect */
     double   bp; int nb, on_n, off_n, cd;
@@ -198,10 +213,14 @@ double hc_ftx_tick(hc_ftx *t);
  * shifted a strobe each way), and the taps' centre of energy held weakly at
  * the middle. In data, 16 alternating symbols on the 4 points are a new
  * training: trained again from the equaliser it has, at the code set by
- * hc_frx_set_code. Carrier lost (under -48 dBm0 for 100 ms): listening
- * again, the equaliser kept (from data) for the next AB. hc_frx_arm: 0x3R,
+ * hc_frx_set_code. Carrier lost (under -48 dBm0, or 10 dB under the
+ * signal's level, for 100 ms; from 3 dB under, nothing adapted and the
+ * equaliser kept as it was): listening
+ * again, the equaliser kept (from data) for the next AB, which then starts
+ * from it, the carrier's phase taken from 8 symbols' fourth power. hc_frx_arm: 0x3R,
  * both rates decoded (the equaliser frozen) until 16 symbols of ones come
- * at the new one, at most 2 s. */
+ * at the new one, at most 2 s. The -14 dB gate on the data's start is this
+ * peer's own choice (our hst_frx happens to use the same figure). */
 #define HC_GN   241
 #define HC_FMFH 54                        /* the matched pulse's half span, samples (16 symbols) */
 #define HC_FMF_R 32                       /* its table's steps a sample */
@@ -234,6 +253,8 @@ typedef struct {
     double   bbr[HC_FBB], bbi[HC_FBB];
     /* power and AB */
     double   pw;                          /* guard output power, leaky */
+    double   pref;                        /* the signal's level since the AB */
+    int      fading;                      /* 3 dB under it: nothing adapted */
     double   r6r, r6i, r30r, r30i;        /* 600 and 3000 Hz, leaky */
     long     abrun, low;
     double   thr_on, thr_off;
@@ -241,14 +262,18 @@ typedef struct {
     /* strobes */
     double   ts, tstep;                   /* the next strobe; T/2 */
     double   tdrift;                      /* the clock offset's, a symbol */
+    double   tadj;                        /* the timing loop's corrections since the AB, less the drift's */
     int      half;
     double   xr[HC_EQN], xi[HC_EQN];
     double   wr[HC_EQN], wi[HC_EQN];
     int      stored;
-    double   sr[HC_EQN], si[HC_EQN];
+    double   sr[HC_EQN], si[HC_EQN], sfreq, sdrift, sadj;   /* the equaliser kept (stored) */
     double   theta, freq;
     double   dq2;                         /* the timing gradient's mean square */
     double   gacc; int gn;
+    int      restoring;                   /* GAIN with the kept equaliser: the phase from z^4 */
+    int      warm;                        /* this training started from the kept equaliser: slow steps */
+    double   z4r, z4i;
     long     nsym, trsym;
     double   mse;                         /* |e|^2 against the decision, smoothed */
     double   mse0;                        /* training: the same over 16 symbols */
@@ -270,6 +295,10 @@ void hc_frx_init(hc_frx *r, int code);
 /* the code of the next training (and, before the first, of the first) */
 void hc_frx_set_code(hc_frx *r, int code);
 void hc_frx_arm(hc_frx *r, int code);
+/* keep the equaliser (taps, carrier frequency, clock offset) for the next
+ * AB, if in data; done on a carrier loss, and by the caller when it stops
+ * listening (a reversal) */
+void hc_frx_keep(hc_frx *r);
 int  hc_frx_tick(hc_frx *r, double x);
 int  hc_frx_state(const hc_frx *r);
 /* the equalised points' SNR, dB, from the decisions (0 before training) */
@@ -289,6 +318,15 @@ typedef struct {
     int     rev_backlog;   /* > 0: asks for the forward channel above this backlog, octets */
     int     force_rate_code, force_rate_at_ms, force_kind;   /* force_kind 0x20 or 0x30 */
     int     level_dbm0;    /* transmit level (0: -12) */
+    /* for the later tasks */
+    int     lr_delay_ms;   /* the LR no earlier than this after the back channel starts (0: straight after
+                              the preamble) */
+    struct { int code, at_ms, kind; } force_more[3];   /* further forced requests (kind 0: none),
+                              each sent at its time once no LN of ours is outstanding */
+    int     ignore_lna;    /* the first N LNAs to our own LNs are not acted on (as if lost):
+                              no reversal, no rate change follows (Task 21's rev_lost) */
+    int     ignore_ln;     /* the first N LNs from the answerer are not acted on (its LNA still goes) */
+    int     ld_hold_ms;    /* carrier held this long after the LD has gone (0: 1000, BinModem's [BM]) */
 } hstcall_cfg;
 
 /* back 450, start 450, rates 0x7C (codes 2..6), flags 0x01, level -12 */
@@ -327,7 +365,11 @@ typedef struct {
     long     t_wait;       /* ms the gap ends */
     int      wait_code;
     int      trained;      /* we have trained forward once */
-    int      forced;
+    int      rate_rx;      /* an 0x2R or 0x3R from the answerer, done once our LNA has gone (-1 none) */
+    int      hold;         /* the rest of the symbol after that LNA: ones, then the marks or training */
+    int      conf_going;   /* the confirming LA is on the line */
+    int      nforce;       /* forced requests sent */
+    int      lnas_ignored, lns_ignored;
     int      ld_sent;      /* LD asked; its carrier stop pending */
     long     ld_off;
     long     rx_bits;      /* bits given to MNP */

@@ -5589,3 +5589,38 @@ report).
 Sizes: `hstcall_t` 165712 octets (x86-64), test side only. Host run 33 s
 (the back channel's 10^5 bits through v32line's resamplers), the short set
 8 s.
+
+### hst 17, review fixes (2026-11-25)
+
+- **I1, holder 0x2R/0x3R:** taken from the answerer, done in `hc_bit` once
+  hstcall's LNA has gone and between frames (the frame in flight finishes
+  [PUB, P2:561]): the marks from the next symbol; the training 20 ms after
+  the LNA, as our reversal waits [OURS]. Without the gap a receiver that
+  starts again on the training loses the LNA's end, still in its Viterbi
+  (24 symbols): seen in `holder_rates`, where our side never got the
+  0x24's LNA. Task 22 should know it of our hst_frx too.
+- **I2, the equaliser across a reversal:** `hc_frx_keep` when hstcall
+  leaves the back role. Getting a kept equaliser to work took four more
+  fixes in the receiver: adaptation frozen once the power falls 3 dB under
+  the signal's level, the equaliser kept then (normalised steps on a fading
+  input wrecked the taps, and the loss used to store those: it failed more
+  often at 30-33 dB than at 24); the carrier lost also at 10 dB under the
+  signal's level (at a 20 dB line the noise is over -48 dBm0); on a kept
+  start the carrier's phase from 8 symbols' fourth power once the delay
+  line is full, and the timing loop's correction against AB's estimate
+  restored; slow steps from a kept start. `stored_eq`: code 6, short
+  training, 0 errors in 2 x 10^4 at 24, 27, 30 and 33 dB, 0 and -7 Hz
+  -100 ppm, 4 seeds each (32 runs). At 20 dB 14400 errs on every seed
+  (27 to 145 per 2 x 10^4), as the long training does (180 in 62000): the
+  1e-5 point of 14400 is near 24 dB (BinModem's working 27 less 3), so the
+  case runs at 24.
+- **Knobs:** `lr_delay_ms`, `force_more[3]`, `ignore_lna`, `ignore_ln`,
+  `ld_hold_ms` (default 1000 [BM]), each with a case (`knobs`,
+  `forced_twice`, `rev_lost`); `turn_back` and `holder_rates` in the call
+  harness, which now runs in steps.
+- **Minors:** the confirming LA's end found to the bit (M1); the back
+  receiver's matched-pulse table sized to +-4 symbols (M12, hstcall_t
+  149472 octets); `marks_self` arms the receiver 36 ms after the marks begin
+  (M13); header notes (M6-M8, static only); the HST96 facts row reworded
+  (M10); `back_to_ours` and `back_from_ours` split per speed (19 cases).
+- Host run 39 s, short set 13 s.

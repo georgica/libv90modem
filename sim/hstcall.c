@@ -528,6 +528,14 @@ void hc_frx_arm(hc_frx *r, int code)
 
 int hc_frx_state(const hc_frx *r) { return r->state; }
 
+void hc_frx_keep(hc_frx *r)
+{
+    if (r->state != HC_FRX_DATA) return;
+    memcpy(r->sr, r->wr, sizeof r->sr); memcpy(r->si, r->wi, sizeof r->si);
+    r->sfreq = r->freq; r->sdrift = r->tdrift; r->sadj = r->tadj;
+    r->stored = 1;
+}
+
 double hc_frx_snr(const hc_frx *r)
 {
     return r->state >= HC_FRX_TRAIN && r->mse > 0 ? 10 * log10(r->sig / r->mse) : 0;
@@ -635,6 +643,24 @@ static void frx_symbol(hc_frx *r)
 {
     double zr = 0, zi = 0, cs, sn, qr, qi, dr, di, er, ei, fr, fi, perr, mu, kp, kf, d4, px = 0;
     int k, s4, hard = -1, lab = -1;
+    if (r->state == HC_FRX_GAIN && r->restoring) {
+        /* the kept equaliser: the carrier's phase from 8 symbols' fourth
+         * power, against A's (B, C and D have the same), once the delay
+         * line holds the symbols the taps were kept for */
+        double z2r, z2i;
+        for (k = 0; k < HC_EQN; k++) {
+            zr += r->wr[k] * r->xr[k] - r->wi[k] * r->xi[k];
+            zi += r->wr[k] * r->xi[k] + r->wi[k] * r->xr[k];
+        }
+        /* once the delay line is full (16 symbols), 8 symbols */
+        z2r = zr * zr - zi * zi; z2i = 2 * zr * zi;
+        if (r->gn >= HC_EQN / 2) { r->z4r += z2r * z2r - z2i * z2i; r->z4i += 2 * z2r * z2i; }
+        if (++r->gn == HC_EQN / 2 + 8) {
+            r->theta = (atan2(r->z4i, r->z4r) - 4 * atan2(-2.0, -6.0)) / 4;
+            r->state = HC_FRX_TRAIN; r->trsym = 0; r->restoring = 0;
+        }
+        return;
+    }
     if (r->state == HC_FRX_GAIN) {
         r->gacc += r->xr[0] * r->xr[0] + r->xi[0] * r->xi[0];
         if (++r->gn == 16) {
@@ -658,7 +684,9 @@ static void frx_symbol(hc_frx *r)
     if (r->state == HC_FRX_TRAIN) {
         r->trsym++;
         dr = r->pts[0][st_lab[s4]][0]; di = r->pts[0][st_lab[s4]][1];
-        mu = r->trsym < 300 ? 0.1 : 0.03; kp = r->trsym < 300 ? 0.1 : 0.05; kf = r->trsym < 300 ? 2e-3 : 5e-4;
+        /* fast for 300 symbols, 100 from a kept equaliser */
+        if (r->trsym < 300 && !r->warm) { mu = 0.1; kp = 0.1; kf = 2e-3; }
+        else { mu = 0.03; kp = 0.05; kf = 5e-4; }
         if (d4 > 4.0) mu = kp = 0;                /* off the 4 points: data coming */
         if (alternating(r->sh, 8) && d4 < 4.0) { r->seen_alt = 1; r->rand_n = 0; }
         else r->rand_n++;
@@ -702,6 +730,9 @@ static void frx_symbol(hc_frx *r)
             r->snb = 0;
         }
     }
+    /* the signal fading (3 dB under its level): nothing adapted (the
+     * normalised steps on a fading input would wreck the taps) */
+    if (r->fading) { mu = 0; kp = 0; kf = 0; }
     er = qr - dr; ei = qi - di;
     r->mse += (er * er + ei * ei - r->mse) / 64;
     /* training: the error over every point, 16 symbols, kept for 16 */
@@ -741,7 +772,7 @@ static void frx_symbol(hc_frx *r)
             if (r->dq2 > 1e-12 && mu > 0) {
                 double u = (er * dqr + ei * dqi) / r->dq2;
                 if (u > 1) u = 1; else if (u < -1) u = -1;
-                r->ts -= 0.01 * u;
+                r->ts -= 0.01 * u; r->tadj -= 0.01 * u;
                 r->tdrift -= 2.5e-5 * u;           /* a clock offset: the step itself */
             }
         }
@@ -749,14 +780,14 @@ static void frx_symbol(hc_frx *r)
             double e = r->wr[k] * r->wr[k] + r->wi[k] * r->wi[k];
             num += k * e; den += e;
         }
-        if (den > 0) r->ts += 1e-4 * (HC_EQN / 2 - num / den);
+        if (den > 0) { r->ts += 1e-4 * (HC_EQN / 2 - num / den); r->tadj += 1e-4 * (HC_EQN / 2 - num / den); }
     }
 }
 
 static void frx_listen(hc_frx *r)
 {
     r->state = HC_FRX_IDLE;
-    r->abrun = 0; r->low = 0;
+    r->abrun = 0; r->low = 0; r->fading = 0;
     r->r6r = r->r6i = r->r30r = r->r30i = 0;
     r->armed = 0;
 }
@@ -785,7 +816,8 @@ int hc_frx_tick(hc_frx *r, double x)
             /* the resonators' phases are against n = 0, and a period of 40 */
             r->ts = t0 + k * T;
             r->tstep = T / 2;
-            r->tdrift = 0;
+            r->tdrift = 0; r->tadj = 0;
+            r->pref = r->pw;
             r->half = 0;
             memset(r->xr, 0, sizeof r->xr); memset(r->xi, 0, sizeof r->xi);
             r->theta = 0;
@@ -794,24 +826,29 @@ int hc_frx_tick(hc_frx *r, double x)
             dec_reset(&r->d, r->next_code);
             if (r->stored) {
                 memcpy(r->wr, r->sr, sizeof r->wr); memcpy(r->wi, r->si, sizeof r->wi);
-                r->state = HC_FRX_TRAIN; r->trsym = 0;
+                r->freq = r->sfreq; r->tdrift = r->sdrift;
+                /* the strobes where the timing loop had them against AB's estimate */
+                r->ts += r->sadj; r->tadj = r->sadj;
+                r->z4r = r->z4i = 0; r->gn = 0; r->restoring = 1; r->warm = 1;
+                r->state = HC_FRX_GAIN;
             } else {
                 memset(r->wr, 0, sizeof r->wr); memset(r->wi, 0, sizeof r->wi);
                 r->freq = 0;
-                r->gacc = 0; r->gn = 0;
+                r->gacc = 0; r->gn = 0; r->restoring = 0; r->warm = 0;
                 r->state = HC_FRX_GAIN;
             }
         }
         r->nbits = 0;
         return 0;
     }
-    /* carrier lost */
-    r->low = r->pw < r->thr_off ? r->low + 1 : 0;
+    /* carrier lost: under -48 dBm0, or 10 dB under the signal's level (its
+     * power in training and data, followed slowly while within 6 dB) */
+    if (r->pw > r->pref / 4) r->pref += (r->pw - r->pref) / 4096;
+    r->low = r->pw < r->thr_off || r->pw < r->pref / 10 ? r->low + 1 : 0;
+    /* fading: the equaliser kept as it was before (once, as it begins) */
+    if (r->pw < r->pref / 2) { if (!r->fading) hc_frx_keep(r); r->fading = 1; }
+    else r->fading = 0;
     if (r->low > 800) {
-        if (r->state == HC_FRX_DATA) {
-            memcpy(r->sr, r->wr, sizeof r->sr); memcpy(r->si, r->wi, sizeof r->si);
-            r->stored = 1;
-        }
         frx_listen(r);
         r->nbits = 0;
         return 0;
@@ -852,9 +889,37 @@ void hstcall_defaults(hstcall_cfg *c)
 static int hc_bit(void *u)
 {
     hstcall_t *c = (hstcall_t *)u;
-    int due = c->mnp.lna_due, b = mnppeer_tx_bit(&c->mnp);
-    if (due && !c->mnp.lna_due) { c->lna_going = 1; c->lna_done = -1; }
-    if (c->lna_going && c->mnp.line_framing == 0) { c->lna_going = 0; c->lna_done = c->ms; }
+    mnppeer_t *m = &c->mnp;
+    int due, conf, b;
+    /* after an 0x2R or 0x3R's LNA: the rest of this symbol ones, then the
+     * marks or the training, which take no bits until their data */
+    if (c->hold) {
+        if (c->ftx.seg != HC_FS_DATA) return 1;
+        c->hold = 0;
+    }
+    /* an 0x2R or 0x3R taken: once our LNA has gone, between frames (the
+     * frame in flight finishes [PUB]; the LNA, owed, goes before any LT).
+     * The marks straight after it; a training 20 ms after it, as our
+     * reversal waits [OURS]: a receiver that starts again on a training
+     * loses what its decoder still holds (24 symbols at 3..6), the LNA's
+     * end */
+    if (c->rate_rx >= 0 && c->role == HC_ROLE_FWD && m->line_framing == 0 && !m->lna_due && !c->lna_going
+        && c->lna_done >= 0 && (((c->rate_rx & 0xF0) == 0x30 && !c->cfg.bm_training) || c->ms >= c->lna_done + 20)) {
+        int r = c->rate_rx & 0x0F;
+        if ((c->rate_rx & 0xF0) == 0x30 && !c->cfg.bm_training) hc_ftx_marks(&c->ftx, r);
+        else hc_ftx_train(&c->ftx, r, 0, c->cfg.bm_training);
+        c->fwd_code = r;
+        c->rate_rx = -1;
+        c->hold = 1;
+        return 1;
+    }
+    due = m->lna_due; conf = m->conf_la;
+    b = mnppeer_tx_bit(m);
+    if (due && !m->lna_due) { c->lna_going = 1; c->lna_done = -1; }
+    if (c->lna_going && m->line_framing == 0) { c->lna_going = 0; c->lna_done = c->ms; }
+    /* the confirming LA: its end, to the bit */
+    if (conf && !m->conf_la) c->conf_going = 1;
+    if (c->conf_going && m->line_framing == 0) { c->conf_going = 0; c->conf_at = c->ms; }
     return b;
 }
 
@@ -875,7 +940,7 @@ void hstcall_init(hstcall_t *c, const hstcall_cfg *cfg)
     c->role = HC_ROLE_BACK;
     c->fwd_code = open_code(c);
     c->back_bps = c->cfg.start_bps;
-    c->conf_at = -1; c->ln_pend = -1; c->ln_rx = -1; c->lna_done = -1;
+    c->conf_at = -1; c->ln_pend = -1; c->ln_rx = -1; c->lna_done = -1; c->rate_rx = -1;
     c->tq1 = c->tq2 = 0;
     hc_btx_init(&c->btx, c->back_bps, c->level, hc_bit, c);
     hc_ftx_init(&c->ftx, c->level, hc_bit, c);
@@ -887,6 +952,7 @@ void hstcall_init(hstcall_t *c, const hstcall_cfg *cfg)
     m.c0 = c->cfg.flags || c->cfg.rates; m.c0_flags = c->cfg.flags; m.c0_rates = c->cfg.rates;
     m.layout_rx_any = 1;
     m.never_lr = c->cfg.no_lr;
+    m.lr_delay_ms = c->cfg.lr_delay_ms > 0 ? c->cfg.lr_delay_ms : 0;   /* mnppeer's clock starts with the back channel */
     m.t401_ms = 3000; m.n400 = 15;           /* BinModem's HST session [BM] */
     m.confirm_la_standard = 1;                /* [BM] */
     m.seed = 0x48535443u;
@@ -951,7 +1017,9 @@ static void ln_done(hstcall_t *c, int code)
 {
     int r = code & 0x0F, kind = code & 0xF0;
     if (kind == 0x10 && c->role == HC_ROLE_BACK) {
-        /* the reversal: our back transmitter stops at once; 200 ms; our training */
+        /* the reversal: our back transmitter stops at once; 200 ms; our
+         * training. The forward equaliser is kept for when we listen again */
+        hc_frx_keep(&c->frx);
         hc_btx_stop(&c->btx);
         c->phase = HC_GAP;
         c->t_wait = c->ms + 200;
@@ -971,16 +1039,14 @@ static void ln_take(hstcall_t *c, int code)
 {
     int r = code & 0x0F, kind = code & 0xF0;
     if (c->role != HC_ROLE_FWD || r < 2 || r > 6) return;
+    if (c->lns_ignored < c->cfg.ignore_ln) { c->lns_ignored++; return; }
     if (kind == 0x10) {
         c->ln_rx = code;
         if (c->mnp.lna_due || c->lna_going) c->lna_done = -1;
         c->phase = HC_TURN;
-    } else if (kind == 0x20 || (kind == 0x30 && c->cfg.bm_training)) {
-        hc_ftx_train(&c->ftx, r, 0, c->cfg.bm_training);
-        c->fwd_code = r;
-    } else if (kind == 0x30) {
-        hc_ftx_marks(&c->ftx, r);
-        c->fwd_code = r;
+    } else if (kind == 0x20 || kind == 0x30) {
+        c->rate_rx = code;                    /* done in hc_bit, after our LNA */
+        if (c->mnp.lna_due || c->lna_going) c->lna_done = -1;
     }
 }
 
@@ -1002,7 +1068,8 @@ static void every_ms(hstcall_t *c)
         c->ld_sent = 1; c->ld_off = -1;
     }
     if (c->ld_sent) {
-        if (c->ld_off < 0 && !m->ld_due && m->line_framing == 0) c->ld_off = c->ms + 100;
+        if (c->ld_off < 0 && !m->ld_due && m->line_framing == 0)
+            c->ld_off = c->ms + (c->cfg.ld_hold_ms > 0 ? c->cfg.ld_hold_ms : 1000);   /* [BM] */
         if (c->ld_off >= 0 && c->ms >= c->ld_off) {
             hc_btx_stop(&c->btx); hc_ftx_stop(&c->ftx);
             c->phase = HC_DROPPED;
@@ -1016,7 +1083,6 @@ static void every_ms(hstcall_t *c)
             hc_frx_set_code(&c->frx, c->fwd_code);      /* the answerer's next training */
         }
     }
-    if (c->linked && c->conf_at < 0 && !m->conf_la && m->line_framing == 0) c->conf_at = c->ms;
     /* 300 bit/s agreed: after the confirming LA, plus 250 ms [BM] */
     if (c->linked && m->hst && m->back300 && c->back_bps == 450 && c->role == HC_ROLE_BACK && c->phase == HC_BACK
         && c->conf_at >= 0 && c->ms >= c->conf_at + 250) {
@@ -1030,13 +1096,23 @@ static void every_ms(hstcall_t *c)
         else if (c->ln_out && m->ln_code < 0) {
             int was = c->ln_pend;
             c->ln_pend = -1; c->ln_out = 0;
-            ln_done(c, was);
+            if (c->lnas_ignored < c->cfg.ignore_lna) c->lnas_ignored++;
+            else ln_done(c, was);
         }
     }
-    if (c->linked && !c->forced && c->cfg.force_rate_at_ms > 0 && c->ms >= c->cfg.force_rate_at_ms && c->ln_pend < 0) {
-        c->forced = 1;
-        c->ln_pend = (c->cfg.force_kind & 0xF0) | (c->cfg.force_rate_code & 0x0F);
-        mnppeer_send_ln(m, c->ln_pend);
+    if (c->linked && c->ln_pend < 0 && c->nforce < 4) {
+        int at, kind, rc;
+        if (c->nforce == 0) { at = c->cfg.force_rate_at_ms; kind = c->cfg.force_kind; rc = c->cfg.force_rate_code; }
+        else {
+            at = c->cfg.force_more[c->nforce - 1].at_ms; kind = c->cfg.force_more[c->nforce - 1].kind;
+            rc = c->cfg.force_more[c->nforce - 1].code;
+        }
+        if (at <= 0 || kind == 0) c->nforce = 4;          /* no more */
+        else if (c->ms >= at) {
+            c->nforce++;
+            c->ln_pend = (kind & 0xF0) | (rc & 0x0F);
+            mnppeer_send_ln(m, c->ln_pend);
+        }
     }
     if (c->linked && c->cfg.rev_backlog > 0 && c->phase == HC_BACK && c->ln_pend < 0
         && hstcall_backlog(c) > c->cfg.rev_backlog && c->ms - c->t_switch >= 2000) {
