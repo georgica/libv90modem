@@ -80,6 +80,8 @@ int16_t v32line_tick(v32line_t *l, int16_t a_tx, v32line_peer_fn peer, void *use
         fwd = crx;
         (void)near;
     } else {
+        /* A-law: the answerer's codewords on the line, decoded */
+        if (c->alaw) a_tx = (int16_t)alaw_to_linear(linear_to_alaw(a_tx));
         l->a_pos = (l->a_pos + 1) & 63; l->a_hist[l->a_pos] = a_tx;
         for (i = 0; i < 8; i++) near += hyb[i] * l->a_hist[(l->a_pos - 2 - i) & 63];
         fwd = fir_push(&l->fa, (double)a_tx);
@@ -130,5 +132,8 @@ int16_t v32line_tick(v32line_t *l, int16_t a_tx, v32line_peer_fn peer, void *use
     at_a += l->g_near * near;
     if (c->noise_a_dbm0 > -200) awgn_add(&l->rng, &at_a, 1, c->noise_a_dbm0 - 3.17, FULL_SCALE);
     q = lrint(at_a);
-    return (int16_t)(q > 32767 ? 32767 : q < -32768 ? -32768 : q);
+    q = q > 32767 ? 32767 : q < -32768 ? -32768 : q;
+    /* A-law: what reaches the answerer is the codeword its codec decodes */
+    if (c->alaw) q = alaw_to_linear(linear_to_alaw((int32_t)q));
+    return (int16_t)q;
 }

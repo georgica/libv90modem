@@ -25,6 +25,8 @@
  *   impaired_450, impaired_300  a 20 ms and a 40 ms dropout early in the
  *                preamble, and a +-3 dB fade at 5 and 10 Hz: detected within
  *                the same budgets
+ *   late_drop_300  a 40 ms dropout 300 ms into the preamble and a 20 ms one
+ *                at 200 ms (the Task 13 review's N3 rows): within 650 ms
  *   v22bis       a V.22bis caller (sim/callpeer, no V.8) against the
  *                library's answerer: 9 s of what the answerer hears (the
  *                echo of its ANSam, then the caller's start-up and data,
@@ -119,6 +121,11 @@ static const struct { double hz, ppm; } offs[4] = { { 7, 100 }, { 7, -100 }, { -
  * signal off for drop_len s from drop_at s after its start (a lost VoIP
  * packet), and a slow fade of +-am_db dB at am_hz. What fired (0 none),
  * and when, in samples from the preamble's arrival */
+/* late_drop: whether the energy stage held at every sample from
+ * held_from samples after the preamble's arrival until the detection (-1:
+ * not watched) */
+static long held_from = -1;
+static int held;
 static int detect_line(int bps, double dbm0, int c, uint32_t seed, double drop_at, double drop_len,
                        double am_hz, double am_db, long *at)
 {
@@ -134,6 +141,7 @@ static int detect_line(int bps, double dbm0, int c, uint32_t seed, double drop_a
     chan_init(&ch, offs[c].hz, offs[c].ppm, level / 10, seed * 7u + 1u);
     hst_det_init(&d);
     *at = -1;
+    held = 1;
     while (n < 2 * FS && !got) {
         int16_t y[4];
         double t = n / (double)FS, v = hst_btx_tick(&tx);
@@ -141,8 +149,10 @@ static int detect_line(int bps, double dbm0, int c, uint32_t seed, double drop_a
         if (drop_len > 0 && t >= drop_at && t < drop_at + drop_len) v = 0;
         if (am_db > 0) v *= pow(10, am_db / 20 * sin(2 * PI * am_hz * t));
         m = chan_push(&ch, v, y);
-        for (k = 0; k < m && !got; k++, n++)
+        for (k = 0; k < m && !got; k++, n++) {
             if ((got = hst_det_tick(&d, y[k])) != 0) *at = n - arrive;
+            else if (held_from >= 0 && n - arrive >= held_from && !hst_det_energy(&d)) held = 0;
+        }
     }
     return got;
 }
@@ -206,6 +216,34 @@ static void impaired(int bps)
                      : "a dropout: the right speed within 650 ms on every line", bad_drop == 0);
     bound(bps == 450 ? "a fade: the right speed within 450 ms on every line"
                      : "a fade: the right speed within 650 ms on every line", bad_am == 0);
+}
+
+/* the Task 13 review's rows at 300 (its N3): a dropout later in the
+ * acquisition, 40 ms at 300 ms and 20 ms at 200 ms, on the four lines at
+ * -26 dBm0. The detector alone is late on two of them (766 and 776 ms at
+ * +7 Hz with the 40 ms one; 786-796 ms before the fix of 6794e93): each is
+ * detected within the 650 ms budget, or after it with the energy stage
+ * held from 650 ms until the detection and within HST_W_MAX_MS, which is
+ * what ANS_HST_WAIT waits on past W for (modem/hst.h) */
+static void late_drop(void)
+{
+    static const double at[2] = { 0.3, 0.2 }, len[2] = { 0.04, 0.02 };
+    const long lim = 650L * FS / 1000;
+    int i, c, bad = 0, got, late = 0;
+    long t, worst = 0;
+    held_from = lim;
+    for (i = 0; i < 2; i++)
+        for (c = 0; c < 4; c++) {
+            got = detect_line(300, -26, c, (uint32_t)(0xE10 + 10 * i + c), at[i], len[i], 0, 0, &t);
+            if (got == HST_DET_300 && t > lim) late++;
+            if (got != HST_DET_300 || t > (long)HST_W_MAX_MS * FS / 1000 || (t > lim && !held)) bad++;
+            if (verbose) printf("  (line %d, drop %d: %.1f ms)\n", c, i, got ? t * 1000.0 / FS : -1.0);
+            if (t > worst || !got) worst = got ? t : 1L << 30;
+        }
+    held_from = -1;
+    printf("late_drop_300: 8 lines, a 40 ms dropout at 300 ms and a 20 ms one at 200 ms: %d past 650 ms\n", late);
+    if (verbose) printf("  (latest detection: %.1f ms)\n", worst * 1000.0 / FS);
+    bound("the right speed within 650 ms, or the energy stage held from then on (W's extension)", bad == 0);
 }
 
 /* ---- negatives ---- */
@@ -345,7 +383,7 @@ static void imp_300(void) { impaired(300); }
 
 int main(int argc, char **argv)
 {
-    int only = t_case_arg(argc, argv, 7);
+    int only = t_case_arg(argc, argv, 8);
     verbose = getenv("HST_VERBOSE") != NULL;
     if (T_CASE(only, 1)) pos_450();
     if (T_CASE(only, 2)) pos_300();
@@ -354,5 +392,6 @@ int main(int argc, char **argv)
     if (T_CASE(only, 5)) v22bis();
     if (T_CASE(only, 6)) imp_450();
     if (T_CASE(only, 7)) imp_300();
+    if (T_CASE(only, 8)) late_drop();
     T_REPORT("test_hst_det");
 }

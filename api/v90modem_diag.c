@@ -202,6 +202,12 @@ void diag_track_answer(diag_track_t *t, const answer_t *a)
     case ANS_K56RT:
         ph = V90M_PHASE_PHASE2; sel = V90M_CONN_K56FLEX;
         break;
+    case ANS_HST_WAIT:
+        ph = V90M_PHASE_TONE;           /* the silence after our answer tone */
+        break;
+    case ANS_HST:
+        ph = legacy_phase(a->connected); sel = V90M_CONN_HST;
+        break;
     default:
         break;
     }

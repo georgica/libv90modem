@@ -321,6 +321,13 @@ void hst_det_init(hst_det_t *d);
 /* one sample at 8000 Hz: 0, or HST_DET_450 / HST_DET_300 from the sample
  * it fires on (and at every one after) */
 int  hst_det_tick(hst_det_t *d, int16_t x);
+/* after it has fired (ANS_HST): the two receivers alone, on the one
+ * band-pass, carrying on (their bits in nb[]); the energy stage and the
+ * lock window are no longer kept */
+void hst_det_rx(hst_det_t *d, int16_t x);
+/* the energy stage alone, over the last 100 ms (stage 1 above): 1 while it
+ * holds. ANS_HST_WAIT listens past HST_W_MS only while it does */
+int  hst_det_energy(const hst_det_t *d);
 
 /* ---------------- the forward channel's transmitter ----------------
  * 2400 baud on 1800 Hz, v32tx on hst_fpulse; GPC scrambler; data through
@@ -542,5 +549,43 @@ void hst_frx_restore(hst_frx_t *r, const hst_eqstore_t *s);
 /* the signal and error power over the last 64 symbols or so (training or
  * data); 0 before the first training and after hst_frx_restore */
 int  hst_frx_snr(const hst_frx_t *r, int64_t *num, int64_t *den);
+
+/* ---------------- the answerer's HST engine (modem/ans_hst.c) ----------------
+ * answer_t.u.hst, from ANS_HST_WAIT on (spec "The answering sequence",
+ * "HST pump"). The detector's two receivers (det.rx[0] at 450, det.rx[1]
+ * at 300, on its one band-pass) are the back receivers of ANS_HST: they
+ * carry on from the detection, locked, so the caller's LR, which follows
+ * its preamble at once, is not lost to a second acquisition.
+ *
+ * W (decision 25, sized in Task 18: docs/limits.md): ANS_HST_WAIT listens
+ * HST_W_MS after ANSam, and on to HST_W_MAX_MS only while the detector's
+ * energy stage holds (250-500 Hz present, 10 dB over 600-3400 Hz), which
+ * no V.22bis, V.21 or Bell caller gives (the Task 13 ruling). */
+#include "../v42/hst_link.h"
+#ifndef HST_W_MS
+#define HST_W_MS     700
+#endif
+#define HST_W_MAX_MS 1500
+#define HST_FAIL_MS  15000            /* ANS_HST: no MNP link this long: V90M_END_HST_FAILED */
+#define HST_LOST_MS  5000             /* holding forward: no back carrier this long: lost */
+#define HST_ONES_N   160              /* samples of scrambled ones after each training of ours
+                                         (48 symbols, V.17's segment 4) before the first data
+                                         bit: the far receiver enters data on them [OURS] */
+
+typedef struct {
+    hst_link_t    link;               /* the mailbox: zeroed at ANS_HST_WAIT, never again in the call */
+    hst_det_t     det;                /* ANS_HST_WAIT's detector; its receivers are the back channel's */
+    hst_btx_t     btx;                /* holding the back channel (a reversal, Task 21) */
+    hst_ftx_t     ftx;                /* the forward transmitter */
+    hst_frx_t     frx;                /* holding the back channel: the forward receiver (Task 21) */
+    hst_eqstore_t eq_fwd;             /* the forward receiver's equaliser across reversals (Task 21) */
+    int32_t       code;               /* the forward rate code in force, 2..6 */
+    int32_t       next;               /* retraining: the code being trained to */
+    int32_t       lane;               /* the back receiver whose bits we hand on: 0 (450), 1 (300) */
+    int32_t       quiet;              /* samples without a back carrier (connected) */
+    int32_t       ones;               /* samples since the training's last symbol, to HST_ONES_N */
+    int32_t       la_seen;            /* the caller's confirming LA has been acted on */
+    uint32_t      reversals;          /* channel reversals this call (Task 21) */
+} hst_t;
 
 #endif

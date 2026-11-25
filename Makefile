@@ -34,6 +34,8 @@
 #                        (calling the library's own answerer; make check runs it)
 #   make crd-scan        K56flex's CRd detector over recorded calls (RECS=<dir>): no detection
 #   make hst-scan        HST's back-channel detector over recorded calls (RECS=<dir>): none
+#   make hst-wsize       sizing W, HST's wait after ANSam: detection times over levels,
+#                        dropouts and a line's lower edge (rig/hst_wsize.c), for docs/limits.md
 #   make cost-hst-back   ARM instructions a second of HST's two back receivers on one
 #                        band-pass, and of the detector (rig/bench_hst.c)
 #   make bench-v90       record a simulated V.90 call, replay it on the host and
@@ -122,7 +124,7 @@ SIM_SRC  := sim/g711.c sim/noise.c sim/filt.c sim/resamp.c sim/channel.c sim/v8c
             sim/p34a.c v90/test/v90_dec.c sim/p2c.c sim/v34peer.c sim/v32call.c sim/v32line.c sim/v92chan.c sim/v92a.c sim/v92call.c sim/dschan.c sim/x2call.c sim/k56call.c sim/mnppeer.c sim/hstcall.c
 SIM_OBJ  := $(patsubst %.c,$(BUILD)/obj/%.o,$(SIM_SRC))
 MODEM_SRC := modem/sintab.c modem/v34_tabs.c modem/v21.c modem/ansam.c modem/v8msg.c modem/async.c modem/v8rx.c modem/v8ans.c \
-             modem/scramble.c modem/v22tx.c modem/v22rx.c modem/v22bis.c modem/v14.c modem/answer.c modem/ans_legacy.c modem/ans_v90.c modem/ans_v34.c modem/ans_x2.c modem/ans_k56.c \
+             modem/scramble.c modem/v22tx.c modem/v22rx.c modem/v22bis.c modem/v14.c modem/answer.c modem/ans_legacy.c modem/ans_v90.c modem/ans_v34.c modem/ans_x2.c modem/ans_k56.c modem/ans_hst.c \
              modem/info.c modem/dpsk.c modem/probe.c modem/p2d.c modem/p2common.c modem/qamrx.c modem/ec.c modem/ecdly.c modem/tonedet.c modem/v34train.c modem/p34d.c modem/v34up.c modem/pcmenc.c \
              modem/v34mp.c modem/p2ans.c modem/v34mod.c modem/v34dx.c modem/v34ans.c modem/anstone.c modem/v8orig.c modem/orig.c modem/p2call.c modem/v34orig.c modem/v90arx.c modem/v90adec.c modem/v90dil.c modem/v90a.c modem/v90a_up90.c modem/v90a_up92.c modem/v90a_down.c modem/v90a_watch.c modem/pcmtx.c modem/v92aseq.c modem/belltone.c \
              modem/x2rec.c modem/x2map.c modem/x2tab.c modem/x2bank.c modem/x2tx.c modem/x2d.c modem/k56tab.c modem/k56enc.c modem/k56tx.c modem/k56d.c modem/v8bismsg.c modem/v8bis.c \
@@ -143,7 +145,7 @@ TESTS    := test_g711 test_noise test_filt test_resamp test_channel test_v21 tes
 # runner (check-arm) runs each case as its own job
 SPLIT_TESTS := test_p34 test_orig_v92 test_orig_seeds test_orig_bell test_hstcall
 # the public API, against the library as it is installed
-API_TESTS := test_api test_ec_fields test_reneg test_diag test_mnp_call test_ec_hstlink
+API_TESTS := test_api test_ec_fields test_reneg test_diag test_mnp_call test_ec_hstlink test_answer_hst
 SUBS     := v34 v90 v92 v42 v32
 
 .PHONY: test-x2-courier test-k56-sm56 test-fixtures test-examples all lib dev install uninstall clean check check-arm check-ubsan test test-arm test-all test-times test-api test-interop examples bench-v90 bench-v34 bench-v90a bench-v90c bench-v92c replay
@@ -313,6 +315,10 @@ $(BUILD)/api_test_mnp_call: test/api/test_mnp_call.c $(DEV) include/v90modem.h
 # of the link (api/v90modem_priv.h): the development archive alone
 $(BUILD)/api_test_ec_hstlink: test/api/test_ec_hstlink.c $(DEV) include/v90modem.h api/v90modem_priv.h
 	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -Iapi -o $@ $< $(DEV) $(LDLIBS)
+# the HST answering branch against sim/hstcall and the legacy callers,
+# reading the modem's phases (api/v90modem_priv.h): the development archive alone
+$(BUILD)/api_test_answer_hst: test/api/test_answer_hst.c $(DEV) include/v90modem.h api/v90modem_priv.h $(HDRS)
+	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -Iapi -o $@ $< $(DEV) $(LDLIBS)
 # every error an engine's header defines has a name (tools/check-diag-names.sh)
 .PHONY: check-diag-names
 check-diag-names: $(BUILD)/api_test_diag tools/check-diag-names.sh
@@ -331,6 +337,8 @@ $(BUILD)/arm/api_test_reneg: test/api/test_reneg.c include/v90modem.h api/v90mod
 $(BUILD)/arm/api_test_mnp_call: test/api/test_mnp_call.c include/v90modem.h $(ARM_API_LIBS)
 	$(ARM_CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -static -o $@ $< $(BUILD)/arm/$(NAME)-dev.a $(LDLIBS)
 $(BUILD)/arm/api_test_ec_hstlink: test/api/test_ec_hstlink.c include/v90modem.h api/v90modem_priv.h $(ARM_API_LIBS)
+	$(ARM_CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -Iapi -static -o $@ $< $(BUILD)/arm/$(NAME)-dev.a $(LDLIBS)
+$(BUILD)/arm/api_test_answer_hst: test/api/test_answer_hst.c include/v90modem.h api/v90modem_priv.h $(HDRS) $(ARM_API_LIBS)
 	$(ARM_CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -Iapi -static -o $@ $< $(BUILD)/arm/$(NAME)-dev.a $(LDLIBS)
 $(BUILD)/api_test_%: test/api/test_%.c $(STATIC) $(DEV) include/v90modem.h api/v90modem_fields.h api/v90modem_diag.h
 	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -o $@ $< $(STATIC) $(DEV) $(LDLIBS)
@@ -511,6 +519,15 @@ $(BUILD)/k56-crd-scan: tools/k56_crd_scan.c modem/v8bis.c modem/v8bismsg.c modem
 crd-scan: $(BUILD)/k56-crd-scan
 	@if [ -z "$(RECS)" ]; then echo "RECS not set (a directory of recordings)"; exit 1; fi; \
 	$(abspath $(BUILD))/k56-crd-scan $(RECS)/*.raw | tail -1
+# W, HST's wait after ANSam (decision 25): when the detector of
+# ANS_HST_WAIT finds sim/hstcall's back channel over Task 13's levels, a
+# dropout sweep and a line's lower edge, against each W from 400 to 700 ms
+# (rig/hst_wsize.c). A measurement for docs/limits.md, not a test.
+$(BUILD)/hst_wsize: rig/hst_wsize.c $(BUILD)/libtest.a $(HDRS)
+	$(CC) $(T_CFLAGS) -o $@ $< $(BUILD)/libtest.a $(LDLIBS)
+.PHONY: hst-wsize
+hst-wsize: $(BUILD)/hst_wsize
+	@$(abspath $(BUILD))/hst_wsize
 # HST's back-channel detector (modem/hst_back.c, hst_det) over what the
 # answerer heard in recorded calls (tools/hst_scan.c -b): RECS=<dir> of
 # v90m-replay recordings (*.raw); a detection is a false one (none of these

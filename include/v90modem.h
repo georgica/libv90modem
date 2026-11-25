@@ -181,10 +181,14 @@ typedef enum {
  * and a 450 or 300 bit/s back channel, MNP error control), as its answering
  * side. Offered only when an MNP endpoint is linked to the modem with
  * v90m_ec_link_hst before it decides (the end of ANSam); a modem without
- * the link answers as without HST. A call that took HST up and has no MNP
- * link within its limit ends with V90M_END_HST_FAILED. In this build no
- * HST caller is answered yet: with it offered, every caller is answered
- * as without it. */
+ * the link answers as without HST. A caller that sends neither CM nor AA
+ * during our answer tone is listened to for its back channel for 700 ms
+ * after it (up to 1.5 s while 250-500 Hz energy is there): heard, HST
+ * (V90M_CONN_HST: tx_bps 9600 at CONNECTED, the best rate both ends agree
+ * after MNP's LRs from the retrain that follows, rx_bps 450 or 300); not
+ * heard, V.22bis or V.21 as without HST, that much later. Callers that send
+ * CM or AA are answered exactly as without HST. A call that took HST up
+ * and has no MNP link within 15 s ends with V90M_END_HST_FAILED. */
 #define V90M_MOD_HST      0x0400u
 
 /* the modulation of a connection (v90m_state.modulation) */

@@ -778,28 +778,24 @@ static int ones30(uint32_t v)
     return ones(v & 0x3FFFFFFFu);
 }
 
-int hst_det_tick(hst_det_t *d, int16_t x)
+/* the energy stage over the last 100 ms: the band over the threshold, and
+ * 10 dB over the high band */
+int hst_det_energy(const hst_det_t *d)
+{
+    int64_t sb = 0, sh = 0;
+    int i;
+    if (d->nfull != HST_DET_BLKS) return 0;
+    for (i = 0; i < HST_DET_BLKS; i++) { sb += d->bb[i]; sh += d->bh[i]; }
+    return sb > (int64_t)DET_ON_MS * HST_DET_BLKS && sb >= 10 * sh;
+}
+
+/* at every 5th sample: the band-pass's output to both receivers (their
+ * bits in nb[], their grid_ok in ok[]), and 1; else 0 */
+static int det_band(hst_det_t *d)
 {
     int32_t y, k;
-    if (d->xn == HST_DET_XL) {
-        memmove(d->xh, d->xh + HST_DET_XL - (HST_HBPF_N - 1), (HST_HBPF_N - 1) * sizeof d->xh[0]);
-        d->xn = HST_HBPF_N - 1;
-    }
-    d->xh[d->xn++] = x;
-    d->nb[0] = d->nb[1] = 0;
-
-    /* the high band, at every 3rd and 5th sample in turn */
-    if (--d->hcnt == 0) {
-        int32_t h = fir_fold(hst_hbpf, HST_HBPF_N, d->xh + d->xn - HST_HBPF_N);
-        d->ph += (int64_t)h * h;
-        d->nh++;
-        d->hstep = 8 - d->hstep;
-        d->hcnt = d->hstep;
-    }
-    if (++d->dec < 5) return d->fired;
+    if (++d->dec < 5) return 0;
     d->dec = 0;
-
-    /* the receivers' band-pass at 1600 Hz, both receivers on it */
     y = fir_fold(hst_bbpf, HST_BBPF_N, d->xh + d->xn - HST_BBPF_N);
     d->rx[0].y = y;
     for (k = 0; k < 2; k++) {
@@ -810,6 +806,42 @@ int hst_det_tick(hst_det_t *d, int16_t x)
             d->ok[k] = d->ok[k] << 1 | (uint32_t)(hst_brx_grid_ok(r) != 0);
         }
     }
+    return 1;
+}
+
+/* the input into xh (moved down when full); no bits yet this sample */
+static void det_input(hst_det_t *d, int16_t x)
+{
+    if (d->xn == HST_DET_XL) {
+        memmove(d->xh, d->xh + HST_DET_XL - (HST_HBPF_N - 1), (HST_HBPF_N - 1) * sizeof d->xh[0]);
+        d->xn = HST_HBPF_N - 1;
+    }
+    d->xh[d->xn++] = x;
+    d->nb[0] = d->nb[1] = 0;
+}
+
+void hst_det_rx(hst_det_t *d, int16_t x)
+{
+    det_input(d, x);
+    (void)det_band(d);
+}
+
+int hst_det_tick(hst_det_t *d, int16_t x)
+{
+    int32_t y;
+    det_input(d, x);
+
+    /* the high band, at every 3rd and 5th sample in turn */
+    if (--d->hcnt == 0) {
+        int32_t h = fir_fold(hst_hbpf, HST_HBPF_N, d->xh + d->xn - HST_HBPF_N);
+        d->ph += (int64_t)h * h;
+        d->nh++;
+        d->hstep = 8 - d->hstep;
+        d->hcnt = d->hstep;
+    }
+    /* the receivers' band-pass at 1600 Hz, both receivers on it */
+    if (!det_band(d)) return d->fired;
+    y = d->rx[0].y;
 
     /* the detector's band, a block at a time */
     if (d->yn == HST_DET_YL) {
@@ -822,17 +854,13 @@ int hst_det_tick(hst_det_t *d, int16_t x)
         d->pb += (int64_t)b * b;
     }
     if (++d->nblk == 16) {
-        int64_t sb = 0, sh = 0;
-        int i;
         d->bb[d->pblk] = d->pb / 16;
         d->bh[d->pblk] = d->nh ? d->ph / d->nh : 0;
         if (++d->pblk == HST_DET_BLKS) d->pblk = 0;
         if (d->nfull < HST_DET_BLKS) d->nfull++;
         d->pb = d->ph = 0;
         d->nblk = d->nh = 0;
-        for (i = 0; i < HST_DET_BLKS; i++) { sb += d->bb[i]; sh += d->bh[i]; }
-        /* 100 ms: the band over the threshold, and 10 dB over the high band */
-        if (!d->fired && d->nfull == HST_DET_BLKS && sb > (int64_t)DET_ON_MS * HST_DET_BLKS && sb >= 10 * sh) {
+        if (!d->fired && hst_det_energy(d)) {
             if (ones30(d->ok[0]) >= DET_MIN) d->fired = HST_DET_450;
             else if (ones30(d->ok[1]) >= DET_MIN) d->fired = HST_DET_300;
         }

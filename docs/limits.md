@@ -311,6 +311,56 @@ a Rockwell or Lucent modem.
   K56flex mid-call (`V90M_EV_RATES`). Designed, not driven by any test.
 - **No calling (client) side.**
 
+## HST (answering)
+
+0.7.0 work in progress: the answering branch to data (Task 18); channel
+reversals, rate changes and the other watchdogs come later in the plan.
+Measured against `sim/hstcall` only; no real HST modem has called it yet.
+
+- **W, the wait after ANSam, is 700 ms, and up to 1500 ms while the back
+  channel's band holds energy** (`HST_W_MS`, `HST_W_MAX_MS` in
+  `modem/hst.h`; decision 25 and the Task 13 ruling). `make hst-wsize`
+  (`rig/hst_wsize.c`) runs `sim/hstcall` against the answerer and times
+  the detector of ANS_HST_WAIT from the wait's start (the caller starts
+  its back channel 30-45 ms after our answer tone stops):
+
+  | lines | latest detection | missed at W 400 / 600 / 650 / 700 | missed with the extension |
+  |---|---|---|---|
+  | 450, -9 / -26 / -43 dBm0, +-7 Hz +-100 ppm, 24 | 430 ms | 16 / 0 / 0 / 0 | 0 at any W |
+  | 300, the same, 24 | 690 ms | 24 / 4 / 4 / 0 | 0 at any W |
+  | 450, one 20 or 40 ms dropout 100-300 ms into the preamble, +-7 Hz, 84 | 690 ms | 84 / 5 / 3 / 0 | 0 at any W |
+  | 300, the same, 84 | 1440 ms | 84 / 64 / 49 / 27 | 0 at any W |
+  | 450, a 300 Hz 4th-order high-pass (a line's lower edge), 4 | 860 ms | 2 / 2 / 2 / 2 | 0 at any W |
+  | 300, the same, 4 | 580 ms | 4 / 0 / 0 / 0 | 0 at any W |
+
+  So a W of 700 ms alone finds every clean line at both speeds, and the
+  extension finds the rest: a dropout in a 300 bit/s caller's acquisition
+  (27 of those 84 lines, 32 %, past 700 ms; the Task 13 review's figure for
+  1-2 % packet loss without redundancy was 1-3 % of 300 bit/s calls) and a
+  450 bit/s caller behind a 300 Hz line edge. None was missed with the
+  extension. The extension would also find every line here with W at 400
+  ms; 700 is kept so that a clean caller does not depend on the energy
+  stage holding unbroken for up to 300 ms at -43 dBm0.
+- **W's cost to callers without V.8:** a V.22bis, V.21 or Bell 103 caller
+  is answered up to W later than without HST, only where the host offers
+  HST and has linked an endpoint (`test_answer_hst` `legacy_unchanged`:
+  the same modulation, rates and data, connected 700, 670 and 700 ms
+  later; with W at 400 ms they were 400, 370 and 400 ms later). None of
+  them puts energy in 250-500 Hz, so none waits past 700 ms; a caller with
+  dial tone or hum on its line might, up to 1500 ms. Callers that send CM
+  or AA are answered sample for sample as without HST.
+- **The forward channel sends 48 symbols of scrambled ones after each of
+  our trainings before the first data bit** (`HST_ONES_N`, [OURS], V.17's
+  segment 4 length): `sim/hstcall`'s receiver enters data only on random
+  points, and without them our first frame after the training (our LR)
+  was lost, which cost a T401 (about 2 s) on every call.
+- **The back channel's presence, for the 5 s watchdog, is a back
+  receiver's lock,** not its carrier detect: our own forward signal's echo
+  holds the carrier detect on with no back channel (the Task 13 review).
+- **The back channel's bits go on through our retrains** (the forward
+  channel alone trains): the endpoint gets them while data is stopped at
+  the API.
+
 ## Included tables (x2)
 
 x2 has no published specification. Where no rule reproduces a table, it is
@@ -399,6 +449,9 @@ channel"):
   `v90m_mem_size()`; only a smaller answering state (its union of engines,
   or the V.34 and Phase 2 state outside it) would.
   (`docs/history/audit-0.6.md`, Task 29.)
+- **HST's engine** (`hst_t`, in the answering side's union of engines) is
+  9840 octets on x86-64 and 9808 on ARMv5, against the union's 45096 /
+  45008 (V.92's engine); `v90m_mem_size()` is unchanged.
 
 ## Bounds and clocks
 
@@ -483,7 +536,7 @@ CPU"); 0.5.0's in brackets:
 - **V.42:** an endpoint at 56 kbit/s both ways costs 5.21 / 9.08 / 9.48 M a
   second with no compression / V.42bis / V.44 (`make cost-v42`; before
   0.6.0's V.42 work: 7.96 / 11.81 / 12.19).
-- **HST's back channel (not yet a call; 0.7.0 work):** the two back
+- **HST's back channel (0.7.0 work):** the two back
   receivers (450 and 300) on one band-pass, as the pump runs them while it
   holds the forward channel, cost 1.89 M instructions a second with the
   caller at 450 and 1.88 M at 300 (`make cost-hst-back`, the third second
@@ -496,8 +549,10 @@ CPU"); 0.5.0's in brackets:
   with a 243-tap band-pass, were 3.70 M (some 1.1 M of that the bench
   reading its file inside the counted second). The detector of
   ANS_HST_WAIT (the two receivers, its 250-500 Hz band and the 189-tap
-  600-3400 Hz band at every 4th sample) is 3.70 M, for at most W (700 ms)
-  when nothing else runs; its high band is 1.26 M of that.
+  600-3400 Hz band at every 4th sample) is 3.70 M, for at most W (700 ms,
+  1500 ms while the band holds energy) when nothing else runs; its high
+  band is 1.26 M of that. In ANS_HST the detector's receivers carry on
+  without its two bands (`hst_det_rx`): the 1.89 M above.
 
 ## Not implemented
 

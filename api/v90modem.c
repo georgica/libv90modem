@@ -473,7 +473,7 @@ void v90m_get_stats(const v90m_t *m, v90m_stats *st)
     st->tx_bps = tx_of(m, orig);
     st->rx_bps = rx_of(m, orig);
     st->renegotiations = m->renegotiations;
-    st->reversals = 0;          /* no HST engine answers yet */
+    st->reversals = ORIGINATING(m) ? 0u : answer_hst_reversals(&m->u.a);
     /* the last measured while connected stays after the call, until the next one */
     if (orig) {
         const orig_t *o = &m->u.o;

@@ -84,6 +84,15 @@ before the first sample; resetting at `CONNECTED` is harmless:
    `v90m_ec_reset` with its configuration does, so the link alone
    readies the endpoint for the next call.
 
+On an HST call, `CONNECTED` comes at the opening rate (9600 bit/s
+forward); once MNP is up, the forward channel retrains at the best rate
+both ends agreed: `DATA_STOPPED`, `DATA_MOVING` and `RATES`, handled as
+for any retrain (`v90m_ec_line_stopped`, `v90m_ec_line_restored`,
+`v90m_ec_set_rates`). An HST caller that sends no LR ends the endpoint
+with `V90M_EC_R_NO_EC` at our training's end plus 5 s: clear the call down
+then (`v90m_cleardown`, `V90M_END_CLEARDOWN_OURS`); a host that does not
+has the modem end it 15 s after HST began, with `V90M_END_HST_FAILED`.
+
 The link is two-way, and either side ends it: `v90m_destroy` and
 `v90m_reset` of the modem; `v90m_ec_destroy` of the endpoint, a
 `v90m_ec_reset` with `mnp.enable` 0, or linking it to another modem.

@@ -16,4 +16,6 @@ impaired_450: 8 lines with a dropout early in the preamble (20 and 40 ms), 8 wit
 impaired_300: 8 lines with a dropout early in the preamble (20 and 40 ms), 8 with a 3 dB fade (5 and 10 Hz)
   a dropout: the right speed within 650 ms on every line: pass
   a fade: the right speed within 650 ms on every line: pass
-test_hst_det: 11 checks, 0 failures
+late_drop_300: 8 lines, a 40 ms dropout at 300 ms and a 20 ms one at 200 ms: 2 past 650 ms
+  the right speed within 650 ms, or the energy stage held from then on (W's extension): pass
+test_hst_det: 12 checks, 0 failures

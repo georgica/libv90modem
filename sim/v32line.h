@@ -22,6 +22,8 @@
 
 typedef struct {
     int      mulaw;            /* G.711 mu-law at the answerer's interface, through sim/channel */
+    int      alaw;             /* (mulaw 0) G.711 A-law at the answerer's interface: what it sends
+                                  and what it receives each through A-law, on the linear line */
     double   loss_db;          /* line loss each way */
     const double *taps; int ntaps;   /* loop filter each way (0: flat) */
     int      delay;            /* one-way delay, samples */

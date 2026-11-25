@@ -5721,3 +5721,62 @@ Sizes: `hstcall_t` 165712 octets (x86-64), test side only. Host run 33 s
   The case count was 19 for 17 cases since the first fix round; now 18 for
   18. LD hold 1000 ms by default: BinModem's ATH holds the line that long
   for its LD (`Cleardown`, [BM]).
+
+## hst 18: the HST answering branch: ANS_HST_WAIT, ANS_HST, to data (2026-11-25)
+
+- **Phases:** `ANS_HST_WAIT` and `ANS_HST` (before `ANS_NPHASES`), one
+  scheme `ans_hst` (`modem/ans_hst.c`: tick, cleardown, retrain, snr_den),
+  `hst_t` in `answer_t.u` with the compile-time check against `v92d_t`. At
+  `V8A_RES_NO_CM` with `ANS_MODE_HST` and `ANS_MODE_HST_LINKED`: the wait
+  (the mailbox zeroed there, once a call; the detector on what we hear);
+  else, or when W runs out, `ans_start_no_cm` (V.22bis, V.21 or the end,
+  0.6.0's branch moved into a function). `answer_hst_link` is ON in
+  `ANS_HST` only (F4: UNDECIDED through the wait).
+- **ANS_HST:** the detector's two receivers carry on as the back
+  receivers (`hst_det_rx`: the band-pass and both receivers, without the
+  detector's two bands, 1.89 M not 3.70 M); our long training at code 4,
+  then 160 samples of scrambled ones before the first data bit (without
+  them hstcall's receiver lost our LR every call, which cost a T401, about
+  2 s: found by `lr_in_training`, where the caller's LR timer then ran
+  out); connected once that is out and a back receiver is locked. The
+  locked receiver's bits go into the ring until connected, to putbit from
+  then on (the agreed speed's when locked, 450 before agreement); through
+  the retrain too. `la_rx` with a rate agreed: the short training at the
+  best code of `agreed_rates & offer_rates` as a retrain (STOPPED, MOVING,
+  RATES at its end). `offer_rates` from `max_down`, `cap_up_code` from
+  `max_up`. Backstop 15 s without `la_rx`: `ANS_END_HST_FAILED`; connected,
+  5 s with neither back receiver locked: `ANS_END_LOST` (not the carrier
+  detect, which our echo holds on: lost_fwd never ended with it).
+  `v90m_retrain`: the short training at the code in force. Our cleardown:
+  the transmitter stops, `ANS_END_CLEARDOWN_OURS`. `v90m_stats.reversals`
+  from the engine (0). Diagnostics: the wait is the tone phase, ANS_HST
+  training then data, selected HST.
+- **W:** 700 ms, and on to 1500 ms while the detector's energy stage holds
+  (`hst_det_energy`, the Task 13 ruling). `make hst-wsize`
+  (`rig/hst_wsize.c`): 24 + 24 level lines, 84 + 84 dropout lines, 4 + 4
+  line-edge lines (table in docs/limits.md). Without the extension W 700
+  misses 27/84 of the 300 dropout lines and 2/4 of the 450 line-edge ones
+  (860 ms); with it none at any W from 400. Step 4 as the plan has it:
+  `rates` and `legacy_unchanged` at `-DHST_W_MS=400` pass (the 300-start
+  caller is found through the extension); legacy callers then 400 / 370 /
+  400 ms late (V.22bis, V.21, Bell 103), at 700: 700 / 670 / 700. Kept 700
+  so that a clean 300 caller (24 lines, the latest at 690 ms) does not lean
+  on the energy stage holding for 300 ms.
+- **N3 (Task 13 review):** `test_hst_det` `late_drop_300`: 40 ms at 300
+  ms and 20 ms at 200 ms on the four lines: 2 of 8 past 650 ms (766, 776
+  ms at +7 Hz), both with the energy stage held from 650 ms on (what the
+  extension waits for). Re-recorded: one case line, one bound, the count.
+- **sim/v32line:** `alaw` (F10): the linear line with A-law at the
+  answerer's interface both ways, through sim/g711's new A-law codec
+  (`alaw_to_linear`, `linear_to_alaw`, from G.711 Table 1a; its decoding
+  equals the library's `v90_octet_linear` on all 256 octets); mu-law and
+  linear unchanged (their goldens).
+- **Tests:** `test/api/test_answer_hst` (11 cases, 362 checks; host 187
+  s, the TEST_SHORT set 21 s; `arm/api_test_answer_hst` added to
+  tools/ports-slow.txt as `api_test_mnp_call` is); `test_clock` an HST entry (hstcall, an mnppeer responder as the
+  endpoint, 14400 / 450, clocks moved on); `test_ans_table` 19 phases.
+- **Memory:** `hst_t` 9840 octets x86-64, 9808 ARMv5 (mailbox 224 / 216,
+  detector with its two receivers 4664, back transmitter 256 / 244,
+  forward transmitter 200 / 184, forward receiver 3880, stored equaliser
+  584); the union stays `v92d_t`'s 45096 / 45008; `v90m_mem_size()` 106320
+  / 106016 and `v90m_ec_mem_size()` 50448 / 50200 unchanged.
