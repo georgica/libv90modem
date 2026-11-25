@@ -521,7 +521,7 @@ def remez(n, bands, dens=16):
 # budget 0.0016 and 0.0010 of 0.0028, -51 dB), their stop bands its pass
 # band's ripple (0.0018 each, under 0.0023). About 53 multiplies a sample,
 # against some 118 for one minimax filter of the same bounds (235 taps).
-G_STOP, G_LOOSE, G_FLAT = 51.0, 0.4, 0.02     # 1 dB and 0.1 dB of margin on the spec's
+G_STOP, G_LOOSE, G_FLAT = 51.0, 0.4, 0.02     # 1 dB margin on the stop band only (560-600 Hz: G_LOOSE + 0.1; flat: none)
 G_L = 4
 G_WF = 0.0018 / 0.0016                        # F's pass-band weight (stop band 1)
 G_WI = 0.0018 / 0.0010                        # I's

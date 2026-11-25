@@ -5805,3 +5805,17 @@ Sizes: `hstcall_t` 165712 octets (x86-64), test side only. Host run 33 s
   header's V90M_MOD_HST comment says 650 ms and 2 s.
 - `test_answer_hst`'s golden re-recorded: its first line prints W (650);
   every other line the same.
+
+### hst, the forward receiver's CPU cut (2026-11-25)
+
+- The forward receiver in 14400 data mode cost **29.90 M instructions/s**
+  against a budget of 26 M; it now costs **25.40 M** (`make cost-hst-fwd`,
+  `rig/bench_hst.c`). The guard high-pass was one 307-tap filter (154
+  multiplies a sample); it is now an interpolated pair: a 75-tap F on samples
+  4 apart (`HST_GUARD_L`) and a 29-tap I on its sums, 53 multiplies a sample.
+- The guard's flatness is 0.02 dB from 600 Hz up and within +-0.5 dB from
+  560 to 600 Hz; the forward band starts at 700 Hz. The stop band has 1 dB
+  of margin on the spec's; the other two bounds none (measured +-0.017 dB).
+  The extra delay is 9 samples (1.1 ms), far inside every event's slack.
+- Only the forward receiver's own goldens changed. Review fixes M1, M2
+  (comments); M3 to M5 are wording and are left.

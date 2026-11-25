@@ -399,8 +399,8 @@ void    hst_ftx_stop(hst_ftx_t *t);
 int     hst_ftx_seg(const hst_ftx_t *t);
 
 /* ---------------- the forward receiver's guard high-pass ----------------
- * The input, delayed, less a low-pass: hst_guard_f on every
- * HST_GUARD_L-th sample (HST_GF_XN of them in its line), then hst_guard_i
+ * The input, delayed, less a low-pass: hst_guard_f on samples
+ * HST_GUARD_L apart (each sample; HST_GF_XN taps in its line), then hst_guard_i
  * on its sums (hst_tabs.h; tools/gen_hst_tabs.py, tab_guard). Each is
  * linear phase: pairs of samples the same distance from the centre added
  * first, (HST_GUARD_FN + 1) / 2 + (HST_GUARD_IN + 1) / 2 multiplies a
