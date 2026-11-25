@@ -20,6 +20,7 @@
 | `qprof.c` (`make prof-v90c`, `make prof-v92c`, host only) | ARM instructions per tick and per function, from qemu's log of a bench run with a mark before every tick (`rig/bench_v90c -t`) |
 | `capinfo.py`, `spec.py`, `hdlc.py` | a recording's level per 200 ms; its strongest spectral lines; the HDLC frames in a bit dump |
 | `gen_*.py` | generators of the constant tables in `modem/` |
+| `gen_hst_tabs.py` | `modem/hst_tabs.[ch]`, HST's tables: the back channel's phase steps (the firmware's constant), its transmit pulse and band-pass filters (our own design, named in its header) |
 | `gen_x2_banks.py` | `modem/x2bank.c`, x2's level banks, from D-Modem's published values (its `dsp/x2_tables.cpp`, kept outside the repository; the numbers only, `docs/limits.md` "Included tables (x2)") |
 | `x2_pad.c`, `x2_pad.h` (host only, tested by `build/test_x2_pad`) | x2's pad octets: the octet the server sends so that the client receives a given level behind a 3 or 6 dB digital pad (`docs/history/x2-facts.md`, "Pads") |
 | `k56enc_dump.c` (`make k56-dump`, host only) | K56flex's data encoder on the oracle's pipeline at every rate, pad and robbed mask: `build/k56dump/r<R>p<PAD>m<MASK>.{oct,bits}` for SM56's decoder harness outside the repository (`docs/history/k56-facts.md`, "Oracle") |

@@ -1,0 +1,8 @@
+bbpf: 243 taps, 250-500 Hz -0.02 to 0.03 dB, <= 150 and >= 600 Hz at most -51.5 dB
+hbpf: 189 taps, 600-3400 Hz -0.08 to 0.07 dB, <= 500 Hz at most -41.5 dB
+tx_phase 450: 117 symbols (45 preamble), step error at most 2.6 deg, grid error at most 1.6 deg
+tx_phase 300: 102 symbols (30 preamble), step error at most 2.6 deg, grid error at most 1.6 deg
+tx_speed: 450 -> 300 at sample 3040, after 57 symbols at 450
+tx_spectrum 450: level 4001 (asked 4000), peak at 379 Hz, -20 dB band 275.4-474.6 Hz, >= 600 Hz -68.9 dB
+tx_spectrum 300: level 3999 (asked 4000), peak at 350 Hz, -20 dB band 285.2-416.0 Hz, >= 600 Hz -75.4 dB
+test_hst_back: 44 checks, 0 failures

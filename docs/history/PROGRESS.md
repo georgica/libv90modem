@@ -4350,3 +4350,51 @@ second MNP peer from it for Task 10 on this evidence.
     qemu-arm $A5 build/arm/api_test_mnp_call (short) -> 155 checks, 0 failures, identical to the host -DTEST_FORCE_SHORT build
     new golden: api/test_mnp_call.txt
     make verify                                      -> VERIFY PASS (439 s; golden 147 identical; ran in a7 short 155/0, big-endian 161/0, ubsan 161/0)
+
+## hst 11: the back channel's tables and its 8-DPSK transmitter (2026-11-24)
+
+`tools/gen_hst_tabs.py` writes `modem/hst_tabs.[ch]` (the design is in its
+header; a new table is one more function in its `TABLES`):
+
+- `hst_bstep` = 1 6 2 5 0 7 3 4, the firmware's 0x43705261 a nibble at a
+  time from the low end (BF §3) [FW].
+- `hst_bpulse450` (160 phases a symbol, 3 a sample: 53 1/3 samples) and
+  `hst_bpulse300` (80 phases, 1 a sample): RRC beta 0.35 over 10 symbols,
+  Kaiser window beta 3, Q14 [OURS]. Ten symbols, not 8: with beta 4 over
+  8 the pulse was 77 dB down at 600 Hz but its ISI through a matched
+  filter reached 2.4 degrees (4.8 on a phase step); 10 symbols and beta 3
+  give 67 dB and 1.4 degrees. The generator checks >= 60 dB at 600 Hz and
+  above and prints the -20 dB band: 274.3-475.7 Hz (450), 282.9-417.1 Hz
+  (300).
+- `hst_bbpf`: 243 taps, Kaiser band-pass with cut-offs 200 and 550 Hz;
+  250-500 Hz within 0.03 dB, at most -51.5 dB at <= 150 and >= 600 Hz.
+  `hst_hbpf`: 189 taps, cut-offs 550 and 3700 Hz; 600-3400 Hz within
+  0.08 dB, at most -41.5 dB at <= 500 Hz (our bound: 40 dB, enough for
+  the detector's 10 dB ratio). The fewest odd taps that meet each with
+  Q15 coefficients.
+
+`modem/scramble.[ch]`: `scr17_scramble` and `scr17_descramble`, the
+polynomial without V.22bis's 64-ones rule; `v22_*` untouched.
+
+`modem/hst.h`, `modem/hst_back.c`: `hst_btx_t` (256 octets on x86-64).
+Each speed has its own pulse train and carrier, so that after
+`hst_btx_set_speed` (taken at the old speed's next symbol boundary) the
+old speed's last symbols ring out on their own pulse; both carriers run
+from `hst_btx_init`. Preamble 300 ms of scrambled ones (45 symbols at
+450, 30 at 300), phase and scrambler from 0; then getbit's bits, the
+tribit's LSB first. `hst_btx_stop`: the pulses drain, then exact zeros.
+
+`test_hst_back` (new; its golden file is new): `steps`, `scr17`, `filters`,
+`tx_phase` (a test-side RRC matched correlator: every symbol's phase,
+preamble included, on 22.5 + 45 k within 1.6 degrees, each step within 2.6),
+`tx_speed`, `tx_spectrum` (Welch, 4096 points, 10 s of random data).
+
+    make -s build/test_hst_back (before the code) -> fatal error: ../modem/hst_tabs.h: No such file or directory
+    build/test_hst_back -> test_hst_back: 44 checks, 0 failures
+      tx_spectrum 450: level 4001 (asked 4000), -20 dB band 275.4-474.6 Hz, >= 600 Hz -68.9 dB
+      tx_spectrum 300: level 3999 (asked 4000), -20 dB band 285.2-416.0 Hz, >= 600 Hz -75.4 dB
+    make check-fixed   -> fixed: 109 objects, 0 float helpers
+    make check-headers -> headers: 110 compile alone
+    make bench-hashes  -> bench hashes: 17 identical
+    make verify        -> VERIFY PASS (692 s; golden 148 identical, test_hst_back's new;
+                          armv7hf and big-endian short-cmp identical; ubsan pass)

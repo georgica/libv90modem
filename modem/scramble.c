@@ -24,3 +24,17 @@ int v22_descramble(scr_t *s, int ds)
     else s->ones = 0;
     return dout;
 }
+
+int scr17_scramble(scr_t *s, int di)
+{
+    int ds = (di ^ (int)(s->reg >> 13) ^ (int)(s->reg >> 16)) & 1;
+    s->reg = (s->reg << 1) | (uint32_t)ds;
+    return ds;
+}
+
+int scr17_descramble(scr_t *s, int ds)
+{
+    int dout = (ds ^ (int)(s->reg >> 13) ^ (int)(s->reg >> 16)) & 1;
+    s->reg = (s->reg << 1) | (uint32_t)(ds & 1);
+    return dout;
+}
