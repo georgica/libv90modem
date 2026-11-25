@@ -3,6 +3,7 @@
 #include "pcmenc.h"
 #include "v21_bpf.h"
 #include "bell103_bpf.h"
+#include "v23_bpf.h"
 #include "../v90/v90_pcm.h"
 
 #define MS(ms) ((int32_t)(ms) * 8)
@@ -39,8 +40,8 @@
 #define V21_CD_AMP         110   /* about -46 dBm0, as in v8ans */
 #define BELL103_MARK_BLOCKS 20   /* 200 ms of the caller's 1270 Hz and little else */
 #define BELL103_1270 ((uint32_t)(((uint64_t)BELL103_O_MARK << 32) / 8000))
-#if V21_BPF_N != BELL103_BPF_N
-#error "the two receive band-passes share one loop"
+#if V21_BPF_N != BELL103_BPF_N || V21_BPF_N != V23_BPF_N
+#error "the receive band-passes share one loop"
 #endif
 
 static void bpf_reset(answer_t *a, const int16_t *taps)
@@ -75,6 +76,21 @@ static void start_fsk(answer_t *a, int bell)
 }
 
 static void start_v21(answer_t *a) { start_fsk(a, 0); }
+
+/* V.23: answering modem transmits on the forward channel (1300/2100 Hz,
+ * 1200 baud) and receives on the backward channel (390/450 Hz, 75 baud).
+ * The backward band-pass (v23_bpf) keeps the echo of our own forward channel
+ * out of the receiver, as the V.21 band-pass does. */
+static void start_v23(answer_t *a)
+{
+    v21mod_init(&a->fmod, V23H_MARK, V23H_SPACE, 8000, 1200, (int16_t)(a->cfg.level * 181 / 128));
+    v21demod_init(&a->fdem, V23L_MARK, V23L_SPACE, 8000, 75);
+    arx_init(&a->uart, 8000, 75);
+    a->cd_thresh = v21demod_energy_of(&a->fdem, V21_CD_AMP);
+    a->fbit = 1; a->cd_run = 0; a->fsk_mod = ANS_MOD_V23;
+    bpf_reset(a, v23_bpf);
+    a->phase = ANS_V23; a->t = 0;
+}
 
 /* Keep the echo of our own channel (1650 / 1850 Hz, or 2025 / 2225 Hz in
  * Bell 103) out of the receiver: its correlators alone reject it by less
@@ -361,6 +377,36 @@ static int16_t tick_v21(answer_t *a, int16_t rx)
     return out;
 }
 
+static int16_t tick_v23(answer_t *a, int16_t rx)
+{
+    int level, c, done, i;
+    int16_t out;
+
+    level = v21demod_tick(&a->fdem, v21_bandpass(a, rx));
+    if (a->fdem.energy < a->cd_thresh) {
+        level = 1;
+        if (a->cd_run > 0) a->cd_run = 0;
+        if (a->connected && --a->cd_run < -MS(CD_LOSS_MS)) { fail(a); return 0; }
+    } else {
+        if (a->cd_run < 0) a->cd_run = 0;
+        if (a->cd_run < MS(V21_CD_ON_MS)) a->cd_run++;
+        else if (!a->connected) {
+            a->connected = 1; a->modulation = ANS_MOD_V23;
+            a->bitrate = 1200; a->rx_bitrate = 75;
+        }
+    }
+    c = arx_tick(&a->uart, level);
+    if (c >= 0 && a->connected) {
+        a->cfg.putbit(a->cfg.user, 0);
+        for (i = 0; i < 8; i++) a->cfg.putbit(a->cfg.user, (c >> i) & 1);
+        a->cfg.putbit(a->cfg.user, 1);
+    }
+    out = v21mod_tick(&a->fmod, a->fbit, &done);
+    if (done) a->fbit = a->connected ? (a->cfg.getbit(a->cfg.user) & 1) : 1;
+    if (!a->connected && a->t > MS(V21_WAIT_MS)) fail(a);
+    return out;
+}
+
 int16_t answer_tick(answer_t *a, int16_t rx)
 {
     int16_t tx = 0;
@@ -388,6 +434,7 @@ int16_t answer_tick(answer_t *a, int16_t rx)
         if (a->v8.result == V8A_RES_NO_CM) {           /* pre-V.8 caller */
             if (a->cfg.modes & V8_MOD_V22) start_v22(a);
             else if (a->cfg.modes & V8_MOD_V21) start_v21(a);
+            else if (a->cfg.modes & V8_MOD_V23) start_v23(a);  /* a bare V.23 terminal */
             else fail(a);
             break;
         }
@@ -401,6 +448,7 @@ int16_t answer_tick(answer_t *a, int16_t rx)
         else if (a->v8.selected == 1 && (a->cfg.modes & V8_MOD_V34)) start_v34(a);
         else if (a->v8.selected == 3 && (a->cfg.modes & V8_MOD_V32)) start_v32(a);
         else if (a->v8.selected == 4) start_v22(a);
+        else if (a->v8.selected == 10 && (a->cfg.modes & V8_MOD_V23)) start_v23(a);
         else if (a->v8.selected == 12) start_v21(a);
         else fail(a);                                  /* nothing in common */
         break;
@@ -451,6 +499,10 @@ int16_t answer_tick(answer_t *a, int16_t rx)
 
     case ANS_V21:
         tx = tick_v21(a, rx);
+        break;
+
+    case ANS_V23:
+        tx = tick_v23(a, rx);
         break;
 
     case ANS_P2:

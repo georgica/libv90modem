@@ -96,7 +96,7 @@ MODEM_SRC := modem/v21.c modem/ansam.c modem/v8msg.c modem/async.c modem/v8rx.c 
 T_SRC    := $(SIM_SRC) $(MODEM_SRC)
 HDRS     := $(wildcard modem/*.h sim/*.h test/*.h v90/*.h v34/*.h v92/*.h v90/test/v90_dec.h)
 T_CFLAGS := $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(EXTRA_CPPFLAGS) -Iv90 -Imodem -Isim -Iv92 -Iv34
-TESTS    := test_g711 test_noise test_filt test_resamp test_channel test_v21 test_ansam test_v8msg test_v8rx test_v8ans \
+TESTS    := test_g711 test_noise test_filt test_resamp test_channel test_v21 test_v23 test_ansam test_v8msg test_v8rx test_v8ans \
             test_v22tx test_v22rx test_v22bis test_v14 test_answer test_info test_dpsk test_probe test_p2 test_qamrx test_ec test_ecdly test_v34train test_sres test_answer_v90 test_p34 test_pcmenc \
             test_v34mp test_p2ans test_v34mod test_v34dx test_v34call test_answer_v34 test_answer_v32 test_answer_v90_v34 \
             test_p2_v92 test_v92call test_answer_v92 test_v92real test_answer_lin \

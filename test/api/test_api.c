@@ -148,7 +148,7 @@ static void test_cfg(void)
         CHECK_EQ_I(st.connected, 0); CHECK_EQ_I(st.end, V90M_END_NONE);
     }
     v90m_destroy(m);
-    c.role = V90M_ROLE_ANSWER; c.modulations = 0x0400;
+    c.role = V90M_ROLE_ANSWER; c.modulations = 0x0800;
     m = v90m_create(&c, &err);
     CHECK(m == NULL); CHECK_EQ_I(err, V90M_EINVAL);
     c.role = V90M_ROLE_ANSWER; c.modulations = 0x8000;
@@ -183,9 +183,9 @@ static void test_cfg(void)
         /* pinned: what v90d sizes its buffers by (K56flex's state lives in
          * the answerer's union) */
 #if defined(__x86_64__)
-        size_t expect = 118824;
+        size_t expect = 120168;
 #elif defined(__arm__)
-        size_t expect = 118512;
+        size_t expect = 119856;
 #else
         size_t expect = v90m_mem_size();
 #endif
@@ -227,7 +227,7 @@ static void test_errors(void)
         bad = c; bad.max_down_bps = -1;    CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
         bad = c; bad.max_up_bps = -1;      CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
         bad = c; bad.echo_delay = -2;      CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
-        bad = c; bad.modulations |= 0x400; CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);   /* 0x100 is x2, 0x200 K56flex now */
+        bad = c; bad.modulations |= 0x800; CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);   /* 0x100 x2, 0x200 K56flex, 0x400 V.23; 0x800 unused */
 
         m = v90m_init(mem.b, sizeof mem.b, &c, &err);
         CHECK(m != NULL); CHECK_EQ_I(err, V90M_OK);

@@ -23,6 +23,7 @@ Each item names where it is recorded.
   and a U.S. Robotics 56K of 1998 have called it (README, "Tried on real
   modems"). Bell 212A answering was tried only on a test build with the
   2225 Hz tone from the start, by a modem that would also have taken V.22.
+  V.23, either role, has not been tried against a real modem.
 - **x2 (answering): one real modem, one line.** The owner's U.S. Robotics
   56K FAX EXT (flash 5.1.4) called the box (v90d with this library,
   2026-11-21): x2 at 56000 / 28800 with PPP, held 3 min 50 s until we hung
