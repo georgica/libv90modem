@@ -83,6 +83,13 @@
  *                 on; a training instead of the marks; armed and nothing
  *                 sent: back in data mode at the new code within 2 s, or
  *                 the acquisition at 2 s, then no error
+ *   long_drift    code 3 at 19 dB and code 4 at 17.5 dB, 60 s of data
+ *                 each (TEST_SHORT: code 4, 30 s): data mode kept, the
+ *                 data mode's gain within 1 dB of its value at 10 s, no
+ *                 more errors in the last 20 s than in the first; the full
+ *                 set, `test_hst_fwd long_drift` built with -DTEST_FULL
+ *                 (make hst-drift; not a case): codes 3..6, 1 and 3 dB
+ *                 over their SNR of BER 1e-5, 300 s each
  *   thresholds    (`test_hst_fwd thresholds`, built with -DTEST_FULL: make
  *                 hst-thresh; not a case) the SNR of BER 1e-5 at codes
  *                 3..6 and the receiver's error there: hst_good_mse
@@ -899,6 +906,20 @@ static void fline(v32line_t *l, double hz, double ppm, uint32_t seed)
     v32line_init(l, &c);
 }
 
+#ifndef HST_PROFILE_BM
+/* the caller's signal power at the answerer over 0-4 kHz (as fline's), dBm0 */
+static double fsig_dbm0(void)
+{
+    double g = 0, re, im;
+    int f, k, n = 0;
+    for (f = 600; f <= 3000; f += 10, n++) {
+        for (re = im = 0, k = 0; k < 4; k++) { re += floop[k] * cos(2 * PI * f * k / FS); im -= floop[k] * sin(2 * PI * f * k / FS); }
+        g += re * re + im * im;
+    }
+    return dbm0_of(FLEVEL * pow(10, -floss / 20.0) * sqrt(g / n));
+}
+#endif
+
 static hst_frx_t R;
 static v32line_t L;
 static fpeer_t   P;
@@ -1460,6 +1481,82 @@ static void marks_missed(void)
     }
 }
 
+/* ---- long calls: the data mode's gain loop against the equaliser ----
+ * Codes 3..6, each 1 dB over its SNR of BER 1e-5 (docs/limits.md: 13.5,
+ * 16.5, 21.0, 23.5 dB) and 3 dB over it (hst_good_mse's level): a long
+ * training on a 40 dB line, then the line's noise raised to the SNR, and
+ * `secs` of data. From `win` s on, the gain (R.g) within 1 dB of its value
+ * at `win` s (10 s; the short set's 20 s window starts it at 20 s); the
+ * errors in the last `win` s no more than in the first; data mode never
+ * left. The full set (`test_hst_fwd long_drift`, -DTEST_FULL: make
+ * hst-drift): 300 s each, windows of 60 s. The case: code 3 at 19 dB and
+ * code 4 at 17.5 dB, 60 s each, windows of 20 s (TEST_SHORT: code 4
+ * alone, 30 s, windows of 10 s). Before the fix each of these drifted
+ * (the gain +4.9 and +8.5 dB in 60 s; the full set lost data mode in 5
+ * of 8 runs) */
+static void drift_one(int code, int snr10, long secs, long win, uint32_t seed)
+{
+    long n, k, off, ns = secs * FS, w = win * FS, g_at = 10L * FS;
+    long e1 = 0, e2 = 0, b1 = 0, b2 = 0, lost = -1;
+    int32_t g0 = 0, gmin = INT32_MAX, gmax = 0;
+    fsnr = 40;
+    fdata(code, seed, 20000);
+    fsnr = 30;
+    L.ch.cfg.us_noise_dbfs = fsig_dbm0() - snr10 / 10.0 - 3.17;
+    off = find_off(P.n - 4000);
+    for (n = 0; n < ns && lost < 0; n++) {
+        long i0 = nrx;
+        ftick();
+        if (hst_frx_state(&R) != HST_FRX_DATA) { lost = n; break; }
+        if (n == g_at) g0 = gmin = gmax = R.g;
+        else if (n > g_at) { if (R.g < gmin) gmin = R.g; if (R.g > gmax) gmax = R.g; }
+        for (k = 0; k < nrx - i0; k++) {
+            long j = i0 + k - off;
+            if (off == LONG_MIN || j < 0 || j < P.n - TXR) continue;
+            if (n < w) { b1++; e1 += R.bits[k] != txr[j & (TXR - 1)]; }
+            else if (n >= ns - w) { b2++; e2 += R.bits[k] != txr[j & (TXR - 1)]; }
+        }
+    }
+    printf("long_drift code %d, %d.%d dB, %ld s: data mode %s; the gain %ld at 10 s, %ld .. %ld after (Q14); "
+           "%ld errors in %ld bits in the first %ld s, %ld in %ld in the last\n", code, snr10 / 10, snr10 % 10, secs,
+           lost < 0 ? "kept" : "LOST", (long)g0, (long)gmin, (long)gmax, e1, b1, win, e2, b2);
+    if (verbose) {
+        printf("  (the gain %+.2f .. %+.2f dB from its value at 10 s", g0 ? 20 * log10((double)gmin / g0) : 0.0,
+               g0 ? 20 * log10((double)gmax / g0) : 0.0);
+        if (lost >= 0) printf("; data mode lost %.1f s on", lost / 8000.0);
+        printf("; the receiver's error %.2f dB)\n", 10 * log10(hst_frx_mse(&R) / 65536.0 + 1e-12));
+    }
+    bound("data mode never left", lost < 0 && off != LONG_MIN);
+    /* 1 dB: x 0.891 .. 1.122 */
+    bound("the gain within 1 dB of its value at 10 s", g0 > 0 && (int64_t)gmin * 1000 >= (int64_t)g0 * 891
+          && (int64_t)gmax * 1000 <= (int64_t)g0 * 1122);
+    bound("errors in the last window no more than in the first", lost < 0 && b2 > 0 && e2 <= e1);
+}
+
+static void long_drift(void)
+{
+#ifdef TEST_SHORT
+    drift_one(4, 175, 30, 10, 2441u);
+#else
+    drift_one(3, 190, 60, 20, 2433u);
+    drift_one(4, 175, 60, 20, 2441u);
+#endif
+}
+
+#ifdef TEST_FULL
+/* `test_hst_fwd long_drift`, built with -DTEST_FULL (make hst-drift): the
+ * full set, not a case (the port matrix builds with TEST_FULL and compares
+ * with the host's golden file) */
+static void long_drift_full(void)
+{
+    static const int snr10[7] = { 0, 0, 0, 135, 165, 210, 235 };
+    int code, lv;
+    for (code = 3; code <= 6; code++)
+        for (lv = 0; lv < 2; lv++)
+            drift_one(code, snr10[code] + (lv ? 30 : 10), 300, 60, 2400u + 10u * (uint32_t)code + (uint32_t)lv);
+}
+#endif
+
 #ifdef TEST_FULL
 /* ---- the thresholds of "good" (hst_good_mse; spec "Rate changes"):
  * `test_hst_fwd thresholds`, built with -DTEST_FULL (make hst-thresh).
@@ -1473,18 +1570,8 @@ static void marks_missed(void)
  * error there, 3 dB lower ---- */
 #define TH_NB   2000000L
 #define TH_ERRS 200L
-#define TH_SEG  20L                /* s of data a run (a training each): the gain loop drifts
-                                    * against the equaliser over minutes on a noisy line */
-static double fsig_dbm0(void)
-{
-    double g = 0, re, im;
-    int f, k, n = 0;
-    for (f = 600; f <= 3000; f += 10, n++) {
-        for (re = im = 0, k = 0; k < 4; k++) { re += floop[k] * cos(2 * PI * f * k / FS); im -= floop[k] * sin(2 * PI * f * k / FS); }
-        g += re * re + im * im;
-    }
-    return dbm0_of(FLEVEL * pow(10, -floss / 20.0) * sqrt(g / n));
-}
+#define TH_SEG  20L                /* s of data a run (a training each); kept from before
+                                    * Task 22c, when the gain loop drifted over minutes */
 
 typedef struct { double snr, ber, mse_db; long errs, bits; } th_t;
 
@@ -1668,6 +1755,16 @@ int main(int argc, char **argv)
 #ifdef HST_PROFILE_BM
     only = t_case_arg(argc, argv, 7);
 #else
+    if (argc == 2 && strcmp(argv[1], "long_drift") == 0) {
+#ifdef TEST_FULL
+        verbose = getenv("HST_VERBOSE") != NULL;
+        long_drift_full();
+        T_REPORT("test_hst_fwd long_drift");
+#else
+        printf("long_drift: build with -DTEST_FULL (make hst-drift)\n");
+        return 2;
+#endif
+    }
     if (argc == 2 && strcmp(argv[1], "thresholds") == 0) {
 #ifdef TEST_FULL
         thresholds();
@@ -1677,7 +1774,7 @@ int main(int argc, char **argv)
         return 2;
 #endif
     }
-    only = t_case_arg(argc, argv, 23);
+    only = t_case_arg(argc, argv, 24);
 #endif
     verbose = getenv("HST_VERBOSE") != NULL;
     if (T_CASE(only, 1)) pulse_points();
@@ -1709,6 +1806,7 @@ int main(int argc, char **argv)
     if (T_CASE(only, 21)) harsh_dropout();
     if (T_CASE(only, 22)) marks_switch();
     if (T_CASE(only, 23)) marks_missed();
+    if (T_CASE(only, 24)) long_drift();
 #endif
     T_REPORT("test_hst_fwd");
 }

@@ -544,6 +544,8 @@ typedef struct {
                                        * nothing else adapted */
     int32_t    gcnt;                  /* symbols it has been so; negative: since the gain
                                        * was set, the equaliser flushing */
+    int32_t    ga;                    /* the gain as last set (G_ONE at a training): the
+                                       * loop leaks back to it and stays within 1 dB */
     int32_t    nsym;                  /* symbols since qamrx_sync */
     int32_t    held;                  /* symbols the error has been under -20 dB */
     int32_t    fast;                  /* still on the fast steps */
