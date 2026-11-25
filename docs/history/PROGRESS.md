@@ -4063,3 +4063,49 @@ Review fixes (round 1):
     -DMNP_FCS2=1, 2, 3; qemu-arm                           -> 146 checks, 0 failures; 1.7 s
     test/golden/out/v42/test_mnppeer.txt                   -> five new lines and the count line (100 -> 146)
     make verify                                            -> VERIFY PASS (736 s; golden 143 identical; log: build/verify-task3-fix1.log)
+
+## hst 4: the MNP link, as responder (2026-11-24)
+
+New `v42/mnp.[ch]` (in `V42_SRC` and in `v42/Makefile`'s `SRC` and `HDR`) and
+the new program `v42/test/test_mnp.c` (in `v42/Makefile`'s `TESTS`). The link
+is at frame level, like `v42_lapm`: bodies in through `mnp_rx_frame`, out
+through `mnp_tx_frame`, with `tx_framing` naming the framing each one goes in.
+Our LR and the frames before the link is up go in the framing the caller's LR
+came in. The rest go in the agreed framing. `mnp_t` carries the mode 2 framers
+(`tx2`, `rx2`) for the endpoint. Interfaces as the plan's Task 4, plus
+`mnp_rx_bad` (a frame the framer dropped: our LR again in establishment,
+A.7.1.3; an LA in the data phase, A.7.3.3 a) and `mnp_ln_of_brk` and
+`mnp_brk_of_ln` (LN types 1, 2, 3 and `V42_BRK_*`).
+
+What it does: it accepts the LR (constant 1 not 2 gives LD 2; an LR it cannot
+take gives LD 1, since code 3 is the initiator's) and replies with the merge.
+Parameter 8 bit 1 agreed means N401 256 both ways, as the peer reads it. Bit 2
+gives the optimised LT and LA. It takes the confirming LA in either layout, or
+an LT first (dropped, answered with an LA). It sends its LR again on T401
+(2 s), on a bad frame or on a repeated LR, and the second failure gives LD 1.
+In the data phase: a window of k (at most 8) slots of N401 octets, limited by
+the credit of the last LA. It goes back on an LA that repeats N(R) or on T401,
+and N400 tries end in LD 4. The receiver takes only V(R) and ignores the first
+N(S) = V(R) - 1. It sends an LA when it is due, when it has received LTs and
+has none to send, at k/2, on T402 and T404, and when credit comes back. Our
+credit is k, or 0 while `mnp_set_busy`. LN and LNA: one outstanding, V(SA)
+from 1, sent again every T401, each delivered once. A full queue of 4 neither
+takes nor acknowledges. LD 255 on `mnp_release`. T401 comes from
+`mnp_t401_ms` at the rates of `mnp_set_rates` (2400/2400 until then). T404 is
+3 s at 2400 bit/s received and above, 7 s below. Every timer is held from
+`mnp_line_stopped` to `mnp_line_restored`.
+
+Not done here: Tables 4 and 5 (what a break does to the data) are left to the
+endpoint (Task 5). The link carries the LN type and discards nothing.
+
+`sizeof(mnp_t)`: 3240 octets on x86-64 and 3188 on ARMv5. The compile-time
+check is ≤ 4096.
+
+    make -s -C v42 build/test_mnp (before mnp.c)        -> No rule to make target 'build/tobj/mnp.o'
+                                                           (test alone: 22 undefined mnp_* references)
+    v42/build/test_mnp                                  -> test_mnp: 294 checks, 0 failures (0.6 s)
+    qemu-arm (armv5), clang, -DMNP_FCS2=1, 2, 3          -> 294 checks, 0 failures; output identical to gcc's
+    mutations (no credit limit, no V(R)-1 rule, no
+    timer hold, LN delivered twice, no go-back)         -> each caught
+    test/golden/out/v42/test_mnp.txt                    -> new (a new program; nothing re-recorded)
+    make verify                                         -> VERIFY PASS (471 s; golden 144 identical; log: build/verify-task4.log)

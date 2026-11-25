@@ -1,0 +1,22 @@
+t401: 3659 6317 1560 1600 1500 ms
+establish: the template answered by itself; LT first, repeated LR, constant 1, parameter 8, no LA
+establish_peer: caller mode 3, ours up to 3, parameter 8 0, LA as agreed: connected at 211 ms, framing 3 layout 0, 4 KiB each way intact
+establish_peer: caller mode 2, ours up to 3, parameter 8 0, LA as agreed: connected at 296 ms, framing 2 layout 0, 4 KiB each way intact
+establish_peer: caller mode 3, ours up to 2, parameter 8 0, LA as agreed: connected at 208 ms, framing 2 layout 0, 4 KiB each way intact
+establish_peer: caller mode 3, ours up to 3, parameter 8 2, LA as agreed: connected at 218 ms, framing 3 layout 1, 4 KiB each way intact
+establish_peer: caller mode 3, ours up to 3, parameter 8 2, LA standard: connected at 231 ms, framing 3 layout 1, 4 KiB each way intact
+establish_peer: caller mode 2, ours up to 2, parameter 8 2, LA standard: connected at 321 ms, framing 2 layout 1, 4 KiB each way intact
+data: mode 3, 64 KiB each way intact in 65816 ms, LT out 1024 in 1024, LA out 269 in 255
+data: mode 2, 64 KiB each way intact in 85416 ms
+data: mode 2, 1 % of the peer's frames corrupted: 16 KiB each way intact, bad frames 1, retx 4
+data: parameter 8 = 3, N401 256 both ways, 16 KiB each way intact, LT in 64
+zero_credit: 2989 ms at credit 0 with LTs waiting, none sent; then 8 KiB each way intact
+goback: LA N(R) 1 twice: LT 2 and 3 again; credit 1: one LT
+dup: N(S) = V(R) - 1 once: no LA; twice: LA; out of sequence: LA; busy: N(k) 0, then 8
+wrap: 19200 octets each way intact, LT out 300 in 304, LN 300/300 each delivered once in order, our frames lost 13, retx 15/5
+n400: silent peer: 12 retransmissions, then LD 4, reason N400
+timers_held: T401 at 2027 ms held 20 s, then expired 2027 ms after the restore
+break: LN 1 to the peer, LN 3 from it, each once; release: LD 255
+break: the peer's LD 255: reason PEER_DISC
+size: mnp_t within 4096 octets
+test_mnp: 294 checks, 0 failures
