@@ -1,0 +1,117 @@
+tone: 1000 ms, then silence
+  starts 30 to 45 ms after the tone: pass
+  then in the back phase at 450: pass
+tone: a 300 ms burst, then silence
+  starts nothing: pass
+tone: then 600 ms, then silence
+  starts 30 to 45 ms after it: pass
+back_to_ours 450, +0 Hz +0 ppm: 100000 bits wanted, 0 errors
+  our hst_brx locks: pass
+  no bit in error: pass
+  no loss of lock: pass
+back_to_ours 300, +0 Hz +0 ppm: 100000 bits wanted, 0 errors
+  our hst_brx locks: pass
+  no bit in error: pass
+  no loss of lock: pass
+back_to_ours 450, +7 Hz +100 ppm: 20000 bits wanted, 0 errors
+  our hst_brx locks: pass
+  no bit in error: pass
+  no loss of lock: pass
+back_to_ours 300, -7 Hz -100 ppm: 20000 bits wanted, 0 errors
+  our hst_brx locks: pass
+  no bit in error: pass
+  no loss of lock: pass
+back_from_ours 450, +0 Hz +0 ppm: 100000 bits wanted, 0 errors
+  no bit in error: pass
+back_from_ours 300, +0 Hz +0 ppm: 100000 bits wanted, 0 errors
+  no bit in error: pass
+back_from_ours 450, -7 Hz +100 ppm: 20000 bits wanted, 0 errors
+  no bit in error: pass
+back_from_ours 300, +7 Hz -100 ppm: 20000 bits wanted, 0 errors
+  no bit in error: pass
+fwd_from_ours, code 2, +0 Hz +0 ppm: data mode reached; 0 errors
+  hstcall's receiver reaches data: pass
+  no bit in error: pass
+fwd_from_ours, code 3, +0 Hz +0 ppm: data mode reached; 0 errors
+  hstcall's receiver reaches data: pass
+  no bit in error: pass
+fwd_from_ours, code 4, +0 Hz +0 ppm: data mode reached; 0 errors
+  hstcall's receiver reaches data: pass
+  no bit in error: pass
+fwd_from_ours, code 5, +0 Hz +0 ppm: data mode reached; 0 errors
+  hstcall's receiver reaches data: pass
+  no bit in error: pass
+fwd_from_ours, code 6, +0 Hz +0 ppm: data mode reached; 0 errors
+  hstcall's receiver reaches data: pass
+  no bit in error: pass
+fwd_from_ours, code 6, +7 Hz +100 ppm: data mode reached; 0 errors
+  hstcall's receiver reaches data: pass
+  no bit in error: pass
+fwd_from_ours, code 6, -7 Hz -100 ppm: data mode reached; 0 errors
+  hstcall's receiver reaches data: pass
+  no bit in error: pass
+fwd_to_ours, long, code 2: data mode reached; 0 errors
+  our hst_frx reaches data: pass
+  no bit in error: pass
+fwd_to_ours, long, code 3: data mode reached; 0 errors
+  our hst_frx reaches data: pass
+  no bit in error: pass
+fwd_to_ours, long, code 4: data mode reached; 0 errors
+  our hst_frx reaches data: pass
+  no bit in error: pass
+fwd_to_ours, long, code 5: data mode reached; 0 errors
+  our hst_frx reaches data: pass
+  no bit in error: pass
+fwd_to_ours, long, code 6: data mode reached; 0 errors
+  our hst_frx reaches data: pass
+  no bit in error: pass
+fwd_to_ours, short, code 6: data mode reached; 0 errors
+  our hst_frx reaches data: pass
+  no bit in error: pass
+fwd_to_ours, V.17, code 3: data mode reached; 0 errors
+  our hst_frx reaches data: pass
+  no bit in error: pass
+fwd_to_ours, V.17, code 6: data mode reached; 0 errors
+  our hst_frx reaches data: pass
+  no bit in error: pass
+marks 6 -> 5: 0 errors before the switch, 0 after
+  the old rate's data intact: pass
+  the receiver follows: the new rate's data intact: pass
+  no data bit lost: only the marks between: pass
+  still in data: pass
+marks 4 -> 6: 0 errors before the switch, 0 after
+  the old rate's data intact: pass
+  the receiver follows: the new rate's data intact: pass
+  no data bit lost: only the marks between: pass
+  still in data: pass
+coexist 14400 / 450, 6 dB ERL, linear: 0 errors back, 0 forward
+  hstcall's forward receiver within 1 dB of its echo-free SNR: pass
+  our back receiver within 1 dB of its echo-free SNR: pass
+  no bit in error either way: pass
+coexist 14400 / 300, 6 dB ERL, linear: 0 errors back, 0 forward
+  hstcall's forward receiver within 1 dB of its echo-free SNR: pass
+  our back receiver within 1 dB of its echo-free SNR: pass
+  no bit in error either way: pass
+coexist 14400 / 450, 6 dB ERL, G.711: 0 errors back, 0 forward
+  hstcall's forward receiver within 1 dB of its echo-free SNR: pass
+  our back receiver within 2 dB of its echo-free SNR (G.711's noise on the echo): pass
+  no bit in error either way: pass
+coexist 14400 / 300, 6 dB ERL, G.711: 0 errors back, 0 forward
+  hstcall's forward receiver within 1 dB of its echo-free SNR: pass
+  our back receiver within 2 dB of its echo-free SNR (G.711's noise on the echo): pass
+  no bit in error either way: pass
+link, back 450: hstcall code 6 back 450; 4096 of 4096 octets to hstcall, 300 of 300 to us, 0 wrong
+  MNP up at both ends: pass
+  HST agreed, our retrain at the best code: pass
+  hstcall at code 6 and the back speed it asked for: pass
+  the data both ways, intact: pass
+link, back 300: hstcall code 6 back 300; 4096 of 4096 octets to hstcall, 300 of 300 to us, 0 wrong
+  MNP up at both ends: pass
+  HST agreed, our retrain at the best code: pass
+  hstcall at code 6 and the back speed it asked for: pass
+  the data both ways, intact: pass
+reversal: hstcall role 1 code 6, reversals 1; 1024 of 1024 octets to hstcall, 3000 of 3000 to us, 0 wrong
+  hstcall holds the forward channel, once reversed: pass
+  our forward receiver in data: pass
+  the data both ways, intact: pass
+test_hstcall: 81 checks, 0 failures

@@ -5527,3 +5527,65 @@ unchanged; bm unchanged), new cases:
     make verify -> VERIFY PASS (862 s; golden 150 identical, test_hst_fwd's
                    re-recorded (its own); replay 636 and bench 17
                    identical; armv7hf and big-endian short-cmp 135)
+
+## hst 17: sim/hstcall, an HST caller written from the facts; coexistence of the two channels (2026-11-25)
+
+`sim/hstcall.[ch]` (in `SIM_SRC`), `test/test_hstcall.c` (in `TESTS`,
+`SPLIT_TESTS` and `HST_BM_TESTS`). A calling peer in double, written from
+`docs/history/hst-facts.md` and including nothing of `modem/` (A23): its own
+back transmitter and receiver, forward transmitter and receiver. It shares
+with the tree only what `sim/v32call` shares: `sim/v32spec.h` (V.32bis's
+sets and Tables 1 and 2, hand-transcribed); MNP is `sim/mnppeer`
+(originator, 0xC0; T401 3000 ms and 15 tries, BinModem's HST session [BM]).
+
+- **Call:** the 2100 Hz tone in 10 ms blocks (present 400 ms, absent 30 ms;
+  a shorter burst counts again) [BM]; then the back preamble (60 symbols of
+  scrambled ones [BM]) at `start_bps` (default 450, ruling F11) and the
+  forward receiver together; the LR straight after the preamble. Opening
+  code 4 (3 with `bm_training`), the best agreed code from the answerer's
+  next training; 300 after the confirming LA plus 250 ms [BM]. 0x1R by
+  backlog (`rev_backlog`, after 2 s), forced 0x2R/0x3R, LD, carrier drop;
+  as the forward holder it takes 0x1R (its LNA gone + 20 ms), 0x2R (short
+  training), 0x3R (marks, or with `bm_training` a training).
+- **Back channel:** RRC 0.35 +-4 symbols, Hann taper; the receiver mixes,
+  low-passes (161 taps) to 1600 Hz, takes the carrier's offset from the
+  lag-one correlation over 100 ms, then Gardner timing and a decision
+  frequency loop.
+- **Forward transmitter:** RRC 1/12 +-15 symbols (Kaiser 3); our
+  provisional training or V.17's long train; marks for 0x3R.
+- **Forward receiver:** linear-phase guard (241 taps), AB on 600/3000 Hz,
+  timing from their phases, matched pulse, 32-tap T/2 LMS, DD carrier loop,
+  Viterbi. What the line needed: a timing loop on the error's gradient
+  (second order; the taps' centre of energy alone did not follow even 30
+  ppm: the LMS bends the taps for a sub-tap shift without moving their
+  energy, and the SNR fell to the 19 dB that hard decisions give on
+  garbage); data detection only after 48 symbols of the random 4 points
+  with the error from before them under -14 dB (AB and CD train the
+  equaliser at two frequencies only: TRN's first points then look off the
+  grid); retraining on 16 alternating symbols in data (our post-agreement
+  and 0x2R trainings arrive with no gap).
+
+Results (host, `HST_VERBOSE=1 build/test_hstcall`): back channel to
+hst_brx and from hst_btx, 450 and 300, 20 dB, 0 errors in 10^5 (2 x 10^4 at
++-7 Hz +-100 ppm), SNR 24 to 27 dB; our long training at codes 2..6 to
+hstcall's receiver, 0 errors in 10^5, SNR about 30 dB at 30 dB, also at
++-7 Hz +-100 ppm and under `HST_PROFILE_BM` (V.17's long train); hstcall's
+trainings (long 2..6, short at 6, V.17 at 3 and 6) to hst_frx, 0 errors;
+marks 6 -> 5 and 4 -> 6 between hstcall's own ends; a call through MNP to a
+test answerer of our pieces, at 450 and 300, 4096 and 300 octets intact;
+a reversal by backlog, 1024 and 3000 octets intact, `reversals` 1.
+
+Coexistence (forward 14400 at -10 dBm0, back at -33 dBm0 at our side, 6 dB
+ERL both ends, -54 dBm0 noise): on a linear line neither receiver loses
+anything (back 25.00 against 24.97 dB at 450, 26.07 against 26.17 at 300;
+forward within 0.02 dB): margin about 1 dB against the 1 dB bound. With
+G.711 at our side hstcall's forward receiver still loses nothing, but our
+back receiver loses 0.5 to 1.5 dB (8 lines each: 450 mean 1.11 dB, max
+1.54; 300 mean 0.78, max 1.06): G.711's quantising noise on our -16 dBm0
+echo, which is coded with the back channel. The test bounds that case at 2
+dB and the linear one at 1 dB; the ruling is the controller's (task 17's
+report).
+
+Sizes: `hstcall_t` 165712 octets (x86-64), test side only. Host run 33 s
+(the back channel's 10^5 bits through v32line's resamplers), the short set
+8 s.
