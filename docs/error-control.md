@@ -80,7 +80,9 @@ before the first sample; resetting at `CONNECTED` is harmless:
    at each `V90M_EV_RATES`, as for any MNP call.
 4. For the next call, link again before its first sample, whether you
    reset the modem (`v90m_reset`) or create a new one: both start
-   unlinked.
+   unlinked. Linking starts the endpoint's call afresh, as
+   `v90m_ec_reset` with its configuration does, so the link alone
+   readies the endpoint for the next call.
 
 The link is two-way, and either side ends it: `v90m_destroy` and
 `v90m_reset` of the modem; `v90m_ec_destroy` of the endpoint, a
@@ -93,10 +95,12 @@ T400 counted from its next tick.
 A host may also feed and tick the linked endpoint from the first sample
 on, through the start-up. Until the modem connects on another path, the
 endpoint holds T400; from then on it is the unlinked endpoint, with T400
-counted from `CONNECTED`. Between calls, reset the endpoint as usual:
-without that reset it starts again by itself only when the next call is
-an HST call (it sees the new call's mailbox); a following non-HST call
-would meet the last call's state, as with any endpoint that is not reset.
+counted from `CONNECTED`. Between calls, reset the endpoint as usual;
+for a linked endpoint that reset is optional, since linking it for the
+next call starts it afresh. An endpoint neither reset nor linked again
+starts again by itself only when the next call is an HST call (it sees
+the new call's mailbox); a following non-HST call would meet the last
+call's state, as with any endpoint that is not reset.
 A frame half-received when the endpoint is reset is lost, and the caller
 repeats it (an LR, within the HST window of our training's end plus 5 s).
 

@@ -276,8 +276,10 @@ void   v42ec_init(v42ec_t *e, const v42ec_cfg_t *cfg);
 void   v42ec_reset(v42ec_t *e, const v42ec_cfg_t *cfg);
 /* Link to an HST pump (hst_link.h): get(ctx, &state) is called from
  * v42ec_tx_bit, v42ec_rx_bit, v42ec_tick and v42ec_reset. NULL get
- * unlinks; so does MNP off (cfg.mnp.enable 0, or an originator): nothing
- * is linked. Linking forgets any HST call in progress. Linked, the
+ * unlinks and changes nothing else; so does MNP off (cfg.mnp.enable 0, or
+ * an originator): nothing is linked. Linking starts the endpoint again,
+ * as v42ec_init with its configuration (the link is for a call the modem
+ * has not decided yet): nothing of an earlier call is kept. Linked, the
  * endpoint holds T400 while the state is HST_LINK_UNDECIDED; from
  * HST_LINK_NONE on it is the unlinked one (T400 counted from there, get
  * not asked again in this call); once HST_LINK_ON has been seen the call

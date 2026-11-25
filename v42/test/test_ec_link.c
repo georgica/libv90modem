@@ -662,6 +662,43 @@ static void new_mailbox(void)
            "call 1 without a bit (state %d), call 2 with an LR: our LR out at bit %d\n", s1, at, s2, end, s3, at3);
 }
 
+/* The ISP note's host: the endpoint fed and ticked from the first sample,
+ * never reset, linked again (only) between calls. Call 1: HST, its LR taken
+ * during our training and answered (MNP establishing). Call 2: the host
+ * links again (v42ec_set_link, as v90m_ec_link_hst does) while the modem
+ * is in its ANSam (UNDECIDED); then HST on a new, zeroed mailbox, its
+ * caller's LR during our training: answered at our first bit. */
+static void relink_next_call(void)
+{
+    int t, ok1, ok2, at1 = -1, at2 = -1, proto_after;
+    ep_init(1, HST_LINK_ON);
+    caller_lr(4);
+    for (t = 0; t < 1400; t++) { if (t % 20 < 9) pump_bits(1); v42ec_tick(&E, 1); }
+    S.L.trained = 1;
+    ok1 = our_lr_first(&at1);
+    CHECK(ok1);
+    for (t = 0; t < 500; t++) { if (t % 20 < 9) pump_bits(1); v42ec_tick(&E, 1); }
+    memset(&S.L, 0, sizeof S.L);
+    S.state = HST_LINK_UNDECIDED;
+    v42ec_set_link(&E, stub_get, &S);            /* the next call's link */
+    proto_after = ep_proto();
+    CHECK_EQ_I(proto_after, V42EC_PROTO_NONE);
+    CHECK_EQ_I(v42ec_state(&E), V42EC_DETECT);
+    for (t = 0; t < 3000; t++) v42ec_tick(&E, 1);
+    CHECK_EQ_I(v42ec_state(&E), V42EC_DETECT);   /* T400 held */
+    S.state = HST_LINK_ON;
+    caller_lr(4);
+    for (t = 0; t < 1400; t++) { if (t % 20 < 9) pump_bits(1); v42ec_tick(&E, 1); }
+    CHECK_EQ_I(ep_proto(), V42EC_PROTO_MNP);
+    CHECK_EQ_I(v42ec_state(&E), V42EC_ESTABLISH);
+    S.L.trained = 1;
+    ok2 = our_lr_first(&at2);
+    CHECK(ok2);
+    CHECK_EQ_I(at2, 16);
+    printf("relink_next_call: never reset, linked again between calls: protocol %d after the link; "
+           "call 2's LR from training: our LR %s at bit %d\n", proto_after, ok2 ? "out" : "MISSING", at2);
+}
+
 /* the ring's counters wrap within a call (pre_r from 0xFFFFFFF0 on): the
  * same call, no restart; the caller's LR across the wrap is answered */
 static void wrap_same_call(void)
@@ -717,6 +754,7 @@ int main(void)
     window_overshoot();
     new_mailbox();
     wrap_same_call();
+    relink_next_call();
     ring_overflow();
     T_REPORT("test_ec_link");
 }

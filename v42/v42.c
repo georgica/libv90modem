@@ -730,6 +730,14 @@ static int hst_window(v42ec_t *e, const hst_link_t *L, unsigned ms)
 void v42ec_set_link(v42ec_t *e, hst_link_get_fn get, void *ctx)
 {
     if (!e->cfg.mnp.enable) get = NULL;     /* MNP off or an originator */
+    if (get) {
+        /* a link is for a call not yet decided: start that call afresh,
+         * as v42ec_reset with our configuration would, so that a host
+         * that links again between calls without a reset still meets the
+         * next caller's LR in detection */
+        v42ec_cfg_t c = e->cfg;
+        v42ec_init(e, &c);
+    }
     e->link_get = get;
     e->link_ctx = get ? ctx : NULL;
     /* no HST call in progress for this link yet */

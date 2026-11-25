@@ -245,6 +245,62 @@ static void linked_v32_odp(void)
     call_done(k);
 }
 
+/* The ISP note's host over two calls: one endpoint, fed and ticked from
+ * the first sample and never reset; a new modem for call 2, linked again
+ * and nothing else. Both calls V.32bis callers with V.42: LAPM and data
+ * each time (the link starts the endpoint's next call) */
+static int odp_call_data(call_t *k, int *proto)
+{
+    static const char msg[] = "call after call";
+    uint8_t got[32], back[32];
+    size_t n = 0, nb = 0;
+    v90m_ec_status s;
+    while (now_ms < 30000 && (v90m_ec_state(k->a.ec) != V90M_EC_CONNECTED || v90m_ec_state(k->c.ec) != V90M_EC_CONNECTED))
+        call_ms(k);
+    v90m_ec_write(k->a.ec, (const uint8_t *)msg, sizeof msg);
+    v90m_ec_write(k->c.ec, (const uint8_t *)msg, sizeof msg);
+    while (now_ms < 40000 && (n < sizeof msg || nb < sizeof msg)) {
+        call_ms(k);
+        n += v90m_ec_read(k->c.ec, got + n, sizeof got - n);
+        nb += v90m_ec_read(k->a.ec, back + nb, sizeof back - nb);
+    }
+    v90m_ec_get_status(k->a.ec, &s);
+    *proto = s.protocol;
+    return s.state == V90M_EC_CONNECTED && n == sizeof msg && nb == sizeof msg
+           && memcmp(got, msg, sizeof msg) == 0 && memcmp(back, msg, sizeof msg) == 0;
+}
+
+static void relink_between_calls(void)
+{
+    call_t *k = &K;
+    unsigned mods = V90M_MOD_V32BIS | V90M_MOD_V22 | V90M_MOD_V21 | V90M_MOD_HST;
+    int ok1, ok2, p1, p2, st_link;
+    v90m_cfg c; int err;
+    call_start(k, CAL_ODP, mods, 1, 1);
+    ok1 = odp_call_data(k, &p1);
+    /* call 2: a new modem, the same endpoint, linked again: nothing else */
+    v90m_destroy(k->a.m);
+    v90m_cfg_default(&c);
+    c.role = V90M_ROLE_ANSWER; c.modulations = mods;
+    c.getbit = ans_get; c.putbit = ans_put; c.on_event = ans_event; c.user = &k->a;
+    k->a.m = v90m_create(&c, &err);
+    CHECK(k->a.m != NULL);
+    k->a.conn_ms = -1; k->a.conn_state = -1; k->a.undecided_before = 1;
+    CHECK_EQ_I(v90m_ec_link_hst(k->a.ec, k->a.m), V90M_OK);
+    st_link = v90m_ec_state(k->a.ec);
+    v90m_ec_destroy(k->c.ec);
+    cal_init(&k->c, CAL_ODP);
+    now_ms = 0;
+    ok2 = odp_call_data(k, &p2);
+    CHECK(ok1); CHECK_EQ_I(p1, V90M_EC_PROTO_LAPM);
+    CHECK_EQ_I(st_link, V90M_EC_DETECT);
+    CHECK(ok2); CHECK_EQ_I(p2, V90M_EC_PROTO_LAPM);
+    CHECK_EQ_I(k->a.undecided_before, 1);
+    printf("relink_between_calls: never reset; call 1: protocol %d, data %s; linked again: state %d; "
+           "call 2: protocol %d, data %s\n", p1, ok1 ? "both ways" : "FAILED", st_link, p2, ok2 ? "both ways" : "FAILED");
+    call_done(k);
+}
+
 /* a V.32bis caller without error control: start-stop 750 ms after CONNECTED */
 static void linked_v32_noec(void)
 {
@@ -452,6 +508,7 @@ int main(void)
 {
     linked_v32_odp();
     linked_v32_noec();
+    relink_between_calls();
     relink_after_reset();
     role_change();
     lifetimes();
