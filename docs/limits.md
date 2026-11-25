@@ -378,9 +378,12 @@ channel"):
   number. Nothing else of BinModem's is used.
 - **Everything else is our own design** [OURS], named in the generator's
   header: the transmit pulse (root-raised-cosine, beta 0.35, 10 symbols,
-  Kaiser window; polyphase for 150 and 100 baud at 8000 Hz), the
-  receivers' 250-500 Hz band-pass and the detector's 600-3400 Hz one
-  (Kaiser-windowed FIRs). The Courier's own 72-tap filter is unknown, so
+  Kaiser window; polyphase for 150 and 100 baud at 8000 Hz, and the
+  receivers' matched filter read from it at 1600 Hz), the receivers'
+  decimation band-pass (39 taps, 60 dB down only where it folds into the
+  back channel at 1600 Hz), and the detector's 250-500 Hz band (at 1600
+  Hz) and 600-3400 Hz high band (Kaiser-windowed FIRs). The Courier's own
+  72-tap filter is unknown, so
   our pulse's band (274-476 Hz at 450 bit/s, 283-417 Hz at 300, at
   -20 dB) is chosen to sit under the forward channel's 600 Hz edge, not
   taken from it.
@@ -480,6 +483,16 @@ CPU"); 0.5.0's in brackets:
 - **V.42:** an endpoint at 56 kbit/s both ways costs 5.21 / 9.08 / 9.48 M a
   second with no compression / V.42bis / V.44 (`make cost-v42`; before
   0.6.0's V.42 work: 7.96 / 11.81 / 12.19).
+- **HST's back channel (not yet a call; 0.7.0 work):** the two back
+  receivers (450 and 300) on one band-pass, as the pump runs them while it
+  holds the forward channel, cost 1.87 M instructions a second with the
+  caller at 450 and 1.86 M at 300 (`make cost-hst-back`, the third second
+  of `rig/bench_hst`'s recording, its own loop of 0.11 M taken off; 1.98 M
+  with it); the target was 2.0 M, the spec's "about 1 M a second each".
+  Task 12's receivers, with a 243-tap band-pass, were 3.70 M. The
+  detector of ANS_HST_WAIT (the two receivers, its 250-500 Hz band and
+  the 189-tap 600-3400 Hz band at every 4th sample) is 3.68 M, for at most
+  W (700 ms) when nothing else runs; its high band is about 1.3 M of that.
 
 ## Not implemented
 

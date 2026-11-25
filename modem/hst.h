@@ -17,18 +17,34 @@
 /* ---------------- the back channel's receiver ----------------
  * One receiver a speed (both run while we hold the forward channel):
  *
- *   8000 Hz -> hst_bbpf (250-500 Hz) at every 5th sample only -> 1600 Hz
- *   -> AGC -> 32-bit NCO to baseband -> matched filter (the transmit pulse
- *   of hst_tabs, +-4 symbols, evaluated only at the strobes, at the
- *   strobe's fractional time: no interpolator) -> Gardner timing at 2
- *   strobes a symbol -> differential decisions -> scr17 descrambler.
+ *   8000 Hz -> hst_bbpf at every 5th sample only -> 1600 Hz -> AGC ->
+ *   32-bit NCO to baseband -> matched filter (the transmit pulse of
+ *   hst_tabs, +-4 symbols, evaluated only at the strobes, at the strobe's
+ *   fractional time: one row of hst_mf450 or hst_mf300 a strobe phase, no
+ *   interpolator) -> Gardner timing at 2 strobes a symbol -> differential
+ *   decisions -> scr17 descrambler.
  *
- * hst_bbpf (243 taps, folded: 122 multiplies) runs at 1600 Hz, not 8000,
- * and once for both receivers (hst_brx_band): its >= 50 dB stop band at
- * 600 Hz and above is what folds into 250-500 Hz at 1600 Hz. hst_hbpf
- * (189 taps) is not the receiver's: it feeds the detector's power ratio
- * only (Task 13), which evaluates it at every 4th sample (the power of a
- * sub-sampled output is the output's power).
+ * hst_bbpf is a decimation filter (Task 13; 39 taps, folded: 20
+ * multiplies, at 1600 Hz only, once for both receivers through
+ * hst_brx_band): it rejects, at least 60 dB, only the bands that fold into
+ * the back channel's 274-476 Hz at 1600 Hz (1124-1326, 1874-2076,
+ * 2724-2926, 3474-3676 Hz), and is flat over 250-500 Hz. The rest of the
+ * selectivity is the matched filter's: the forward channel's lower edge
+ * and its echo at 476-1124 Hz (hst_bbpf is -1.7 dB at 600 Hz, -29 at 1000)
+ * and the hum below the band. Measured (test_hst_back `echo`): under our
+ * own forward signal's echo at -16 dBm0 in HST's band, a back channel at
+ * -33 dBm0 locks and runs error-free; V.32's 25 % pulse, which reaches
+ * into the back band, is the limit at an echo 3 dB over the back channel.
+ * The carrier detect and the AGC work on hst_bbpf's output, so an echo or
+ * hum strong enough holds the carrier on with no back channel; `locked`
+ * then ends through the fade rule (the matched filter's symbols fall 9 dB),
+ * and the AGC's level includes them (the back channel is then smaller in
+ * the baseband, which the decisions, being angles, do not mind).
+ *
+ * The 243-tap band-pass of Task 12 (50 dB down at 600 Hz and above) cost
+ * 1.36 M ARMv5 instructions a second; the two receivers on one hst_bbpf now
+ * cost about 1.9 M together (make cost-hst-back). hst_dbpf and hst_hbpf are
+ * the detector's, not the receivers'.
  *
  * Timing, acquired in one step: four strobes a symbol over HST_BRX_OM
  * symbols, the phase of the symbol-rate line in their power (Oerder and
@@ -61,7 +77,11 @@
  * of the grid; at least 4 different steps, none in more than 8 (a tone, or
  * dial tone, or hum, steps the same way every symbol: a scrambled signal
  * uses all eight); an RMS error under HST_BRX_RMS degrees (noise that falls
- * on the grid by chance does not); and the alias check, on the last
+ * on the grid by chance does not); the symbols' power steady, its spread
+ * (variance over the squared mean) at most 1/6 (8-DPSK through the matched
+ * filter is of constant modulus: its spread stays under 0.13 down to 6 dB;
+ * two tones that beat, which can step the phase in a varied way, spread
+ * 0.24 and more); and the alias check, on the last
  * HST_BRX_EST strobes, preferring the turn in use to r +- 45 by 2:1. When
  * it prefers r +- 45 instead, the carrier is estimated again from those
  * strobes. A second check on two fresh windows of 10 symbols after the
@@ -108,7 +128,7 @@
  * test first. */
 #define HST_BRX_XL  (HST_BBPF_N + 40)  /* the 8000 Hz input, linear, moved down when full */
 #define HST_BRX_ZN  130                /* the matched filter's span at 1600 Hz: 8 symbols at 300, +2 */
-#define HST_BRX_ZL  (HST_BRX_ZN + 32)  /* the 1600 Hz baseband, linear, moved down when full */
+#define HST_BRX_ZL  (HST_BRX_ZN + 128) /* the 1600 Hz baseband, linear, moved down when full */
 #define HST_BRX_EST 10                 /* symbols for the carrier's estimate */
 #define HST_BRX_OM  8                  /* symbols for the timing's */
 #define HST_BRX_WIN 16                 /* decisions the lock and grid_ok look over */
@@ -147,7 +167,11 @@ typedef struct {
     /* the last HST_BRX_WIN decisions: their steps and squared errors */
     uint8_t  wstep[HST_BRX_WIN];
     int32_t  wsq[HST_BRX_WIN];        /* (error in turns Q16)^2 / 16 */
+    uint16_t wpw[HST_BRX_WIN];        /* symbol power, Q8 of the mean (at most 255.99) */
     int32_t  wpos, nwin, qbad;        /* ring place; decisions in it; symbols of bad quality in a row */
+    int32_t  qacq, qhold;             /* the window's quality to win a lock (and grid_ok), to hold one */
+    int32_t  wn[8];                   /* the window's decisions of each step */
+    int64_t  wsum, wp1, wp2;          /* its sums: squared errors, powers, squared powers */
     int32_t  nfade;                   /* locked symbols 9 dB under the mean in a row */
     uint8_t  dly[HST_BRX_DLY];        /* the last decisions' bits while locked, a ring (bit b: bits[b]) */
     int32_t  ndly, pdly;              /* bits held back: symbols, the ring's place */
@@ -159,6 +183,7 @@ typedef struct {
     int32_t  wturn;                   /* the carrier's turn a symbol left after the NCO, 2^32 a turn */
     uint32_t okhist;                  /* each decision within +-12 degrees of the grid, the newest in bit 0 */
     int32_t  nsym, locked, grid_ok;
+    uint32_t ndec;                    /* decisions made (on symbols, not the estimate's), modulo 2^32 */
     int64_t  e2;                      /* mean square of the decision error, turns Q16 squared */
     scr_t    scr;
     uint8_t  bits[3];                 /* the last symbol's bits, the first in bits[0] */
@@ -230,5 +255,53 @@ void    hst_btx_set_speed(hst_btx_t *t, int bps);
 int16_t hst_btx_tick(hst_btx_t *t);
 /* no more symbols: the pulses in flight ring out, then silence */
 void    hst_btx_stop(hst_btx_t *t);
+
+/* ---------------- the detector of ANS_HST_WAIT ----------------
+ * The spec's "Detecting the caller's back channel": it fires when both
+ * stages hold.
+ *
+ * 1. Energy: over the last 100 ms (ten 10 ms blocks), the 250-500 Hz band
+ *    over HST_DET_ON dBm0 and at least 10 dB above the 600-3400 Hz band.
+ *    The band is hst_dbpf at 1600 Hz on the receivers' hst_bbpf output;
+ *    the high band is hst_hbpf at 8000 Hz, evaluated at every 4th sample on
+ *    average (3 and 5 in turn, so that a tone at a multiple of 1000 Hz is
+ *    not sampled at one phase; the power of a sub-sampled output is the
+ *    output's power). The spec's -43 dBm0 is the weakest back channel to be
+ *    found: the threshold sits 2 dB under it [OURS].
+ * 2. Lock: on the 450 (or the 300) receiver, both on one band-pass, 24 of
+ *    the last 30 decisions grid_ok (hst_brx_grid_ok: on the grid, with the
+ *    lock's window conditions, and only after the carrier's estimate). A
+ *    window, never one decision: dial tone gives a lone grid_ok now and then.
+ *
+ * Measured (test_hst_det): it fires within 450 ms of the preamble's start
+ * at 450 and 650 ms at 300 (the window alone needs 24 decisions: 160 ms at
+ * 450, 240 ms at 300, after the lock's acquisition), never on dial tone,
+ * hum, tones, noise, V.21, Bell 103 or V.22bis callers, or our ANSam's echo.
+ * The receivers carry on after it fires (rx[], nb[]): bits, lock, carrier. */
+#define HST_DET_450 1
+#define HST_DET_300 2
+#define HST_DET_ON  (-45)             /* dBm0: the band's threshold */
+#define HST_DET_XL  (HST_HBPF_N + 40) /* the 8000 Hz input, linear, moved down when full */
+#define HST_DET_YL  (HST_DBPF_N + 32) /* the 1600 Hz band-passed input, likewise */
+#define HST_DET_BLKS 10               /* 10 ms blocks: 100 ms */
+
+typedef struct {
+    hst_brx_t rx[2];                  /* 450, 300; on one band-pass (this struct's) */
+    int32_t  nb[2];                   /* the bits each gave at the last tick (0 or 3) */
+    int16_t  xh[HST_DET_XL];          /* the input at 8000 Hz */
+    int16_t  yh[HST_DET_YL];          /* hst_bbpf's output at 1600 Hz */
+    int32_t  xn, yn, dec, hcnt, hstep;
+    int32_t  nblk, nh;                /* 1600 Hz samples in the block; high-band samples in it */
+    int64_t  pb, ph;                  /* this block's sums of squares: band, high band */
+    int64_t  bb[HST_DET_BLKS], bh[HST_DET_BLKS];   /* the last blocks' means: band, high band */
+    int32_t  pblk, nfull;             /* the ring's place; blocks in it */
+    uint32_t ok[2], ndec[2];          /* each receiver's grid_ok history (newest in bit 0); decisions seen */
+    int32_t  fired;                   /* 0, HST_DET_450 or HST_DET_300, once fired */
+} hst_det_t;
+
+void hst_det_init(hst_det_t *d);
+/* one sample at 8000 Hz: 0, or HST_DET_450 / HST_DET_300 from the sample
+ * it fires on (and at every one after) */
+int  hst_det_tick(hst_det_t *d, int16_t x);
 
 #endif

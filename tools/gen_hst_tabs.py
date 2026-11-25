@@ -22,15 +22,26 @@ The back channel (hst-facts.md "Back channel"):
                  Checked here: power at 600 Hz and above at least 60 dB
                  below the pulse's peak (1.5 symbol rates from the 450
                  carrier), and its -20 dB band.
-  hst_bbpf       the receivers' band-pass [OURS]: 250-500 Hz within +-0.5
-                 dB, at least 50 dB down at 600 Hz and above and at 150 Hz
-                 and below (50 and 60 Hz hum, not its harmonics at 180-250 Hz,
-                 which the detector's 8-PSK lock rejects instead). Meant to be
-                 evaluated at the receiver's 1600 Hz instants: its stop band
-                 at 600 Hz and above is what folds into 250-500 Hz there.
-                 Windowed-sinc FIR (Kaiser), cut-offs
-                 200 and 550 Hz, the fewest odd taps that meet it with Q15
-                 coefficients (checked here, and in test/test_hst_back.c).
+  hst_mf450      the receiver's matched filter: the transmit pulse over +-4
+  hst_mf300      symbols, read at the receiver's 1600 Hz samples, one row a
+                 strobe phase between two samples (15 at 450, 5 at 300), so
+                 that a strobe is a plain dot product.
+  hst_bbpf       the receivers' band-pass [OURS], evaluated only at the
+                 receivers' 1600 Hz instants (a decimation filter): it rejects
+                 the bands that fold into the back channel's 274-476 Hz there,
+                 1124-1326, 1874-2076, 2724-2926 and 3474-3676 Hz, at least 60
+                 dB, and is flat to +-0.5 dB over 250-500 Hz. Nothing else:
+                 476-1124 Hz (the forward channel's lower edge, its echo) and
+                 the low band (hum) are left to the matched filter. A Kaiser
+                 low-pass, the fewest odd taps that meet it with Q15
+                 coefficients; for that length, the cut-off (700-900 Hz, 10
+                 Hz steps) and window (beta 3.0-8.0, 0.2 steps) with the
+                 deepest alias bands (checked here, and in
+                 test/test_hst_back.c).
+  hst_dbpf       the detector's band [OURS], at 1600 Hz on hst_bbpf's output:
+                 250-500 Hz within +-0.5 dB, at least 40 dB down at 150 Hz and
+                 below and at 600-800 Hz. Kaiser band-pass, cut-offs 200 and
+                 550 Hz, fewest odd taps, Q15.
   hst_hbpf       the detector's high band, for its ratio [OURS]: 600-3400 Hz
                  within +-0.5 dB, at least 40 dB down at 500 Hz and below.
                  Kaiser FIR, cut-offs 550 and 3700 Hz, fewest odd taps, Q15.
@@ -160,66 +171,133 @@ def tab_bpulse():
         c += ["    { " + ", ".join("%6d" % v for v in r) + " }," for r in qt]
         c.append("};")
         c.append("")
+        # the receiver's matched filter at 1600 Hz (k pulse phases a sample):
+        # for a strobe `frac` phases (0 .. k-1) before the newest sample, the
+        # taps on the newest-but-i0 sample and older, i0 = 1 when frac > 0;
+        # the pulse over +-4 symbols, m = P .. 9P, zeros after the last
+        k = P * baud // 1600
+        rows_, n_ = [], []
+        for frac in range(k):
+            i0 = (frac + k - 1) // k
+            taps = [qt[m % P][m // P] for m in range(P + i0 * k - frac, 9 * P + 1, k)]
+            rows_.append(taps)
+            n_.append(len(taps))
+        width = max(n_)
+        h.append(define("HST_MF%d_K" % bps, k, "matched filter: strobe phases a 1600 Hz sample"))
+        h.append(define("HST_MF%d_N" % bps, width, "matched filter: taps at most"))
+        h.append("/* [frac][t], Q14: the matched filter for a strobe frac pulse phases before")
+        h.append(" * a sample, tap t on the t-th sample back from it; hst_mf%d_n[frac] taps */" % bps)
+        h.append("extern const int16_t hst_mf%d[HST_MF%d_K][HST_MF%d_N];" % (bps, bps, bps))
+        h.append("extern const uint8_t hst_mf%d_n[HST_MF%d_K];" % (bps, bps))
+        c.append("const int16_t hst_mf%d[HST_MF%d_K][HST_MF%d_N] = {" % (bps, bps, bps))
+        for r in rows_:
+            r = r + [0] * (width - len(r))
+            c += ["    {"] + rows(r, 12, 6) + ["    },"]
+        c.append("};")
+        c.append("const uint8_t hst_mf%d_n[HST_MF%d_K] = { %s };" % (bps, bps, ", ".join(str(v) for v in n_)))
+        c.append("")
     return h, c
 
 
 # ---------------- band-pass filters ----------------
-def fir_db(h, f):
+def fir_db(h, f, fs=FS):
     re = im = 0.0
     for i, v in enumerate(h):
-        re += v * math.cos(2 * math.pi * f * i / FS)
-        im -= v * math.sin(2 * math.pi * f * i / FS)
+        re += v * math.cos(2 * math.pi * f * i / fs)
+        im -= v * math.sin(2 * math.pi * f * i / fs)
     return 10 * math.log10((re * re + im * im) / (32768.0 * 32768.0) + 1e-30)
 
 
-def bandpass(f1, f2, n, beta):
+def kaiser_fir(f1, f2, n, beta, fs=FS):
+    """Q15 Kaiser-windowed sinc, pass band f1..f2 (f1 = 0: a low-pass)."""
     m = (n - 1) / 2.0
     h = []
     for i in range(n):
         t = i - m
         if t == 0:
-            v = 2 * (f2 - f1) / FS
+            v = 2 * (f2 - f1) / fs
         else:
-            v = (math.sin(2 * math.pi * f2 * t / FS) - math.sin(2 * math.pi * f1 * t / FS)) / (math.pi * t)
+            v = (math.sin(2 * math.pi * f2 * t / fs) - math.sin(2 * math.pi * f1 * t / fs)) / (math.pi * t)
         h.append(v * kaiser(t / (m + 1), beta))
-    return [q(v, 32768) for v in h]
+    h = [q(v, 32768) for v in h]
+    if any(h[i] != h[n - 1 - i] for i in range(n)):
+        die("not symmetric")
+    return h
 
 
-def design(name, f1, f2, passband, stops, atten):
+def flat(h, passband, fs=FS):
+    pb = [fir_db(h, f, fs) for f in range(passband[0], passband[1] + 1, 2)]
+    return min(pb), max(pb)
+
+
+def design(name, f1, f2, passband, stops, atten, fs=FS):
     """The fewest odd taps whose Q15 Kaiser band-pass (cut-offs f1, f2) is
     flat to +-0.5 dB over `passband` and `atten` dB down over each of `stops`."""
     beta = 0.1102 * (atten + 2 - 8.7)
-    est = int((atten + 2 - 7.95) / (2.285 * 2 * math.pi * 100.0 / FS))     # Kaiser's, 100 Hz transitions
-    for n in range(est - est % 2 - 39, 601, 2):
-        h = bandpass(f1, f2, n, beta)
-        if any(h[i] != h[n - 1 - i] for i in range(n)):
-            die(name + ": not symmetric")
-        pb = [fir_db(h, f) for f in range(passband[0], passband[1] + 1, 2)]
-        if min(pb) < -0.5 or max(pb) > 0.5:
+    est = int((atten + 2 - 7.95) / (2.285 * 2 * math.pi * 100.0 / fs))     # Kaiser's, 100 Hz transitions
+    for n in range(max(est - est % 2 - 39, 11) | 1, 601, 2):
+        h = kaiser_fir(f1, f2, n, beta, fs)
+        lo, hi = flat(h, passband, fs)
+        if lo < -0.5 or hi > 0.5:
             continue
-        sb = max(fir_db(h, f) for lo, hi in stops for f in range(lo, hi + 1, 2))
+        sb = max(fir_db(h, f, fs) for a, b in stops for f in range(a, b + 1, 2))
         if sb <= -atten - 1:
             sys.stderr.write("gen_hst_tabs: %s: %d taps, passband %.2f..%.2f dB, stop %.1f dB\n"
-                             % (name, n, min(pb), max(pb), sb))
+                             % (name, n, lo, hi, sb))
             return h
     die(name + ": no design up to 599 taps")
 
 
+# the bands that fold into the back channel's 274-476 Hz at 1600 Hz
+ALIAS = ((1124, 1326), (1874, 2076), (2724, 2926), (3474, 3676))
+
+
+def design_decim(name, passband, stops, atten):
+    """The fewest odd taps of a Q15 Kaiser low-pass flat to +-0.5 dB over
+    `passband` and `atten` dB down over each of `stops`; for that length,
+    the cut-off and window that put the stops deepest."""
+    for n in range(11, 201, 2):
+        best = None
+        for fc in range(700, 901, 10):
+            for b10 in range(30, 81, 2):
+                h = kaiser_fir(0.0, float(fc), n, b10 / 10.0)
+                lo, hi = flat(h, passband)
+                if lo < -0.5 or hi > 0.5:
+                    continue
+                sb = max(fir_db(h, f) for a, b in stops for f in range(a, b + 1, 2))
+                if best is None or sb < best[0]:
+                    best = (sb, h, fc, b10 / 10.0, lo, hi)
+        if best and best[0] <= -atten:
+            sb, h, fc, beta, lo, hi = best
+            sys.stderr.write("gen_hst_tabs: %s: %d taps (cut-off %d Hz, beta %.1f), passband %.2f..%.2f dB, "
+                             "alias bands %.1f dB, 600 Hz %.1f dB, 1000 Hz %.1f dB\n"
+                             % (name, n, fc, beta, lo, hi, sb, fir_db(h, 600), fir_db(h, 1000)))
+            return h
+    die(name + ": no design up to 199 taps")
+
+
+def emit(name, macro, what, taps, h, c):
+    h.append("#define %s %d" % (macro, len(taps)))
+    h.append("/* %s; Q15, linear phase, gain 1 */" % what)
+    h.append("extern const int16_t %s[%s];" % (name, macro))
+    c.append("const int16_t %s[%s] = {" % (name, macro))
+    c += rows(taps, 12)
+    c.append("};")
+    c.append("")
+
+
 def tab_bpf():
     h, c = [], []
-    for name, macro, what, f1, f2, pb, stops, atten in (
-            ("hst_bbpf", "HST_BBPF_N", "250-500 Hz, >= 50 dB down at 600 Hz and above and 150 Hz and below",
-             200.0, 550.0, (250, 500), ((0, 150), (600, 4000)), 50),
-            ("hst_hbpf", "HST_HBPF_N", "600-3400 Hz, >= 40 dB down at 500 Hz and below",
-             550.0, 3700.0, (600, 3400), ((0, 500),), 40)):
-        taps = design(name, f1, f2, pb, stops, atten)
-        h.append("#define %s %d" % (macro, len(taps)))
-        h.append("/* %s; Q15, linear phase, gain 1 */" % what)
-        h.append("extern const int16_t %s[%s];" % (name, macro))
-        c.append("const int16_t %s[%s] = {" % (name, macro))
-        c += rows(taps, 12)
-        c.append("};")
-        c.append("")
+    emit("hst_bbpf", "HST_BBPF_N",
+         "the receivers' band-pass, at their 1600 Hz instants: 250-500 Hz, >= 60 dB down "
+         "at 1124-1326, 1874-2076, 2724-2926 and 3474-3676 Hz",
+         design_decim("hst_bbpf", (250, 500), ALIAS, 60), h, c)
+    emit("hst_dbpf", "HST_DBPF_N",
+         "the detector's band, at 1600 Hz on hst_bbpf's output: 250-500 Hz, >= 40 dB down "
+         "at 150 Hz and below and 600-800 Hz",
+         design("hst_dbpf", 200.0, 550.0, (250, 500), ((0, 150), (600, 800)), 40, 1600.0), h, c)
+    emit("hst_hbpf", "HST_HBPF_N", "600-3400 Hz, >= 40 dB down at 500 Hz and below",
+         design("hst_hbpf", 550.0, 3700.0, (600, 3400), ((0, 500),), 40), h, c)
     return h, c
 
 

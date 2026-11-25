@@ -4632,3 +4632,85 @@ New cases in `test_hst_back` (113 checks; 20 s on the host, 2.5 s short):
   that, the lock's second check may end a lock, which is not a loss.
 
 CPU (ARMv5, two receivers on one band-pass): 3.70 M a second.
+
+## hst 13: the detector, tools/hst_scan, the receivers' CPU; milestone 3 (2026-11-25)
+
+First commit, the Task 12 leftovers (rulings carried from its review):
+- I-A. The second alias check now sums the mismatches of two fresh
+  windows of 10 symbols after the lock and confirms when the turn in use
+  predicts better than r +- 45 (1:1 on the pool); one window alone was
+  unclear about a right lock now and then, and dropping it made about 5 %
+  of the clean starts at 300 late. The lock's own window is not pooled
+  (pooling it let the review's 300 +12 Hz seed 28 alias through). The
+  hold is HST_BRX_DLY = 21 symbols at both speeds (140 ms at 450, 210 at
+  300), past both windows.
+- `first_bit` (test_hst_back case 29): 256 clean starts at 300, +-7 Hz,
+  +-100 ppm, 20 and 30 dB: the lock giving the first bit (first bit less
+  the hold) within 450 ms on every one. The `loop_*` bound is strict
+  again (no loss of lock after the lock).
+- hst.h: a carrier stop discards the whole held ring (some 10-15 real
+  symbols: 42 line bits at 450, 31 at 300 measured); Task 21 owns the fix.
+  The carrier-off margin is 10 ms (80-90 ms against 100).
+
+Second commit, Task 13:
+- `hst_bbpf` is a decimation filter: 39 taps (cut-off 740 Hz, Kaiser beta
+  5.8), at least 60 dB down only where it folds into 274-476 Hz at
+  1600 Hz (1124-1326, 1874-2076, 2724-2926, 3474-3676 Hz; 63.9 dB),
+  flat to 0.47 dB over 250-500 Hz. The rest of the selectivity is the
+  matched filter's. `hst_mf450`/`hst_mf300`: the matched filter as one row
+  of taps a strobe phase (a dot product; the same numbers as before).
+- CPU work, outputs unchanged by each step (test_hst_back byte-identical):
+  the matched filter's rows, a 32-bit mixer, one sincos, the window's
+  sums kept running, the decisions' tribits from a table, the divisions
+  by the symbol power in 32 bits (shifted to 12 bits), a 32-bit square
+  root for the AGC, the NCO drain as t x 3/32 and t/16.
+- Lock and grid_ok also need the symbols' power steady over the window
+  (variance at most 1/6 of the squared mean). The detector, as first
+  written, fired on two tones that beat (330 + 401 Hz, 350 + 421 Hz: 2 of
+  12000 random tone mixtures); real 8-DPSK spreads at most 0.13 (6-30 dB,
+  +-12 Hz), those two tones 0.24 and more.
+- `hst_det` (hst.h): both stages over 100 ms (ten 10 ms blocks): the band
+  (`hst_dbpf`, 43 taps at 1600 Hz on the receivers' band-pass) over
+  -45 dBm0 [OURS: the spec's -43 is the weakest to be found, 2 dB margin]
+  and 10 dB over the high band (`hst_hbpf` at every 3rd and 5th sample in
+  turn), and 24 of the last 30 grid_ok on the 450 (or else the 300)
+  receiver. The receivers carry on after it fires.
+- `tools/hst_scan.c` (`make hst-scan RECS=`), `rig/bench_hst.c`
+  (`make cost-hst-back`).
+- test_hst_back: `filters` for the new tables; `echo` (case 30): the back
+  channel at -33 dBm0 under our forward signal's echo, the library's V.32
+  transmitter standing in (2400 baud at 1800 Hz; the HST forward
+  transmitter is not on this branch): in HST's forward band (a test-side
+  high-pass at 550 Hz with a -40 dB floor, for the beta 1/12 pulse) from
+  -10 dBm0 at 6 dB ERL, locked and error-free over 2 x 10^4 bits; V.32's
+  own 25 % pulse reaches into the back band, and its limit is an echo of
+  -30 dBm0, 3 dB over the back channel (-28: errors on 3 lines of 24; at
+  the corner the 450 receiver does not lock). `noise_first`/`dropout`:
+  at most one decision (3 bits) wrong after the lock, not none: with the
+  39-tap band-pass, 1 line in 360 at 40 seeds had one wrong decision in
+  the first ones after the lock at 10 dB (the 243-tap: 0 in 360); the
+  7800 hard starts give one such run either way; an alias gives half.
+- test_hst_det (new): pos_450, pos_300 (-9, -26, -43 dBm0, 20 dB, +-7 Hz,
+  +-100 ppm), quiet, mixtures, v22bis.
+
+    make -s build/test_hst_det (before the code) -> error: unknown type name 'hst_det_t'
+    build/test_hst_det -> test_hst_det: 7 checks, 0 failures
+      detection: 356-416 ms at 450 (budget 450), 526-576 ms at 300 (650)
+    build/test_hst_back -> test_hst_back: 120 checks, 0 failures
+    make hst-scan RECS=$RECS -> 106 recordings, 0 back-channel detections;
+      the closest any came: 0 grid_ok in any window (before the steady
+      power rule: 17 of 30 at 300 on a 462 Hz tone, 10 at 450)
+    12000 random mixtures of 1-3 tones (150-650 Hz, -45 to -5 dBm0, AM,
+      mu-law, noise): no grid_ok; 1910 tone and noise runs: 0 locks
+    7800 hard starts: no epoch from an alias; within +-12 Hz one run with
+      3 wrong bits after the lock; 3500 clean starts, first bit less the
+      hold: 300 +-7 Hz 0 late at 10-30 dB, 300 +-12 Hz 10-21 % late at
+      10-20 dB (was 39-59 %)
+    make cost-hst-back ARM_CC=$A5 (third second, the bench's loop of
+      0.11 M taken off): two receivers on one band-pass 1.87 M (caller at
+      450), 1.86 M (300); 1.98 M with the loop. Task 12: 3.70 M.
+      Detector 3.68 M, of which hst_hbpf 1.26 M (a profile).
+    sizeof(hst_brx_t) 1824, sizeof(hst_det_t) 4504 (x86-64 and ARMv5)
+    make verify -> VERIFY PASS (see the commit)
+    milestone 3: verify-phase deferred to the merge of the tracks (a port
+      matrix was running in ~/hst-wt; owner's controller ruling)
