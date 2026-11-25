@@ -6225,3 +6225,25 @@ milestone gate (verify-phase, ports, ARM) is Task 26's.
   target** (new: `rec_hst -R`, `bench_hst -k`), the 0x3R parallel decode
   32.04 M for 20 ms. The levers (equaliser at T/2, a cheaper guard) are
   the forward receiver's and left to after 23b: docs/limits.md.
+
+## hst 23d: v42ec_tx_busy counts the HDLC closing flag (2026-11-25)
+
+- **Bug** (Task 23 review, Important 2): `v42hdlc_tx_busy` read 0 from the
+  first bit of a frame's closing flag, 7 bits early, against the contract
+  of `v90m_ec_tx_busy` ("busy until the frame is out"). MNP framing 3's LD
+  was never acknowledged, so a host stopping the line at busy 0 cut it.
+  LAPM and MNP mode 3, every modulation; mode 2 was right.
+- **Fix** (`v42/v42_hdlc.c`): a `closing` flag (one byte, in the padding
+  after `cur`, so `v90m_ec_mem_size` is unchanged) is set while the closing
+  flag is shifted out; busy stays up until its last bit is taken. Zero
+  insertion before it was already inside `in_frame`. Only when busy reads 0
+  changes, not a bit on the line.
+- **Tests**: `test_hdlc` busy_closing_flag (stop at busy 0: the frame is
+  decoded, FCS-16 and 32, ones runs), `test_ec_mnp` release_mode3 (the peer
+  gets the LD); both failed before. `test_v42` detect_case fed the receiver
+  16 bits after busy: now 9, the same stream as before.
+- **ans_hst.c**: the 1 s ask in back_watch only with nothing pending (rc
+  none, no ln_req, no rate_order); `test_answer_hst` case 32
+  back_silent_pending (failed before). The cleardown tail
+  (HST_CLR_FWD_MS/BACK_MS) is kept: the closing flag part of it is now
+  redundant, the transmit pipeline and far decoder flush are not.

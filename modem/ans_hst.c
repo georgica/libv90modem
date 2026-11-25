@@ -668,7 +668,9 @@ static void back_watch(answer_t *a)
         a->retraining = 1; a->retrains++;
         to_fwd(a, HST_REV_TRAIN);
     } else if (h->fq == MS(HST_SILENT_ASK_MS) && h->link.agreed_rates
-               && !(h->rc == HST_RC_ASK && h->rc_order == (0x20 | h->code))) {
+               && h->rc == HST_RC_NONE && !h->link.ln_req && !h->link.rate_order) {
+        /* only with nothing pending: a change asked or followed is not
+         * replaced (the carrier may be back within HST_SILENT_BACK_MS) */
         ask(a, 0x20 | h->code);
     }
 }
@@ -762,9 +764,9 @@ static int16_t tick(answer_t *a, int16_t rx)
 
 /* ours (the host has had the endpoint release first and waited for its
  * tx_busy 0, docs/error-control.md): with MNP up and data going out, the
- * host's bits HST_CLR_FWD_MS or HST_CLR_BACK_MS more (the LD's closing
- * flag, which tx_busy no longer counts once begun, and the LD's end
- * through the far decoder), then both carriers stop; else at once */
+ * host's bits HST_CLR_FWD_MS or HST_CLR_BACK_MS more (the LD's end through
+ * our transmitter and the far decoder; the closing flag itself is out when
+ * tx_busy reads 0), then both carriers stop; else at once */
 static int cleardown(answer_t *a)
 {
     hst_t *h = &a->u.hst;

@@ -857,7 +857,7 @@ static int detect_case(uint8_t addr)
     v42hdlc_tx_frame(&t, f, 12, 0); v42hdlc_tx_flags(&t, 1);
     for (i = 0; i < 8; i++) (void)v42hdlc_tx_bit(&t);             /* its flag: lost */
     while (v42hdlc_tx_busy(&t)) v42ec_rx_bit(&B, v42hdlc_tx_bit(&t));
-    for (i = 0; i < 16; i++) v42ec_rx_bit(&B, v42hdlc_tx_bit(&t));  /* its last bits, the closing flag */
+    for (i = 0; i < 9; i++) v42ec_rx_bit(&B, v42hdlc_tx_bit(&t));   /* flags after the closing one */
     for (i = 0; i < 40; i++) v42ec_rx_bit(&B, 1);                  /* mark again */
     return B.want_hdlc;
 }

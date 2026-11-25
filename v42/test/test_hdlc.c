@@ -313,6 +313,34 @@ static const char usr_reneg_hex[] =
     "84f8f9fd";
 #define USR_RENEG_BITS 794
 
+/* busy stays up until the closing flag's last bit has been taken, so a host
+ * that stops the line the moment busy reads 0 still delivers the frame; ones
+ * runs exercise the zero insertion before the flag */
+static void test_busy_closing_flag(void)
+{
+    static const uint8_t pats[3][6] = { { 0x03, 0x3F, 0xFF, 0xFF, 0x01, 0 },
+                                        { 0x7E, 0x00, 0xA5, 0x5A, 0xF8, 1 },
+                                        { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 2 } };
+    int p, fcs32, i, ev, got, bits;
+    for (p = 0; p < 3; p++)
+        for (fcs32 = 0; fcs32 <= 1; fcs32++) {
+            v42hdlc_tx_t t; v42hdlc_rx_t r;
+            v42hdlc_tx_init(&t); v42hdlc_rx_init(&r);
+            v42hdlc_rx_set_fcs(&r, V42HDLC_FCS_EITHER);
+            for (i = 0; i < 16; i++) (void)v42hdlc_rx_bit(&r, v42hdlc_tx_bit(&t));
+            v42hdlc_tx_frame(&t, pats[p], 5, fcs32);
+            got = 0; bits = 0;
+            while (v42hdlc_tx_busy(&t) && bits < 1000) {
+                ev = v42hdlc_rx_bit(&r, v42hdlc_tx_bit(&t));
+                if (ev > 0) got++;
+                bits++;
+            }
+            /* stopped at once: the frame is out whole */
+            CHECK_EQ_I(got, 1);
+            CHECK_EQ_I(t.nbits, 0);
+        }
+}
+
 static void test_resync(void)
 {
     uint8_t f[V42HDLC_MAX_PAYLOAD];
@@ -425,6 +453,7 @@ static void test_noise(void)
 
 int main(void)
 {
+    test_busy_closing_flag();
     test_fcs();
     test_tx_bits();
     test_loopback();

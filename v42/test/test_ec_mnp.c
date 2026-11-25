@@ -538,6 +538,29 @@ static void release_mode2(void)
     printf("release_mode2: busy for %d bits, the peer got LD %d\n", bits, R.p.rx_ld_reason);
 }
 
+/* framing mode 3: busy lasts until the LD's closing flag has gone, so a
+ * host that stops the line at busy 0 still delivers the LD */
+static void release_mode3(void)
+{
+    mnp_peer_cfg pc = peer_cfg(3);
+    int bits = 0;
+    rig_init(&R, SRC_PEER, 1, 1, &pc);
+    rig_run(&R, 1500);
+    CHECK_EQ_I(v42ec_state(&R.e), V42EC_CONNECTED);
+    CHECK_EQ_I(R.e.l.mnp.framing, 3);
+    rig_run(&R, 300);
+    CHECK_EQ_I(v42ec_tx_busy(&R.e), 0);
+    v42ec_release(&R.e);
+    CHECK_EQ_I(v42ec_tx_busy(&R.e), 1);
+    while (v42ec_tx_busy(&R.e) && bits < 10000) {
+        mnppeer_rx_bit(&R.p, v42ec_tx_bit(&R.e));
+        (void)mnppeer_tx_bit(&R.p);
+        bits++;
+    }
+    CHECK_EQ_I(R.p.rx_ld_reason, 255);
+    printf("release_mode3: busy for %d bits, the peer got LD %d\n", bits, R.p.rx_ld_reason);
+}
+
 /* an abort in the data phase: nothing more goes, not even an LD */
 static void abort_mnp(void)
 {
@@ -804,6 +827,7 @@ int main(void)
     breaks();
     busy();
     release_mode2();
+    release_mode3();
     abort_mnp();
     ld_const1();
     n400_end();

@@ -1883,6 +1883,33 @@ static void back_silent(void)
     }
 }
 
+/* back_silent_pending: holding the back channel, the caller's carrier gone,
+ * a change followed or asked is pending when the 1 s are up: our 0x2R at the
+ * rate in force does not replace it (the carrier may be back within 5 s) */
+static void back_silent_pending(void)
+{
+    hstcall_cfg hc;
+    our_cfg oc = hst_ours();
+    long t_drop;
+    hst_t *h;
+    int n26, rc_before;
+    hc_defaults(&hc);
+    hc.rev_backlog = 64;
+    printf("back_silent_pending: the caller gone with a followed change pending at 1 s\n");
+    rc_call(&hc, &oc, 100000000L, 2048, 2306u);
+    C.after_fwd = 1;
+    run_ms(60000L, holding_back_data); run_ms(now_ms + 2000, ended);
+    t_drop = now_ms;
+    HC.cfg.drop_at_ms = (int)HC.ms + 1;
+    run_ms(t_drop + 500, ended);
+    h = &ans()->u.hst;
+    n26 = RC.nln;
+    h->rc = HST_RC_FOLLOW; h->rc_order = 0x20 | ((h->code % 14) + 1); h->rct = 0; h->rc_st = HST_FRX_NOCARRIER;
+    rc_before = h->rc_order;
+    run_ms(t_drop + 1300, ended);
+    bound("no 0x2R of ours at 1 s over the pending change", RC.nln == n26 && h->rc == HST_RC_FOLLOW && h->rc_order == rc_before);
+}
+
 /* retrain_failed: holding the back channel at 9600, the one rate agreed,
  * the line falls to 3 dB SNR: our 0x24, the caller's training, again and
  * again; 3 failed retrains within 10 s at the lowest agreed rate end the
@@ -2117,7 +2144,7 @@ static void levels(void)
         }
 }
 
-#define NCASES 31
+#define NCASES 32
 int main(int argc, char **argv)
 {
     int only;
@@ -2173,6 +2200,7 @@ int main(int argc, char **argv)
     if (!only || only == 29) ours();
     if (!only || only == 30) unlock_loop();
     if (!only || only == 31) levels();
+    if (!only || only == 32) back_silent_pending();
     CHECK_EQ_I(proc_err, 0);
     if (O.m) v90m_destroy(O.m);
     if (O.ec) v90m_ec_destroy(O.ec);
