@@ -836,4 +836,4 @@ $(BUILD)/bench_v42.arm: rig/bench_v42.c $(V42_SRC) $(wildcard v42/*.h)
 # records real ones (tools/rec_orig.c; host only)
 $(BUILD)/rec_orig: tools/rec_orig.c $(SIM_SRC) $(MODEM_SRC) api/v90modem.c $(HDRS) test/v90link.h test/line34.h
 	@mkdir -p $(BUILD)
-	$(CC) $(T_CFLAGS) -Iinclude -Iapi -o $@ tools/rec_orig.c api/v90modem.c $(SIM_SRC) $(MODEM_SRC) $(addprefix v42/,v42_hdlc.c v42_detect.c v42_comp.c v44_comp.c v42_lapm.c v42.c) $(LDLIBS)
+	$(CC) $(T_CFLAGS) -Iinclude -Iapi -o $@ tools/rec_orig.c api/v90modem.c $(SIM_SRC) $(MODEM_SRC) $(V42_SRC) $(LDLIBS)

@@ -180,8 +180,8 @@ static void step_ms(void)
     }
     pump(&A, &ab, &B); pump(&B, &ba, &A);
     v42ec_tick(&A, 1); v42ec_tick(&B, 1);
-    u = v42lapm_unacked(&A.lapm); if (u > max_un_a) max_un_a = u;
-    u = v42lapm_unacked(&B.lapm); if (u > max_un_b) max_un_b = u;
+    u = v42lapm_unacked(&A.l.lapm); if (u > max_un_a) max_un_a = u;
+    u = v42lapm_unacked(&B.l.lapm); if (u > max_un_b) max_un_b = u;
     now_ms++;
 }
 
@@ -292,9 +292,9 @@ static void test_handshake_noisy(void)
         ca.lapm.t401_ms = cb.lapm.t401_ms = 300;
         start();
         CHECK(run_until_both(V42EC_CONNECTED, 15000) >= 0);
-        CHECK_EQ_I(A.lapm.k_tx, B.lapm.k_rx);
-        CHECK_EQ_I(A.lapm.comp_tx, B.lapm.comp_rx);
-        CHECK_EQ_I(A.lapm.comp_n2, B.lapm.comp_n2);
+        CHECK_EQ_I(A.l.lapm.k_tx, B.l.lapm.k_rx);
+        CHECK_EQ_I(A.l.lapm.comp_tx, B.l.lapm.comp_rx);
+        CHECK_EQ_I(A.l.lapm.comp_n2, B.l.lapm.comp_n2);
     }
 }
 
@@ -310,9 +310,9 @@ static void bulk(int kind_ab, int kind_ba, size_t len, int comp, int fcs32, int 
     ca.lapm.n401_tx = ca.lapm.n401_rx = cb.lapm.n401_tx = cb.lapm.n401_rx = n401;
     pab.delay = pba.delay = delay;
     connect_pair();
-    CHECK_EQ_I(A.lapm.fcs32, fcs32);
-    CHECK_EQ_I(A.lapm.k_tx, k); CHECK_EQ_I(B.lapm.k_tx, k);
-    CHECK_EQ_I(A.lapm.n401_tx, n401);
+    CHECK_EQ_I(A.l.lapm.fcs32, fcs32);
+    CHECK_EQ_I(A.l.lapm.k_tx, k); CHECK_EQ_I(B.l.lapm.k_tx, k);
+    CHECK_EQ_I(A.l.lapm.n401_tx, n401);
     CHECK_EQ_I(A.comp_tx, comp); CHECK_EQ_I(B.comp_tx, comp);
     CHECK_EQ_I(A.comp_rx, comp); CHECK_EQ_I(B.comp_rx, comp);
     CHECK_EQ_I(A.comp_alg, !comp ? V42EC_COMP_NONE : use_v44 ? V42EC_COMP_V44 : V42EC_COMP_V42BIS);
@@ -324,8 +324,8 @@ static void bulk(int kind_ab, int kind_ba, size_t len, int comp, int fcs32, int 
     CHECK(max_un_a <= k && max_un_b <= k);
     CHECK(max_un_a >= 1);
     CHECK(both(V42EC_CONNECTED));
-    CHECK_EQ_I(A.lapm.tx_i_retx, 0); CHECK_EQ_I(B.lapm.tx_i_retx, 0);
-    CHECK_EQ_I(A.lapm.violations, 0); CHECK_EQ_I(B.lapm.violations, 0);
+    CHECK_EQ_I(A.l.lapm.tx_i_retx, 0); CHECK_EQ_I(B.l.lapm.tx_i_retx, 0);
+    CHECK_EQ_I(A.l.lapm.violations, 0); CHECK_EQ_I(B.l.lapm.violations, 0);
     if (fcs32) CHECK_EQ_I(A.hrx.last_fcs32, 1);
 }
 
@@ -425,9 +425,9 @@ static void test_bursts(void)
     pab.corrupt = pba.corrupt = 0;
     CHECK(run_until_done(20000) >= 0);
     check_flow(&ab); check_flow(&ba);
-    CHECK(A.lapm.rx_rej + A.lapm.t401_expiries >= 3);
-    CHECK(B.lapm.rx_rej + B.lapm.t401_expiries >= 3);
-    CHECK(A.lapm.tx_i_retx >= 3 && B.lapm.tx_i_retx >= 3);
+    CHECK(A.l.lapm.rx_rej + A.l.lapm.t401_expiries >= 3);
+    CHECK(B.l.lapm.rx_rej + B.l.lapm.t401_expiries >= 3);
+    CHECK(A.l.lapm.tx_i_retx >= 3 && B.l.lapm.tx_i_retx >= 3);
     CHECK(both(V42EC_CONNECTED));
 }
 
@@ -441,14 +441,14 @@ static void test_t401_recovery(void)
     CHECK_EQ_I(v42ec_write(&A, (const uint8_t *)"lonely frame", 12), 12);
     run(300);
     CHECK_EQ_I(v42ec_read(&B, buf, sizeof buf), 0);
-    CHECK_EQ_I(A.lapm.t401_expiries, 0);
+    CHECK_EQ_I(A.l.lapm.t401_expiries, 0);
     pab.corrupt = 0;
     run(1500);
     CHECK_EQ_I(v42ec_read(&B, buf, sizeof buf), 12);
     CHECK(memcmp(buf, "lonely frame", 12) == 0);
-    CHECK(A.lapm.t401_expiries >= 1);
-    CHECK_EQ_I(A.lapm.rx_rej, 0);
-    CHECK(A.lapm.tx_polls >= 1);
+    CHECK(A.l.lapm.t401_expiries >= 1);
+    CHECK_EQ_I(A.l.lapm.rx_rej, 0);
+    CHECK(A.l.lapm.tx_polls >= 1);
     CHECK(v42ec_tx_idle(&A));
     CHECK(both(V42EC_CONNECTED));
 
@@ -461,7 +461,7 @@ static void test_t401_recovery(void)
     CHECK_EQ_I(v42ec_read(&B, buf, sizeof buf), 9);
     CHECK(memcmp(buf, "once only", 9) == 0);
     CHECK(v42ec_tx_idle(&A));
-    CHECK(A.lapm.t401_expiries >= 2);
+    CHECK(A.l.lapm.t401_expiries >= 2);
 }
 
 /* ---------------------------------------------------------- flow control */
@@ -488,7 +488,7 @@ static void test_flow_control(int comp)
         bound = V42EC_TXBUF + V42EC_RXBUF + 17 * 128;
         CHECK(stalled <= bound);
         CHECK(stalled >= V42EC_TXBUF + V42EC_RXBUF / 2);
-        CHECK(B.lapm.rx_i_dropped <= 15);               /* at most the window in flight */
+        CHECK(B.l.lapm.rx_i_dropped <= 15);               /* at most the window in flight */
     }
     CHECK(tap_count(&tb, 0x03, 0x05) + tap_count(&tb, 0x01, 0x05) >= 1);    /* RNR seen */
     CHECK(both(V42EC_CONNECTED));                       /* busy is not a failure */
@@ -496,7 +496,7 @@ static void test_flow_control(int comp)
     ab.reading = 1;
     CHECK(run_until_done(60000) >= 0);
     check_flow(&ab);
-    CHECK_EQ_I(A.lapm.violations, 0); CHECK_EQ_I(B.lapm.violations, 0);
+    CHECK_EQ_I(A.l.lapm.violations, 0); CHECK_EQ_I(B.l.lapm.violations, 0);
 }
 
 /* ------------------------------------------------- single-endpoint runs */
@@ -695,7 +695,7 @@ static void test_line_cut(void)
     CHECK(both(V42EC_DISCONNECTED));
     v42ec_get_status(&A, &s); CHECK_EQ_I(s.reason, V42LAPM_R_N400);
     v42ec_get_status(&B, &s); CHECK_EQ_I(s.reason, V42LAPM_R_N400);
-    CHECK_EQ_I(A.lapm.tx_polls, 3); CHECK_EQ_I(B.lapm.tx_polls, 3);    /* N400 */
+    CHECK_EQ_I(A.l.lapm.tx_polls, 3); CHECK_EQ_I(B.l.lapm.tx_polls, 3);    /* N400 */
     /* what did arrive was right, and nothing is invented afterwards */
     CHECK(ab.ngot - got_before < 400);
     CHECK(memcmp(ab.got, ab.src, ab.ngot) == 0);
@@ -757,10 +757,10 @@ static void test_resume_without_flag(void)
     }
     CHECK_EQ_I(done, 1);
     check_flow(&ab);
-    CHECK_EQ_I(B.lapm.tx_rej, 0);
-    CHECK_EQ_I(B.lapm.rx_i_dropped, 0);
-    CHECK_EQ_I(A.lapm.tx_i_retx, 0);
-    CHECK_EQ_I(A.lapm.t401_expiries, 0);
+    CHECK_EQ_I(B.l.lapm.tx_rej, 0);
+    CHECK_EQ_I(B.l.lapm.rx_i_dropped, 0);
+    CHECK_EQ_I(A.l.lapm.tx_i_retx, 0);
+    CHECK_EQ_I(A.l.lapm.t401_expiries, 0);
     CHECK(both(V42EC_CONNECTED));
 }
 
@@ -815,9 +815,9 @@ static void test_restore_flags(void)
     CHECK_EQ_I(A.htx.aborts, 1);
     CHECK(run_until_done(3000) >= 0);
     check_flow(&ab);
-    CHECK_EQ_I(A.lapm.tx_i_retx, 1);
+    CHECK_EQ_I(A.l.lapm.tx_i_retx, 1);
     CHECK_EQ_I(A.htx.aborts, 1);                /* the frames after it: none aborted */
-    CHECK_EQ_I(A.lapm.t401_expiries, 0);
+    CHECK_EQ_I(A.l.lapm.t401_expiries, 0);
 
     /* a frame begun after the restore is not the one the stop cut */
     setup(); connect_pair();
@@ -1073,15 +1073,15 @@ static void test_abort_states(void)
 static void test_comp_negotiation(void)
 {
     setup(); cb.lapm.comp_tx = cb.lapm.comp_rx = 0; connect_pair();
-    CHECK_EQ_I(A.lapm.comp_tx, 0); CHECK_EQ_I(A.lapm.comp_rx, 0);
+    CHECK_EQ_I(A.l.lapm.comp_tx, 0); CHECK_EQ_I(A.l.lapm.comp_rx, 0);
     flow_fill(&ab, 5000, F_TEXT); flow_fill(&ba, 5000, F_TEXT);
     CHECK(run_until_done(10000) >= 0);
     check_flow(&ab); check_flow(&ba);
     CHECK_EQ_I(A.enc.bis.in_chars, 0);
 
     setup(); ca.lapm.comp_rx = 0; connect_pair();       /* only A to B compressed */
-    CHECK_EQ_I(A.lapm.comp_tx, 1); CHECK_EQ_I(A.lapm.comp_rx, 0);
-    CHECK_EQ_I(B.lapm.comp_tx, 0); CHECK_EQ_I(B.lapm.comp_rx, 1);
+    CHECK_EQ_I(A.l.lapm.comp_tx, 1); CHECK_EQ_I(A.l.lapm.comp_rx, 0);
+    CHECK_EQ_I(B.l.lapm.comp_tx, 0); CHECK_EQ_I(B.l.lapm.comp_rx, 1);
     flow_fill(&ab, 20000, F_TEXT); flow_fill(&ba, 5000, F_TEXT);
     CHECK(run_until_done(10000) >= 0);
     check_flow(&ab); check_flow(&ba);
@@ -1090,8 +1090,8 @@ static void test_comp_negotiation(void)
 
     /* smaller dictionary and string length on one side: the minimum rules */
     setup(); cb.lapm.comp_p1 = 512; cb.lapm.comp_p2 = 6; connect_pair();
-    CHECK_EQ_I(A.lapm.comp_n2, 512); CHECK_EQ_I(B.lapm.comp_n2, 512);
-    CHECK_EQ_I(A.lapm.comp_n7, 6);   CHECK_EQ_I(B.lapm.comp_n7, 6);
+    CHECK_EQ_I(A.l.lapm.comp_n2, 512); CHECK_EQ_I(B.l.lapm.comp_n2, 512);
+    CHECK_EQ_I(A.l.lapm.comp_n7, 6);   CHECK_EQ_I(B.l.lapm.comp_n7, 6);
     flow_fill(&ab, 40000, F_TEXT); flow_fill(&ba, 40000, F_RUNS);   /* dictionary recycles */
     CHECK(run_until_done(20000) >= 0);
     check_flow(&ab); check_flow(&ba);
@@ -1125,10 +1125,10 @@ static void test_cinit_fail(void)
     v42ec_status_t s;
     int i;
     setup(); start();
-    for (i = 0; i < 3000 && A.lapm.state != V42LAPM_ESTABLISHING; i++) step_ms();
-    CHECK_EQ_I(A.lapm.state, V42LAPM_ESTABLISHING);
-    CHECK_EQ_I(A.lapm.comp_tx, 1);
-    A.lapm.comp_n2 = 4096;                              /* past V42COMP_MAX_CODEWORDS */
+    for (i = 0; i < 3000 && A.l.lapm.state != V42LAPM_ESTABLISHING; i++) step_ms();
+    CHECK_EQ_I(A.l.lapm.state, V42LAPM_ESTABLISHING);
+    CHECK_EQ_I(A.l.lapm.comp_tx, 1);
+    A.l.lapm.comp_n2 = 4096;                              /* past V42COMP_MAX_CODEWORDS */
     for (i = 0; i < 3000 && v42ec_state(&A) != V42EC_DISCONNECTED; i++) step_ms();
     CHECK_EQ_I(v42ec_state(&A), V42EC_DISCONNECTED);
     v42ec_get_status(&A, &s);
@@ -1147,8 +1147,8 @@ static void test_comp_error(void)
     static const uint8_t bad[2] = { 0x00, 0x05 };       /* escape, reserved command */
     v42ec_status_t s;
     setup(); connect_pair();
-    CHECK(v42lapm_can_send(&A.lapm) > 0);
-    CHECK_EQ_I(v42lapm_send(&A.lapm, bad, 2), 0);
+    CHECK(v42lapm_can_send(&A.l.lapm) > 0);
+    CHECK_EQ_I(v42lapm_send(&A.l.lapm, bad, 2), 0);
     CHECK(run_until_both(V42EC_DISCONNECTED, 2000) >= 0);
     v42ec_get_status(&B, &s); CHECK_EQ_I(s.reason, V42EC_R_COMPRESSION);
     v42ec_get_status(&A, &s); CHECK_EQ_I(s.reason, V42LAPM_R_PEER_DISC);
@@ -1180,7 +1180,7 @@ static void test_v44(void)
     CHECK_EQ_I(sa.v44_n2_tx, ca.lapm.v44_p1_tx); CHECK_EQ_I(sa.v44_n2_rx, ca.lapm.v44_p1_tx);
     CHECK_EQ_I(sa.v44_n7_tx, 255); CHECK_EQ_I(sb.v44_n7_rx, 255);
     CHECK_EQ_I(sa.v44_n8_tx, ca.lapm.v44_p3_tx); CHECK_EQ_I(sb.v44_n8_tx, ca.lapm.v44_p3_tx);
-    CHECK_EQ_I(A.lapm.comp_tx, 0); CHECK_EQ_I(B.lapm.comp_rx, 0);
+    CHECK_EQ_I(A.l.lapm.comp_tx, 0); CHECK_EQ_I(B.l.lapm.comp_rx, 0);
     flow_fill(&ab, 60000, F_TEXT); flow_fill(&ba, 60000, F_RUNS);
     t = run_until_done(30000);
     CHECK(t >= 0);
@@ -1249,7 +1249,7 @@ static void test_v44(void)
         v42ec_get_status(&A, &sa); v42ec_get_status(&B, &sb);
         CHECK_EQ_I(sa.comp_alg, V42EC_COMP_V42BIS); CHECK_EQ_I(sb.comp_alg, V42EC_COMP_V42BIS);
         CHECK_EQ_I(sa.comp_tx, 1); CHECK_EQ_I(sb.comp_rx, 1);
-        CHECK_EQ_I(A.lapm.v44_tx, 0); CHECK_EQ_I(B.lapm.v44_tx, 0);
+        CHECK_EQ_I(A.l.lapm.v44_tx, 0); CHECK_EQ_I(B.l.lapm.v44_tx, 0);
         flow_fill(&ab, 20000, F_TEXT); flow_fill(&ba, 20000, F_TEXT);
         CHECK(run_until_done(30000) >= 0);
         check_flow(&ab); check_flow(&ba);
@@ -1276,8 +1276,8 @@ static void test_v44(void)
     {
         static const uint8_t bad[2] = { 0x7F, 0x00 };
         setup(); connect_pair();
-        CHECK(v42lapm_can_send(&A.lapm) > 0);
-        CHECK_EQ_I(v42lapm_send(&A.lapm, bad, 2), 0);
+        CHECK(v42lapm_can_send(&A.l.lapm) > 0);
+        CHECK_EQ_I(v42lapm_send(&A.l.lapm, bad, 2), 0);
         CHECK(run_until_both(V42EC_DISCONNECTED, 2000) >= 0);
         v42ec_get_status(&B, &sb); CHECK_EQ_I(sb.reason, V42EC_R_COMPRESSION);
         v42ec_get_status(&A, &sa); CHECK_EQ_I(sa.reason, V42LAPM_R_PEER_DISC);
@@ -1318,7 +1318,7 @@ static void test_v44(void)
     pab.corrupt = pba.corrupt = 0;
     CHECK(run_until_done(30000) >= 0);
     check_flow(&ab); check_flow(&ba);
-    CHECK(A.lapm.tx_i_retx >= 3 && B.lapm.tx_i_retx >= 3);
+    CHECK(A.l.lapm.tx_i_retx >= 3 && B.l.lapm.tx_i_retx >= 3);
     CHECK_EQ_I(B.dec.v44.out_chars, 60000); CHECK_EQ_I(A.dec.v44.out_chars, 60000);
     CHECK(both(V42EC_CONNECTED));
 }

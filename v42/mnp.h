@@ -190,6 +190,9 @@ void mnp_line_stopped(mnp_t *m);
 void mnp_line_restored(mnp_t *m);
 /* LD reason 255, MNP_S_DISCONNECTED with MNP_R_LOCAL */
 void mnp_release(mnp_t *m);
+/* the line is gone: MNP_S_DISCONNECTED with MNP_R_LOCAL at once, no LD
+ * (one already due still goes); nothing else is sent */
+void mnp_abort(mnp_t *m);
 /* our transmit and the far end's rate (bit/s): T401 and T404 again */
 void mnp_set_rates(mnp_t *m, int tx_bps, int rx_bps);
 

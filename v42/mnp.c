@@ -610,6 +610,11 @@ void mnp_release(mnp_t *m)
     finish(m, LD_USER, MNP_R_LOCAL);
 }
 
+void mnp_abort(mnp_t *m)
+{
+    finish(m, 0, MNP_R_LOCAL);
+}
+
 void mnp_set_rates(mnp_t *m, int tx_bps, int rx_bps)
 {
     if (tx_bps > 0) m->tx_bps = tx_bps;

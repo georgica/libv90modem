@@ -41,7 +41,14 @@
     X(lapm.v44_p3_rx,   lapm.v44_p3_rx,   512, V44COMP_MAX_HISTORY) \
     X(lapm.t401_ms,     lapm.t401_ms,     1, INT_MAX) \
     X(lapm.t403_ms,     lapm.t403_ms,     0, INT_MAX) \
-    X(lapm.n400,        lapm.n400,        1, INT_MAX)
+    X(lapm.n400,        lapm.n400,        1, INT_MAX) \
+    X(mnp.enable,       mnp.enable,       0, 1) \
+    X(mnp.k,            mnp.link.k,       1, MNP_MAX_K) \
+    X(mnp.n401,         mnp.link.n401,    1, MNP_MAX_N401) \
+    X(mnp.opt,          mnp.link.opt,     0, 3) \
+    X(mnp.framing,      mnp.link.framing, 2, 3) \
+    X(mnp.t401_min_ms,  mnp.link.t401_min_ms, 500, 60000) \
+    X(mnp.n400,         mnp.link.n400,    1, 255)
 
 /* X(member of both v90m_ec_status and v42ec_status_t): all of the public
  * status but enc_on, dec_on and alg_on, which are the endpoint's own */
@@ -57,7 +64,10 @@
     X(tx_i) X(tx_i_retx) X(rx_i) X(rx_i_dropped) \
     X(tx_rej) X(rx_rej) X(t401_expiries) X(violations) \
     X(comp_in) X(comp_out) X(decomp_in) X(decomp_out) \
-    X(async_overruns) X(async_framing)
+    X(async_overruns) X(async_framing) \
+    X(protocol) X(mnp_framing) X(mnp_opt) X(mnp_streamlined) \
+    X(hst) X(hst_rates) X(hst_back300) X(attn_tx) X(attn_rx) \
+    X(rx_unknown) X(rx_unknown_id) X(peer_ld_reason)
 
 /* every member of v90m_ec_cfg is an int on the list */
 #define V90M_EC_FIELD_ONE(pub, in, lo, hi) + 1
@@ -66,12 +76,16 @@ typedef char v90m_check_ec_cfg_fields[(0 V90M_EC_CFG_FIELDS(V90M_EC_FIELD_ONE)) 
 
 static inline int ec_in_range(int v, int lo, int hi) { return v >= lo && v <= hi; }
 
-/* V90M_OK, or V90M_EINVAL for a value outside its range */
+/* V90M_OK, or V90M_EINVAL for a value outside its range, or for the one
+ * rule across fields: an MNP N401 of 256 needs parameter 8 bit 1 (the
+ * 256-octet facility), which is how Annex A agrees it */
 static inline int check_ec_cfg(const v90m_ec_cfg *c)
 {
 #define V90M_EC_FIELD_CHECK(pub, in, lo, hi) && ec_in_range(c->pub, lo, hi)
-    return (1 V90M_EC_CFG_FIELDS(V90M_EC_FIELD_CHECK)) ? V90M_OK : V90M_EINVAL;
+    if (!(1 V90M_EC_CFG_FIELDS(V90M_EC_FIELD_CHECK))) return V90M_EINVAL;
 #undef V90M_EC_FIELD_CHECK
+    if (c->mnp.n401 == MNP_MAX_N401 && !(c->mnp.opt & 1)) return V90M_EINVAL;
+    return V90M_OK;
 }
 
 static inline void cfg_in(v42ec_cfg_t *o, const v90m_ec_cfg *c)

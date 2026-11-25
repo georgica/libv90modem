@@ -2111,6 +2111,64 @@ static void test_v22_s1_tone(void)
     }
 }
 
+/* MNP in the endpoint's configuration: the defaults, each range's edges
+ * (accepted) and one past them (V90M_EINVAL), the rule that N401 256
+ * needs parameter 8 bit 1, and the endpoint's memory, pinned */
+static void test_ec_mnp_cfg(void)
+{
+    static union { v90m_align a; uint8_t b[V90M_EC_MEM_SIZE]; } mem;
+    v90m_ec_cfg c, b;
+    v90m_ec_t *e;
+    int err, k;
+    v90m_ec_cfg_default(&c, 0);
+    CHECK_EQ_I(c.mnp.enable, 0); CHECK_EQ_I(c.mnp.k, 8); CHECK_EQ_I(c.mnp.n401, 64);
+    CHECK_EQ_I(c.mnp.opt, 2); CHECK_EQ_I(c.mnp.framing, 3); CHECK_EQ_I(c.mnp.t401_min_ms, 1500);
+    CHECK_EQ_I(c.mnp.n400, 12);
+    v90m_ec_cfg_default(&b, 1);
+    CHECK(memcmp(&b.mnp, &c.mnp, sizeof c.mnp) == 0);
+    e = v90m_ec_init(mem.b, sizeof mem.b, &c, &err);
+    CHECK(e != NULL);
+    if (!e) return;
+    for (k = 0; k < 14; k++) {
+        int *f, lo, hi;
+        b = c;
+        switch (k / 2) {
+        case 0: f = &b.mnp.enable; lo = 0; hi = 1; break;
+        case 1: f = &b.mnp.k; lo = 1; hi = 8; break;
+        case 2: f = &b.mnp.n401; lo = 1; hi = 256; b.mnp.opt = 3; break;
+        case 3: f = &b.mnp.opt; lo = 0; hi = 3; break;
+        case 4: f = &b.mnp.framing; lo = 2; hi = 3; break;
+        case 5: f = &b.mnp.t401_min_ms; lo = 500; hi = 60000; break;
+        default: f = &b.mnp.n400; lo = 1; hi = 255; break;
+        }
+        *f = k % 2 ? hi : lo;
+        if (v90m_ec_reset(e, &b) != V90M_OK) printf("  MNP field %d: edge %d refused\n", k / 2, *f);
+        CHECK_EQ_I(v90m_ec_reset(e, &b), V90M_OK);
+        *f = k % 2 ? hi + 1 : lo - 1;
+        CHECK_EQ_I(v90m_ec_reset(e, &b), V90M_EINVAL);
+        err = 99; CHECK(v90m_ec_create(&b, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
+    }
+    b = c; b.mnp.n401 = 256; b.mnp.opt = 2;
+    CHECK_EQ_I(v90m_ec_reset(e, &b), V90M_EINVAL);
+    b.mnp.opt = 0; CHECK_EQ_I(v90m_ec_reset(e, &b), V90M_EINVAL);
+    b.mnp.opt = 1; CHECK_EQ_I(v90m_ec_reset(e, &b), V90M_OK);
+    b.mnp.opt = 3; CHECK_EQ_I(v90m_ec_reset(e, &b), V90M_OK);
+    b.mnp.n401 = 255; b.mnp.opt = 2; CHECK_EQ_I(v90m_ec_reset(e, &b), V90M_OK);
+    {
+        /* pinned as v90m_mem_size is (x86-64 and 32-bit ARM; elsewhere the
+         * check holds by construction, so every target counts the same) */
+#if defined(__x86_64__)
+        size_t expect = 50128;
+#elif defined(__arm__)
+        size_t expect = 49892;
+#else
+        size_t expect = v90m_ec_mem_size();
+#endif
+        CHECK_EQ_I(v90m_ec_mem_size(), expect);
+        CHECK(v90m_ec_mem_size() <= V90M_EC_MEM_SIZE);
+    }
+}
+
 int main(void)
 {
     test_cfg();
@@ -2134,5 +2192,6 @@ int main(void)
     test_block_sizes();
     test_null();
     test_cfg_ranges();
+    test_ec_mnp_cfg();
     T_REPORT("api");
 }

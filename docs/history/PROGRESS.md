@@ -4177,3 +4177,43 @@ Review fixes (round 2):
     v42/build/test_mnppeer                                   -> test_mnppeer: 200 checks, 0 failures
     qemu-arm armv5, clang, -DMNP_FCS2=1,2,3                   -> identical outputs, 0 failures
     make verify                                              -> VERIFY PASS (695 s; golden 144 identical; log: build/verify-task4-fix2.log)
+
+## hst 5: MNP in the endpoint: detection, configuration, status, memory (2026-11-24)
+
+First, the two review minors of Task 4 (b4890c3): the `mnp.h` break
+contract reworded (data held from our LN 1 goes after its LNA's reset,
+every later `resets` change flushes), and `sim/mnppeer` starts a break
+queued before connect when the link comes up (test
+`raw_ln1_before_connect`).
+
+Then MNP as a mode of `v42ec_t`:
+
+- `lapm` moved into `union { v42lapm_t lapm; mnp_t mnp; } l`; the v42
+  goldens are byte-identical (source edit only, 43 uses in `test_v42.c`).
+- Detection (answerer, `mnp.enable` 1, no ODP seen): a CRC-valid LR in
+  start-stop (a second hunter, `hunt2`, on the detection phase's
+  characters) or in HDLC (the existing receiver's frames; also after flags,
+  while LAPM has taken nothing) starts the MNP link in LAPM's place; our
+  replies go in the framing the LR came in. An ODP first is LAPM. With
+  `enable` 0 nothing new runs (the hunter stays zero).
+- The data phase: the link is drained after every frame; busy while the
+  receive ring has less than k x N401 free; on each `resets` change both
+  rings are flushed, except at our own LN 1's LNA (the data the user wrote
+  after asking for the break goes then). Breaks are LN 1..3; release is
+  LD 255 and DISCONNECTED at once; `v42ec_tx_busy` (and so
+  `v90m_ec_tx_busy`) covers an LD owed and the mode 2 framer (F24).
+  `mnp_abort` added for `v42ec_abort`. LTs over HDLC are cut at 254 octets
+  (`V42HDLC_MAX_PAYLOAD`), so N401 256 in the standard layout still fits.
+- API: `v90m_ec_cfg.mnp` (ranges in `V90M_EC_CFG_FIELDS`;
+  `t401_min_ms` 500..60000, the link's clamp); the rule "n401 256 needs
+  opt bit 1" in `check_ec_cfg` after the generated ranges (F22);
+  `V90M_EC_PROTO_*`; the twelve status fields.
+- `v90m_ec_mem_size()`: 49792 -> 50128 on x86-64, 49568 -> 49892 on ARMv5,
+  pinned in `test_api.c` (`V90M_EC_MEM_SIZE` 51200 unchanged).
+- `rec_orig`'s rule listed the v42 sources by hand; it now uses `$(V42_SRC)`.
+
+    v42/build/test_ec_mnp                 -> test_ec_mnp: 103 checks, 0 failures (13 cases)
+    mutations (always flush, never flush, never busy, no LD in tx_busy) -> 1-3 failures each
+    build/api_test_api                    -> api: 1025 checks, 0 failures (was 953)
+    build/api_test_ec_fields              -> 14 checks; 34 fields, 49 status fields, 0 differ
+    re-recorded: api/test_api.txt (count line), api/test_ec_fields.txt (the field counts)

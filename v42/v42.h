@@ -41,6 +41,14 @@
  *     the two share their storage here, as only one runs on a connection.
  *   - A V.42 bis or V.44 decoder error releases the connection
  *     (V42EC_R_COMPRESSION).
+ *   - MNP (cfg.mnp.enable, answerer): in the detection phase a complete
+ *     LR with a good FCS, in start-stop (framing mode 2) or HDLC (mode 3),
+ *     starts the MNP link of mnp.h in LAPM's place (v42ec_status_t.protocol);
+ *     so does one in HDLC after flags, before LAPM has taken anything. An ODP
+ *     first means LAPM. Replies go in the framing the LR came in. Breaks are
+ *     LNs of types 1 to 3; v42ec_release sends LD 255 and is
+ *     V42EC_DISCONNECTED at once (wait for v42ec_tx_busy() to be 0 before
+ *     dropping the line).
  *   - After V42EC_DISCONNECTED keep calling v42ec_tx_bit() for a few dozen
  *     bits if the line is still up, so a final UA or DM gets out; data
  *     already received stays readable.
@@ -64,6 +72,7 @@
 #include "v42_lapm.h"
 #include "v42_comp.h"
 #include "v44_comp.h"
+#include "mnp.h"
 
 /* user data buffers, octets (compile-time) */
 #ifndef V42EC_TXBUF
@@ -87,6 +96,14 @@ enum {
 #define V42EC_R_COMPRESSION  17   /* V.42 bis or V.44 decoder reported C-ERROR */
 #define V42EC_R_NO_SABME     18   /* answerer: nothing after the detection phase */
 
+/* MNP (V.42 Annex A) beside LAPM: the answerer takes a caller's LR */
+typedef struct {
+    int enable;             /* answerer: 1 = an LR (either framing) leads to MNP;
+                               0 = no MNP, the endpoint is 0.6.0's */
+    mnp_cfg_t link;         /* what we offer: k, N401, parameter 8, framing,
+                               T401 floor, N400 */
+} v42ec_mnp_cfg_t;
+
 typedef struct {
     int originator;         /* 1 = originating DCE, 0 = answering DCE */
     int detect;             /* run the detection phase (7.2.1) */
@@ -97,7 +114,12 @@ typedef struct {
     int comp_policy;        /* V42COMP_AUTO / _ALWAYS / _NEVER for our encoder
                                (V44COMP_* are the same values) */
     v42lapm_cfg_t lapm;     /* k, N401, V.42 bis, V.44, FCS, T401, T403, N400 */
+    v42ec_mnp_cfg_t mnp;
 } v42ec_cfg_t;
+
+/* the protocol detection chose: none yet, LAPM (an ODP, flags or a frame
+ * that is not an LR), MNP (an LR) or start-stop */
+enum { V42EC_PROTO_NONE = 0, V42EC_PROTO_LAPM, V42EC_PROTO_MNP, V42EC_PROTO_ASYNC };
 
 /* the compression procedure in use on the connection */
 enum { V42EC_COMP_NONE = 0, V42EC_COMP_V42BIS, V42EC_COMP_V44 };
@@ -121,6 +143,14 @@ typedef struct {
     unsigned long comp_in, comp_out;         /* our encoder: characters, octets */
     unsigned long decomp_in, decomp_out;     /* our decoder: octets, characters */
     unsigned long async_overruns, async_framing;
+    int protocol;            /* V42EC_PROTO_* */
+    int mnp_framing, mnp_opt, mnp_streamlined;   /* MNP: the framing mode, parameter 8
+                                                    agreed, the HST layout (not yet: 0) */
+    int hst, hst_rates, hst_back300;             /* the HST profile (not yet: 0) */
+    int attn_tx, attn_rx;    /* MNP: the type of the last LN sent, received */
+    unsigned long rx_unknown;    /* MNP: valid frames of an unknown type */
+    int rx_unknown_id;       /* MNP: the first octet of the last of them */
+    int peer_ld_reason;      /* MNP: the reason of the far end's LD, 0 none */
 } v42ec_status_t;
 
 typedef struct {
@@ -146,7 +176,9 @@ typedef struct v42ec {
     v42async_tx_t atx;
     v42hdlc_tx_t htx;
     v42hdlc_rx_t hrx;
-    v42lapm_t    lapm;
+    /* the link: LAPM until detection picks MNP (protocol), which then
+     * starts the MNP one in its place */
+    union { v42lapm_t lapm; mnp_t mnp; } l;
     union { v42comp_enc_t bis; v44comp_enc_t v44; } enc;    /* the one of comp_alg */
     union { v42comp_dec_t bis; v44comp_dec_t v44; } dec;
     int comp_alg;            /* V42EC_COMP_* */
@@ -164,6 +196,11 @@ typedef struct v42ec {
      * stop_frames of the transmitter's (htx.frames) */
     int stopped, stop_cut;
     unsigned long stop_frames;
+
+    int protocol;            /* V42EC_PROTO_* */
+    int mnp_brk;             /* MNP: our destructive break waits for its LNA; that
+                                LNA's reset flushes nothing (mnp.h, Breaks) */
+    mnp2_rx_t hunt2;         /* MNP on, detection: the start-stop LR hunter */
 } v42ec_t;
 
 /* Fill cfg with defaults for the given role: detection on, fallback on,
@@ -209,6 +246,9 @@ size_t v42ec_read_avail(const v42ec_t *e);
 /* True when everything written has been sent and, in error-corrected
  * mode, acknowledged by the far end. */
 int    v42ec_tx_idle(const v42ec_t *e);
+/* True while a frame (an MNP frame due from the link included) has not
+ * completely left the transmitter, in either framing. */
+int    v42ec_tx_busy(const v42ec_t *e);
 
 /* Orderly release (7.7): DISC is sent; unsent data is discarded, so wait
  * for v42ec_tx_idle() first if it matters. In async mode it just stops. */

@@ -11,6 +11,13 @@
  * may still be finishing its ten ADPs and not yet listening for frames. Cut
  * short as soon as its flags arrive. Ten ADPs are at most 520 bits. */
 #define ORIG_WAIT_BITS 600
+/* MNP: the longest LR body the start-stop hunter takes (an LI is at most
+ * 254, mnp_lr_parse reads no extended one), and the longest LT information
+ * that fits an HDLC frame of v42_hdlc.h with the standard header */
+#define LR_MAX_BODY    255
+#define HDLC_MAX_LT    (V42HDLC_MAX_PAYLOAD - MNP_LT_STD_HDR)
+/* MNP: busy below k x N401 octets free (mnp.h): never all the time */
+typedef char v42ec_rxbuf_mnp[V42EC_RXBUF > MNP_MAX_K * MNP_MAX_N401 ? 1 : -1];
 
 /* ------------------------------------------------------------------ rings */
 static void ring_reset(v42ec_ring_t *r) { r->head = r->len = 0; }
@@ -76,6 +83,8 @@ void v42ec_cfg_default(v42ec_cfg_t *cfg, int originator)
     cfg->lapm.v44_p1_tx = cfg->lapm.v44_p1_rx = V44COMP_MAX_CODEWORDS < 2048 ? V44COMP_MAX_CODEWORDS : 2048;
     cfg->lapm.v44_p2_tx = cfg->lapm.v44_p2_rx = V44COMP_MAX_STRING;
     cfg->lapm.v44_p3_tx = cfg->lapm.v44_p3_rx = V44COMP_MAX_HISTORY < 4096 ? V44COMP_MAX_HISTORY : 4096;
+    cfg->mnp.enable = 0;
+    mnp_cfg_default(&cfg->mnp.link);
 }
 
 /* --------------------------------------------- the compression procedures */
@@ -100,13 +109,13 @@ typedef struct {
 /* V.42 bis */
 static int bis_enc_init(v42ec_t *e)
 {
-    if (v42comp_enc_init(&e->enc.bis, e->lapm.comp_n2, e->lapm.comp_n7) != 0) return -1;
+    if (v42comp_enc_init(&e->enc.bis, e->l.lapm.comp_n2, e->l.lapm.comp_n7) != 0) return -1;
     v42comp_enc_policy(&e->enc.bis, e->cfg.comp_policy);
     return 0;
 }
 static int bis_dec_init(v42ec_t *e)
 {
-    return v42comp_dec_init(&e->dec.bis, e->lapm.comp_n2, e->lapm.comp_n7);
+    return v42comp_dec_init(&e->dec.bis, e->l.lapm.comp_n2, e->l.lapm.comp_n7);
 }
 static size_t bis_encode(v42ec_t *e, const uint8_t *in, size_t inlen, uint8_t *out, size_t outmax, size_t *outlen)
 {
@@ -136,14 +145,14 @@ static void bis_dec_counts(const v42ec_t *e, unsigned long *in, unsigned long *o
 /* V.44 */
 static int v44_enc_init(v42ec_t *e)
 {
-    const v42lapm_t *l = &e->lapm;
+    const v42lapm_t *l = &e->l.lapm;
     if (v44comp_enc_init(&e->enc.v44, l->v44_n2_tx, l->v44_n7_tx, l->v44_n8_tx) != 0) return -1;
     v44comp_enc_policy(&e->enc.v44, e->cfg.comp_policy);
     return 0;
 }
 static int v44_dec_init(v42ec_t *e)
 {
-    const v42lapm_t *l = &e->lapm;
+    const v42lapm_t *l = &e->l.lapm;
     return v44comp_dec_init(&e->dec.v44, l->v44_n2_rx, l->v44_n7_rx, l->v44_n8_rx);
 }
 static size_t v44_encode(v42ec_t *e, const uint8_t *in, size_t inlen, uint8_t *out, size_t outmax, size_t *outlen)
@@ -194,7 +203,7 @@ static const comp_ops_t *ops(const v42ec_t *e)
  * far end would compress, or expect compressed data, while we did not. */
 static void comp_init(v42ec_t *e)
 {
-    const v42lapm_t *l = &e->lapm;
+    const v42lapm_t *l = &e->l.lapm;
     int tx = 0, rx = 0, bad = 0;
 
     e->comp_tx = e->comp_rx = 0;
@@ -218,7 +227,7 @@ static void comp_init(v42ec_t *e)
     if (bad) {
         e->comp_tx = e->comp_rx = 0;
         e->reason_override = V42EC_R_COMPRESSION;
-        v42lapm_release(&e->lapm);
+        v42lapm_release(&e->l.lapm);
     }
 }
 
@@ -244,12 +253,13 @@ static void finish(v42ec_t *e, int reason)
 static void start_protocol(v42ec_t *e)
 {
     e->state = V42EC_ESTABLISH;
+    e->protocol = V42EC_PROTO_LAPM;
     e->t400 = -1;
     if (e->cfg.originator) {
         e->hdlc_tx_on = 1;
         v42hdlc_tx_flags(&e->htx, PREAMBLE_FLAGS);
         if (e->cfg.detect) e->orig_wait = ORIG_WAIT_BITS;
-        else v42lapm_start(&e->lapm);
+        else v42lapm_start(&e->l.lapm);
     } else if (e->t_est < 0 && e->cfg.establish_ms > 0) {
         e->t_est = e->cfg.establish_ms;
     }
@@ -260,6 +270,7 @@ static void enter_async(v42ec_t *e)
     e->t400 = e->t_est = -1;
     if (!e->cfg.fallback) { finish(e, V42EC_R_NO_EC); return; }
     e->state = V42EC_ASYNC;
+    e->protocol = V42EC_PROTO_ASYNC;
     e->hdlc_tx_on = 0;
     v42async_tx_init(&e->atx);
 }
@@ -283,8 +294,10 @@ void v42ec_init(v42ec_t *e, const v42ec_cfg_t *cfg)
     v42async_tx_init(&e->atx);
     v42det_rx_init(&e->det_rx, e->cfg.originator);
     v42det_tx_init(&e->det_tx, e->cfg.originator ? V42DET_PAT_ODP : V42DET_PAT_ADP_V42, 8);
-    v42lapm_init(&e->lapm, e->cfg.originator, &e->cfg.lapm);
-    v42hdlc_rx_set_fcs(&e->hrx, e->lapm.rx_fcs_mode);
+    v42lapm_init(&e->l.lapm, e->cfg.originator, &e->cfg.lapm);
+    v42hdlc_rx_set_fcs(&e->hrx, e->l.lapm.rx_fcs_mode);
+    e->cfg.mnp.enable = !e->cfg.originator && e->cfg.mnp.enable != 0;
+    if (e->cfg.mnp.enable) mnp2_rx_init(&e->hunt2, LR_MAX_BODY);
 
     if (e->cfg.detect) {
         e->state = V42EC_DETECT;
@@ -300,7 +313,7 @@ static void drain_rx(v42ec_t *e)
 {
     for (;;) {
         const uint8_t *p;
-        int n = v42lapm_rx_avail(&e->lapm, &p);
+        int n = v42lapm_rx_avail(&e->l.lapm, &p);
         size_t room = ring_free(&e->rxr);
 
         if (e->comp_rx) {
@@ -311,15 +324,15 @@ static void drain_rx(v42ec_t *e)
             if (room < ops(e)->dec_room(e)) break;
             rc = ops(e)->decode(e, p, (size_t)n, &used, tmp, max, &out);
             ring_put(&e->rxr, tmp, out);
-            if (used) v42lapm_rx_consume(&e->lapm, (int)used);
+            if (used) v42lapm_rx_consume(&e->l.lapm, (int)used);
             if (rc != 0) {
                 /* C-ERROR (V.42 bis 5.8, V.44 7.15). V.42 bis asks for
                  * "appropriate recovery action, including re-establishment";
                  * this implementation does not re-establish, it releases
                  * the connection so no doubtful data reaches the user. */
-                if (n > (int)used) v42lapm_rx_consume(&e->lapm, n - (int)used);
+                if (n > (int)used) v42lapm_rx_consume(&e->l.lapm, n - (int)used);
                 e->reason_override = V42EC_R_COMPRESSION;
-                v42lapm_release(&e->lapm);
+                v42lapm_release(&e->l.lapm);
                 break;
             }
             if (used == 0 && out == 0) break;
@@ -327,52 +340,56 @@ static void drain_rx(v42ec_t *e)
             size_t c = (size_t)n < room ? (size_t)n : room;
             if (c == 0) break;
             ring_put(&e->rxr, p, c);
-            v42lapm_rx_consume(&e->lapm, (int)c);
+            v42lapm_rx_consume(&e->l.lapm, (int)c);
         }
     }
 }
+
+static void mnp_sync(v42ec_t *e);
 
 static void sync(v42ec_t *e)
 {
     const uint8_t *p;
 
+    if (e->protocol == V42EC_PROTO_MNP) { mnp_sync(e); return; }
+
     if (e->state == V42EC_DETECT || e->state == V42EC_ASYNC || e->state == V42EC_DISCONNECTED)
         return;
-    v42hdlc_rx_set_fcs(&e->hrx, e->lapm.rx_fcs_mode);
+    v42hdlc_rx_set_fcs(&e->hrx, e->l.lapm.rx_fcs_mode);
 
-    if (e->lapm.established != e->seen_established) {
+    if (e->l.lapm.established != e->seen_established) {
         /* L-ESTABLISH: C-INIT both compression functions (V.42 bis 5.2, 5.3;
          * V.44 7.5) and
          * drop whatever the detection phase left in the receive buffer */
-        e->seen_established = e->lapm.established;
-        e->seen_resets = e->lapm.resets;
+        e->seen_established = e->l.lapm.established;
+        e->seen_resets = e->l.lapm.resets;
         comp_init(e);
         ring_reset(&e->rxr);
         e->brk_have = 0; e->brk_tx_pend = 0;
         e->t_est = -1;
     }
-    if (e->lapm.resets != e->seen_resets) {
+    if (e->l.lapm.resets != e->seen_resets) {
         /* destructive break (8.13, V.42 bis 5.6; for V.44 by the same rule,
          * see v42/README.md): data in both directions is
          * discarded and the compression functions start again */
-        e->seen_resets = e->lapm.resets;
+        e->seen_resets = e->l.lapm.resets;
         ring_reset(&e->txr); ring_reset(&e->rxr);
         comp_init(e);
         e->brk_tx_pend = 0; e->brk_have = 0;
     }
 
-    switch (e->lapm.state) {
+    switch (e->l.lapm.state) {
     case V42LAPM_CONNECTED:    e->state = V42EC_CONNECTED; break;
     case V42LAPM_RELEASING:    e->state = V42EC_RELEASING; break;
     case V42LAPM_DISCONNECTED:
-        finish(e, e->reason_override ? e->reason_override : e->lapm.reason);
+        finish(e, e->reason_override ? e->reason_override : e->l.lapm.reason);
         return;
     default:                   e->state = V42EC_ESTABLISH; break;
     }
     if (e->state != V42EC_CONNECTED) return;
 
     drain_rx(e);
-    if (e->lapm.state != V42LAPM_CONNECTED) { sync(e); return; }
+    if (e->l.lapm.state != V42LAPM_CONNECTED) { sync(e); return; }
 
     /* Own-receiver busy (8.4.7) is left to LAPM, which declares it when a
      * frame arrives and the previous one could not be moved out of its
@@ -381,11 +398,183 @@ static void sync(v42ec_t *e)
 
     /* a break is handed up once everything received before it is in the
      * user's buffer */
-    if (!e->brk_have && v42lapm_rx_avail(&e->lapm, &p) == 0
+    if (!e->brk_have && v42lapm_rx_avail(&e->l.lapm, &p) == 0
         && !dec_pending(e)
-        && v42lapm_get_break(&e->lapm, &e->brk_opt, &e->brk_len)) {
+        && v42lapm_get_break(&e->l.lapm, &e->brk_opt, &e->brk_len)) {
         e->brk_have = 1;
         e->brk_after = e->brk_opt == V42_BRK_NONDESTRUCTIVE_INSEQ ? e->rxr.len : 0;
+    }
+}
+
+/* -------------------------------------------------------------------- MNP */
+/* MNP on: is this body an LR (complete, its FCS already checked)? An LAPM
+ * frame cannot be one: its second octet is a control field */
+static int is_lr(const uint8_t *f, int len)
+{
+    mnp_lr_t lr;
+    return mnp_lr_parse(f, len, &lr) != -1;
+}
+
+/* in LAPM's establishment, an LR still leads to MNP: answerer, no ODP,
+ * LAPM has taken nothing (V.42 7.2.1.3: flags first, then the frame) */
+static int lr_still_taken(const v42ec_t *e)
+{
+    return e->cfg.mnp.enable && e->sub == 0 && e->state == V42EC_ESTABLISH
+        && e->protocol == V42EC_PROTO_LAPM && e->l.lapm.state == V42LAPM_IDLE
+        && e->l.lapm.established == 0;
+}
+
+/* Detection picks MNP: the link starts in LAPM's place with the caller's
+ * LR (f is the hunter's or the HDLC receiver's, outside the union) and
+ * answers in its framing fr */
+static void mnp_pick(v42ec_t *e, const uint8_t *f, int len, int fr)
+{
+    e->protocol = V42EC_PROTO_MNP;
+    e->state = V42EC_ESTABLISH;
+    e->t400 = e->t_est = -1;
+    e->want_hdlc = 0;
+    e->adp_strip = 0;
+    e->seen_resets = 0;
+    e->mnp_brk = 0;
+    ring_reset(&e->rxr);                 /* the LR's characters are not the user's */
+    mnp_init(&e->l.mnp, &e->cfg.mnp.link);
+    v42hdlc_rx_set_fcs(&e->hrx, V42HDLC_FCS16);
+    (void)mnp_accept_lr(&e->l.mnp, f, len, fr);    /* a refusal: LD, then DISCONNECTED */
+    mnp_sync(e);
+}
+
+/* follow what the MNP link has done: resets, state, the LT it holds,
+ * busy, LNs */
+static void mnp_sync(v42ec_t *e)
+{
+    mnp_t *m = &e->l.mnp;
+    const uint8_t *p;
+    int code;
+
+    if (e->state == V42EC_DISCONNECTED) return;
+    if (m->resets != e->seen_resets) {
+        /* a destructive break reset the link (Tables 4 and 5): data in both
+         * directions is discarded, unless it is our own break's LNA, whose
+         * data was discarded when it was asked for and what the user wrote
+         * since goes now (mnp.h, Breaks). One frame resets at most once,
+         * and this runs after every frame. */
+        e->seen_resets = m->resets;
+        if (e->mnp_brk) e->mnp_brk = 0;
+        else {
+            ring_reset(&e->txr); ring_reset(&e->rxr);
+            e->brk_tx_pend = 0; e->brk_have = 0;
+        }
+    }
+    switch (m->state) {
+    case MNP_S_CONNECTED:    e->state = V42EC_CONNECTED; break;
+    case MNP_S_DISCONNECTED: finish(e, m->reason); return;
+    default:                 e->state = V42EC_ESTABLISH; return;
+    }
+    /* the link holds one LT: into the ring before the next frame */
+    for (;;) {
+        int n = mnp_rx_avail(m, &p);
+        size_t c = (size_t)n < ring_free(&e->rxr) ? (size_t)n : ring_free(&e->rxr);
+        if (c == 0) break;
+        ring_put(&e->rxr, p, c);
+        mnp_rx_consume(m, (int)c);
+    }
+    /* our credit is k: busy while the ring cannot take k LTs */
+    mnp_set_busy(m, ring_free(&e->rxr) < (size_t)m->k * (size_t)m->n401);
+    /* a break is handed up once everything received before it is in the
+     * user's buffer; LN types that are no break are dropped */
+    while (!e->brk_have && mnp_rx_avail(m, &p) == 0 && mnp_get_ln(m, &code)) {
+        int opt = mnp_brk_of_ln(code);
+        if (opt < 0) continue;
+        e->brk_have = 1; e->brk_opt = opt; e->brk_len = 0;
+        e->brk_after = opt == V42_BRK_NONDESTRUCTIVE_INSEQ ? e->rxr.len : 0;
+    }
+}
+
+/* queued user data into at most one new LT, and an in-sequence break
+ * once the data written before it has gone */
+static void feed_mnp(v42ec_t *e)
+{
+    mnp_t *m = &e->l.mnp;
+    int room = mnp_can_send(m);
+
+    if (room > 0) {
+        uint8_t info[MNP_MAX_N401];
+        size_t n, limit = e->txr.len;
+        if (m->framing == 3 && room > HDLC_MAX_LT) room = HDLC_MAX_LT;
+        if (e->brk_tx_pend && limit > e->brk_tx_after) limit = e->brk_tx_after;
+        if (limit > (size_t)room) limit = (size_t)room;
+        n = ring_get(&e->txr, info, limit);
+        if (e->brk_tx_pend) e->brk_tx_after -= n;
+        if (n > 0) (void)mnp_send(m, info, (int)n);
+    }
+    if (e->brk_tx_pend && e->brk_tx_after == 0 && mnp_send_ln(m, MNP_LN_INSEQ) == 0)
+        e->brk_tx_pend = 0;
+}
+
+/* the link's next frame into the framer of its framing, switching the
+ * transmitter between HDLC (flags first) and start-stop at a frame's
+ * boundary */
+static void mnp_next(v42ec_t *e)
+{
+    mnp_t *m = &e->l.mnp;
+    uint8_t f[MNP_MAX_BODY];
+    int n;
+    if (e->state == V42EC_CONNECTED) feed_mnp(e);
+    n = mnp_tx_frame(m, f);
+    if (n <= 0) return;
+    if (m->tx_framing == 3) {
+        if (!e->hdlc_tx_on) { e->hdlc_tx_on = 1; v42hdlc_tx_flags(&e->htx, 2); }
+        (void)v42hdlc_tx_frame(&e->htx, f, n, 0);
+    } else {
+        e->hdlc_tx_on = 0;
+        (void)mnp2_tx_frame(&m->tx2, f, n);
+    }
+    mnp_sync(e);
+}
+
+/* MNP's line bit: flags between HDLC frames, mark between start-stop
+ * ones; no new frame while the line is stopped */
+static int mnp_tx_bit(v42ec_t *e)
+{
+    mnp_t *m = &e->l.mnp;
+    if (e->hdlc_tx_on) {
+        if (!e->stopped && v42hdlc_tx_need_frame(&e->htx)) mnp_next(e);
+        if (e->hdlc_tx_on) return v42hdlc_tx_bit(&e->htx);
+    }
+    if (v42async_tx_idle(&e->atx)) {
+        int c = mnp2_tx_octet(&m->tx2);
+        if (c < 0 && !e->stopped) {
+            mnp_next(e);
+            if (e->hdlc_tx_on) return v42hdlc_tx_bit(&e->htx);
+            c = mnp2_tx_octet(&m->tx2);
+        }
+        if (c >= 0) v42async_tx_char(&e->atx, (uint8_t)c);
+    }
+    return v42async_tx_bit(&e->atx);
+}
+
+/* MNP's receiver: while the LRs are exchanged both framings are heard,
+ * then the agreed one; a dropped frame counts in the framing in use only */
+static void mnp_rx_bit(v42ec_t *e, int bit)
+{
+    mnp_t *m = &e->l.mnp;
+    int both = m->state == MNP_S_CONFIRMING;
+    int fr = m->state == MNP_S_CONNECTED ? m->framing : m->est_framing;
+    int r;
+
+    if (e->state == V42EC_DISCONNECTED) return;
+    if (both || m->framing == 3) {
+        r = v42hdlc_rx_bit(&e->hrx, bit);
+        if (r > 0) { mnp_rx_frame(m, e->hrx.buf, r); mnp_sync(e); }
+        else if ((r == V42HDLC_RX_BAD_FCS || r == V42HDLC_RX_LONG) && fr == 3) { mnp_rx_bad(m); mnp_sync(e); }
+    }
+    if ((both || m->framing == 2) && e->state != V42EC_DISCONNECTED) {
+        int c = v42async_rx_bit(&e->det_rx.rx, bit);
+        if (c >= 0) {
+            r = mnp2_rx_octet(&m->rx2, (uint8_t)c);
+            if (r == MNP2_RX_FRAME) { mnp_rx_frame(m, m->rx2.buf, m->rx2.len); mnp_sync(e); }
+            else if (r == MNP2_RX_BAD && fr == 2) { mnp_rx_bad(m); mnp_sync(e); }
+        }
     }
 }
 
@@ -393,7 +582,7 @@ static void sync(v42ec_t *e)
 /* Turn queued user data into at most one new I frame. */
 static void feed_lapm(v42ec_t *e)
 {
-    int room = v42lapm_can_send(&e->lapm);
+    int room = v42lapm_can_send(&e->l.lapm);
 
     if (room > 0) {
         uint8_t info[V42_MAX_N401];
@@ -422,11 +611,11 @@ static void feed_lapm(v42ec_t *e)
             n = ring_get(&e->txr, info, limit);
             if (e->brk_tx_pend) e->brk_tx_after -= n;
         }
-        if (n > 0) v42lapm_send(&e->lapm, info, (int)n);
+        if (n > 0) v42lapm_send(&e->l.lapm, info, (int)n);
     }
     if (e->brk_tx_pend && e->brk_tx_after == 0 && !e->enc_dirty
         && !enc_pending(e)
-        && v42lapm_send_break(&e->lapm, e->brk_tx_opt, e->brk_tx_len) == 0)
+        && v42lapm_send_break(&e->l.lapm, e->brk_tx_opt, e->brk_tx_len) == 0)
         e->brk_tx_pend = 0;
 }
 
@@ -436,13 +625,13 @@ static void hdlc_next(v42ec_t *e)
 {
     if (e->orig_wait > 0 && (--e->orig_wait == 0 || e->hrx.flag_run >= FLAGS_SEEN)) {
         e->orig_wait = 0;
-        v42lapm_start(&e->lapm);
+        v42lapm_start(&e->l.lapm);
     }
     if (!e->stopped && v42hdlc_tx_need_frame(&e->htx)) {
         uint8_t f[V42HDLC_MAX_PAYLOAD];
         int n, fcs32 = 0;
         if (e->state == V42EC_CONNECTED) feed_lapm(e);
-        n = v42lapm_tx_frame(&e->lapm, f, &fcs32);
+        n = v42lapm_tx_frame(&e->l.lapm, f, &fcs32);
         if (n > 0) v42hdlc_tx_frame(&e->htx, f, n, fcs32);
     }
 }
@@ -455,6 +644,7 @@ static int hdlc_bit(v42ec_t *e)
 
 int v42ec_tx_bit(v42ec_t *e)
 {
+    if (e->protocol == V42EC_PROTO_MNP) return mnp_tx_bit(e);   /* also after release: the LD */
     if (e->hdlc_tx_on) return hdlc_bit(e);      /* also after release: the last UA or DM */
 
     if (e->state == V42EC_ASYNC) {
@@ -520,11 +710,13 @@ void v42ec_rx_bit(v42ec_t *e, int bit)
     int r;
 
     bit = bit ? 1 : 0;
+    if (e->protocol == V42EC_PROTO_MNP) { mnp_rx_bit(e, bit); return; }
     if (e->state != V42EC_DETECT && e->state != V42EC_ASYNC && e->state != V42EC_DISCONNECTED) {
         /* HDLC alone: establishing, connected, releasing */
         r = v42hdlc_rx_bit(&e->hrx, bit);
         if (r > 0) {
-            v42lapm_rx_frame(&e->lapm, e->hrx.buf, r, e->hrx.last_fcs32);
+            if (lr_still_taken(e) && is_lr(e->hrx.buf, r)) { mnp_pick(e, e->hrx.buf, r, 3); return; }
+            v42lapm_rx_frame(&e->l.lapm, e->hrx.buf, r, e->hrx.last_fcs32);
             sync(e);
         }
         return;
@@ -555,9 +747,17 @@ void v42ec_rx_bit(v42ec_t *e, int bit)
         }
         if (r == V42DET_ODP && e->sub == 0) {
             e->sub = 1;
+            e->protocol = V42EC_PROTO_LAPM;     /* the ODP wins over any LR */
             e->t400 = -1;
             ring_reset(&e->rxr);
             if (e->cfg.establish_ms > 0) e->t_est = e->cfg.establish_ms;
+        }
+        /* MNP on, no ODP: an LR in start-stop characters (framing mode 2) */
+        if (e->cfg.mnp.enable && e->sub == 0 && e->det_rx.last_char >= 0
+            && mnp2_rx_octet(&e->hunt2, (uint8_t)e->det_rx.last_char) == MNP2_RX_FRAME
+            && is_lr(e->hunt2.buf, e->hunt2.len)) {
+            mnp_pick(e, e->hunt2.buf, e->hunt2.len, 2);
+            return;
         }
         /* flags or a frame start the protocol phase, with or without ODP;
          * a frame with no opening flag (after a run of ones, v42_hdlc.h)
@@ -566,13 +766,19 @@ void v42ec_rx_bit(v42ec_t *e, int bit)
         {
             unsigned long rs = e->hrx.resynced;
             r = v42hdlc_rx_bit(&e->hrx, bit);
+            /* MNP on, no ODP: an LR in HDLC (mode 3), with or without its
+             * opening flag (its FCS and its layout are the test) */
+            if (r > 0 && e->cfg.mnp.enable && e->sub == 0 && is_lr(e->hrx.buf, r)) {
+                mnp_pick(e, e->hrx.buf, r, 3);
+                return;
+            }
             if (r > 0 && e->hrx.resynced != rs && e->hrx.buf[0] != 0x01 && e->hrx.buf[0] != 0x03) r = 0;
         }
         if (r > 0 || e->hrx.flag_run >= FLAGS_SEEN) {
             e->want_hdlc = 1;
             start_protocol(e);
             if (r > 0) {
-                v42lapm_rx_frame(&e->lapm, e->hrx.buf, r, e->hrx.last_fcs32);
+                v42lapm_rx_frame(&e->l.lapm, e->hrx.buf, r, e->hrx.last_fcs32);
                 sync(e);
             }
         }
@@ -593,6 +799,7 @@ void v42ec_line_stopped(v42ec_t *e)
     e->stopped = 1;
     e->stop_cut = e->hdlc_tx_on && e->htx.in_frame;
     e->stop_frames = e->htx.frames;
+    if (e->protocol == V42EC_PROTO_MNP) mnp_line_stopped(&e->l.mnp);
 }
 
 void v42ec_line_restored(v42ec_t *e)
@@ -607,7 +814,8 @@ void v42ec_line_restored(v42ec_t *e)
             v42hdlc_tx_flags(&e->htx, 2);
         }
     }
-    v42lapm_line_restored(&e->lapm);
+    if (e->protocol == V42EC_PROTO_MNP) mnp_line_restored(&e->l.mnp);
+    else v42lapm_line_restored(&e->l.lapm);
 }
 
 void v42ec_tick(v42ec_t *e, unsigned ms)
@@ -628,13 +836,16 @@ void v42ec_tick(v42ec_t *e, unsigned ms)
     if (e->t_est >= 0) {
         e->t_est -= (int)ms;
         if (e->t_est <= 0) {
-            v42lapm_abort(&e->lapm, V42LAPM_R_PROTOCOL);
+            v42lapm_abort(&e->l.lapm, V42LAPM_R_PROTOCOL);
             finish(e, V42EC_R_NO_SABME);
             return;
         }
     }
-    if (e->state != V42EC_DETECT) {
-        v42lapm_tick(&e->lapm, ms);
+    if (e->protocol == V42EC_PROTO_MNP) {
+        mnp_tick(&e->l.mnp, ms);
+        mnp_sync(e);
+    } else if (e->state != V42EC_DETECT) {
+        v42lapm_tick(&e->l.lapm, ms);
         sync(e);
     }
 }
@@ -669,12 +880,24 @@ size_t v42ec_read(v42ec_t *e, uint8_t *data, size_t max)
     return n;
 }
 
+int v42ec_tx_busy(const v42ec_t *e)
+{
+    if (e->protocol == V42EC_PROTO_MNP) {
+        /* an LD the link owes goes out at the next bit */
+        if (e->l.mnp.ld_due) return 1;
+        if (e->hdlc_tx_on) return v42hdlc_tx_busy(&e->htx);
+        return mnp2_tx_busy(&e->l.mnp.tx2) || !v42async_tx_idle(&e->atx);
+    }
+    return e->hdlc_tx_on && v42hdlc_tx_busy(&e->htx);
+}
+
 int v42ec_tx_idle(const v42ec_t *e)
 {
     if (e->txr.len != 0) return 0;
     if (e->state == V42EC_ASYNC) return v42async_tx_idle(&e->atx);
+    if (e->protocol == V42EC_PROTO_MNP) return mnp_unacked(&e->l.mnp) == 0 && !e->brk_tx_pend;
     if (e->enc_dirty || enc_pending(e)) return 0;
-    return v42lapm_unacked(&e->lapm) == 0 && !e->brk_tx_pend;
+    return v42lapm_unacked(&e->l.lapm) == 0 && !e->brk_tx_pend;
 }
 
 void v42ec_release(v42ec_t *e)
@@ -686,7 +909,8 @@ void v42ec_release(v42ec_t *e)
         break;
     case V42EC_ESTABLISH:
     case V42EC_CONNECTED:
-        v42lapm_release(&e->lapm);
+        if (e->protocol == V42EC_PROTO_MNP) mnp_release(&e->l.mnp);    /* LD 255 */
+        else v42lapm_release(&e->l.lapm);
         sync(e);
         break;
     default:
@@ -697,7 +921,8 @@ void v42ec_release(v42ec_t *e)
 void v42ec_abort(v42ec_t *e)
 {
     if (e->state == V42EC_DISCONNECTED) return;
-    v42lapm_abort(&e->lapm, V42LAPM_R_LOCAL);   /* only a UA or DM owed still goes */
+    if (e->protocol == V42EC_PROTO_MNP) mnp_abort(&e->l.mnp);   /* only an LD owed still goes */
+    else v42lapm_abort(&e->l.lapm, V42LAPM_R_LOCAL);   /* only a UA or DM owed still goes */
     e->orig_wait = 0;
     finish(e, V42LAPM_R_LOCAL);
 }
@@ -705,14 +930,36 @@ void v42ec_abort(v42ec_t *e)
 int v42ec_send_break(v42ec_t *e, int opt, int len10ms)
 {
     if (e->state != V42EC_CONNECTED || e->brk_tx_pend) return -1;
+    if (e->protocol == V42EC_PROTO_MNP) {
+        mnp_t *m = &e->l.mnp;
+        int ln = mnp_ln_of_brk(opt);
+        if (ln < 0 || m->ln_code >= 0) return -1;
+        if (ln == MNP_LN_INSEQ) {
+            /* after the data already written; feed_mnp() hands it on */
+            e->brk_tx_pend = 1; e->brk_tx_opt = opt; e->brk_tx_len = len10ms;
+            e->brk_tx_after = e->txr.len;
+            return 0;
+        }
+        if (mnp_send_ln(m, ln) != 0) return -1;
+        if (ln == MNP_LN_DESTRUCTIVE) {
+            /* Table 4: what has not gone and what is not delivered is
+             * discarded now; what the user writes from here is held until
+             * the LNA, whose reset does not flush it */
+            ring_reset(&e->txr); ring_reset(&e->rxr);
+            e->brk_have = 0;
+            e->mnp_brk = 1;
+        }
+        mnp_sync(e);
+        return 0;
+    }
     if (opt == V42_BRK_NONDESTRUCTIVE_INSEQ) {
         /* goes after the data already written; feed_lapm() hands it on */
-        if (e->lapm.brk_tx != 0) return -1;
+        if (e->l.lapm.brk_tx != 0) return -1;
         e->brk_tx_pend = 1; e->brk_tx_opt = opt; e->brk_tx_len = len10ms;
         e->brk_tx_after = e->txr.len;
         return 0;
     }
-    if (v42lapm_send_break(&e->lapm, opt, len10ms) != 0) return -1;
+    if (v42lapm_send_break(&e->l.lapm, opt, len10ms) != 0) return -1;
     sync(e);
     return 0;
 }
@@ -730,9 +977,33 @@ int v42ec_state(const v42ec_t *e) { return e->state; }
 
 void v42ec_get_status(const v42ec_t *e, v42ec_status_t *st)
 {
-    const v42lapm_t *l = &e->lapm;
+    const v42lapm_t *l = &e->l.lapm;
     memset(st, 0, sizeof *st);
     st->state = e->state; st->reason = e->reason;
+    st->protocol = e->protocol;
+    st->tx_queued = e->txr.len;
+    st->rx_avail = v42ec_read_avail(e);
+    st->rx_frames = e->hrx.good;
+    st->rx_frames_bad = e->hrx.bad_fcs + e->hrx.runts + e->hrx.aborts
+                      + e->hrx.too_long + e->hrx.misaligned;
+    st->async_overruns = e->async_overruns; st->async_framing = e->async_framing;
+    if (e->protocol == V42EC_PROTO_MNP) {
+        const mnp_t *m = &e->l.mnp;
+        st->k_tx = st->k_rx = m->k;
+        st->n401_tx = st->n401_rx = m->n401;
+        st->unacked = mnp_unacked(m);
+        st->rx_frames += m->rx2.frames;
+        st->rx_frames_bad += m->rx2.bad;
+        st->tx_i = m->tx_lt; st->tx_i_retx = m->tx_retx;
+        st->rx_i = m->rx_lt; st->rx_i_dropped = m->rx_dropped;
+        st->t401_expiries = m->t401_expiries; st->violations = m->violations;
+        st->mnp_framing = m->framing; st->mnp_opt = m->opt;
+        st->mnp_streamlined = m->layout == MNP_LAYOUT_STREAM;
+        st->attn_tx = m->attn_tx; st->attn_rx = m->attn_rx;
+        st->rx_unknown = m->rx_unknown; st->rx_unknown_id = m->rx_unknown_id;
+        st->peer_ld_reason = m->peer_ld_reason;
+        return;
+    }
     st->k_tx = l->k_tx; st->k_rx = l->k_rx;
     st->n401_tx = l->n401_tx; st->n401_rx = l->n401_rx;
     if (l->v44_tx || l->v44_rx) {
@@ -746,12 +1017,7 @@ void v42ec_get_status(const v42ec_t *e, v42ec_status_t *st)
         st->comp_n2 = l->comp_n2; st->comp_n7 = l->comp_n7;
     }
     st->fcs32 = l->fcs32;
-    st->tx_queued = e->txr.len;
-    st->rx_avail = v42ec_read_avail(e);
     st->unacked = v42lapm_unacked(l);
-    st->rx_frames = e->hrx.good;
-    st->rx_frames_bad = e->hrx.bad_fcs + e->hrx.runts + e->hrx.aborts
-                      + e->hrx.too_long + e->hrx.misaligned;
     st->tx_i = l->tx_i; st->tx_i_retx = l->tx_i_retx;
     st->rx_i = l->rx_i; st->rx_i_dropped = l->rx_i_dropped;
     st->tx_rej = l->tx_rej; st->rx_rej = l->rx_rej;
@@ -760,5 +1026,4 @@ void v42ec_get_status(const v42ec_t *e, v42ec_status_t *st)
         if (e->comp_tx) ops(e)->enc_counts(e, &st->comp_in, &st->comp_out);
         if (e->comp_rx) ops(e)->dec_counts(e, &st->decomp_in, &st->decomp_out);
     }
-    st->async_overruns = e->async_overruns; st->async_framing = e->async_framing;
 }

@@ -424,6 +424,17 @@ typedef struct {
         int v44_p3_tx, v44_p3_rx;   /* history, octets 512..4096 */
         int t401_ms, t403_ms, n400; /* t401_ms >= 1; t403_ms >= 0, 0 = off; n400 >= 1 */
     } lapm;
+    /* MNP (V.42 Annex A), answering: a caller's LR, in start-stop or HDLC,
+     * leads to MNP; an ODP still leads to LAPM (protocol in the status) */
+    struct {
+        int enable;        /* 0..1, default 0: MNP off, the endpoint is 0.6.0's */
+        int k;             /* 1..8, default 8 */
+        int n401;          /* 1..256, default 64 (256 needs opt bit 1) */
+        int opt;           /* parameter 8 bitmap, 0..3, default 2 (fixed-field LT/LA, no 256) */
+        int framing;       /* highest framing mode we offer or accept, 2..3, default 3 */
+        int t401_min_ms;   /* floor for the computed T401, 500..60000, default 1500 */
+        int n400;          /* 1..255, default 12 */
+    } mnp;
 } v90m_ec_cfg;
 #define V90M_COMP_AUTO   0
 #define V90M_COMP_ALWAYS 1
@@ -439,6 +450,8 @@ enum { V90M_EC_R_NONE = 0, V90M_EC_R_LOCAL, V90M_EC_R_PEER_DISC, V90M_EC_R_PEER_
        V90M_EC_R_N400, V90M_EC_R_PROTOCOL, V90M_EC_R_NEGOTIATION,
        V90M_EC_R_NO_EC = 16, V90M_EC_R_COMPRESSION, V90M_EC_R_NO_SABME };
 enum { V90M_EC_COMP_NONE = 0, V90M_EC_COMP_V42BIS, V90M_EC_COMP_V44 };
+/* the protocol the answerer's detection chose (v90m_ec_status.protocol) */
+enum { V90M_EC_PROTO_NONE = 0, V90M_EC_PROTO_LAPM, V90M_EC_PROTO_MNP, V90M_EC_PROTO_ASYNC };
 
 typedef struct {
     int state, reason;
@@ -457,6 +470,14 @@ typedef struct {
     unsigned long tx_rej, rx_rej, t401_expiries, violations;
     unsigned long comp_in, comp_out, decomp_in, decomp_out;
     unsigned long async_overruns, async_framing;
+    int protocol;                   /* V90M_EC_PROTO_* */
+    int mnp_framing, mnp_opt, mnp_streamlined;  /* MNP: framing mode 2 or 3, parameter 8
+                                                   agreed, the HST layout */
+    int hst, hst_rates, hst_back300;            /* the HST profile agreed (0 for now) */
+    int attn_tx, attn_rx;           /* MNP: the type of the last LN sent, received */
+    unsigned long rx_unknown;       /* MNP: valid frames of an unknown type */
+    int rx_unknown_id;              /* MNP: the first octet of the last of them */
+    int peer_ld_reason;             /* MNP: the reason in the far end's LD, 0 none */
 } v90m_ec_status;
 
 void        v90m_ec_cfg_default(v90m_ec_cfg *cfg, int originator);
@@ -481,9 +502,11 @@ size_t      v90m_ec_write_space(const v90m_ec_t *e);
 size_t      v90m_ec_read(v90m_ec_t *e, uint8_t *data, size_t max);
 size_t      v90m_ec_read_avail(const v90m_ec_t *e);
 int         v90m_ec_tx_idle(const v90m_ec_t *e);        /* everything written was acknowledged */
-int         v90m_ec_tx_busy(const v90m_ec_t *e);        /* a frame is still leaving the transmitter */
+int         v90m_ec_tx_busy(const v90m_ec_t *e);        /* a frame is still leaving the transmitter
+                                                           (MNP: an LD owed too, either framing) */
 
-void        v90m_ec_release(v90m_ec_t *e);              /* orderly: DISC, wait for UA */
+void        v90m_ec_release(v90m_ec_t *e);              /* orderly: DISC, wait for UA; MNP: LD 255,
+                                                           DISCONNECTED at once (wait for tx_busy 0) */
 void        v90m_ec_abort(v90m_ec_t *e);                /* the line is gone: stop without a word, in
                                                            every state: V90M_EC_DISCONNECTED on return */
 /* break signals (V.42 12.3.1): opt is one of these, len10ms the length in

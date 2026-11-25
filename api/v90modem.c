@@ -558,7 +558,7 @@ size_t v90m_ec_write_space(const v90m_ec_t *e) { return e ? v42ec_write_space(&e
 size_t v90m_ec_read(v90m_ec_t *e, uint8_t *d, size_t max) { return e ? v42ec_read(&e->e, d, max) : 0; }
 size_t v90m_ec_read_avail(const v90m_ec_t *e) { return e ? v42ec_read_avail(&e->e) : 0; }
 int    v90m_ec_tx_idle(const v90m_ec_t *e) { return e ? v42ec_tx_idle(&e->e) : V90M_EINVAL; }
-int    v90m_ec_tx_busy(const v90m_ec_t *e) { return e ? e->e.hdlc_tx_on && v42hdlc_tx_busy(&e->e.htx) : V90M_EINVAL; }
+int    v90m_ec_tx_busy(const v90m_ec_t *e) { return e ? v42ec_tx_busy(&e->e) : V90M_EINVAL; }
 void   v90m_ec_release(v90m_ec_t *e) { if (e) v42ec_release(&e->e); }
 void   v90m_ec_abort(v90m_ec_t *e) { if (e) v42ec_abort(&e->e); }
 int    v90m_ec_send_break(v90m_ec_t *e, int opt, int len10ms)
