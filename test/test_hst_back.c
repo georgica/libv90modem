@@ -19,8 +19,14 @@
  *   tx_spectrum  10 s of random data at 450 and at 300: power at 600 Hz and
  *                above >= 50 dB below the in-band peak; the occupied band at
  *                -20 dB 274-476 Hz (450) and 283-417 Hz (300) within
- *                +-10 Hz; the line level is the one asked for */
+ *                +-10 Hz; the line level is the one asked for
+ *
+ * The output (the golden file) holds exact integers and one pass or fail
+ * line per bound; the measured values, from the test's own floating-point
+ * arithmetic, only with HST_VERBOSE set. Each case seeds its own random
+ * data, so a case run alone prints what it prints in the whole run. */
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include "test.h"
 #include "../modem/scramble.h"
@@ -46,7 +52,16 @@ static int mscr_data_for(mscr_t *m, int ds)
     return di;
 }
 
-static uint32_t prbs = 0x1234567u;
+static int verbose;
+/* one bound: its line, and its check */
+static void bound(const char *what, int ok)
+{
+    printf("  %s: %s\n", what, ok ? "pass" : "FAIL");
+    CHECK(ok);
+}
+
+static uint32_t prbs;
+static void prbs_seed(uint32_t s) { prbs = s; }
 static int prbs_bit(void)
 {
     prbs = prbs * 1664525u + 1013904223u;
@@ -153,6 +168,7 @@ static void scr17(void)
     CHECK(vdiff > 0);               /* where v22_scramble inverts */
 
     /* against the model, and the round trip, over 10^4 PRBS bits */
+    prbs_seed(0x1234567u);
     scr_init(&s); scr_init(&d);
     for (i = 0; i < 10000; i++) {
         di = prbs_bit();
@@ -192,19 +208,21 @@ static void filters(void)
     for (i = 0; i < HST_HBPF_N; i++) sym &= hst_hbpf[i] == hst_hbpf[HST_HBPF_N - 1 - i];
     CHECK(sym);                                   /* linear phase */
 
-    for (f = 250; f <= 500; f += 1) { double d = fir_db(hst_bbpf, HST_BBPF_N, f); if (d < lo) lo = d; if (d > hi) hi = d; }
-    for (f = 600; f <= 4000; f += 1) { double d = fir_db(hst_bbpf, HST_BBPF_N, f); if (d > stop) stop = d; }
-    for (f = 0; f <= 150; f += 1) { double d = fir_db(hst_bbpf, HST_BBPF_N, f); if (d > stop) stop = d; }
-    printf("bbpf: %d taps, 250-500 Hz %.2f to %.2f dB, <= 150 and >= 600 Hz at most %.1f dB\n", HST_BBPF_N, lo, hi, stop);
-    CHECK(lo >= -0.5 && hi <= 0.5);
-    CHECK(stop <= -50);
+    for (f = 250; f <= 500; f += 2) { double d = fir_db(hst_bbpf, HST_BBPF_N, f); if (d < lo) lo = d; if (d > hi) hi = d; }
+    for (f = 600; f <= 4000; f += 2) { double d = fir_db(hst_bbpf, HST_BBPF_N, f); if (d > stop) stop = d; }
+    for (f = 0; f <= 150; f += 2) { double d = fir_db(hst_bbpf, HST_BBPF_N, f); if (d > stop) stop = d; }
+    printf("bbpf: %d taps\n", HST_BBPF_N);
+    if (verbose) printf("  (250-500 Hz %.3f to %.3f dB, <= 150 and >= 600 Hz at most %.2f dB)\n", lo, hi, stop);
+    bound("250-500 Hz within 0.5 dB", lo >= -0.5 && hi <= 0.5);
+    bound("50 dB down at <= 150 Hz and >= 600 Hz", stop <= -50);
 
     lo = 1e9; hi = -1e9; stop = -1e9;
-    for (f = 600; f <= 3400; f += 1) { double d = fir_db(hst_hbpf, HST_HBPF_N, f); if (d < lo) lo = d; if (d > hi) hi = d; }
-    for (f = 0; f <= 500; f += 1) { double d = fir_db(hst_hbpf, HST_HBPF_N, f); if (d > stop) stop = d; }
-    printf("hbpf: %d taps, 600-3400 Hz %.2f to %.2f dB, <= 500 Hz at most %.1f dB\n", HST_HBPF_N, lo, hi, stop);
-    CHECK(lo >= -0.5 && hi <= 0.5);
-    CHECK(stop <= -40);
+    for (f = 600; f <= 3400; f += 2) { double d = fir_db(hst_hbpf, HST_HBPF_N, f); if (d < lo) lo = d; if (d > hi) hi = d; }
+    for (f = 0; f <= 500; f += 2) { double d = fir_db(hst_hbpf, HST_HBPF_N, f); if (d > stop) stop = d; }
+    printf("hbpf: %d taps\n", HST_HBPF_N);
+    if (verbose) printf("  (600-3400 Hz %.3f to %.3f dB, <= 500 Hz at most %.2f dB)\n", lo, hi, stop);
+    bound("600-3400 Hz within 0.5 dB", lo >= -0.5 && hi <= 0.5);
+    bound("40 dB down at <= 500 Hz", stop <= -40);
 }
 
 /* line tribits: every value in turn, then a mixed run */
@@ -245,10 +263,10 @@ static void phase_run(int bps)
         step_bad += es > 3;
         prev = ph;
     }
-    printf("tx_phase %d: %d symbols (%d preamble), step error at most %.1f deg, grid error at most %.1f deg\n",
-           bps, nsym, npre, emax_step, emax_grid);
-    CHECK_EQ_I(step_bad, 0);
-    CHECK_EQ_I(grid_bad, 0);
+    printf("tx_phase %d: %d symbols (%d preamble)\n", bps, nsym, npre);
+    if (verbose) printf("  (step error at most %.3f deg, grid error at most %.3f deg)\n", emax_step, emax_grid);
+    bound("every step hst_bstep[t] x 45 deg within 3 deg", step_bad == 0);
+    bound("every symbol on 22.5 + 45 k deg within 3 deg", grid_bad == 0);
     CHECK(src.pos >= 3 * nline);
 }
 
@@ -291,12 +309,21 @@ static void tx_speed(void)
         prev = ph;
     }
     printf("tx_speed: 450 -> 300 at sample %d, after %d symbols at 450\n", n300, s450);
-    CHECK_EQ_I(bad, 0);
+    bound("the 300 symbols' steps and grid within 3 deg", bad == 0);
 
     hst_btx_stop(&tx);
     for (n = 0; n < (HST_BL + 1) * 80; n++) (void)hst_btx_tick(&tx);
     for (n = 0; n < 1000; n++) tail |= hst_btx_tick(&tx);
-    CHECK_EQ_I(tail, 0);
+    bound("silence once the pulses have drained", tail == 0);
+}
+
+/* floor(sqrt(v)) */
+static int64_t isqrt64(int64_t v)
+{
+    int64_t r = (int64_t)sqrt((double)v);
+    while (r * r > v) r--;
+    while ((r + 1) * (r + 1) <= v) r++;
+    return r;
 }
 
 /* ---- spectrum: Welch, Hann, 4096 points, half overlap ---- */
@@ -310,11 +337,13 @@ static void fft(double *re, double *im, int n)
         j ^= bit;
         if (i < j) { double t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; }
     }
+    static double twr[NF / 2], twi[NF / 2];
+    if (twi[1] == 0)
+        for (k = 0; k < NF / 2; k++) { twr[k] = cos(-2 * PI * k / NF); twi[k] = sin(-2 * PI * k / NF); }
     for (len = 2; len <= n; len <<= 1) {
-        double a = -2 * PI / len;
         for (i = 0; i < n; i += len)
             for (k = 0; k < len / 2; k++) {
-                double wr = cos(a * k), wi = sin(a * k);
+                double wr = twr[k * (NF / len)], wi = twi[k * (NF / len)];
                 double xr = re[i + k + len / 2] * wr - im[i + k + len / 2] * wi;
                 double xi = re[i + k + len / 2] * wi + im[i + k + len / 2] * wr;
                 re[i + k + len / 2] = re[i + k] - xr; im[i + k + len / 2] = im[i + k] - xi;
@@ -330,15 +359,17 @@ static void spectrum_run(int bps, double lo_want, double hi_want)
     hst_btx_t tx;
     src_t src;
     int n, i, seg, nseg = 0, pk = 0, lo, hi;
-    double sq = 0, peak, out = 0, rms, hz = (double)FS / NF;
+    int64_t sq = 0, rms;
+    double peak, out = 0, hz = (double)FS / NF;
 
+    prbs_seed(0x2468ACEu + (uint32_t)bps);
     memset(&src, 0, sizeof src);
     src.random = 1;
     hst_btx_init(&tx, bps, 4000, getbit, &src);
     hst_btx_preamble(&tx);
     for (n = 0; n < FS; n++) (void)hst_btx_tick(&tx);         /* past the preamble */
-    for (n = 0; n < 10 * FS; n++) { x[n] = hst_btx_tick(&tx); sq += (double)x[n] * x[n]; }
-    rms = sqrt(sq / (10 * FS));
+    for (n = 0; n < 10 * FS; n++) { x[n] = hst_btx_tick(&tx); sq += (int64_t)x[n] * x[n]; }
+    rms = isqrt64(sq / (10 * FS));
 
     memset(psd, 0, sizeof psd);
     for (seg = 0; seg + NF <= 10 * FS; seg += NF / 2, nseg++) {
@@ -354,12 +385,17 @@ static void spectrum_run(int bps, double lo_want, double hi_want)
     for (i = (int)ceil(600 / hz); i <= NF / 2; i++) if (psd[i] > out) out = psd[i];
     for (lo = pk; lo > 0 && psd[lo - 1] >= peak / 100; lo--) ;
     for (hi = pk; hi < NF / 2 && psd[hi + 1] >= peak / 100; hi++) ;
-    printf("tx_spectrum %d: level %.0f (asked 4000), peak at %.0f Hz, -20 dB band %.1f-%.1f Hz, >= 600 Hz %.1f dB\n",
-           bps, rms, pk * hz, lo * hz, hi * hz, 10 * log10(out / peak));
-    CHECK_NEAR(20 * log10(rms / 4000), 0, 0.3);
-    CHECK(10 * log10(out / peak) <= -50);
-    CHECK_NEAR(lo * hz, lo_want, 10);
-    CHECK_NEAR(hi * hz, hi_want, 10);
+    printf("tx_spectrum %d: level %d (asked 4000), %d segments\n", bps, (int)rms, nseg);
+    if (verbose)
+        printf("  (peak at %.1f Hz, -20 dB band %.1f-%.1f Hz, >= 600 Hz %.2f dB)\n",
+               pk * hz, lo * hz, hi * hz, 10 * log10(out / peak));
+    bound("level within 0.3 dB of 4000", rms >= 3863 && rms <= 4141);     /* 4000 x 10^(-+0.3/20) */
+    bound(">= 600 Hz at least 50 dB below the peak", 10 * log10(out / peak) <= -50);
+    {
+        char what[64];
+        snprintf(what, sizeof what, "-20 dB band within 10 Hz of %d-%d Hz", (int)lo_want, (int)hi_want);
+        bound(what, fabs(lo * hz - lo_want) <= 10 && fabs(hi * hz - hi_want) <= 10);
+    }
     CHECK(nseg >= 30);
 }
 
@@ -372,6 +408,7 @@ static void tx_spectrum(void)
 int main(int argc, char **argv)
 {
     int only = t_case_arg(argc, argv, 6);
+    verbose = getenv("HST_VERBOSE") != NULL;
     if (T_CASE(only, 1)) steps();
     if (T_CASE(only, 2)) scr17();
     if (T_CASE(only, 3)) filters();

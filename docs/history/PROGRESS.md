@@ -4376,7 +4376,7 @@ header; a new table is one more function in its `TABLES`):
 `modem/scramble.[ch]`: `scr17_scramble` and `scr17_descramble`, the
 polynomial without V.22bis's 64-ones rule; `v22_*` untouched.
 
-`modem/hst.h`, `modem/hst_back.c`: `hst_btx_t` (256 octets on x86-64).
+`modem/hst.h`, `modem/hst_back.c`: `hst_btx_t` (256 octets on x86-64, all fields fixed-width).
 Each speed has its own pulse train and carrier, so that after
 `hst_btx_set_speed` (taken at the old speed's next symbol boundary) the
 old speed's last symbols ring out on their own pulse; both carriers run
@@ -4398,6 +4398,22 @@ preamble included, on 22.5 + 45 k within 1.6 degrees, each step within 2.6),
     make bench-hashes  -> bench hashes: 17 identical
     make verify        -> VERIFY PASS (692 s; golden 148 identical, test_hst_back's new;
                           armv7hf and big-endian short-cmp identical; ubsan pass)
+
+Review fixes (round 1). `test_hst_back` now prints only exact integers
+(taps, symbols, the level as the integer square root of the integer mean
+square) and one pass/fail line per bound. The measured values, which come
+from the test's own libm arithmetic, print only with `HST_VERBOSE` set
+(make golden, verify.sh and verify-phase.sh unset it). Each case seeds its
+own random data, so the cases run one at a time print exactly what the
+whole run prints (checked plain and verbose). In `hst_back.c`, a negative
+level is taken as 0, and `newsym` is set only when a symbol is sent. The
+structs use fixed-width fields. `hst.h` notes that `hst_bbpf` is meant to
+run at the receiver's 1600 Hz instants. The FFT twiddles are precomputed
+and the filter grid is 2 Hz: ARMv5 under qemu takes 9.8 s, down from 15 s.
+`tools/test-times.txt` has entries for both builds.
+
+    build/test_hst_back -> test_hst_back: 42 checks, 0 failures; ARMv5 (qemu) output identical
+    make verify         -> VERIFY PASS (1198 s; golden 148 identical, test_hst_back's own rewritten)
 
 ## hst 14: the forward pulse, v32tx's pulse pointer, guard filter (2026-11-25)
 

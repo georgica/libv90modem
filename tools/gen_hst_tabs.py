@@ -24,7 +24,11 @@ The back channel (hst-facts.md "Back channel"):
                  carrier), and its -20 dB band.
   hst_bbpf       the receivers' band-pass [OURS]: 250-500 Hz within +-0.5
                  dB, at least 50 dB down at 600 Hz and above and at 150 Hz
-                 and below (mains hum). Windowed-sinc FIR (Kaiser), cut-offs
+                 and below (50 and 60 Hz hum, not its harmonics at 180-250 Hz,
+                 which the detector's 8-PSK lock rejects instead). Meant to be
+                 evaluated at the receiver's 1600 Hz instants: its stop band
+                 at 600 Hz and above is what folds into 250-500 Hz there.
+                 Windowed-sinc FIR (Kaiser), cut-offs
                  200 and 550 Hz, the fewest odd taps that meet it with Q15
                  coefficients (checked here, and in test/test_hst_back.c).
   hst_hbpf       the detector's high band, for its ratio [OURS]: 600-3400 Hz
@@ -159,6 +163,9 @@ def tab_bpulse():
         seq = [qt[ph][j] for j in range(BL) for ph in range(P)]       # in time order
         h0 = pulse_dtft(seq, P, 0.0)
         far = (600.0 - fc) / baud
+        # from 600 Hz up 6 symbol rates (1500 Hz at 450, 1200 at 300), on the
+        # pulse at its table rate; test_hst_back's tx_spectrum measures the
+        # 8000 Hz output, aliases included, up to 4000 Hz
         worst = max(pulse_dtft(seq, P, far + k / 50.0) for k in range(0, 50 * 6))
         if 20 * math.log10(worst / h0) > -60:
             die("%d: pulse %.1f dB at 600 Hz and above" % (bps, 20 * math.log10(worst / h0)))

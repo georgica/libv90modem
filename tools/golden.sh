@@ -16,8 +16,8 @@
 # whose log is missing, or older than the program, is an error too (run
 # make check PAR=N first). It reads no exit status: make check, which
 # fails on any failing program, comes first (make golden runs both). The
-# environment variables that make tests talk more (V92_VERBOSE, V32_DEBUG)
-# must not be set (make golden unsets them). A golden file is re-recorded
+# environment variables that make tests talk more (V92_VERBOSE, V32_DEBUG,
+# HST_VERBOSE) must not be set (make golden unsets them). A golden file is re-recorded
 # only when a change explains it, and the commit lists each file
 # re-recorded and why.
 set -u
