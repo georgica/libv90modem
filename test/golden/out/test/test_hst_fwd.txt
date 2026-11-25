@@ -109,4 +109,54 @@ zero_isi: the pulse against itself at 1 .. 29 symbols
   the pulse's own ISI at most -40 dB: pass
 zero_isi: transmitter to receiver, 400 points of the 4-point training through the matched filter
   through the receiver's start, nothing adapted: at least 25 dB: pass
-test_hst_fwd: 129 checks, 0 failures
+carrier_loss, code 2: NOCARRIER in time; 0 bits from 200 ms after the carrier's end; 3 s later state 4
+  in data mode before: pass
+  NOCARRIER within HST_FRX_LOSS_MS + 200 ms, and kept: pass
+  no bits from 200 ms after the carrier's end: pass
+carrier_loss, code 4: NOCARRIER in time; 0 bits from 200 ms after the carrier's end; 3 s later state 4
+  in data mode before: pass
+  NOCARRIER within HST_FRX_LOSS_MS + 200 ms, and kept: pass
+  no bits from 200 ms after the carrier's end: pass
+carrier_loss, code 6: NOCARRIER in time; 0 bits from 200 ms after the carrier's end; 3 s later state 4
+  in data mode before: pass
+  NOCARRIER within HST_FRX_LOSS_MS + 200 ms, and kept: pass
+  no bits from 200 ms after the carrier's end: pass
+carrier_return: after a 1 s cut state 4; with the data back for 1 s, state 4 and 0 bits
+  the cut: NOCARRIER: pass
+  the data back without a training: still NOCARRIER, no bits: pass
+carrier_return: a short training then: data mode reached, tracking by then; from the 41st data symbol 0 errors in 100000 bits
+  a short training: from the equaliser kept, trained before the data: pass
+  then no error from the 41st data symbol: pass
+dropout, code 2: 100 ms; data mode kept; from 4000 data bits after it 0 errors in 100000 bits
+  data mode kept: pass
+  no error from 4000 bits after it: pass
+dropout, code 4: 100 ms; data mode kept; from 4000 data bits after it 0 errors in 100000 bits
+  data mode kept: pass
+  no error from 4000 bits after it: pass
+dropout, code 6: 100 ms; data mode kept; from 4000 data bits after it 0 errors in 100000 bits
+  data mode kept: pass
+  no error from 4000 bits after it: pass
+train_fail, 15 dB, code 3: in training 2.2 s after it began: no
+  not in training 2.2 s after it began: pass
+train_fail, 15 dB, code 4: in training 2.2 s after it began: no
+  not in training 2.2 s after it began: pass
+train_fail, 6 dB, code 4: in training 2.2 s after it began: no
+  not in training 2.2 s after it began: pass
+train_fail, 6 dB, code 4: state 6, 0 bits
+  TRAINFAIL, no bits: pass
+level_step -1 dB, code 6: state 3; from 16000 data bits after it 0 errors in 100000 bits
+  data mode kept: pass
+  no error from 16000 bits after it: pass
+level_step +3 dB, code 6: state 3; from 16000 data bits after it 0 errors in 100000 bits
+  data mode kept: pass
+  no error from 16000 bits after it: pass
+level_step -2 dB, code 4: state 3; from 16000 data bits after it 0 errors in 100000 bits
+  data mode kept: pass
+  no error from 16000 bits after it: pass
+level_step +6 dB, code 4: state 3; from 16000 data bits after it 0 errors in 100000 bits
+  data mode kept: pass
+  no error from 16000 bits after it: pass
+lock_loss: the carrier 40 Hz off at 14400: UNLOCKED in time; 0 bits after it; 2 s later state 5
+  UNLOCKED within HST_FRX_LOCK_SYMS + 0.3 s, and kept: pass
+  no bits after it: pass
+test_hst_fwd: 162 checks, 0 failures

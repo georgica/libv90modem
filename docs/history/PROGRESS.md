@@ -4679,3 +4679,93 @@ signal. 10^5 data bits a case (BER < 1e-5), 10^4 under TEST_SHORT.
     make verify -> VERIFY PASS (725 s; golden 150 identical, bench 17,
                    replay 636; armv7hf and big-endian short-cmp 135 identical)
     make check-arm ARM_CC=$A5 (ARMv5, short) -> ALL ARM CHECKS PASS
+
+### hst 16, review fixes (2026-11-25)
+
+- **The receiver's own ends (ruling).** It reports them through
+  `hst_frx_state` and listens for AB again; what to do about them (retrain,
+  wait, end) is Task 23's scheme's.
+  - `HST_FRX_NOCARRIER`: the guard's output under -48 dBm0 for 300 ms in
+    training or data. A dropout is clamped from 20 ms on, or as soon as
+    the power is 10 dB under its slow (0.5 s) mean: no bits, nothing
+    adapted. If the power is back (over -45 dBm0, within 10 dB) before
+    300 ms, all goes on. The equaliser and frequency are kept for the next
+    training.
+  - `HST_FRX_UNLOCKED`: in data mode the error over 256 symbols above
+    `lock_mse[code]` for 1200 symbols. The thresholds are 1 dB under what
+    noise alone gives after the rate's hard decisions (s^2 / 6 over the
+    set's power: -4.8, -11.8, -14.8, -18.0, -20.9 dB at codes 2..6). A flat
+    -10 dB never fires at 14400, where garbage reads -21 dB.
+  - `HST_FRX_TRAINFAIL`: no data mode 3600 symbols after the start.
+  - The data-mode gate's `mse0` is now the error 8 symbols back. Taken
+    only when none of the last 8 points was off, it was biased low on a
+    poor line, and data mode was declared at 6 dB.
+- **Gain loop in data mode** (on qamrx's input):
+  - A power step is set at once by the root of the power ratio, then
+    G_FLUSH symbols unmeasured. It counts as a step when the points' power
+    over 32 symbols is a quarter or more off, or over 128 symbols a sixth
+    or more off, for 64 symbols, within 10 dB.
+  - While the power is a quarter off over 32 symbols, or 30 % off over 8,
+    or during the flush, nothing else adapts.
+  - Otherwise the gain tracks the power, at 2^-8 or 2^-10 a symbol.
+  - What the tries showed:
+    - Decision-directed loops and an overshooting continuous loop both
+      fed wrong decisions to the carrier loop. It was kicked a Hz off
+      within 2-3 symbols and took seconds to come back.
+    - The 8-symbol power is the quickest decision-free sign; flapping is
+      harmless there, it only pauses adaptation.
+    - Error-based freezes broke ±7 Hz tracking.
+- **qamrx API (ruling), additive:** `qamrx_stop`, `qamrx_get_eq`,
+  `qamrx_sync_eq` (`qamrx_sync`, then the taps loaded held to ±QRX_CMAX,
+  then the frequency). No existing function changed. hst_frx writes no
+  qamrx field and reads only the point (`zr/zi`). The
+  taps' bound now holds however often they are kept and loaded again.
+- **Spec amendment:** "Forward channel: receiver" step 4, the TRN-at-4800
+  sentence replaced with the reviewer's wording.
+- **Smaller fixes:**
+  - `train_reset` shared by init and start.
+  - `hst_frx_set_code`'s lost `V32_VDEPTH` symbols documented.
+  - `hst_frx_snr` zeroed by `hst_frx_restore`.
+  - AB needs both tones together at 1/4 of the power as well: 14400
+    data back after a cut once passed for AB on 1/16 each.
+
+`test_hst_fwd` (golden re-recorded: 129 -> 162 checks, the old lines
+unchanged; bm unchanged at 123), new cases:
+
+| case | what it checks |
+|---|---|
+| `carrier_loss` | codes 2, 4, 6: NOCARRIER within 500 ms of the caller's stop, no bits from 200 ms on |
+| `carrier_return` | NOCARRIER after a 1 s cut. The data back without a training: still NOCARRIER, no bits. A short training then starts from the kept equaliser: trained before the data, no error from its 41st symbol |
+| `dropout` | 100 ms, codes 2, 4, 6: data mode kept, no error from 4000 bits on; the last errors 320-927 bits after |
+| `train_fail` | 15 dB, codes 3 and 4: not in training 2.2 s on. 6 dB: TRAINFAIL, no bits |
+| `level_step` | -1 / +3 dB at 14400, -2 / +6 dB at 9600: data mode kept, no error from 16000 bits on; the last errors 5442 / 61 / none / 41 bits after |
+| `lock_loss` | the line's carrier 40 Hz off at 14400: UNLOCKED in 611 ms, no bits |
+
+    seed sweep (scratch, 24 seeds, 10^4 bits): acq_*, offsets, stored_eq,
+                   trn_as_ones, carrier_*, dropout, train_fail, lock_loss:
+                   0 failures; level_step: 92 of 96 runs clean, 4 end
+                   UNLOCKED (the carrier loop kicked before the step is seen)
+    clang -fsanitize=undefined, both profiles -> identical to gcc's
+
+CPU, ARMv5, the same bench and recording (14400 data, seconds 3 to 4):
+30.74 M instructions; the receiver alone about 29.8 M (the bench's reads
+0.9 M), as before the fixes. By function: `hst_gf_tick` 7.66 M (8.89 before:
+the four-pair unroll, output identical; a two-pointer walk measured worse,
+7.96), `v32_vit_step` 9.35, qamrx 9.77, the rest of hst_frx (now the
+carrier detect, the gain loop and the lock measure) 1.19 + 0.56 of 64-bit
+division (0.64 before the gain loop's step became a constant division).
+**The CPU task's target (milestone 4, `make cost-hst`): the forward
+receiver alone ≤ 26 M**, so that holding back (with the back transmitter's
+1.8 M and MNP) is under 30 M. The levers: a cheaper guard (the delayed
+input less a decimated low-pass, or a shorter one with the matched
+filter's own rejection counted), and an optional T/2 mode of qamrx as a new
+init option (V.34 untouched). The Viterbi decoder stays as it is (V.32bis's).
+
+    build/test_hst_fwd -> test_hst_fwd: 162 checks, 0 failures (5.5 s)
+    make check-hst-bm -> test_hst_fwd: 123 checks, 0 failures (unchanged)
+    qemu-arm ARMv5 short set -> 162 checks, 0 failures, identical to the
+                   host's -DTEST_FORCE_SHORT (381 s; tools/test-times.txt)
+    make verify -> VERIFY PASS (534 s; golden 150 identical, test_hst_fwd's
+                   re-recorded (its own); replay 636 and bench 17 identical:
+                   V.34, V.90/V.92 and k56d unchanged by the qamrx additions;
+                   armv7hf and big-endian short-cmp 135 identical)

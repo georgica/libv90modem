@@ -659,7 +659,15 @@ end that does not depend on the training's contents:
    the Viterbi decoder. The descrambler is self-synchronising and the
    differential decoder resynchronises in one symbol, so no segment length
    is needed; HDLC finds the flags. At 4800 the data set is the training
-   set, and TRN (scrambled ones) decodes as ones: harmless idle.
+   set. TRN's dibits are mapped to A..D directly (V.32 Table 4, not
+   differentially), so read through the data path they are not ones; the
+   receiver therefore recognises TRN itself (the 4 points read directly
+   under each quarter turn and descrambled give ones for 8 symbols),
+   delivers ones while it lasts (harmless idle), and loads the data
+   descrambler from that reading, so that the data descrambles from its
+   first bit. Under the BinModem profile, V.17's bridge (descrambled 0000
+   0001 0001 0001) reaches the endpoint as bits between those ones and the
+   data; it holds no flag and is harmless. **[OURS]**
 5. **Stored equaliser:** at a reversal keep the taps and carrier
    frequency; restore them on the next training of that direction.
 

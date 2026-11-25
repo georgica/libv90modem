@@ -156,11 +156,12 @@ int16_t hst_gf_tick(hst_gf_t *g, int16_t in);
  * the training but that it starts with AB (ours, V.32's S, V.17's segment
  * 1):
  *   IDLE   listening: both band-edge tones (600 and 3000 Hz) of AB, each
- *          at least 1/16 of the power, the power at least -43 dBm0
- *   AB     ... for HST_FRX_AB_MS; then qamrx_sync with the symbol timing
+ *          at least 1/16 of the power and both 1/4, the power at least
+ *          -43 dBm0
+ *   AB     ... for HST_FRX_AB_MS; then qamrx_sync_eq with the symbol timing
  *          from the phase between the two tones, and the equaliser and
- *          carrier frequency from the stored ones (hst_frx_restore) or else
- *          the transmit pulse's matched filter and the tones' own turn
+ *          carrier frequency kept (hst_frx_restore, or a carrier lost) or
+ *          else the transmit pulse's matched filter and the tones' own turn
  *   TRAIN  decision-directed on the 4 points A..D, fast steps (until the
  *          error has stayed under -20 dB for HST_FRX_HOLD symbols, in
  *          training or data), then tracking
@@ -170,19 +171,42 @@ int16_t hst_gf_tick(hst_gf_t *g, int16_t in);
  *          (before those 8) was under -14 dB, or the hold was reached. At
  *          code 2, V.32's TRN (Table 4's dibits of scrambled ones, not
  *          differentially encoded) is recognised, and its bits given as
- *          ones: an idle line, as the spec wants
+ *          ones: an idle line. In data mode a gain loop holds the points'
+ *          power at the set's (a level step of the line)
+ * and three states the receiver ends in by itself, each listening for AB
+ * again as IDLE does (what to do about them is the scheme's):
+ *   NOCARRIER  the power under -48 dBm0 for HST_FRX_LOSS_MS in training or
+ *          data. From HST_FRX_CLAMP_MS on, or as soon as the power is 10
+ *          dB under its slow average, no bits come and nothing is adapted
+ *          (the gain loop neither); should the power come back (over -45
+ *          dBm0, and within 10 dB) before the loss, all goes on: a
+ *          dropout. The equaliser and frequency are kept for the next
+ *          training
+ *   UNLOCKED   in data mode the error (over 256 symbols), for
+ *          HST_FRX_LOCK_SYMS symbols, near what noise alone gives after
+ *          the rate's decisions (-5.8, -12.8, -15.8, -19, -21.9 dB at codes
+ *          2..6)
+ *   TRAINFAIL  no data mode HST_FRX_TRAIN_SYMS symbols after the start
+ *          (S1's rest, S2 and the long S3 are 3220 or so)
  * The data bits come descrambled (GPC), in the order sent (HST sends each
- * octet's LSB first); at code 3..6 V32_VDEPTH symbols late. Only
- * hst_frx_init and hst_frx_restore go back to listening: nothing here
- * notices the far end stopping (the scheme's watchdogs do). The point
- * scale: HST_FRX_U per signal space unit. */
+ * octet's LSB first); at code 3..6 V32_VDEPTH symbols late. The power the
+ * carrier detect measures is the guard's output (560 Hz up), not 600-3000
+ * Hz alone. The point scale: HST_FRX_U per signal space unit. */
 #include "qamrx.h"
 
-enum { HST_FRX_IDLE, HST_FRX_AB, HST_FRX_TRAIN, HST_FRX_DATA };
+enum {
+    HST_FRX_IDLE, HST_FRX_AB, HST_FRX_TRAIN, HST_FRX_DATA,
+    HST_FRX_NOCARRIER, HST_FRX_UNLOCKED, HST_FRX_TRAINFAIL
+};
 
-#define HST_FRX_U       1024     /* receiver units per signal space unit: 2 V32_UNIT */
-#define HST_FRX_AB_MS     40     /* AB heard this long before the receiver starts */
-#define HST_FRX_HOLD     100     /* symbols under -20 dB before tracking */
+#define HST_FRX_U          1024  /* receiver units per signal space unit: 2 V32_UNIT */
+#define HST_FRX_AB_MS        40  /* AB heard this long before the receiver starts */
+#define HST_FRX_HOLD        100  /* symbols under -20 dB before tracking */
+#define HST_FRX_CLAMP_MS     20  /* no carrier this long: no bits, nothing adapted */
+#define HST_FRX_LOSS_MS     300  /* ... this long: NOCARRIER (a 100 ms dropout survives) */
+#define HST_FRX_LOCK_SYMS  1200  /* data mode: symbols of poor error before UNLOCKED (0.5 s;
+                                  * a 1 dB step at 14400 takes some 1000 to settle) */
+#define HST_FRX_TRAIN_SYMS 3600  /* symbols of training at most */
 
 /* the equaliser kept for the next training of the direction (spec,
  * "stored equaliser") */
@@ -196,26 +220,38 @@ typedef struct {
     hst_gf_t   gf;                    /* the guard high-pass */
     qamrx_t    q;
     v32_vit_t  vit;
+    hst_eqstore_t eq;                 /* to start the next training from, when valid */
     int32_t    state;                 /* HST_FRX_* */
+    int32_t    listen;                /* the listening state AB falls back to */
     int32_t    code;                  /* rate code in force, 2..6 */
-    int32_t    stored;                /* q's taps and frequency are a stored equaliser's */
     /* AB: 600 and 3000 Hz, a sample's phase from n40 (both repeat in 40 samples) */
     int32_t    n40;
     uint32_t   ph6;                   /* 600 Hz's phase */
     int32_t    lr, li, ur, ui;        /* the two tones, leaky (x 64) */
-    int64_t    pw;                    /* the power, leaky */
+    int64_t    pw;                    /* the power, leaky (every state: the carrier detect) */
     int64_t    tr, ti;                /* 600 x conj(3000), summed: the symbol timing */
     int32_t    l0r, l0i, u0r, u0i;    /* the tones 40 samples before */
     int64_t    fr, fi;                /* each tone x conj(itself 40 samples before), summed:
                                        * the carrier's offset */
     int32_t    abrun;                 /* samples AB has been there */
-    /* training */
+    /* training and data */
+    int32_t    off;                   /* samples the carrier has been off */
+    int64_t    pslow;                 /* the power, slowly (2^-12 a sample) */
+    int32_t    mlock;                 /* data mode: the error over 256 symbols */
+    int32_t    bad;                   /* data symbols it has been poor (lock_mse) */
+    int32_t    g;                     /* the data mode's gain on qamrx's input, Q14 */
+    int64_t    pz, pz8, pzl;          /* the points' power, over 32, 8 and 128 symbols */
+    int32_t    gstep;                 /* it is off (a level step): the decisions wrong,
+                                       * nothing else adapted */
+    int32_t    gcnt;                  /* symbols it has been so; negative: since the gain
+                                       * was set, the equaliser flushing */
     int32_t    nsym;                  /* symbols since qamrx_sync */
     int32_t    held;                  /* symbols the error has been under -20 dB */
     int32_t    fast;                  /* still on the fast steps */
     uint32_t   offw;                  /* off the 4 points: the last 8 symbols, bit 0 the newest */
     int32_t    mse;                   /* |e|^2 / |d|^2 (65536 = 0 dB), smoothed over 16 symbols */
-    int32_t    mse0;                  /* mse when none of the last 8 was off */
+    int32_t    mse0;                  /* mse before the last 8 points */
+    int32_t    msh[8];                /* mse over the last 8 symbols */
     int32_t    hzr[8], hzi[8];        /* the last 8 points, for the decoder at the switch */
     uint32_t   sh;                    /* the last 8 decisions (A..D), 2 bits each, the newest lowest */
     int32_t    alt;                   /* symbols since the last 8 were an alternation (S, S-bar) */
@@ -232,19 +268,20 @@ typedef struct {
 } hst_frx_t;
 
 void hst_frx_init(hst_frx_t *r);
-/* the rate code in force, 2..6 (outside, the nearest); in data mode a new
- * one takes the next symbol */
+/* the rate code in force, 2..6 (outside, the nearest). In data mode a new
+ * one takes the next symbol, and the decoder starts again: the
+ * V32_VDEPTH symbols in it are lost (the switch's ones cover them) */
 void hst_frx_set_code(hst_frx_t *r, int code);
 /* one line sample; returns the number of bits decided, in r->bits[] */
 int  hst_frx_tick(hst_frx_t *r, int16_t x);
 int  hst_frx_state(const hst_frx_t *r);
 /* the equaliser (taps, carrier frequency) as it is now */
 void hst_frx_store(const hst_frx_t *r, hst_eqstore_t *s);
-/* back to listening for AB; the next training starts from s's equaliser
- * (when s->valid) instead of the matched filter */
+/* back to listening for AB (IDLE); the next training starts from s's
+ * equaliser (when s->valid) instead of the matched filter */
 void hst_frx_restore(hst_frx_t *r, const hst_eqstore_t *s);
 /* the signal and error power over the last 64 symbols or so (training or
- * data); 0 before the first training */
+ * data); 0 before the first training and after hst_frx_restore */
 int  hst_frx_snr(const hst_frx_t *r, int64_t *num, int64_t *den);
 
 #endif

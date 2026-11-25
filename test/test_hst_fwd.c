@@ -52,6 +52,19 @@
  *                 -40 dB; through the transmitter and the receiver as it
  *                 starts (matched filter, AB's timing, nothing adapted;
  *                 noiseless, no line): 25 dB or more
+ *   carrier_loss  the caller stops in data mode (codes 2, 4, 6): NOCARRIER
+ *                 within HST_FRX_LOSS_MS + 200 ms, no bits from 200 ms on
+ *   carrier_return the line cut 1 s at 14400: NOCARRIER; the data back
+ *                 without a training: still NOCARRIER, no bits; a short
+ *                 training then starts from the equaliser kept at the loss
+ *   dropout       the line cut 100 ms (codes 2, 4, 6): data mode kept, no
+ *                 error from 4000 data bits after it
+ *   train_fail    15 dB (codes 3, 4): not in training 2.2 s on; 6 dB
+ *                 (code 4): TRAINFAIL by then, no bits
+ *   level_step    -1 and +3 dB at 14400, -2 and +6 dB at 9600 in data
+ *                 mode: data mode kept, no error from 16000 data bits on
+ *   lock_loss     the line's carrier 40 Hz off at 14400: UNLOCKED within
+ *                 HST_FRX_LOCK_SYMS + 0.3 s, no bits after it
  *
  * The program also runs under make check-hst-bm (HST_PROFILE_BM), where
  * every training is V.17's long train; there cases 4 and on are
@@ -804,6 +817,7 @@ static double fp_tx(void *user, double rx) { (void)rx; return hst_ftx_tick(&((fp
  * 30 dB under the signal at the answerer; hz and ppm of offset */
 static const double floop[] = { 0.3, 1.0, -0.5, 0.3 };
 static double dbm0_of(double rms) { return 20 * log10(rms / v32line_rms(0)); }
+static double fsnr = 30;          /* the line's SNR, dB */
 static void fline(v32line_t *l, double hz, double ppm, uint32_t seed)
 {
     v32line_cfg c;
@@ -817,7 +831,7 @@ static void fline(v32line_t *l, double hz, double ppm, uint32_t seed)
     c.mulaw = 1; c.loss_db = 6; c.delay = 200; c.taps = floop; c.ntaps = 4;
     c.near_db = c.far_db = c.c_near_db = c.c_far_db = 300;
     c.noise_c_dbm0 = -300;
-    c.noise_a_dbm0 = dbm0_of(FLEVEL * pow(10, -6 / 20.0) * sqrt(g / n)) - 30;
+    c.noise_a_dbm0 = dbm0_of(FLEVEL * pow(10, -6 / 20.0) * sqrt(g / n)) - fsnr;
     c.freq_offset = hz; c.ppm = ppm; c.seed = seed;
     v32line_init(l, &c);
 }
@@ -826,10 +840,18 @@ static hst_frx_t R;
 static v32line_t L;
 static fpeer_t   P;
 
-/* a tick of the line: the caller's sample to the receiver, its bits logged */
+/* a tick of the line: the caller's sample, times fscale (a level step, or
+ * 0: the line cut), to the receiver; its bits logged */
+static double fscale = 1;
 static void ftick(void)
 {
-    int k, n = hst_frx_tick(&R, v32line_tick(&L, 0, fp_tx, &P));
+    int16_t x = v32line_tick(&L, 0, fp_tx, &P);
+    int k, n;
+    if (fscale != 1) {
+        double v = floor(x * fscale + 0.5);
+        x = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+    }
+    n = hst_frx_tick(&R, x);
     for (k = 0; k < n; k++) { if (nrx < NLOG) rxb[nrx] = R.bits[k]; nrx++; }
 }
 
@@ -885,6 +907,7 @@ static void ftrain(fres_t *o, int code, int long_form, long secs)
 static void fstart(int code, double hz, double ppm, uint32_t seed)
 {
     int n;
+    fscale = 1;
     fline(&L, hz, ppm, seed);
     P.r = seed * 2654435761u + 12345u; P.n = 0;
     hst_ftx_init(&P.tx, FLEVEL, fp_bit, &P);
@@ -986,6 +1009,181 @@ static void trn_as_ones(void)
     bound("TRN decodes as ones (and there is some)", o.found && o.off > 1000 && zeros == 0);
     bound("then the data, no error in the bits compared", o.found && o.cmp == NB && o.errs == 0);
 }
+
+/* ---- the receiver's own ends: carrier, lock, training; level steps ---- */
+
+/* ticks until the caller has sent `bits` data bits, `secs` at most */
+static void frun_bits(long bits, long secs)
+{
+    long n = 0;
+    while (n < secs * FS && P.n < bits) { ftick(); n++; }
+}
+
+/* a long training at `code` from fstart, then data until `bits` have been sent */
+static void fdata(int code, uint32_t seed, long bits)
+{
+    fstart(code, 0, 0, seed);
+    nrx = 0; P.n = 0;
+    hst_ftx_train(&P.tx, code, 1);
+    frun_bits(bits, 8);
+}
+
+/* the caller stops in data mode: NOCARRIER within HST_FRX_LOSS_MS + 200 ms
+ * of its last symbol, no bit from 200 ms after it on (the line's 25 ms,
+ * the pulse's ring, the guard's 19 ms, the power falling 30 dB), NOCARRIER
+ * still 3 s later */
+static void carrier_loss(void)
+{
+    static const int codes[3] = { 2, 4, 6 };
+    int c;
+    for (c = 0; c < 3; c++) {
+        int code = codes[c], was_data;
+        long n, at = -1, n0, after = 0;
+        fdata(code, 700u + (uint32_t)code, 4000);
+        was_data = hst_frx_state(&R) == HST_FRX_DATA;
+        hst_ftx_stop(&P.tx);
+        for (n = 0; n < 3 * FS; n++) {
+            n0 = nrx;
+            ftick();
+            if (n >= FS / 5) after += nrx - n0;
+            if (at < 0 && hst_frx_state(&R) == HST_FRX_NOCARRIER) at = n;
+        }
+        printf("carrier_loss, code %d: NOCARRIER %s; %ld bits from 200 ms after the carrier's end; 3 s later state %d\n",
+               code, at >= 0 && at <= (HST_FRX_LOSS_MS + 200) * 8 ? "in time" : "LATE OR NEVER", after, hst_frx_state(&R));
+        if (verbose) printf("  (NOCARRIER %.1f ms after the caller stopped)\n", at / 8.0);
+        bound("in data mode before", was_data);
+        bound("NOCARRIER within HST_FRX_LOSS_MS + 200 ms, and kept", at >= 0 && at <= (HST_FRX_LOSS_MS + 200) * 8 && hst_frx_state(&R) == HST_FRX_NOCARRIER);
+        bound("no bits from 200 ms after the carrier's end", after == 0);
+    }
+}
+
+/* The line cut for 1 s in data mode (14400), then back with the caller's
+ * data going on: no AB, so the receiver stays NOCARRIER and gives no bits
+ * (the scheme has to ask for a training). Then a short training: it
+ * starts from the equaliser kept at the loss: trained before the data
+ * came, no error from the 41st data symbol */
+static void carrier_return(void)
+{
+    fres_t o;
+    long n, bits = 0, n0;
+    int st_cut, st_back;
+    fdata(6, 800u, 4000);
+    fscale = 0;
+    for (n = 0; n < FS; n++) ftick();
+    st_cut = hst_frx_state(&R);
+    fscale = 1;
+    for (n = 0; n < FS; n++) { n0 = nrx; ftick(); bits += nrx - n0; }
+    st_back = hst_frx_state(&R);
+    printf("carrier_return: after a 1 s cut state %d; with the data back for 1 s, state %d and %ld bits\n", st_cut, st_back, bits);
+    bound("the cut: NOCARRIER", st_cut == HST_FRX_NOCARRIER);
+    bound("the data back without a training: still NOCARRIER, no bits", st_back == HST_FRX_NOCARRIER && bits == 0);
+    ftrain(&o, 6, 0, fsecs(6, 0));
+    compare(&o, 40L * 6);
+    printf("carrier_return: a short training then: data mode %s, %s; from the 41st data symbol %ld errors in %ld bits\n",
+           o.data_at >= 0 ? "reached" : "NOT reached", o.fast == 0 ? "tracking by then" : "still fast", o.errs, o.cmp);
+    bound("a short training: from the equaliser kept, trained before the data", o.fast == 0);
+    bound("then no error from the 41st data symbol", o.found && o.cmp == NB && o.errs == 0);
+}
+
+/* the line cut for 100 ms in data mode: still data mode throughout, and no
+ * error from 4000 data bits after the cut */
+static void dropout(void)
+{
+    static const int codes[3] = { 2, 4, 6 };
+    int c;
+    for (c = 0; c < 3; c++) {
+        int code = codes[c], left = 0;
+        long n, ev;
+        fres_t o;
+        fdata(code, 900u + (uint32_t)code, 4000);
+        ev = P.n;
+        fscale = 0;
+        for (n = 0; n < FS / 10; n++) { ftick(); left |= hst_frx_state(&R) != HST_FRX_DATA; }
+        fscale = 1;
+        while (P.n < ev + 4000 + NB + 2000) { ftick(); left |= hst_frx_state(&R) != HST_FRX_DATA; }
+        compare(&o, ev + 4000);
+        printf("dropout, code %d: 100 ms; data mode %s; from 4000 data bits after it %ld errors in %ld bits\n",
+               code, left ? "LEFT" : "kept", o.errs, o.cmp);
+        if (verbose) printf("  (the last error %ld data bits after the cut)\n", o.last - ev);
+        bound("data mode kept", !left);
+        bound("no error from 4000 bits after it", o.found && o.cmp == NB && o.errs == 0);
+    }
+}
+
+/* A long training on a poor line: at 15 dB (codes 3 and 4) not in
+ * training 2.2 s after it began, whatever came of it; at 6 dB (code 4)
+ * TRAINFAIL by then, and no bits (at 10 dB 1 seed of 24 trained) */
+static void train_fail(void)
+{
+    static const int codes[3] = { 3, 4, 4 };
+    static const double snr[3] = { 15, 15, 6 };
+    int c;
+    for (c = 0; c < 3; c++) {
+        long n;
+        int st;
+        fsnr = snr[c];
+        fstart(codes[c], 0, 0, 1000u + (uint32_t)c);
+        nrx = 0; P.n = 0;
+        hst_ftx_train(&P.tx, codes[c], 1);
+        for (n = 0; n < FS * 22 / 10; n++) ftick();
+        st = hst_frx_state(&R);
+        fsnr = 30;
+        printf("train_fail, %d dB, code %d: in training 2.2 s after it began: %s\n", (int)snr[c], codes[c],
+               st == HST_FRX_TRAIN ? "yes" : "no");
+        if (verbose) printf("  (state %d, %ld bits)\n", st, nrx);
+        bound("not in training 2.2 s after it began", st != HST_FRX_TRAIN);
+        if (snr[c] < 12) {
+            printf("train_fail, %d dB, code %d: state %d, %ld bits\n", (int)snr[c], codes[c], st, nrx);
+            bound("TRAINFAIL, no bits", st == HST_FRX_TRAINFAIL && nrx == 0);
+        }
+    }
+}
+
+/* a level step in data mode, 2000 data bits in: still data mode, and no
+ * error from 16000 data bits after it (1.1 s at 14400, 1.7 s at 9600) */
+static void level_step(void)
+{
+    static const int codes[4] = { 6, 6, 4, 4 }, db[4] = { -1, 3, -2, 6 };
+    int c;
+    for (c = 0; c < 4; c++) {
+        long ev;
+        fres_t o;
+        fdata(codes[c], 1100u + (uint32_t)c, 2000);
+        ev = P.n;
+        fscale = pow(10, db[c] / 20.0);
+        frun_bits(ev + 16000 + NB + 2000, 40);
+        compare(&o, ev + 16000);
+        printf("level_step %+d dB, code %d: state %d; from 16000 data bits after it %ld errors in %ld bits\n",
+               db[c], codes[c], hst_frx_state(&R), o.errs, o.cmp);
+        if (verbose) printf("  (the last error %ld data bits after the step)\n", o.last - ev);
+        bound("data mode kept", hst_frx_state(&R) == HST_FRX_DATA);
+        bound("no error from 16000 bits after it", o.found && o.cmp == NB && o.errs == 0);
+        fscale = 1;
+    }
+}
+
+/* In data mode at 14400 the line's carrier jumps 40 Hz (past what the
+ * carrier loop takes): UNLOCKED within HST_FRX_LOCK_SYMS + 0.3 s, and no
+ * bits after it. (A rate changed unannounced is not seen: 9600's points
+ * fall on 14400's grid, the error stays small; the decoder's bits are
+ * wrong. HDLC's checks catch that.) */
+static void lock_loss(void)
+{
+    long n, at = -1, n0, after = 0;
+    fdata(6, 1200u, 4000);
+    L.cfg.freq_offset = 40;
+    for (n = 0; n < 2 * FS; n++) {
+        n0 = nrx;
+        ftick();
+        if (at >= 0) after += nrx - n0;
+        if (at < 0 && hst_frx_state(&R) == HST_FRX_UNLOCKED) at = n;
+    }
+    printf("lock_loss: the carrier 40 Hz off at 14400: UNLOCKED %s; %ld bits after it; 2 s later state %d\n",
+           at >= 0 && at <= HST_FRX_LOCK_SYMS * 10 / 3 + FS * 3 / 10 ? "in time" : "LATE OR NEVER", after, hst_frx_state(&R));
+    if (verbose) printf("  (UNLOCKED %.1f ms after the jump)\n", at / 8.0);
+    bound("UNLOCKED within HST_FRX_LOCK_SYMS + 0.3 s, and kept", at >= 0 && at <= HST_FRX_LOCK_SYMS * 10 / 3 + FS * 3 / 10 && hst_frx_state(&R) == HST_FRX_UNLOCKED);
+    bound("no bits after it", after == 0);
+}
 #else
 static void acq_v17(void)
 {
@@ -1076,7 +1274,7 @@ int main(int argc, char **argv)
 #ifdef HST_PROFILE_BM
     int only = t_case_arg(argc, argv, 7);
 #else
-    int only = t_case_arg(argc, argv, 13);
+    int only = t_case_arg(argc, argv, 19);
 #endif
     verbose = getenv("HST_VERBOSE") != NULL;
     if (T_CASE(only, 1)) pulse_points();
@@ -1098,6 +1296,12 @@ int main(int argc, char **argv)
     if (T_CASE(only, 11)) stored_eq();
     if (T_CASE(only, 12)) trn_as_ones();
     if (T_CASE(only, 13)) zero_isi();
+    if (T_CASE(only, 14)) carrier_loss();
+    if (T_CASE(only, 15)) carrier_return();
+    if (T_CASE(only, 16)) dropout();
+    if (T_CASE(only, 17)) train_fail();
+    if (T_CASE(only, 18)) level_step();
+    if (T_CASE(only, 19)) lock_loss();
 #endif
     T_REPORT("test_hst_fwd");
 }
