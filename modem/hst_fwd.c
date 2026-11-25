@@ -150,31 +150,49 @@ int16_t hst_ftx_tick(hst_ftx_t *t)
 void hst_gf_init(hst_gf_t *g)
 {
     int i;
-    for (i = 0; i < 2 * HST_GUARD_N; i++) g->x[i] = 0;
-    g->pos = 0;
+    for (i = 0; i < 2 * HST_GF_XN; i++) g->x[i] = 0;
+    for (i = 0; i < 2 * HST_GUARD_IN; i++) g->t[i] = 0;
+    g->pos = g->tpos = 0;
 }
 
 int16_t hst_gf_tick(hst_gf_t *g, int16_t in)
 {
+    enum { L = HST_GUARD_L, FN = HST_GUARD_FN, IN = HST_GUARD_IN, XN = HST_GF_XN };
     const int16_t *x;
+    const int32_t *t;
     int64_t acc;
+    int32_t y;
     int i;
-    if (--g->pos < 0) g->pos = HST_GUARD_N - 1;
-    g->x[g->pos] = g->x[g->pos + HST_GUARD_N] = in;
-    x = &g->x[g->pos];                 /* x[i]: i samples ago, i < HST_GUARD_N */
-    acc = (int64_t)hst_guard[HST_GUARD_N / 2] * x[HST_GUARD_N / 2];
-    /* four pairs a pass, from the outside in (the sum is exact: the order
-     * does not matter; about 7 instead of 8 ARMv5 instructions a pair) */
-    for (i = 0; i + 4 <= HST_GUARD_N / 2; i += 4) {
-        acc += (int64_t)hst_guard[i] * ((int32_t)x[i] + x[HST_GUARD_N - 1 - i]);
-        acc += (int64_t)hst_guard[i + 1] * ((int32_t)x[i + 1] + x[HST_GUARD_N - 2 - i]);
-        acc += (int64_t)hst_guard[i + 2] * ((int32_t)x[i + 2] + x[HST_GUARD_N - 3 - i]);
-        acc += (int64_t)hst_guard[i + 3] * ((int32_t)x[i + 3] + x[HST_GUARD_N - 4 - i]);
+    if (--g->pos < 0) g->pos = XN - 1;
+    g->x[g->pos] = g->x[g->pos + XN] = in;
+    x = &g->x[g->pos];                 /* x[i]: i samples ago, i < XN */
+    /* F on every L-th sample, from the outside in, four pairs a pass (the
+     * sum is exact: the order does not matter) */
+    acc = (int64_t)hst_guard_f[FN / 2] * x[L * (FN / 2)];
+    for (i = 0; i + 4 <= FN / 2; i += 4) {
+        acc += (int64_t)hst_guard_f[i] * ((int32_t)x[L * i] + x[XN - 1 - L * i]);
+        acc += (int64_t)hst_guard_f[i + 1] * ((int32_t)x[L * (i + 1)] + x[XN - 1 - L * (i + 1)]);
+        acc += (int64_t)hst_guard_f[i + 2] * ((int32_t)x[L * (i + 2)] + x[XN - 1 - L * (i + 2)]);
+        acc += (int64_t)hst_guard_f[i + 3] * ((int32_t)x[L * (i + 3)] + x[XN - 1 - L * (i + 3)]);
     }
-    for (; i < HST_GUARD_N / 2; i++)
-        acc += (int64_t)hst_guard[i] * ((int32_t)x[i] + x[HST_GUARD_N - 1 - i]);
-    acc = (acc + (1 << 14)) >> 15;
-    return (int16_t)(acc > 32767 ? 32767 : acc < -32768 ? -32768 : acc);
+    for (; i < FN / 2; i++)
+        acc += (int64_t)hst_guard_f[i] * ((int32_t)x[L * i] + x[XN - 1 - L * i]);
+    if (--g->tpos < 0) g->tpos = IN - 1;
+    g->t[g->tpos] = g->t[g->tpos + IN] = (int32_t)(acc / 4);
+    t = &g->t[g->tpos];
+    /* I on F's sums, likewise */
+    acc = (int64_t)hst_guard_i[IN / 2] * t[IN / 2];
+    for (i = 0; i + 4 <= IN / 2; i += 4) {
+        acc += (int64_t)hst_guard_i[i] * (t[i] + t[IN - 1 - i]);
+        acc += (int64_t)hst_guard_i[i + 1] * (t[i + 1] + t[IN - 2 - i]);
+        acc += (int64_t)hst_guard_i[i + 2] * (t[i + 2] + t[IN - 3 - i]);
+        acc += (int64_t)hst_guard_i[i + 3] * (t[i + 3] + t[IN - 4 - i]);
+    }
+    for (; i < IN / 2; i++)
+        acc += (int64_t)hst_guard_i[i] * (t[i] + t[IN - 1 - i]);
+    /* the low-pass, Q28 to a sample, rounded; the delayed input less it */
+    y = x[HST_GF_DELAY] - (int32_t)((acc + (1 << 27)) >> 28);
+    return (int16_t)(y > 32767 ? 32767 : y < -32768 ? -32768 : y);
 }
 
 /* ---------------- the forward receiver (hst.h) ---------------- */

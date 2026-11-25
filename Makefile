@@ -34,6 +34,8 @@
 #                        (calling the library's own answerer; make check runs it)
 #   make crd-scan        K56flex's CRd detector over recorded calls (RECS=<dir>): no detection
 #   make hst-scan        HST's back-channel detector over recorded calls (RECS=<dir>): none
+#   make cost-hst-fwd    ARM instructions a second of HST's forward receiver in 14400
+#                        data mode (rig/bench_hst.c)
 #   make cost-hst-back   ARM instructions a second of HST's two back receivers on one
 #                        band-pass, and of the detector (rig/bench_hst.c)
 #   make bench-v90       record a simulated V.90 call, replay it on the host and
@@ -900,6 +902,26 @@ cost-hst-back: $(BUILD)/bench_hst $(BUILD)/bench_hst.arm
 	     d) echo "HST back-channel detector, the caller at $$s: $$((c - loop)) ARM instructions a second ($$c with the bench's loop)"; echo "  ($$h)" ;; \
 	     esac; \
 	   done; \
+	 done
+# ---- HST's forward receiver on the target: rig/bench_hst -f writes 4 s of
+# our forward channel (the long training at 14400, then data; integer only);
+# cost-hst-fwd counts the ARM instructions of its third second (data mode)
+# through hst_frx_tick (-r), split where the trace enters bench_hst_mark,
+# less the bench's own loop (-n). The host's output and the target's must
+# agree ----
+.PHONY: cost-hst-fwd
+cost-hst-fwd: $(BUILD)/bench_hst $(BUILD)/bench_hst.arm
+	@pc=$$(nm $(BUILD)/bench_hst.arm | sed -n 's/^\([0-9a-f]*\) T bench_hst_mark$$/\1/p'); \
+	 r=$(BUILD)/hst_fwd.rec; $(abspath $(BUILD))/bench_hst -f $$r > /dev/null || exit 1; \
+	 for m in n r; do \
+	   h=$$($(abspath $(BUILD))/bench_hst -$$m $$r); a=$$($(QEMU) $(abspath $(BUILD))/bench_hst.arm -$$m $$r); \
+	   [ "$$h" = "$$a" ] || { echo "bench_hst -$$m: host '$$h', target '$$a'"; exit 1; }; \
+	   c=$$($(CNT) $(abspath $(BUILD))/bench_hst.arm -$$m $$r 2>&1 >/dev/null \
+	      | awk -v pc="/00000000$$pc/" 'BEGIN { k = 0 } /^Trace/ { if (index($$0, pc)) k++; n[k]++ } END { print n[1] + 0 }'); \
+	   case $$m in \
+	   n) loop=$$c ;; \
+	   r) echo "HST forward receiver, 14400 data mode: $$((c - loop)) ARM instructions a second ($$c with the bench's loop, $$loop)"; echo "  ($$h)" ;; \
+	   esac; \
 	 done
 $(BUILD)/bench_hst: rig/bench_hst.c $(MODEM_SRC) $(HDRS)
 	@mkdir -p $(BUILD)

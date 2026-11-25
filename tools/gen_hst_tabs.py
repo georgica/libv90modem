@@ -65,9 +65,13 @@ The forward channel (hst-facts.md "Forward channel"):
   hst_guard      the forward receiver's guard high-pass [OURS]: within
                  +-0.5 dB from 560 Hz up, at least 50 dB down at 480 Hz and
                  below (the spec's edges; the back channel's -20 dB band ends
-                 at 476 Hz). Kaiser FIR, cut-off 520 Hz, the fewest odd taps,
-                 Q15; run by hst_gf_tick (modem/hst_fwd.c), which uses its
-                 symmetry: (HST_GUARD_N + 1) / 2 multiplies a sample.
+                 at 476 Hz), and within +-0.02 dB from 600 Hz up (the
+                 forward signal's band). The delay less an interpolated
+                 FIR low-pass, hst_guard_f(z^4) hst_guard_i(z), each
+                 minimax (Parks-McClellan, remez() here), the pair with
+                 the fewest multiplies that holds all three as Q15 (see
+                 tab_guard); run by hst_gf_tick (modem/hst_fwd.c), which
+                 uses their symmetry.
 
 To add a table: write a function that returns (header lines, source
 lines) and append it to TABLES.
@@ -425,13 +429,172 @@ def tab_fpulse():
 
 
 # ---------------- the forward receiver's guard high-pass ----------------
+def remez(n, bands, dens=16):
+    """A linear-phase FIR of n taps (n odd), minimax (Parks-McClellan's
+    exchange): `bands` are (f1, f2, wanted gain, weight), Hz; the weighted
+    error is equal at the extremes of every band. Returns the taps (floats,
+    gain 1 = 1.0). Plain double arithmetic in a fixed order: the same taps
+    on every run."""
+    m = (n - 1) // 2
+    ne = m + 2                                  # extremes
+    span = sum(b[1] - b[0] for b in bands)
+    grid = []                                   # (w, wanted, weight, band)
+    for k, (f1, f2, d, w) in enumerate(bands):
+        g = max(int(dens * (m + 1) * (f2 - f1) / span), 2)
+        grid += [(2 * math.pi * (f1 + (f2 - f1) * i / g) / FS, d, w, k) for i in range(g + 1)]
+    xs = [math.cos(g[0]) for g in grid]
+    ng = len(grid)
+
+    def bary(pts):                              # barycentric weights (scaled by 2: no underflow)
+        out = []
+        for k, a in enumerate(pts):
+            p = 1.0
+            for j, b in enumerate(pts):
+                if j != k:
+                    p *= 2 * (a - b)
+            out.append(1 / p)
+        return out
+
+    ext = [i * (ng - 1) // (ne - 1) for i in range(ne)]
+    for it in range(60):
+        xe = [xs[i] for i in ext]
+        b = bary(xe)
+        delta = (sum(b[k] * grid[ext[k]][1] for k in range(ne))
+                 / sum(b[k] * (-1) ** k / grid[ext[k]][2] for k in range(ne)))
+        cx = xe[:m + 1]
+        cv = [grid[ext[k]][1] - (-1) ** k * delta / grid[ext[k]][2] for k in range(m + 1)]
+        cb = bary(cx)
+
+        def amp(x):
+            num = den = 0.0
+            for k in range(m + 1):
+                t = x - cx[k]
+                if t == 0:
+                    return cv[k]
+                num += cb[k] / t * cv[k]
+                den += cb[k] / t
+            return num / den
+
+        err = [g[2] * (amp(x) - g[1]) for g, x in zip(grid, xs)]
+        # the local extremes within each band, then alternating in sign
+        cand = []
+        for i in range(ng):
+            e = err[i]
+            l = err[i - 1] if i > 0 and grid[i - 1][3] == grid[i][3] else None
+            r = err[i + 1] if i < ng - 1 and grid[i + 1][3] == grid[i][3] else None
+            if (e > 0 and (l is None or e >= l) and (r is None or e > r)) or \
+               (e < 0 and (l is None or e <= l) and (r is None or e < r)):
+                cand.append(i)
+        alt = []
+        for i in cand:
+            if alt and (err[i] > 0) == (err[alt[-1]] > 0):
+                if abs(err[i]) > abs(err[alt[-1]]):
+                    alt[-1] = i
+            else:
+                alt.append(i)
+        while len(alt) > ne:
+            alt.pop(0 if abs(err[alt[0]]) < abs(err[alt[-1]]) else -1)
+        if len(alt) < ne:
+            die("remez: %d taps: the exchange lost its alternation" % n)
+        ext = alt
+        if max(abs(err[i]) for i in ext) <= abs(delta) * (1 + 1e-6):
+            break
+    else:
+        die("remez: %d taps: no convergence" % n)
+    a = [amp(math.cos(2 * math.pi * k / n)) for k in range(n)]
+    return [sum(a[k] * math.cos(2 * math.pi * k * (i - m) / n) for k in range(n)) / n for i in range(n)]
+
+
+# The guard: the spec's bounds, at least 50 dB down at 480 Hz and below and
+# within 0.5 dB from 560 Hz up, and within 0.02 dB from 600 Hz up, where the
+# forward signal is (its -3 dB points are 600 and 3000 Hz): passband ripple
+# there is an echo at the ends of the guard's impulse response, beyond the
+# equaliser's 24 symbols; +-0.02 dB is +-0.0023, -53 dB of the signal.
+#
+# It is the delay less a low-pass, the low-pass an interpolated FIR: F(z^4)
+# I(z). F, designed for four times the band edges (pass 0-1920 Hz, stop
+# 2240-4000 Hz), is run on every fourth sample, which puts its edges at
+# 480 and 560 Hz with images of its pass band about 2000 Hz; I (pass 0-560,
+# stop 1440-4000 Hz) takes the images away. Each is a minimax design, and
+# the low-pass's amplitude is the product of theirs, so the guard's is
+# 1 - F(4f) I(f): F's and I's pass-band error is the guard's stop band (the
+# budget 0.0016 and 0.0010 of 0.0028, -51 dB), their stop bands its pass
+# band's ripple (0.0018 each, under 0.0023). About 53 multiplies a sample,
+# against some 118 for one minimax filter of the same bounds (235 taps).
+G_STOP, G_LOOSE, G_FLAT = 51.0, 0.4, 0.02     # 1 dB and 0.1 dB of margin on the spec's
+G_L = 4
+G_WF = 0.0018 / 0.0016                        # F's pass-band weight (stop band 1)
+G_WI = 0.0018 / 0.0010                        # I's
+
+
+def zero_phase(h, w):
+    """The real amplitude of a symmetric h (odd length) at w rad a sample."""
+    m = (len(h) - 1) // 2
+    return h[m] + 2 * sum(h[m - k] * math.cos(k * w) for k in range(1, m + 1))
+
+
+def guard_check(fa, ia, freqs):
+    """The guard's response in dB at freqs, from F's amplitude at 4f and I's
+    at f (dicts of Q15 amplitudes by frequency)."""
+    return [20 * math.log10(abs(1 - fa[f] * ia[f] / 2.0 ** 30) + 1e-30) for f in freqs]
+
+
 def tab_guard():
-    taps = design("hst_guard", 520.0, FS / 2, (560, 4000), ((0, 480),), 50, trans=80.0)
-    h = ["#define HST_GUARD_N %d" % len(taps),
-         "/* high-pass before the forward receiver: within 0.5 dB from 560 Hz up, >= 50 dB",
-         " * down at 480 Hz and below (the back channel); Q15, linear phase, gain 1 */",
-         "extern const int16_t hst_guard[HST_GUARD_N];"]
-    c = ["const int16_t hst_guard[HST_GUARD_N] = {"] + rows(taps, 12) + ["};", ""]
+    stop = list(range(0, 481, 2))
+    loose = list(range(560, 601, 2))
+    band = list(range(600, 4001, 2))
+    freqs = stop + loose + band
+    designs = {}
+
+    def amps(n, which):
+        if (n, which) not in designs:
+            if which == "F":
+                t = remez(n, ((0, G_L * 480, 1.0, G_WF), (G_L * 560, FS / 2, 0.0, 1.0)))
+            else:
+                t = remez(n, ((0, 560, 1.0, G_WI), (1440, FS / 2, 0.0, 1.0)))
+            t = [q(v, 32768) for v in t]
+            if any(t[i] != t[n - 1 - i] for i in range(n)):
+                die("hst_guard: not symmetric")
+            k = G_L if which == "F" else 1
+            designs[(n, which)] = (t, {f: zero_phase(t, 2 * math.pi * k * f / FS) for f in freqs})
+        return designs[(n, which)]
+
+    best = None
+    for ni in range(21, 42, 2):
+        for nf in range(55, 112, 2):
+            if best and (ni + 1) // 2 + (nf + 1) // 2 >= best[0]:
+                break
+            fa, ia = amps(nf, "F")[1], amps(ni, "I")[1]
+            sb = max(guard_check(fa, ia, stop))
+            if sb > -G_STOP:
+                continue
+            lo = guard_check(fa, ia, loose)
+            fl = guard_check(fa, ia, band)
+            if min(lo) >= -G_LOOSE - 0.1 and max(lo) <= G_LOOSE + 0.1 and min(fl) >= -G_FLAT and max(fl) <= G_FLAT:
+                best = ((ni + 1) // 2 + (nf + 1) // 2, nf, ni, sb, min(lo), max(lo), min(fl), max(fl))
+                break
+    if not best:
+        die("hst_guard: no design")
+    mul, nf, ni, sb, lo, hi, flo, fhi = best
+    ft, it = amps(nf, "F")[0], amps(ni, "I")[0]
+    # hst_gf_tick keeps F's sums over 4 for I: under 2^30, so that two of
+    # them, added before I's multiply, fit an int32
+    if sum(abs(v) for v in ft) * 32768 // 4 >= 2 ** 30:
+        die("hst_guard: F's sums do not fit")
+    sys.stderr.write("gen_hst_tabs: hst_guard: F %d taps every %d samples, I %d taps: %d multiplies a sample, "
+                     "560-600 Hz %.2f..%.2f dB, 600 Hz up %.3f..%.3f dB, stop %.1f dB\n"
+                     % (nf, G_L, ni, mul, lo, hi, flo, fhi, sb))
+    h = ["#define HST_GUARD_L %d" % G_L,
+         "#define HST_GUARD_FN %d" % nf,
+         "#define HST_GUARD_IN %d" % ni,
+         "/* high-pass before the forward receiver: within 0.5 dB from 560 Hz up and 0.02 dB",
+         " * from 600 Hz up, >= 50 dB down at 480 Hz and below (the back channel), linear",
+         " * phase: the delay less the low-pass hst_guard_f(z^HST_GUARD_L) hst_guard_i(z);",
+         " * Q15, each gain 1 */",
+         "extern const int16_t hst_guard_f[HST_GUARD_FN];",
+         "extern const int16_t hst_guard_i[HST_GUARD_IN];"]
+    c = (["const int16_t hst_guard_f[HST_GUARD_FN] = {"] + rows(ft, 12) + ["};", ""]
+         + ["const int16_t hst_guard_i[HST_GUARD_IN] = {"] + rows(it, 12) + ["};", ""])
     return h, c
 
 
