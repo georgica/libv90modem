@@ -54,4 +54,59 @@ trn: short S3 after data, 200 symbols: 0 unlike GPC's, 150 unlike GPA's; A 82, B
   S3: ones through GPC from zero, Table 4's dibits: pass
   S3: not GPA's: pass
   S3: all 4 points: pass
-test_hst_fwd: 91 checks, 0 failures
+acq_long, code 2: data mode reached; 0 errors in 100000 bits
+  reaches data mode: pass
+  no error in the bits compared: pass
+acq_long, code 3: data mode reached; 0 errors in 100000 bits
+  reaches data mode: pass
+  no error in the bits compared: pass
+acq_long, code 4: data mode reached; 0 errors in 100000 bits
+  reaches data mode: pass
+  no error in the bits compared: pass
+acq_long, code 5: data mode reached; 0 errors in 100000 bits
+  reaches data mode: pass
+  no error in the bits compared: pass
+acq_long, code 6: data mode reached; 0 errors in 100000 bits
+  reaches data mode: pass
+  no error in the bits compared: pass
+acq_short, code 2: data mode reached; 0 errors in 100000 bits
+  reaches data mode: pass
+  no error in the bits compared: pass
+acq_short, code 3: data mode reached; 0 errors in 100000 bits
+  reaches data mode: pass
+  no error in the bits compared: pass
+acq_short, code 4: data mode reached; 0 errors in 100000 bits
+  reaches data mode: pass
+  no error in the bits compared: pass
+acq_short, code 5: data mode reached; 0 errors in 100000 bits
+  reaches data mode: pass
+  no error in the bits compared: pass
+acq_short, code 6: data mode reached; 0 errors in 100000 bits
+  reaches data mode: pass
+  no error in the bits compared: pass
+acq_offset +7 Hz +100 ppm, code 6: data mode reached; 0 errors in 100000 bits
+  reaches data mode: pass
+  no error in the bits compared: pass
+acq_offset +7 Hz -100 ppm, code 6: data mode reached; 0 errors in 100000 bits
+  reaches data mode: pass
+  no error in the bits compared: pass
+acq_offset -7 Hz +100 ppm, code 6: data mode reached; 0 errors in 100000 bits
+  reaches data mode: pass
+  no error in the bits compared: pass
+acq_offset -7 Hz -100 ppm, code 6: data mode reached; 0 errors in 100000 bits
+  reaches data mode: pass
+  no error in the bits compared: pass
+stored_eq, code 3: data mode reached, tracking by then; from the 41st data symbol 0 errors in 100000 bits
+  trained (tracking) before the data came: pass
+  data from its 41st symbol on without error: pass
+stored_eq, code 6: data mode reached, tracking by then; from the 41st data symbol 0 errors in 100000 bits
+  trained (tracking) before the data came: pass
+  data from its 41st symbol on without error: pass
+trn_as_ones: 0 zeros before the data; 0 errors in 100000 data bits
+  TRN decodes as ones (and there is some): pass
+  then the data, no error in the bits compared: pass
+zero_isi: the pulse against itself at 1 .. 29 symbols
+  the pulse's own ISI at most -40 dB: pass
+zero_isi: transmitter to receiver, 400 points of the 4-point training through the matched filter
+  through the receiver's start, nothing adapted: at least 25 dB: pass
+test_hst_fwd: 129 checks, 0 failures

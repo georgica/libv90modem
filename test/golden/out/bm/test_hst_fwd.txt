@@ -91,4 +91,23 @@ bm short asked, code 6: unlike: AB 0, first 16 0, conditioning 0, bridge bits 0,
   segment 4: differential from the bridge's first symbol in the rate's labelling: pass
   getbit idle through the training: pass
   then data at the rate: pass
-test_hst_fwd: 111 checks, 0 failures
+acq_v17, code 2: data mode reached; 0 errors in 100000 bits
+  reaches data mode: pass
+  no error in the bits compared: pass
+acq_v17, code 3: data mode reached; 0 errors in 100000 bits
+  reaches data mode: pass
+  no error in the bits compared: pass
+acq_v17, code 4: data mode reached; 0 errors in 100000 bits
+  reaches data mode: pass
+  no error in the bits compared: pass
+acq_v17, code 5: data mode reached; 0 errors in 100000 bits
+  reaches data mode: pass
+  no error in the bits compared: pass
+acq_v17, code 6: data mode reached; 0 errors in 100000 bits
+  reaches data mode: pass
+  no error in the bits compared: pass
+zero_isi: the pulse against itself at 1 .. 29 symbols
+  the pulse's own ISI at most -40 dB: pass
+zero_isi: transmitter to receiver, 400 points of the 4-point training through the matched filter
+  through the receiver's start, nothing adapted: at least 25 dB: pass
+test_hst_fwd: 123 checks, 0 failures
