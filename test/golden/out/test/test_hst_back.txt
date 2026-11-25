@@ -21,4 +21,58 @@ tx_spectrum 300: level 4002 (asked 4000), 38 segments
   level within 0.3 dB of 4000: pass
   >= 600 Hz at least 50 dB below the peak: pass
   -20 dB band within 10 Hz of 283-417 Hz: pass
-test_hst_back: 42 checks, 0 failures
+loop_450 +7 Hz +100 ppm: 200000 bits compared after the lock
+  locked: pass
+  BER < 1e-5 (at most one error): pass
+  no loss of lock or carrier after the lock: pass
+loop_450 +7 Hz -100 ppm: 200000 bits compared after the lock
+  locked: pass
+  BER < 1e-5 (at most one error): pass
+  no loss of lock or carrier after the lock: pass
+loop_450 -7 Hz +100 ppm: 200000 bits compared after the lock
+  locked: pass
+  BER < 1e-5 (at most one error): pass
+  no loss of lock or carrier after the lock: pass
+loop_450 -7 Hz -100 ppm: 200000 bits compared after the lock
+  locked: pass
+  BER < 1e-5 (at most one error): pass
+  no loss of lock or carrier after the lock: pass
+loop_300 +7 Hz +100 ppm: 200000 bits compared after the lock
+  locked: pass
+  BER < 1e-5 (at most one error): pass
+  no loss of lock or carrier after the lock: pass
+loop_300 +7 Hz -100 ppm: 200000 bits compared after the lock
+  locked: pass
+  BER < 1e-5 (at most one error): pass
+  no loss of lock or carrier after the lock: pass
+loop_300 -7 Hz +100 ppm: 200000 bits compared after the lock
+  locked: pass
+  BER < 1e-5 (at most one error): pass
+  no loss of lock or carrier after the lock: pass
+loop_300 -7 Hz -100 ppm: 200000 bits compared after the lock
+  locked: pass
+  BER < 1e-5 (at most one error): pass
+  no loss of lock or carrier after the lock: pass
+lock_time 450: 4 lines
+  locked within 300 ms on every line: pass
+lock_time 300: 4 lines
+  locked within 450 ms on every line: pass
+cd 450: 10 s of -50 dBm0 noise
+  no carrier, no lock, no bits: pass
+cd 450: 2 s of signal, then silence
+  carrier on with the signal: pass
+  carrier off within 100 ms of the silence: pass
+cd 300: 10 s of -50 dBm0 noise
+  no carrier, no lock, no bits: pass
+cd 300: 2 s of signal, then silence
+  carrier on with the signal: pass
+  carrier off within 100 ms of the silence: pass
+line_450 +7 Hz +100 ppm: 50000 bits compared after the lock
+  locked: pass
+  no bit in error: pass
+  no loss of lock or carrier after the lock: pass
+line_300 +7 Hz +100 ppm: 50000 bits compared after the lock
+  locked: pass
+  no bit in error: pass
+  no loss of lock or carrier after the lock: pass
+test_hst_back: 80 checks, 0 failures

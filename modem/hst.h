@@ -14,13 +14,106 @@
 #include "hst_tabs.h"
 #include "../v32/v32.h"
 
-/* ---------------- the back channel's receivers (Task 12) ----------------
- * hst_bbpf (hst_tabs.h, 243 taps) is meant to be evaluated only at the
- * receiver's 1600 Hz instants (every 5th sample), shared by both
- * receivers: at 8000 Hz it would cost some 2 M multiply-adds a second. Its
- * >= 50 dB stop band at 600 Hz and above is what folds into 250-500 Hz at
- * 1600 Hz. hst_hbpf (189 taps) serves the detector's power ratio only, so
- * it can be evaluated at a sub-sampled rate. */
+/* ---------------- the back channel's receiver ----------------
+ * One receiver a speed (both run while we hold the forward channel):
+ *
+ *   8000 Hz -> hst_bbpf (250-500 Hz) at every 5th sample only -> 1600 Hz
+ *   -> AGC -> 32-bit NCO to baseband -> matched filter (the transmit pulse
+ *   of hst_tabs, +-4 symbols, evaluated only at the strobes, at the
+ *   strobe's fractional time: no interpolator) -> Gardner timing at 2
+ *   strobes a symbol -> differential decisions -> scr17 descrambler.
+ *
+ * hst_bbpf (243 taps, folded: 122 multiplies) runs at 1600 Hz, not 8000,
+ * and once for both receivers (hst_brx_band): its >= 50 dB stop band at
+ * 600 Hz and above is what folds into 250-500 Hz at 1600 Hz. hst_hbpf
+ * (189 taps) is not the receiver's: it feeds the detector's power ratio
+ * only (Task 13), which evaluates it at every 4th sample (the power of a
+ * sub-sampled output is the output's power).
+ *
+ * Timing, acquired in one step: four strobes a symbol over HST_BRX_OM
+ * symbols, the phase of the symbol-rate line in their power (Oerder and
+ * Meyr); then Gardner at two strobes a symbol.
+ *
+ * The carrier, acquired in one step: over HST_BRX_EST symbols, the eighth
+ * power of the differential strobes gives the turn a symbol modulo 45
+ * degrees, data removed. 45 degrees a symbol is baud/8 Hz, 12.5 Hz at
+ * 300, where a 7 Hz offset turns a symbol 25 degrees; the midpoint strobes
+ * settle which of r, r + 45 and r - 45 it is. A midpoint is the sum of the
+ * symbols around it weighted by the pulse's autocorrelation, each turned
+ * against it by the carrier; the right turn predicts it, one 45 degrees
+ * off does not. The turn is taken off each differential angle (wturn), not
+ * stepped onto the NCO, which reaches the strobes only through the matched
+ * filter's 8 symbols. Then a frequency loop on the differential decisions'
+ * error (no phase loop: the decisions are differential); once locked,
+ * wturn drains slowly into the NCO.
+ *
+ * The whole acquisition again if no lock follows, or when lock is lost.
+ * Carrier detect: the band's power in 10 ms blocks (before the AGC), on
+ * at -44 dBm0 for 3 blocks, off under -47 dBm0 for 3 blocks [OURS]. */
+#define HST_BRX_XL  (HST_BBPF_N + 40)  /* the 8000 Hz input, linear, moved down when full */
+#define HST_BRX_ZN  130                /* the matched filter's span at 1600 Hz: 8 symbols at 300, +2 */
+#define HST_BRX_ZL  (HST_BRX_ZN + 32)  /* the 1600 Hz baseband, linear, moved down when full */
+#define HST_BRX_EST 10                 /* symbols for the carrier's estimate */
+#define HST_BRX_OM  8                  /* symbols for the timing's */
+
+typedef struct {
+    int16_t  xh[HST_BRX_XL];          /* the input at 8000 Hz */
+    int16_t  zr[HST_BRX_ZL], zi[HST_BRX_ZL];   /* baseband at 1600 Hz */
+    int32_t  xn, dec, zn;             /* the next places in xh and zr/zi; samples since the last band-pass */
+    int32_t  y;                       /* the last band-passed sample (1600 Hz) */
+    int32_t  lane;                    /* 0: 450, 1: 300 */
+    /* carrier detect and AGC, on the band's power */
+    int64_t  bpw, ps;                 /* this block's sum of squares; the smoothed block power */
+    int32_t  nblk, cnt, cd;
+    int32_t  gain;                    /* Q16 */
+    /* NCO */
+    uint32_t ph, dph, dph0;
+    /* timing */
+    int32_t  tacc;                    /* time since the last strobe, pulse phases Q16 */
+    int32_t  half;                    /* the last strobe was a midpoint's (1) or a symbol's (0) */
+    int32_t  acq;                     /* acquisition: timing, carrier, lock */
+    int32_t  sidx, nom;               /* timing: the quarter-symbol strobe, symbols so far */
+    int64_t  omr, omi;                /* timing: the symbol-rate line of the strobes' power */
+    int32_t  ymr, ymi, ypr, ypi;      /* the last midpoint strobe, the last symbol strobe */
+    int64_t  pref;                    /* mean symbol power */
+    /* acquisition: the carrier's turn a symbol, from HST_BRX_EST symbol
+     * and midpoint strobes */
+    int32_t  rho1, rho3;              /* the pulse's autocorrelation at T/2 and 3T/2, Q14 of its peak */
+    int32_t  esr[HST_BRX_EST], esi[HST_BRX_EST];   /* symbol strobes */
+    int32_t  emr[HST_BRX_EST], emi[HST_BRX_EST];   /* the midpoint strobe before each */
+    int32_t  nest, wait;              /* strobes kept; symbols left for a lock before acquiring again */
+    /* decisions */
+    uint32_t aprev;                   /* the last symbol's angle */
+    int32_t  wturn;                   /* the carrier's turn a symbol left after the NCO, 2^32 a turn */
+    uint32_t okhist;                  /* grid_ok, the newest in bit 0 */
+    int32_t  nsym, locked, grid_ok;
+    int64_t  e2;                      /* mean square of the decision error, turns Q16 squared */
+    scr_t    scr;
+    uint8_t  bits[3];                 /* the last symbol's bits, the first in bits[0] */
+} hst_brx_t;
+
+/* bps 450 or 300 */
+void hst_brx_init(hst_brx_t *r, int bps);
+/* one sample at 8000 Hz; returns the bits decided (0 or 3), in r->bits[]
+ * (none while there is no carrier; until hst_brx_locked, not to be
+ * trusted) */
+int  hst_brx_tick(hst_brx_t *r, int16_t x);
+/* one band-passed sample at 1600 Hz, as hst_brx_tick computes it at every
+ * 5th sample (it returns the same). Both receivers run on one band-pass:
+ * hst_brx_tick on the first, and whenever its `dec` is back to 0,
+ * hst_brx_band on the second with the first's `y` */
+int  hst_brx_band(hst_brx_t *r, int32_t y);
+/* carrier, with hysteresis */
+int  hst_brx_cd(const hst_brx_t *r);
+/* the differential decisions on the grid: 11 of the last 12, after the
+ * acquisition; lost when 8 of the last 16 are off it, or with the carrier */
+int  hst_brx_locked(const hst_brx_t *r);
+/* the SNR (Es/N0, from the decisions' phase error) as num/den; 0 when not
+ * locked */
+int  hst_brx_snr(const hst_brx_t *r, int64_t *num, int64_t *den);
+/* the last decision within +-12 degrees of the 45-degree grid (the
+ * detector's input) */
+int  hst_brx_grid_ok(const hst_brx_t *r);
 
 /* ---------------- the back channel's transmitter ---------------- */
 #define HST_BTX_PRE_MS 300            /* preamble: scrambled ones [OURS] */

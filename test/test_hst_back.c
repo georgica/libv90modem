@@ -20,6 +20,22 @@
  *                above >= 50 dB below the in-band peak; the occupied band at
  *                -20 dB 274-476 Hz (450) and 283-417 Hz (300) within
  *                +-10 Hz; the line level is the one asked for
+ *   loop_450, loop_300  our transmitter, random data, through a line of
+ *                sim/resamp (+-100 ppm), a +-7 Hz carrier shift and sim/noise
+ *                (white, 20 dB below the signal over 0-4 kHz); four cases
+ *                each: locked, and at most one bit in error in 2 x 10^5
+ *                after the lock (BER < 1e-5), and no loss of lock after it
+ *                (TEST_SHORT: 10^4 bits)
+ *   lock_time    the loop_* lines: locked within 300 ms of the
+ *                preamble's start at 450, 450 ms at 300
+ *   cd           carrier off within 100 ms of the line falling silent (the
+ *                transmitter stopped and drained), behind -50 dBm0 noise; no
+ *                carrier, no lock and no bits on 10 s of -50 dBm0 noise
+ *   line_450, line_300  sim/v32line's line model (mu-law, 6 dB loss, a
+ *                dispersive loop, 200 samples of delay, 20 dB SNR, +7 Hz,
+ *                +100 ppm): no bit in error in 5 x 10^4 after the lock (the
+ *                test that says whether the receiver needs an equaliser;
+ *                TEST_SHORT: 2 x 10^3)
  *
  * The output (the golden file) holds exact integers and one pass or fail
  * line per bound; the measured values, from the test's own floating-point
@@ -32,6 +48,9 @@
 #include "../modem/scramble.h"
 #include "../modem/hst_tabs.h"
 #include "../modem/hst.h"
+#include "../sim/v32line.h"
+#include "../sim/noise.h"
+#include "../sim/resamp.h"
 
 #define FS 8000
 #define PI 3.14159265358979323846
@@ -75,12 +94,17 @@ typedef struct {
     const uint8_t *line;
     int    pos;            /* data bits handed out */
     int    random;         /* random data instead */
+    uint8_t *log; long nlog, maxlog;   /* random data: the bits handed out */
 } src_t;
 static int getbit(void *user)
 {
     src_t *s = (src_t *)user;
     int ds;
-    if (s->random) return prbs_bit();
+    if (s->random) {
+        int b = prbs_bit();
+        if (s->log && s->nlog < s->maxlog) s->log[s->nlog++] = (uint8_t)b;
+        return b;
+    }
     ds = (s->line[(s->pos / 3) % s->nline] >> (s->pos % 3)) & 1;      /* tribit LSB first */
     s->pos++;
     return mscr_data_for(&s->model, ds);
@@ -405,9 +429,285 @@ static void tx_spectrum(void)
     spectrum_run(300, 283, 417);
 }
 
+/* ---- the receiver (Task 12): our transmitter through a line ---- */
+#define LEVEL 4000                     /* the transmitter's RMS, about -12 dBm0 */
+#ifdef TEST_SHORT
+#define NBITS 10000L
+#define NBITS_LINE 2000L
+#else
+#define NBITS 200000L
+#define NBITS_LINE 50000L
+#endif
+#define LOGN (NBITS + 4000)
+static uint8_t txlog[LOGN], rxlog[LOGN];
+
+static double dbm0_of(double rms) { return 20 * log10(rms / v32line_rms(0)); }
+/* |H(f)| of a loop filter */
+static double loop_gain(const double *h, int n, double f)
+{
+    double re = 0, im = 0;
+    int i;
+    for (i = 0; i < n; i++) { re += h[i] * cos(2 * PI * f * i / FS); im -= h[i] * sin(2 * PI * f * i / FS); }
+    return sqrt(re * re + im * im);
+}
+static double peer_tx(void *user, double rx) { (void)rx; return hst_btx_tick((hst_btx_t *)user); }
+
+/* The loop_* line: the caller's clock (sim/resamp, linear: its error is
+ * some -46 dB at 500 Hz), a frequency shift (a Hilbert transformer, 63
+ * taps, Hamming, as sim/v32line's; the carrier by a recursive rotation,
+ * set again every 1024 samples), and sim/noise's white noise. A lighter
+ * line than v32line's, whose two windowed-sinc resamplers cost some 200
+ * libm calls a sample. */
+#define HILN 63
+typedef struct {
+    resamp_t rs;
+    rng_t    g;
+    double   nrms, w, c, s;
+    double   hil[HILN], h[HILN];
+    int      hp;
+    long     n;
+} chan_t;
+static void chan_init(chan_t *ch, double hz, double ppm, double nrms, uint32_t seed)
+{
+    int i;
+    memset(ch, 0, sizeof *ch);
+    resamp_init(&ch->rs, 1.0 / ppm_ratio(ppm));
+    rng_seed(&ch->g, seed);
+    ch->nrms = nrms;
+    ch->w = 2 * PI * hz / FS;
+    ch->c = 1;
+    for (i = 0; i < HILN; i++) {
+        int k = i - HILN / 2;
+        ch->hil[i] = (k & 1) ? 2.0 / (PI * k) * (0.54 + 0.46 * cos(2 * PI * k / (HILN - 1))) : 0.0;
+    }
+}
+/* one sample from the caller; the line's samples (0, 1 or 2) to out */
+static int chan_push(chan_t *ch, double x, int16_t *out)
+{
+    double r[4], im, re, v;
+    int n = resamp_push(&ch->rs, x, r, 4), i, j;
+    for (i = 0; i < n; i++) {
+        ch->hp = (ch->hp + 1) % HILN;
+        ch->h[ch->hp] = r[i];
+        re = ch->h[(ch->hp - HILN / 2 + HILN) % HILN];
+        for (im = 0, j = 0; j < HILN; j += 2) im += ch->hil[j] * ch->h[(ch->hp - j + HILN) % HILN];   /* odd k = j - 31 */
+        if ((ch->n & 1023) == 0) { ch->c = cos(ch->w * ch->n); ch->s = sin(ch->w * ch->n); }
+        v = re * ch->c - im * ch->s + rng_gauss(&ch->g) * ch->nrms;
+        { double c = ch->c * cos(ch->w) - ch->s * sin(ch->w); ch->s = ch->s * cos(ch->w) + ch->c * sin(ch->w); ch->c = c; }
+        ch->n++;
+        out[i] = (int16_t)lrint(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+    }
+    return n;
+}
+
+typedef struct {
+    int    bps;
+    double hz, ppm;                    /* carrier shift, the caller's clock */
+    int    mulaw;                      /* v32line's line model: mu-law, loss, loop, delay */
+    uint32_t seed;
+} line_t;
+
+typedef struct {
+    long   lock_at;                    /* samples from the preamble's arrival to the lock; -1: never */
+    long   nbits, errors;              /* bits compared after the lock, and in error */
+    int    unlocks;                    /* losses of lock after it */
+    int    cd_lost;
+    long   snr_num, snr_den;
+} run_t;
+
+/* the receiver's view of one line sample */
+typedef struct {
+    hst_brx_t rx;
+    run_t    *o;
+    long      n, nrx, arrive;
+    int       was;
+} watch_t;
+static void watch(watch_t *w, int16_t x)
+{
+    int nb = hst_brx_tick(&w->rx, x), lk = hst_brx_locked(&w->rx), k;
+    if (lk && w->o->lock_at < 0) w->o->lock_at = w->n - w->arrive;
+    if (w->was && !lk) w->o->unlocks++;
+    if (w->o->lock_at >= 0 && !hst_brx_cd(&w->rx)) w->o->cd_lost = 1;
+    w->was = lk;
+    if (w->o->lock_at >= 0)
+        for (k = 0; k < nb && w->nrx < LOGN; k++) rxlog[w->nrx++] = w->rx.bits[k];
+    w->n++;
+}
+
+/* the transmitter's preamble then random data through the line; the
+ * receiver's bits from its lock compared with the data, `want` of them
+ * (0: run `secs` seconds and only time the lock) */
+static void run_line(const line_t *ln, long want, double secs, run_t *o)
+{
+    static const double loop[] = { 0.3, 1.0, -0.5, 0.3 };     /* test_v22bis's "mild" loop */
+    static v32line_t L;
+    static chan_t ch;
+    static watch_t W;
+    v32line_cfg lc;
+    hst_btx_t tx;
+    src_t src;
+    long nmax;
+
+    memset(o, 0, sizeof *o);
+    o->lock_at = -1;
+    memset(&W, 0, sizeof W);
+    W.o = o;
+    if (ln->mulaw) {
+        memset(&lc, 0, sizeof lc);
+        lc.mulaw = 1; lc.loss_db = 6; lc.delay = 200; lc.taps = loop; lc.ntaps = 4;
+        lc.near_db = lc.far_db = lc.c_near_db = lc.c_far_db = 300;
+        lc.noise_c_dbm0 = -300;
+        lc.noise_a_dbm0 = dbm0_of(LEVEL * pow(10, -6 / 20.0) * loop_gain(loop, 4, ln->bps == 450 ? 375 : 350)) - 20;
+        lc.freq_offset = ln->hz;
+        lc.ppm = ln->ppm;
+        lc.seed = ln->seed;
+        v32line_init(&L, &lc);
+        W.arrive = L.oneway;
+    } else {
+        chan_init(&ch, ln->hz, ln->ppm, LEVEL / 10.0, ln->seed);     /* 20 dB below the signal */
+        W.arrive = HILN / 2 + 1;
+    }
+
+    prbs_seed(ln->seed * 2654435761u + 77);
+    memset(&src, 0, sizeof src);
+    src.random = 1;
+    src.log = txlog; src.maxlog = LOGN;
+    hst_btx_init(&tx, ln->bps, LEVEL, getbit, &src);
+    hst_btx_preamble(&tx);
+    hst_brx_init(&W.rx, ln->bps);
+
+    nmax = want ? (long)((want + 3000) * FS / (double)ln->bps) + 4 * FS : (long)(secs * FS);
+    while (W.n < nmax) {
+        if (ln->mulaw) watch(&W, v32line_tick(&L, 0, peer_tx, &tx));
+        else {
+            int16_t y[4];
+            int k, m = chan_push(&ch, hst_btx_tick(&tx), y);
+            for (k = 0; k < m; k++) watch(&W, y[k]);
+        }
+        if (want && W.nrx >= want + 400 && src.nlog > want + 400) break;
+    }
+    {
+        int64_t num = 0, den = 0;
+        if (o->lock_at >= 0 && hst_brx_snr(&W.rx, &num, &den)) { o->snr_num = (long)num; o->snr_den = (long)den; }
+    }
+    if (!want || o->lock_at < 0 || W.nrx < want + 400) return;
+    /* the data's place in the received bits: 64 bits from the 400th, found in the log */
+    {
+        long off, best = -1, j, i0 = 400;
+        for (off = 0; off + 64 < src.nlog && best < 0; off++) {
+            for (j = 0; j < 64 && rxlog[i0 + j] == txlog[off + j]; j++) ;
+            if (j == 64) best = off;
+        }
+        if (best < 0) { o->nbits = 0; o->errors = want; return; }
+        /* rxlog[i] is txlog[best - i0 + i]; before the data, the preamble's ones */
+        for (j = 0; j < want; j++) {
+            long t = best - i0 + j;
+            int expect = t < 0 ? 1 : txlog[t];
+            if (t >= src.nlog) break;
+            o->errors += rxlog[j] != expect;
+            o->nbits++;
+        }
+    }
+}
+
+static const struct { double hz, ppm; } offs[4] = { { 7, 100 }, { 7, -100 }, { -7, 100 }, { -7, -100 } };
+
+static void loop_case(int bps, int c, int mulaw)
+{
+    line_t ln;
+    run_t o;
+    long want = mulaw ? NBITS_LINE : NBITS;
+    ln.bps = bps; ln.hz = offs[c].hz; ln.ppm = offs[c].ppm; ln.mulaw = mulaw;
+    ln.seed = (uint32_t)(bps * 10 + c + 1 + 100 * mulaw);
+    run_line(&ln, want, 0, &o);
+    printf("%s_%d %+d Hz %+d ppm: %ld bits compared after the lock\n", mulaw ? "line" : "loop",
+           bps, (int)ln.hz, (int)ln.ppm, o.nbits);
+    if (verbose)
+        printf("  (locked %.1f ms after the preamble's start, %ld errors, snr %.1f dB)\n",
+               o.lock_at * 1000.0 / FS, o.errors,
+               o.snr_den ? 10 * log10((double)o.snr_num / o.snr_den) : 0.0);
+    bound("locked", o.lock_at >= 0);
+    bound(mulaw ? "no bit in error" : "BER < 1e-5 (at most one error)", o.nbits == want && o.errors * 100000L < o.nbits);
+    bound("no loss of lock or carrier after the lock", o.unlocks == 0 && !o.cd_lost);
+}
+
+static void lock_time(void)
+{
+    int s, c;
+    for (s = 0; s < 2; s++) {
+        int bps = s ? 300 : 450;
+        long lim = (s ? 450 : 300) * FS / 1000, worst = 0;
+        int late = 0;
+        for (c = 0; c < 4; c++) {
+            line_t ln;
+            run_t o;
+            ln.bps = bps; ln.hz = offs[c].hz; ln.ppm = offs[c].ppm; ln.mulaw = 0;
+            ln.seed = (uint32_t)(500 + bps + c);
+            run_line(&ln, 0, 1.5, &o);
+            if (o.lock_at < 0 || o.lock_at > lim) late++;
+            if (o.lock_at > worst) worst = o.lock_at;
+            if (o.lock_at < 0) worst = 1L << 30;
+        }
+        printf("lock_time %d: 4 lines\n", bps);
+        if (verbose) printf("  (latest lock %.1f ms after the preamble's start)\n", worst * 1000.0 / FS);
+        bound(s ? "locked within 450 ms on every line" : "locked within 300 ms on every line", late == 0);
+    }
+}
+
+static void cd(void)
+{
+    rng_t g;
+    int s;
+    long n;
+    double nrms = v32line_rms(-50);
+    for (s = 0; s < 2; s++) {
+        int bps = s ? 300 : 450, on = 0, lk = 0, bits = 0;
+        hst_btx_t tx;
+        hst_brx_t rx;
+        src_t src;
+        long last = -1, off_at = -1, stop_at;
+        /* noise alone */
+        rng_seed(&g, 1000u + (uint32_t)bps);
+        hst_brx_init(&rx, bps);
+        for (n = 0; n < 10 * FS; n++) {
+            double v = rng_gauss(&g) * nrms;
+            bits += hst_brx_tick(&rx, (int16_t)lrint(v));
+            on |= hst_brx_cd(&rx);
+            lk |= hst_brx_locked(&rx);
+        }
+        printf("cd %d: 10 s of -50 dBm0 noise\n", bps);
+        bound("no carrier, no lock, no bits", !on && !lk && bits == 0);
+        /* 2 s of signal behind that noise, then the transmitter stops */
+        prbs_seed(0x5151u + (uint32_t)bps);
+        memset(&src, 0, sizeof src);
+        src.random = 1;
+        hst_btx_init(&tx, bps, LEVEL, getbit, &src);
+        hst_btx_preamble(&tx);
+        hst_brx_init(&rx, bps);
+        on = 0;
+        stop_at = 2 * FS;
+        for (n = 0; n < 3 * FS; n++) {
+            int16_t t;
+            if (n == stop_at) hst_btx_stop(&tx);
+            t = hst_btx_tick(&tx);
+            if (t != 0) last = n;
+            hst_brx_tick(&rx, (int16_t)lrint(t + rng_gauss(&g) * nrms));
+            if (n < stop_at && hst_brx_cd(&rx)) on = 1;
+            if (n > stop_at && off_at < 0 && !hst_brx_cd(&rx)) off_at = n;
+        }
+        printf("cd %d: 2 s of signal, then silence\n", bps);
+        if (verbose) printf("  (carrier off %.1f ms after the last sample)\n", (off_at - last) * 1000.0 / FS);
+        bound("carrier on with the signal", on);
+        bound("carrier off within 100 ms of the silence", off_at > last && off_at - last <= FS / 10);
+    }
+}
+
+static void loop_450(int c) { loop_case(450, c, 0); }
+static void loop_300(int c) { loop_case(300, c, 0); }
+
 int main(int argc, char **argv)
 {
-    int only = t_case_arg(argc, argv, 6);
+    int only = t_case_arg(argc, argv, 18), c;
     verbose = getenv("HST_VERBOSE") != NULL;
     if (T_CASE(only, 1)) steps();
     if (T_CASE(only, 2)) scr17();
@@ -415,5 +715,11 @@ int main(int argc, char **argv)
     if (T_CASE(only, 4)) tx_phase();
     if (T_CASE(only, 5)) tx_speed();
     if (T_CASE(only, 6)) tx_spectrum();
+    for (c = 0; c < 4; c++) if (T_CASE(only, 7 + c)) loop_450(c);
+    for (c = 0; c < 4; c++) if (T_CASE(only, 11 + c)) loop_300(c);
+    if (T_CASE(only, 15)) lock_time();
+    if (T_CASE(only, 16)) cd();
+    if (T_CASE(only, 17)) loop_case(450, 0, 1);
+    if (T_CASE(only, 18)) loop_case(300, 0, 1);
     T_REPORT("test_hst_back");
 }

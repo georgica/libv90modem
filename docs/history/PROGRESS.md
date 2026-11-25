@@ -4414,3 +4414,84 @@ and the filter grid is 2 Hz: ARMv5 under qemu takes 9.8 s, down from 15 s.
 
     build/test_hst_back -> test_hst_back: 42 checks, 0 failures; ARMv5 (qemu) output identical
     make verify         -> VERIFY PASS (1198 s; golden 148 identical, test_hst_back's own rewritten)
+
+## hst 12: the back channel's receiver, 450 and 300 (2026-11-25)
+
+`modem/hst.h`, `modem/hst_back.c`: `hst_brx_t` (1568 octets on x86-64 and
+ARMv5, all fields fixed-width), `hst_brx_init/tick/band/cd/locked/snr/grid_ok`.
+The spec's chain: `hst_bbpf` (folded, 122 multiplies) at every 5th sample
+only, so at 1600 Hz; carrier detect on the band's power in 10 ms blocks
+(on at -44 dBm0 for 3 blocks, off under -47 dBm0 for 3 blocks); AGC; a
+32-bit NCO to baseband; the matched filter (Task 11's transmit pulse, +-4
+symbols) evaluated only at the strobes, at each strobe's own pulse phase
+(1/160 of a symbol at 450, 1/80 at 300: no interpolator); Gardner at two
+strobes a symbol; differential decisions; `scr17_descramble`.
+`hst_brx_band` takes a band-passed sample, so that the engine runs one
+`hst_bbpf` for both receivers (hst.h said it would).
+
+Acquisition is in three steps [OURS], each one-shot, because the loops
+alone were too slow or wrong:
+- Timing: four strobes a symbol over 8 symbols, the phase of the
+  symbol-rate line in their power (Oerder and Meyr), then Gardner at two
+  strobes a symbol. Gardner alone at a gain high enough to lock in time
+  left 10-degree jitter.
+- Carrier: over 10 symbols, the eighth power of the differential strobes
+  gives the turn a symbol modulo 45 degrees. 45 degrees a symbol is baud/8
+  Hz, 12.5 Hz at 300, where 7 Hz turns a symbol 25 degrees: a
+  decision-directed loop settles there 45 degrees off (seen: 300 at -7 Hz
+  locked at +5.7 Hz). The midpoint strobes settle it. A midpoint is its
+  four neighbouring symbols weighted by the pulse's autocorrelation
+  (computed at init from the table), each turned against it by w T/4 at
+  T/2 and 3 w T/4 at 3T/2. The matched filter's output for a carrier off
+  by w turns at w/2 across a pulse, so the turn is a quarter, not a half:
+  with the half, the check could not tell. The right turn of r, r + 45 and
+  r - 45 predicts the midpoints; the others miss them by 3 to 7 times the
+  power. A cross-product estimator on strobes half a symbol apart was
+  tried first: 5 Hz rms over 30 symbols, and biased.
+- The estimate is taken off each differential angle (`wturn`), not put on
+  the NCO. A step there reaches the strobes only through the matched
+  filter's 8 symbols, and a decision-directed loop through the NCO was
+  unstable for the same reason. The stored window is decided again with it,
+  which fills the lock history and puts the descrambler in step: before
+  that, the first bits after the lock were wrong. Once locked, a
+  first-order loop on the decision error (1/32) tracks, and `wturn` drains
+  into the NCO at 1/64 a symbol.
+- Lock: 11 of the last 12 decisions within +-12 degrees of the grid, after
+  the estimate; lost at 8 of 16 off. With no lock 24 symbols after the
+  estimate, or when lock is lost, acquisition starts again.
+
+No equaliser: `line_450` and `line_300` run v32line's line model (mu-law,
+6 dB loss, the loop { 0.3, 1.0, -0.5, 0.3 }, 200 samples of delay, 20 dB
+SNR, +7 Hz, +100 ppm) with no bit in error in 5 x 10^4.
+
+`test_hst_back` (its golden file re-recorded: 42 -> 80 checks, the new lines
+after the old ones, which are unchanged): `loop_450`, `loop_300` (four
+lines each: +-7 Hz, +-100 ppm, white noise 20 dB below the signal over
+0-4 kHz; a lighter line than v32line's, whose two windowed-sinc resamplers
+cost some 200 libm calls a sample: sim/resamp's linear resampler, a
+63-tap Hilbert shift, sim/noise), `lock_time`, `cd`, `line_450`, `line_300`.
+TEST_SHORT: 10^4 bits on loop_*, 2 x 10^3 on line_*.
+
+    make -s build/test_hst_back (before the code) -> error: unknown type name 'hst_brx_t';
+        implicit declaration of function 'hst_brx_init' (and the other hst_brx_*)
+    build/test_hst_back -> test_hst_back: 80 checks, 0 failures (12 s on the host)
+    HST_VERBOSE=1: loop_*: 0 errors in 2 x 10^5 bits on all eight, locked 185-365 ms
+      after the preamble's start, SNR estimate 27.5-32.5 dB; line_*: 0 errors
+      in 5 x 10^4; carrier off 20-30 ms after the line falls silent
+    lock time over 800 lines (scratch driver, seeds 1-50, four offsets each,
+      flat and v32line's mu-law line): worst 225 ms at 450, 328 ms at 300; the
+      carrier within 0.12 Hz on every one (no alias). At 10 dB SNR: 252 and 389 ms.
+    ARMv5 (uclibc) and armv7hf (musl) short sets identical to the host's
+      -DTEST_FORCE_SHORT; clang -fsanitize=undefined short set identical, clean;
+      each case alone prints what the whole run prints
+    make check-fixed   -> fixed: 109 objects, 0 float helpers
+    make check-headers -> headers: 110 compile alone
+
+CPU, ARMv5 instructions a second (qemu -d exec, a scratch bench: 450
+transmitter alone, then with both receivers on its signal): two receivers
+each with its own band-pass 5.1 M; with one shared band-pass
+(`hst_brx_band`) 3.5 M. `hst_bbpf` alone is about 1.36 M of that (7
+instructions a tap). The spec's "about 1 M a second per receiver" is
+missed: the lever is a shorter `hst_bbpf` (Task 11's generator), for
+`make cost-hst` to weigh against the 15 M of holding forward. (The 450
+transmitter is 1.8 M.)
