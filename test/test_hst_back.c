@@ -36,6 +36,12 @@
  *                +100 ppm): no bit in error in 5 x 10^4 after the lock (the
  *                test that says whether the receiver needs an equaliser;
  *                TEST_SHORT: 2 x 10^3)
+ *   noise_first .. grid_ok  the review rounds' cases (below, each with its
+ *                comment)
+ *   first_bit    300 bit/s, clean starts at +-7 Hz, +-100 ppm, 20 and 30
+ *                dB, 128 lines (TEST_SHORT: 16): the lock that gives the
+ *                first bit (the first bit less the hold) within 450 ms of
+ *                the preamble's start on every one
  *
  * The output (the golden file) holds exact integers and one pass or fail
  * line per bound; the measured values, from the test's own floating-point
@@ -710,7 +716,7 @@ static void loop_case(int bps, int c, int mulaw)
                o.snr_den ? 10 * log10((double)o.snr_num / o.snr_den) : 0.0);
     bound("locked", o.lock_at >= 0);
     bound(mulaw ? "no bit in error" : "BER < 1e-5 (at most one error)", o.nbits == want && o.errors * 100000L < o.nbits);
-    bound("no loss of lock or carrier once the bits come", o.unlocks_bits == 0 && !o.cd_lost);
+    bound("no loss of lock or carrier after the lock", o.unlocks == 0 && !o.cd_lost);
 }
 
 static void lock_time(void)
@@ -1136,12 +1142,57 @@ static void grid_ok(void)
     }
 }
 
+/* the lock that gives the first bit (the first bit's time less the hold,
+ * HST_BRX_DLY symbols) within 450 ms of the preamble's start at 300: clean
+ * starts at +-7 Hz, +-100 ppm, 20 and 30 dB, FB_SEEDS seeds each */
+#ifdef TEST_SHORT
+#define FB_SEEDS 4
+#else
+#define FB_SEEDS 32
+#endif
+static void first_bit(void)
+{
+    static chan_t ch;
+    static hst_brx_t rx;
+    const long hold = (long)HST_BRX_DLY * FS / 100, lim = 450L * FS / 1000;
+    long worst = 0;
+    int c, l, seed, late = 0, runs = 0;
+    for (l = 0; l < 2; l++)
+        for (c = 0; c < 4; c++)
+            for (seed = 1; seed <= FB_SEEDS; seed++) {
+                hst_btx_t tx;
+                src_t src;
+                long n = 0, arrive = HILN / 2 + 1, first = -1;
+                prbs_seed((uint32_t)(0xF1B0 + 1000 * l + 100 * c + seed));
+                memset(&src, 0, sizeof src);
+                src.random = 1;
+                hst_btx_init(&tx, 300, LEVEL, getbit, &src);
+                hst_btx_preamble(&tx);
+                chan_init(&ch, offs[c].hz, offs[c].ppm, LEVEL * pow(10, -(l ? 30 : 20) / 20.0),
+                          (uint32_t)(0xF1B1 + 1000 * l + 100 * c + seed));
+                hst_brx_init(&rx, 300);
+                while (n < 2 * FS && first < 0) {
+                    int16_t y[4];
+                    int k, m = chan_push(&ch, hst_btx_tick(&tx), y);
+                    for (k = 0; k < m && first < 0; k++, n++)
+                        if (hst_brx_tick(&rx, y[k])) first = n - arrive - hold;
+                }
+                runs++;
+                if (first < 0 || first > lim) late++;
+                if (verbose && (first < 0 || first > lim)) printf("  (late: %d dB, %+.0f Hz %+.0f ppm, seed %d: %.1f ms)\n", l ? 30 : 20, offs[c].hz, offs[c].ppm, seed, first * 1000.0 / FS);
+                if (first < 0) worst = 1L << 30; else if (first > worst) worst = first;
+            }
+    printf("first_bit 300: %d clean starts, +-7 Hz, 20 and 30 dB\n", runs);
+    if (verbose) printf("  (latest lock giving the first bit %.1f ms after the preamble's start)\n", worst * 1000.0 / FS);
+    bound("the lock giving the first bit within 450 ms on every start", late == 0);
+}
+
 static void loop_450(int c) { loop_case(450, c, 0); }
 static void loop_300(int c) { loop_case(300, c, 0); }
 
 int main(int argc, char **argv)
 {
-    int only = t_case_arg(argc, argv, 28), c;
+    int only = t_case_arg(argc, argv, 29), c;
     verbose = getenv("HST_VERBOSE") != NULL;
     if (T_CASE(only, 1)) steps();
     if (T_CASE(only, 2)) scr17();
@@ -1165,5 +1216,6 @@ int main(int argc, char **argv)
     if (T_CASE(only, 26)) fades();
     if (T_CASE(only, 27)) hold();
     if (T_CASE(only, 28)) grid_ok();
+    if (T_CASE(only, 29)) first_bit();
     T_REPORT("test_hst_back");
 }

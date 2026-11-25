@@ -24,35 +24,35 @@ tx_spectrum 300: level 4002 (asked 4000), 38 segments
 loop_450 +7 Hz +100 ppm: 200000 bits compared after the lock
   locked: pass
   BER < 1e-5 (at most one error): pass
-  no loss of lock or carrier once the bits come: pass
+  no loss of lock or carrier after the lock: pass
 loop_450 +7 Hz -100 ppm: 200000 bits compared after the lock
   locked: pass
   BER < 1e-5 (at most one error): pass
-  no loss of lock or carrier once the bits come: pass
+  no loss of lock or carrier after the lock: pass
 loop_450 -7 Hz +100 ppm: 200000 bits compared after the lock
   locked: pass
   BER < 1e-5 (at most one error): pass
-  no loss of lock or carrier once the bits come: pass
+  no loss of lock or carrier after the lock: pass
 loop_450 -7 Hz -100 ppm: 200000 bits compared after the lock
   locked: pass
   BER < 1e-5 (at most one error): pass
-  no loss of lock or carrier once the bits come: pass
+  no loss of lock or carrier after the lock: pass
 loop_300 +7 Hz +100 ppm: 200000 bits compared after the lock
   locked: pass
   BER < 1e-5 (at most one error): pass
-  no loss of lock or carrier once the bits come: pass
+  no loss of lock or carrier after the lock: pass
 loop_300 +7 Hz -100 ppm: 200000 bits compared after the lock
   locked: pass
   BER < 1e-5 (at most one error): pass
-  no loss of lock or carrier once the bits come: pass
+  no loss of lock or carrier after the lock: pass
 loop_300 -7 Hz +100 ppm: 200000 bits compared after the lock
   locked: pass
   BER < 1e-5 (at most one error): pass
-  no loss of lock or carrier once the bits come: pass
+  no loss of lock or carrier after the lock: pass
 loop_300 -7 Hz -100 ppm: 200000 bits compared after the lock
   locked: pass
   BER < 1e-5 (at most one error): pass
-  no loss of lock or carrier once the bits come: pass
+  no loss of lock or carrier after the lock: pass
 lock_time 450: 4 lines
   locked within 300 ms on every line: pass
 lock_time 300: 4 lines
@@ -70,11 +70,11 @@ cd 300: 2 s of signal, then silence
 line_450 +7 Hz +100 ppm: 50000 bits compared after the lock
   locked: pass
   no bit in error: pass
-  no loss of lock or carrier once the bits come: pass
+  no loss of lock or carrier after the lock: pass
 line_300 +7 Hz +100 ppm: 50000 bits compared after the lock
   locked: pass
   no bit in error: pass
-  no loss of lock or carrier once the bits come: pass
+  no loss of lock or carrier after the lock: pass
 noise_first 450: 72 lines, 1 s of noise first at 20, 15 and 10 dB
   each locked on the right carrier, no bit in error after the lock: pass
 noise_first 300: 72 lines, 1 s of noise first at 20, 15 and 10 dB
@@ -135,4 +135,6 @@ grid_ok 450: 2 lines
   0 before the estimate and for 6 decisions after it; then 1: pass
 grid_ok 300: 2 lines
   0 before the estimate and for 6 decisions after it; then 1: pass
-test_hst_back: 113 checks, 0 failures
+first_bit 300: 256 clean starts, +-7 Hz, 20 and 30 dB
+  the lock giving the first bit within 450 ms on every start: pass
+test_hst_back: 114 checks, 0 failures

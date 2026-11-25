@@ -160,11 +160,13 @@ int16_t hst_btx_tick(hst_btx_t *t)
 /* faded symbols in a row that lose the lock, about 75 ms: 11 at 450, 8 at
  * 300 */
 static const int32_t fade_lose[2] = { 11, 8 };
-/* symbols the bits are held back while locked: past CONFIRM (no bit leaves
- * before the second alias check), and past a fade that loses the lock and
- * the 8 symbols before it, over which the matched filter ramps down */
-static const int32_t hold[2] = { 19, 18 };
-#define CONFIRM   10                  /* symbols after the lock: the second alias check, on a fresh window */
+#define CONFIRM   10                  /* symbols in each of the second check's two fresh windows */
+/* the bits are held back HST_BRX_DLY symbols while locked, at both speeds:
+ * past 2 x CONFIRM (no bit leaves before the second alias check on its two
+ * fresh windows), and past a fade that loses the lock (fade_lose) and the
+ * 8 symbols before it, over which the matched filter ramps down */
+typedef char hst_dly_check[HST_BRX_DLY > 2 * CONFIRM && HST_BRX_DLY >= 11 + 8 ? 1 : -1];
+
 enum { ACQ_TIMING, ACQ_CARRIER, ACQ_LOCK };
 
 /* pulse phases a 1600 Hz sample: 15 at 450 (160 a symbol), 5 at 300 (80) */
@@ -235,7 +237,7 @@ static void rx_acquire(hst_brx_t *r)
     r->e2 = 0;
     r->nest = 0; r->wait = 0; r->nchk = 0; r->nalias = 0;
     r->wpos = r->nwin = r->qbad = r->nfade = 0;
-    r->ndly = r->pdly = 0; r->conf = 0;
+    r->ndly = r->pdly = 0; r->conf = r->nconf = 0;
     scr_init(&r->scr);
 }
 
@@ -348,18 +350,30 @@ static int64_t est_mismatch(const hst_brx_t *r, int32_t h)
     return sum;
 }
 
-/* the alias check on the kept strobes around the turn h in use: -1 or +1
- * when h - 45 or h + 45 predicts the midpoints better by 2:1, 0 when h
- * does better than both by num:den, 2 when neither is clear */
-static int rx_alias(const hst_brx_t *r, int32_t h, int num, int den)
+/* the kept strobes' mismatch at the turns h - 45, h and h + 45 */
+static void alias_e(const hst_brx_t *r, int32_t h, int64_t e[3])
 {
-    int64_t e[3];
     int j;
     for (j = 0; j < 3; j++) e[j] = est_mismatch(r, h + (j - 1) * (int32_t)(1u << 29));
+}
+
+/* the alias check on mismatches e at h - 45, h, h + 45: -1 or +1 when h -
+ * 45 or h + 45 predicts the midpoints better by 2:1, 0 when h does better
+ * than both by num:den, 2 when neither is clear */
+static int alias_vote(const int64_t e[3], int num, int den)
+{
     if (e[0] * 2 < e[1] && e[0] <= e[2]) return -1;
     if (e[2] * 2 < e[1] && e[2] < e[0]) return 1;
     if (e[1] * num < e[0] * den && e[1] * num < e[2] * den) return 0;
     return 2;
+}
+
+/* the alias check on the kept strobes around the turn h in use */
+static int rx_alias(const hst_brx_t *r, int32_t h, int num, int den)
+{
+    int64_t e[3];
+    alias_e(r, h, e);
+    return alias_vote(e, num, den);
 }
 
 /* the carrier's turn a symbol, from the kept strobes: modulo 45 degrees
@@ -497,21 +511,37 @@ static int rx_symbol(hst_brx_t *r, int32_t yr, int32_t yi)
         if (!r->locked) {
             if (ones(r->okhist & LOCK_WIN) >= LOCK_MIN && r->qbad == 0) {
                 int al = rx_alias(r, r->wturn, 2, 1);
-                if (al == 0) { r->locked = 1; r->nchk = CHK_EVERY; r->nalias = 0; r->conf = CONFIRM; }
+                if (al == 0) { r->locked = 1; r->nchk = CHK_EVERY; r->nalias = 0; r->conf = CONFIRM; r->nconf = 0; }
                 else if (al != 2) rx_estimate(r, HST_BRX_EST - 1);     /* 45 degrees off: again */
             }
         } else if (ones(~r->okhist & 0xFFFFu) >= 8 || r->qbad >= HST_BRX_WIN || r->nfade >= fade_lose[r->lane]) {
             r->locked = 0; r->wait = 0;                     /* lost: acquire again */
         } else if (r->conf > 0) {
-            /* the second check, before any bit is out, on a fresh window:
-             * the turn in use better than both others by 3:2 again, or no
-             * lock (again from the strobes, when they prefer r +- 45; an
-             * unclear window costs a lock won again, never a bit) */
+            /* the second check, before any bit is out: two fresh windows
+             * after the lock, their mismatches summed, the turn in use
+             * better than both others confirms it;
+             * otherwise no lock (again from the strobes, when they prefer
+             * r +- 45 by 2:1). The lock's own window is not pooled: it
+             * passed its check by selection, an alias's by the data's
+             * chance. One fresh window alone (7 midpoints) is unclear about
+             * a right lock now and then, more often right after the lock,
+             * where the carrier still turns inside the matched filter */
             if (--r->conf == 0) {
-                int al = rx_alias(r, r->wturn, 3, 2);
-                if (al != 0) {
-                    r->locked = 0; r->okhist = 0;
-                    if (al != 2) rx_estimate(r, HST_BRX_EST - 1);
+                int64_t e[3];
+                int j;
+                alias_e(r, r->wturn, e);
+                if (r->nconf == 0) {
+                    for (j = 0; j < 3; j++) r->econf[j] = e[j];
+                    r->nconf = 1; r->conf = CONFIRM;
+                } else {
+                    int al;
+                    for (j = 0; j < 3; j++) e[j] += r->econf[j];
+                    al = alias_vote(e, 1, 1);
+                    r->nconf = 0;
+                    if (al != 0) {
+                        r->locked = 0; r->okhist = 0;
+                        if (al != 2) rx_estimate(r, HST_BRX_EST - 1);
+                    }
                 }
             }
         } else if (--r->nchk <= 0) {
@@ -530,7 +560,7 @@ static int rx_symbol(hst_brx_t *r, int32_t yr, int32_t yi)
     /* held back: a lock lost to a fade, or to the second alias check, takes
      * the bits not yet out with it */
     {
-        const int32_t n = hold[r->lane];
+        const int32_t n = HST_BRX_DLY;
         uint8_t in = (uint8_t)(r->bits[0] | r->bits[1] << 1 | r->bits[2] << 2), out = r->dly[r->pdly];
         r->dly[r->pdly] = in;
         if (++r->pdly == n) r->pdly = 0;
