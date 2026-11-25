@@ -28,6 +28,9 @@
  *    asks for the forward channel (LN 0x1R, R the current forward code);
  *    on the LNA it stops its back transmitter, waits 200 ms, and trains
  *    forward at R, long the first time, short after (`Reversal`, [OURS]).
+ *    With `la_after_rev`, its first frame on the new channel after each
+ *    switch is an LA (`Reversal`, [OURS]: the LAs in flight at a switch
+ *    are lost); by default not.
  *  - Holding the forward channel, it takes 0x1R (once its LNA has gone,
  *    plus 20 ms: forward off, back preamble, forward receiver listening),
  *    0x2R (a short training at R) and 0x3R (by marks: 15 ms of ones at the
@@ -329,6 +332,8 @@ typedef struct {
     int     ignore_ln;     /* the first N LNs from the answerer are not acted on (its LNA still goes) */
     int     ld_hold_ms;    /* carrier held this long after the LD has gone (0: 1000: BinModem's ATH holds
                               the line 1000 ms for its LD to get out, hst-facts `Cleardown` [BM]) */
+    int     la_after_rev;  /* after each switch its first frame on the new channel is an LA (`Reversal`,
+                              [OURS]; 0: not, as nothing says a Courier does) */
 } hstcall_cfg;
 
 /* back 450, start 450, rates 0x7C (codes 2..6), flags 0x01, level -12 */

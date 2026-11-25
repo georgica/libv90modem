@@ -2,7 +2,7 @@ offer: offer_rates 3C, the caller 01/FC: our LR ends C0 02 01 3C; hst 1, rates 3
 streamlined_rule: parameter 8 both: streamlined 1 (the peer heard 2), data intact; the template: streamlined 0 (the peer heard 0, sent streamlined), data intact
 mailbox: agreed 1, rates 7C, back300 1; la_rx 0 at the agreement, 1 after the caller's LA
 attn_in: LN 14: LNA, rev_lna_sent after its closing flag (early 0), rev_code 4, LTs held 1 until the epoch; LN 23, 35: rate_order 23, 35; LN 37, 45: violations +2, no order
-attn_out: ln_req 16: LN 16 sent, attn_tx 16, rev_lna_rx 1; LTs held 1, LAs 4, the peer's LN answered 1; LTs after the epoch; our LN and LD during a hold out
+attn_out: ln_req 16: LN 16 sent, attn_tx 16, rev_lna_rx 1; LTs held 1, LAs 5, the peer's LN answered 1; LTs after the epoch; our LN and LD during a hold out
 hold_bound: no epoch: LTs again 12000 ms after the LN was asked for
 layout_learn: A: LT 4 lost, then LT 5: 3 octets, right; C: LT 2 again as 01 01 30: state 2, 2 octets; D: a standard LNA at V(R) 7: 6 octets, right
 unknown: rx_unknown 1, id 3F, no LA for it; its data 3004 ms later (the peer's T401 3000 ms)

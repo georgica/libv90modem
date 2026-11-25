@@ -56,11 +56,15 @@
  *    caller's training is in (the next epoch); a rate not agreed, or
  *    another class, an LNA and a count (`violations`) only;
  *  - from an attention we send or grant until the pump's epoch changes
- *    (at most MNP_HST_HOLD_MAX_MS) no LT goes, the control frames do;
+ *    (at most MNP_HST_HOLD_MAX_MS) no LT goes, the control frames do; at
+ *    the epoch's change an LA goes first (the LAs in flight at a reversal's
+ *    switch are lost, hst-facts.md `Reversal`);
  *  - holding the back channel, we ask for the forward one (0x1R at the
- *    current forward rate) when our backlog, queued plus unacknowledged,
- *    is over MNP_HST_BACKLOG octets, the far end has held the forward
- *    channel MNP_HST_FAR_MS and no attention is outstanding (D14);
+ *    current forward rate) when our backlog, the octets not yet
+ *    transmitted (queued; the patent's "untransmitted data", not the
+ *    unacknowledged ones: an LA lost at a switch would count them until
+ *    T401 and ask for a needless reversal), is over MNP_HST_BACKLOG
+ *    octets, the far end has held the forward channel MNP_HST_FAR_MS and no attention is outstanding (D14);
  *  - a repeated N(R) sends us back once per N(R) value: the LAs a single
  *    loss draws on the slow channel come one after another, each of them
  *    a go-back under A.7.3.5 a's literal reading; a loss of the frame

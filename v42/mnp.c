@@ -760,15 +760,6 @@ void mnp_hst_offer(mnp_t *m, const hst_link_t *L)
     m->hst_epoch = L->epoch;
 }
 
-/* octets in LTs stored and not acknowledged */
-static size_t unacked_octets(const mnp_t *m)
-{
-    size_t n = 0;
-    int i, s = stored(m);
-    for (i = 1; i <= s; i++) n += m->slot_len[(uint8_t)(m->ack + i) % MNP_MAX_K];
-    return n;
-}
-
 void mnp_hst_poll(mnp_t *m, hst_link_t *L, unsigned ms, size_t queued)
 {
     int t = ms > 60000u ? 60000 : (int)ms, code = 0;
@@ -787,6 +778,7 @@ void mnp_hst_poll(mnp_t *m, hst_link_t *L, unsigned ms, size_t queued)
          * granted above the cap is followed by our 0x2R now */
         m->hst_epoch = L->epoch;
         m->attn_hold = 0;
+        m->la_due = 1;          /* the LAs in flight at the switch are lost: acknowledge anew [OURS] */
         if (L->tx_bps > 0 && L->rx_bps > 0) mnp_set_rates(m, L->tx_bps, L->rx_bps);
         if (m->cap_due == 1 && m->hst_role == HST_ROLE_BACK) m->cap_due = 2;
     }
@@ -808,8 +800,8 @@ void mnp_hst_poll(mnp_t *m, hst_link_t *L, unsigned ms, size_t queued)
         m->cap_due = 0;
     } else if (m->hst_role == HST_ROLE_BACK && !m->attn_hold && m->far_ms >= MNP_HST_FAR_MS
                && L->fwd_code >= 2 && L->fwd_code <= 7
-               && queued + unacked_octets(m) > MNP_HST_BACKLOG) {
-        code = 0x10 | L->fwd_code;           /* the reversal policy (D14) */
+               && queued > MNP_HST_BACKLOG) {
+        code = 0x10 | L->fwd_code;           /* the reversal policy (D14, untransmitted octets only) */
     }
     if (code != 0 && mnp_send_ln(m, code & 0xFF) == 0) hst_hold(m);
 }

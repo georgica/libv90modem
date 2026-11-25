@@ -1141,6 +1141,7 @@ static void every_ms(hstcall_t *c)
         c->phase = HC_FWD;
         c->reversals++;
         c->t_switch = c->ms;
+        if (c->cfg.la_after_rev) m->la_now = 1;   /* acknowledge anew on the new channel (`Reversal`, [OURS]) */
     }
     if (c->phase == HC_TURN && c->lna_done >= 0 && c->ms >= c->lna_done + 20) {
         int r = c->ln_rx & 0x0F;
@@ -1149,6 +1150,7 @@ static void every_ms(hstcall_t *c)
         c->fwd_code = r;
         c->reversals++;
         start_back(c, r);
+        if (c->cfg.la_after_rev) m->la_now = 1;   /* acknowledge anew on the new channel (`Reversal`, [OURS]) */
     }
 }
 

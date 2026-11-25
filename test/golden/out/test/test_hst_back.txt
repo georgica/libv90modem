@@ -154,4 +154,8 @@ echo_fwd 450: the back channel at -33 dBm0 under the echo of hst_ftx at 14400 (-
   locked, no bit in error, no loss of lock: pass
 echo_fwd 300: the back channel at -33 dBm0 under the echo of hst_ftx at 14400 (-10 dBm0, 6 dB ERL), 2 lines
   locked, no bit in error, no loss of lock: pass
-test_hst_back: 123 checks, 0 failures
+stop_tail 450: data to the far end's stop, 12 lines
+  every bit sent given, the frame's FCS and flag included: pass
+stop_tail 300: data to the far end's stop, 12 lines
+  every bit sent given, the frame's FCS and flag included: pass
+test_hst_back: 125 checks, 0 failures

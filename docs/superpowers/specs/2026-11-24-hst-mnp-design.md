@@ -534,9 +534,13 @@ nibble is the rate code **[FW]**):
   default (decision 27).
 
 **Reversal policy (decision 14)** **[PUB, US 5,008,901]**: while we hold
-the back channel, we ask for the forward channel when our backlog (queued
-plus unacknowledged) is over **64 octets**, the far end has held the
-forward channel at least **2 s**, and no other attention is outstanding.
+the back channel, we ask for the forward channel when our backlog of
+untransmitted (queued) octets is over **64 octets**, the far end has held
+the forward channel at least **2 s**, and no other attention is
+outstanding. **[OURS]** Amended in Task 21's review (controller's ruling):
+unacknowledged octets no longer count, as in the patent's "untransmitted
+data"; an LA lost at a switch kept them over 64 until T401 and asked for a
+needless reversal against a far end that does not acknowledge anew.
 We prefer these to BinModem's 256 octets and 3 s **[BM]**. On the ISP,
 downstream traffic dominates, so we hold the forward channel nearly all
 the time.
