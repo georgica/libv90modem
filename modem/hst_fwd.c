@@ -403,6 +403,12 @@ void hst_frx_set_code(hst_frx_t *r, int code)
 
 int hst_frx_state(const hst_frx_t *r) { return r->state; }
 
+int hst_frx_carrier(const hst_frx_t *r)
+{
+    if (r->state == HST_FRX_TRAIN || r->state == HST_FRX_DATA) return r->off < FCD_CLAMP;
+    return r->pw > FCD_ON;
+}
+
 void hst_frx_store(const hst_frx_t *r, hst_eqstore_t *s)
 {
     qamrx_get_eq(&r->q, s->cr, s->ci, &s->freq);
@@ -561,6 +567,8 @@ static void enter_data(hst_frx_t *r)
 {
     int k, first = -1;
     r->state = HST_FRX_DATA;
+    r->pref = r->pw;               /* the signal's level is the data's, not AB's (which a far end
+                                    * may send louder; the Task 16 review's Minor F, Task 23) */
     r->mlock = r->mse0;            /* the error before the data (the first data points, against A..D, are far off) */
     r->pz = r->pz8 = r->pzl = (int64_t)set_pw[r->code] * U * U;
     if (r->code == 2) return;

@@ -72,7 +72,27 @@
  *    (retraining) once under way, until the receiver is in data at R; then
  *    epoch. A change given up (not in data at R by HST_RC_BOUND_MS, the
  *    training failed) also bumps epoch, and counts as a failed retrain.
- * The other watchdogs and the far end's cleardown are Task 23's. */
+ * Retrain, watchdogs, cleardown and end codes (spec "Retrain, watchdogs,
+ * cleardown and end codes"; Task 23):
+ *  - v90m_retrain: holding forward, the short training at the rate in
+ *    force; holding back, our 0x2R at it (ask), data stopped once the
+ *    holder's training is under way;
+ *  - the watchdogs (hst.h HST_LOST_MS ...): holding forward, 5 s without a
+ *    back receiver locked ends the call ANS_END_LOST; holding back, 1 s
+ *    without the forward carrier asks 0x2R, 5 s takes the forward channel
+ *    back (a retrain), and the first rule follows;
+ *  - holding back, 3 failed retrains within 10 s at the lowest agreed
+ *    rate, or the HST_CY_N-th retrain for a lost data mode within
+ *    HST_CY_MS there, end the call ANS_END_RETRAIN_FAILED;
+ *  - the far end's LD (link.far_ld): ANS_END_CLEARDOWN_FAR when its
+ *    carrier goes, or 2 s on;
+ *  - ours (v90m_cleardown, the host having released the endpoint first):
+ *    with MNP up and data going out, the host's bits (the endpoint's idle
+ *    flags after its LD) for HST_CLR_FWD_MS (holding forward) or
+ *    HST_CLR_BACK_MS (holding back) so that the LD's end reaches the far
+ *    end, then both carriers stop: ANS_END_CLEARDOWN_OURS;
+ *  - after a reversal's cut, HST_REV_TAIL symbols of ones before the
+ *    forward carrier stops (V.17's turn-off under the BinModem profile). */
 #include <string.h>
 #include "ans_scheme.h"
 
@@ -140,7 +160,7 @@ void ans_start_hst(answer_t *a, int det)
     int cap;
     h->code = h->next = HST_OPEN_CODE;
     h->lane = det == HST_DET_300 ? 1 : 0;
-    h->fe_t = h->fl_t = -1;
+    h->fe_t = h->fl_t = h->cy_t = -1;
     h->since_down = MS(HST_UP_MS);
     h->link.offer_rates = rates_under(a->max_down);       /* decision 20 */
     cap = best_code(rates_under(a->max_up));
@@ -223,6 +243,8 @@ static void rc_clear(hst_t *h)
     h->link.ln_acted = 0;
     h->link.recover = 0;
     h->hold_t = 0;
+    h->cy_t = -1; h->cy_n = 0;
+    h->fq = 0;
     win_reset(h);
 }
 
@@ -241,8 +263,8 @@ static void ask(answer_t *a, int order)
 }
 
 /* holding back, a retrain at r failed: again at r, or after HST_RC_FAILS
- * within HST_DOWN_MS of the first one rate lower; at the lowest no more
- * from here (spec "end codes": Task 23's) */
+ * within HST_DOWN_MS of the first one rate lower; at the lowest agreed
+ * rate the call ends ANS_END_RETRAIN_FAILED (spec "end codes") */
 static void failed(answer_t *a, int r)
 {
     hst_t *h = &a->u.hst;
@@ -253,9 +275,30 @@ static void failed(answer_t *a, int r)
     lower = code_below(h, r);
     if (lower) {
         h->fl_t = -1;
+        h->cy_t = -1;
         h->since_down = 0;
         ask(a, 0x20 | lower);
+    } else {
+        ans_fail(a, ANS_END_RETRAIN_FAILED);
     }
+}
+
+/* holding back, the receiver out of data mode by itself, the carrier
+ * there, no retrain on probation: a retrain at the rate in force, but the
+ * HST_CY_N-th within HST_CY_MS one agreed rate lower, or at the lowest the
+ * end (hst.h; the Task 22b review's M2) */
+static void unlock_cycle(answer_t *a)
+{
+    hst_t *h = &a->u.hst;
+    int lower;
+    if (h->cy_t < 0) { h->cy_t = 0; h->cy_n = 0; }
+    if (++h->cy_n < HST_CY_N) { ask(a, 0x20 | h->code); return; }
+    h->cy_t = -1;
+    lower = code_below(h, h->code);
+    if (!lower) { ans_fail(a, ANS_END_RETRAIN_FAILED); return; }
+    h->fl_t = -1;
+    h->since_down = 0;
+    ask(a, 0x20 | lower);
 }
 
 /* holding back, the change pending given up: the endpoint's LTs go again,
@@ -308,6 +351,7 @@ static void rate_back(answer_t *a)
     h->rx_bad = bad;
     if (h->since_down < MS(HST_UP_MS)) h->since_down++;
     if (h->fl_t >= 0 && ++h->fl_t > MS(HST_DOWN_MS)) h->fl_t = -1;
+    if (h->cy_t >= 0 && ++h->cy_t > MS(HST_CY_MS)) h->cy_t = -1;
     if (h->link.rate_order) {
         int order = h->link.rate_order;
         h->link.rate_order = 0;
@@ -356,12 +400,14 @@ static void rate_back(answer_t *a)
         if (nxt && st == HST_FRX_DATA && hst_frx_mse(&h->frx) < hst_good_mse[nxt]) h->up_good++;
     }
     if (st != HST_FRX_DATA) {
-        /* the receiver out of data by itself, the carrier there: a retrain
-         * at the rate in force; within HST_RC_HOLD_MS of a retrain's data,
-         * that retrain failed (no carrier: Task 23's watchdogs) */
-        if (st == HST_FRX_UNLOCKED || st == HST_FRX_TRAINFAIL) {
+        /* the receiver out of data by itself, the carrier there (a lost
+         * lock, a failed training, a dropout over HST_FRX_LOSS_MS with the
+         * carrier back): a retrain at the rate in force (unlock_cycle);
+         * within HST_RC_HOLD_MS of a retrain's data, that retrain failed.
+         * No carrier: the watchdogs (tick_hst) */
+        if (st == HST_FRX_UNLOCKED || st == HST_FRX_TRAINFAIL || (st == HST_FRX_NOCARRIER && hst_frx_carrier(&h->frx))) {
             if (h->hold_t > 0) failed(a, h->code);
-            else if (!(h->fl_t >= 0 && h->fl_n >= HST_RC_FAILS)) ask(a, 0x20 | h->code);
+            else if (!(h->fl_t >= 0 && h->fl_n >= HST_RC_FAILS)) unlock_cycle(a);
         }
         return;
     }
@@ -377,6 +423,7 @@ static void rate_back(answer_t *a)
         lower = code_below(h, h->code);
         if (lower) {
             h->since_down = 0;
+            h->cy_t = -1;
             ask(a, 0x20 | lower);
             return;
         }
@@ -560,11 +607,13 @@ static void reversal(answer_t *a)
         break;
     case HST_REV_GRANT:
         /* 20 ms [OURS], and the frame that began in them out (fwd_getbit's
-         * cut; at most 0.5 s). Under the BinModem profile V.17's turn-off
-         * ends the burst: HST_BM_TOFF_ONES symbols of ones (the cut's),
-         * then the forward carrier's silence from the switch, which is
-         * longer than its HST_BM_TOFF_QUIET symbols (Task 15's ruling) */
-        if (h->cut > (HST_LONG_V17 ? HST_BM_TOFF_ONES : 0) || h->rt >= MS(500)) to_back(a);
+         * cut; at most 0.5 s), then HST_REV_TAIL symbols of ones so that
+         * the far decoder gives that frame's end (Task 23). Under the
+         * BinModem profile V.17's turn-off ends the burst instead:
+         * HST_BM_TOFF_ONES symbols of ones (the cut's), then the forward
+         * carrier's silence from the switch, which is longer than its
+         * HST_BM_TOFF_QUIET symbols (Task 15's ruling) */
+        if (h->cut > (HST_LONG_V17 ? HST_BM_TOFF_ONES : HST_REV_TAIL) || h->rt >= MS(500)) to_back(a);
         break;
     case HST_REV_LISTEN:
         /* the far end's training: in data, LTs go again (epoch). Not heard
@@ -599,10 +648,47 @@ static void fwd_rx(answer_t *a, int16_t rx)
     for (k = 0; k < n; k++) a->cfg.putbit(a->cfg.user, h->frx.bits[k]);
 }
 
+/* the far end's carrier: holding forward a back receiver locked (our own
+ * echo holds their carrier detect on), holding back the forward carrier */
+static int far_carrier(const hst_t *h)
+{
+    if (h->link.role == HST_ROLE_FWD) return hst_brx_locked(&h->det.rx[0]) || hst_brx_locked(&h->det.rx[1]);
+    return hst_frx_carrier(&h->frx);
+}
+
+/* holding back, no reversal in progress: the forward carrier's watchdog
+ * (hst.h HST_SILENT_ASK_MS, HST_SILENT_BACK_MS) */
+static void back_watch(answer_t *a)
+{
+    hst_t *h = &a->u.hst;
+    if (hst_frx_carrier(&h->frx)) { h->fq = 0; return; }
+    if (++h->fq >= MS(HST_SILENT_BACK_MS)) {
+        /* the forward channel taken back, as a retrain (the far end never
+         * switched); the watchdog of holding forward from here */
+        a->retraining = 1; a->retrains++;
+        to_fwd(a, HST_REV_TRAIN);
+    } else if (h->fq == MS(HST_SILENT_ASK_MS) && h->link.agreed_rates
+               && !(h->rc == HST_RC_ASK && h->rc_order == (0x20 | h->code))) {
+        ask(a, 0x20 | h->code);
+    }
+}
+
 static int16_t tick_hst(answer_t *a, int16_t rx)
 {
     hst_t *h = &a->u.hst;
     int32_t tx;
+    if (h->clr) {
+        /* our cleardown: the host's bits a while more, then both carriers stop */
+        tx = hst_ftx_tick(&h->ftx);
+        if (h->btx.mode != HST_BTX_SILENT) tx += hst_btx_tick(&h->btx);
+        if (--h->clr == 0) {
+            hst_ftx_stop(&h->ftx);
+            hst_btx_stop(&h->btx);
+            ans_fail(a, ANS_END_CLEARDOWN_OURS);
+            return 0;
+        }
+        return (int16_t)(tx > 32767 ? 32767 : tx < -32768 ? -32768 : tx);
+    }
     if (h->link.role == HST_ROLE_FWD) back_rx(a, rx);
     else fwd_rx(a, rx);
     /* both transmitters: the one stopped rings out */
@@ -621,6 +707,10 @@ static int16_t tick_hst(answer_t *a, int16_t rx)
         }
     }
     if (a->connected) {
+        if (h->link.far_ld) {
+            /* the far end's LD: the end when its carrier goes, or 2 s on */
+            if (++h->ld_t >= MS(HST_FAR_LD_MS) || !far_carrier(h)) { ans_fail(a, ANS_END_CLEARDOWN_FAR); return 0; }
+        }
         reversal(a);
         if (h->link.role == HST_ROLE_FWD) {
             /* the receive rate is the bits' (RATES when it changes) */
@@ -649,8 +739,10 @@ static int16_t tick_hst(answer_t *a, int16_t rx)
              * back channel at all (the Task 13 review), and never locks one */
             if (hst_brx_locked(&h->det.rx[0]) || hst_brx_locked(&h->det.rx[1])) h->quiet = 0;
             else if (++h->quiet > MS(HST_LOST_MS)) { ans_fail(a, ANS_END_LOST); return 0; }
-        } else if (h->rev == HST_REV_NONE && h->link.agreed_rates) {
-            rate_back(a);
+        } else if (h->rev == HST_REV_NONE) {
+            back_watch(a);
+            if (h->link.role == HST_ROLE_BACK && h->link.agreed_rates) rate_back(a);
+            if (a->phase != ANS_HST) return 0;      /* ANS_END_RETRAIN_FAILED */
         }
         if (h->link.role == HST_ROLE_FWD || h->rev != HST_REV_NONE) {
             /* the frame errors and the upshift count holding back alone */
@@ -668,23 +760,40 @@ static int16_t tick(answer_t *a, int16_t rx)
     return a->phase == ANS_HST_WAIT ? tick_wait(a, rx) : tick_hst(a, rx);
 }
 
-/* ours: both carriers stop now (the host has had the endpoint release
- * first, docs/error-control.md) */
+/* ours (the host has had the endpoint release first and waited for its
+ * tx_busy 0, docs/error-control.md): with MNP up and data going out, the
+ * host's bits HST_CLR_FWD_MS or HST_CLR_BACK_MS more (the LD's closing
+ * flag, which tx_busy no longer counts once begun, and the LD's end
+ * through the far decoder), then both carriers stop; else at once */
 static int cleardown(answer_t *a)
 {
+    hst_t *h = &a->u.hst;
     if (a->phase != ANS_HST) return -1;
-    hst_ftx_stop(&a->u.hst.ftx);
+    if (h->clr) return 0;
+    if (a->connected && h->link.la_rx) {
+        if (h->link.role == HST_ROLE_FWD && hst_ftx_in_data(&h->ftx)) { h->clr = MS(HST_CLR_FWD_MS); return 0; }
+        if (h->link.role == HST_ROLE_BACK && h->btx.mode == HST_BTX_DATA) { h->clr = MS(HST_CLR_BACK_MS); return 0; }
+    }
+    hst_ftx_stop(&h->ftx);
+    hst_btx_stop(&h->btx);
     ans_fail(a, ANS_END_CLEARDOWN_OURS);
     return 0;
 }
 
-/* holding the forward channel: the short training at the rate in force
- * (not through a reversal; holding back, Task 23's 0x2R) */
+/* holding the forward channel: the short training at the rate in force;
+ * holding back, our 0x2R at it (the receiver armed for the holder's
+ * training; data stops once it is under way). Not during a reversal, a
+ * rate change or retrain, or our cleardown */
 static int retrain(answer_t *a)
 {
     hst_t *h = &a->u.hst;
-    if (a->phase != ANS_HST || !a->connected || a->retraining || h->link.role != HST_ROLE_FWD
+    if (a->phase != ANS_HST || !a->connected || a->retraining || h->clr
         || h->rev != HST_REV_NONE || h->rc != HST_RC_NONE) return -1;
+    if (h->link.role == HST_ROLE_BACK) {
+        if (!h->link.agreed_rates) return -1;
+        ask(a, 0x20 | h->code);
+        return 0;
+    }
     fwd_retrain(a);
     return 0;
 }

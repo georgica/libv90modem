@@ -6167,3 +6167,61 @@ Sizes: `hstcall_t` 165712 octets (x86-64), test side only. Host run 33 s
   attn_stale's added, count 148 -> 157). `make check PAR=16`: ALL HOST
   CHECKS PASS (6 min 35 s); 157 of 158 goldens identical before the
   re-record.
+
+## hst 23: retrain, watchdogs, cleardown and end codes (23a) (2026-11-25)
+
+Spec "Retrain, watchdogs, cleardown and end codes"; the controller's
+carried items 1-7 (task-23-carries.md). x86-64 only (owner rule); the
+milestone gate (verify-phase, ports, ARM) is Task 26's.
+
+- **v90m_retrain holding back**: our 0x2R at the rate in force (`ask`),
+  data stopped once the holder's training is under way (holding forward:
+  the short training, as before). V90M_ESTATE while one is pending.
+- **Watchdogs** (hst.h `HST_SILENT_ASK_MS`, `HST_SILENT_BACK_MS`):
+  holding back, 1 s without the forward carrier (`hst_frx_carrier`, new)
+  asks 0x2R, 5 s takes the forward channel back (a retrain), then the
+  forward rule (5 s without a back lock: LOST). NOCARRIER with the
+  carrier back (a dropout over Task 16's 200 ms hold) is a retrain at once.
+- **RETRAIN_FAILED**: 3 failed retrains within 10 s at the lowest agreed
+  rate end the call. The Task 22b review's M2: retrains for a lost data
+  mode count in a 30 s window (`HST_CY_N` 4, `HST_CY_MS`); the 4th goes one
+  rate lower, or ends the call at the lowest.
+- **Far LD**: `link.far_ld` ends the call CLEARDOWN_FAR when the far
+  carrier goes, or 2 s on. **Ours**: with MNP up, the host's bits 30 ms
+  (holding forward) / 200 ms (holding back) more, then both carriers stop.
+  Found on the way: `v90m_ec_tx_busy` is 0 from the LD's closing flag's
+  first bit; cutting there gave the caller an abort at 450 bit/s.
+- **Reversal tail** (the Task 21 review's M3): 20 symbols of ones from the
+  cut before our forward carrier stops (default profile).
+- **N1** (back receiver, Task 19's carry): a fade long enough to lose the
+  lock whose last 8 (450) / 5 (300) symbols are steady and on the grid is
+  a level step: the mean taken again, the lock kept. `rec_hst -x -12@1000`
+  / `-20@1000`, 450 and 300, 2 seeds: no loss of lock, the undropped
+  throughput (832 / 576 octets in 19 s).
+- **Forward receiver** (level and carrier-loss paths only; 23b owns the
+  training start): the level re-taken where data mode begins (Minor F).
+- **Diag**: `ANS_ERR_HST_LINK`, `ANS_ERR_HST_CARRIER` appended; the HST
+  row of `diag_err_answer` (RETRAIN_FAILED gives `ANS_ERR_RETRAINS`).
+- **Tests**: `test_answer_hst` cases 25-31 (`retrain_back`, `back_silent`,
+  `retrain_failed`, `far_ld`, `ours`, `unlock_loop`, `levels`), each seen
+  failing first; diag checks in `no_lr`, `lost_fwd`; reversal switch
+  expectations 28-31 ms / 8-10 ms of ones. `fallback`'s seed 2206 -> 2210:
+  at 15 dB a 7200 training fails 3 times in a row on ~2 lines in 5 before
+  and after (seeds 2206-2225: 12 vs 9 of 20 end at 7200). `test_hst_back`
+  `lasting_drop`, `test_hst_fwd` `ab_loud`.
+- **Goldens re-recorded**: `api/test_answer_hst.txt` (new cases, the
+  reversal line's wording, `down`'s octet count and `fallback`'s lines
+  from the moved timing/seed, count 592 -> 1091), `api/test_diag.txt` (names
+  117 -> 119, count 7411 -> 7652), `test/test_hst_back.txt` (lasting_drop
+  lines, 125 -> 131), `test/test_hst_fwd.txt` (ab_loud lines, 208 -> 212).
+  The bm goldens identical.
+- **Commands**: `make check PAR=12`: ALL HOST CHECKS PASS (7 min 2 s, with
+  check-hst-bm); `tools/golden.sh check build`: 154 of 158 identical
+  before the re-record (the four above); `tools/replay-proof.sh check`:
+  742 runs identical; `tools/bench-hashes.sh check`: 19 identical; the
+  TEST_SHORT build of cases 25-31: pass.
+- **CPU** (`make cost-hst ARM_CC=$A5`, the one ARMv5 run): holding forward
+  14.44 M (13.19 at Task 19), **holding back 38.44 M, over the 30 M
+  target** (new: `rec_hst -R`, `bench_hst -k`), the 0x3R parallel decode
+  32.04 M for 20 ms. The levers (equaliser at T/2, a cheaper guard) are
+  the forward receiver's and left to after 23b: docs/limits.md.

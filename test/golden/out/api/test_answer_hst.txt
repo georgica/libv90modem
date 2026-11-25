@@ -142,8 +142,10 @@ no_lr: the host clears down; the endpoint NO_EC yes; end 4
 no_lr: the host does not; the endpoint NO_EC yes; end 11
   NO_EC at our training's end + 5 s (+-10 ms): pass
   V90M_END_HST_FAILED 15 s after ANS_HST: pass
+  error ANS_ERR_HST_LINK
 lost_fwd: the caller's carriers stop at 12 s
   V90M_END_LOST 5 s after the back carrier went (+ its release, < 300 ms): pass
+  error ANS_ERR_HST_CARRIER
 legacy_unchanged: V.90 (V.8): modulation 4, 29333 / 24000 bit/s; with HST offered modulation 4, 29333 / 24000 bit/s; data the same; connected at the same ms
   V.90 (V.8): the same modulation, rates and data: pass
   V.90 (V.8): sample for sample the same: pass
@@ -178,7 +180,7 @@ block_size 4000: 5 events, in data 1 at 14400 / 450; 7104 octets to the caller, 
 rev_caller: the caller's backlog: its 0x1R, our LNA, its training
   switches 1; the caller's training S3 3096 at code 6
   one reversal: to the back channel: pass
-  to the back channel 20 ms after our LNA drained: pass
+  to the back channel 20 ms and 20 symbols of ones after our LNA drained: pass
   ones, no host bit, from the cut to the switch: pass
   there our forward carrier stops, our back transmitter starts at the agreed speed: pass
   RATES with tx and rx exchanged: pass
@@ -189,7 +191,7 @@ rev_caller: the caller's backlog: its 0x1R, our LNA, its training
 rev_ours: then our backlog: our 0x1R, its LNA, our training
   switches 2; our 0x1R 0x16; the caller's receiver from its kept equaliser on 1 of 1 of our trainings
   two reversals: to the back channel and back: pass
-  to the back channel 20 ms after our LNA drained: pass
+  to the back channel 20 ms and 20 symbols of ones after our LNA drained: pass
   ones, no host bit, from the cut to the switch: pass
   there our forward carrier stops, our back transmitter starts at the agreed speed: pass
   RATES with tx and rx exchanged: pass
@@ -204,7 +206,7 @@ rev_ours: then our backlog: our 0x1R, its LNA, our training
 rev_back300: the same, the back channel at 300
   switches 2; our 0x1R 0x16; the caller's receiver from its kept equaliser on 1 of 1 of our trainings
   two reversals: to the back channel and back: pass
-  to the back channel 20 ms after our LNA drained: pass
+  to the back channel 20 ms and 20 symbols of ones after our LNA drained: pass
   ones, no host bit, from the cut to the switch: pass
   there our forward carrier stops, our back transmitter starts at the agreed speed: pass
   RATES with tx and rx exchanged: pass
@@ -233,7 +235,7 @@ snr: holding the back channel, the forward receiver's SNR
 rev_ours_la: rev_ours, the caller sending an LA first after each switch
   switches 2; our 0x1R 0x16; the caller's receiver from its kept equaliser on 1 of 1 of our trainings
   two reversals: to the back channel and back: pass
-  to the back channel 20 ms after our LNA drained: pass
+  to the back channel 20 ms and 20 symbols of ones after our LNA drained: pass
   ones, no host bit, from the cut to the switch: pass
   there our forward carrier stops, our back transmitter starts at the agreed speed: pass
   RATES with tx and rx exchanged: pass
@@ -262,7 +264,7 @@ down: holding back at 14400, 15 frame errors in 10 s: our 0x25
   15 frame errors within 10 s of the first: our 0x25: pass
   the caller's training at 12000: a retrain, DATA_STOPPED then DATA_MOVING, RATES rx 12000, retrains 2: pass
   our next LN 0x36, no sooner than 10 s after the downshift; back at 14400 by marks: pass
-  retrains 2, reversals 1; LNs ours 2, last 0x36, the caller's last 0x16, violations 0; data 2048 to the caller, 35648 to us, 0 wrong
+  retrains 2, reversals 1; LNs ours 2, last 0x36, the caller's last 0x16, violations 0; data 2048 to the caller, 34112 to us, 0 wrong
   the data both ways intact: pass
 retrain_by_2R: holding forward, the caller's 0x25: our short training at 12000
   our trainings after 12 s: 1, code 5, S3 200; retrains 2
@@ -288,9 +290,85 @@ recovery: the caller expects a training where we switch by marks; 2 x T401: our 
   retrains 2, reversals 0; LNs ours 0, last 0x00, the caller's last 0x35, violations 0; data 5632 to the caller, 768 to us, 0 wrong
   the data both ways intact, and moving again: pass
 fallback: holding back at 12000, the line at 15 dB SNR: down to 7200, and staying there
-  our LNs 3: 0x25 0x24 0x23; retrains 7
+  our LNs 3: 0x25 0x24 0x23; retrains 8
   in data at 7200, holding back: pass
   no loop: at most 8 retrains, none and no LN in the last 15 s: pass
-  retrains 8, reversals 1; LNs ours 3, last 0x23, the caller's last 0x15, violations 0; data 2048 to the caller, 22784 to us, 0 wrong
+  retrains 9, reversals 1; LNs ours 3, last 0x23, the caller's last 0x15, violations 0; data 2048 to the caller, 11904 to us, 0 wrong
   the data intact: pass
-test_answer_hst: 592 checks, 0 failures
+retrain_back: holding the back channel at 14400, v90m_retrain: our 0x26
+  retrains 2, reversals 1; LNs ours 1, last 0x26, the caller's last 0x16, violations 0; data 2048 to the caller, 8512 to us, 0 wrong
+  our 0x26 at once, our only LN: pass
+  the caller's training at 14400: DATA_STOPPED, then DATA_MOVING at rx 14400; retrains 2: pass
+  the data both ways intact: pass
+back_silent: holding the back channel, the caller gone
+  the forward channel taken back yes; end 2 (ANS_ERR_HST_CARRIER)
+  our 0x26 1 s after the forward carrier went (+ its detection, < 100 ms): pass
+  the forward channel taken back 5 s after it went: pass
+  V90M_END_LOST 5 s after that (+ the back receivers' release, < 300 ms): pass
+  connected without a far signal at most 12 s: pass
+back_silent: the caller gone at our switch to the back channel
+  the forward channel taken back yes; end 2 (ANS_ERR_HST_CARRIER)
+  the forward channel taken back 3 s after the switch: pass
+  V90M_END_LOST 5 s after that: pass
+  connected without a far signal at most 12 s: pass
+retrain_failed: holding the back channel at 9600, the one rate agreed; the line at 3 dB SNR
+  our LNs 0x24 only 1; the caller's trainings 3, at 9600 3; end 8 (ANS_ERR_RETRAINS)
+  our 0x24 alone; the caller's trainings at 9600, three: pass
+  the end within 15 s of the noise: pass
+  the data intact: pass
+far_ld: holding the forward channel, the caller's carrier held 1000 ms after its LD
+  our endpoint had the LD: yes; end 3, error 0
+  when the back carrier went (within 300 ms): pass
+far_ld: holding the forward channel, the caller's carrier held 5000 ms after its LD
+  our endpoint had the LD: yes; end 3, error 0
+  2 s after our endpoint had the LD: pass
+far_ld: holding the back channel, the caller's carrier held 1000 ms after its LD
+  our endpoint had the LD: yes; end 3, error 0
+  when the forward carrier went (within 100 ms): pass
+ours: holding the forward channel: v90m_ec_release, then v90m_cleardown
+  end 4, error 0; the caller had LD 255; our transmit's peak in the last 500 ms 0
+  v90m_ec_tx_busy 0 within 1 s of the release: pass
+  ended within 200 ms of v90m_cleardown, both carriers stopped: pass
+  the caller had our LD 255: pass
+ours: holding the back channel: v90m_ec_release, then v90m_cleardown
+  end 4, error 0; the caller had LD 255; our transmit's peak in the last 500 ms 0
+  v90m_ec_tx_busy 0 within 1 s of the release: pass
+  ended within 200 ms of v90m_cleardown, both carriers stopped: pass
+  the caller had our LD 255: pass
+unlock_loop: holding the back channel at 12000, its lock lost every 4 s
+  the caller's trainings: 3 at 12000, then 4 at 9600; end 8 (ANS_ERR_RETRAINS)
+  3 retrains at 12000, then one rate lower: pass
+  4 at 9600 (the downshift and 3 retrains), then the end: pass
+  the end within 30 s of the downshift: pass
+  the data intact: pass
+levels -9 dBm0, +100 ppm: reversals 25, rate changes 5 (the caller asked 5), retrains 3; data 7744 to the caller, 11712 to us, 0 wrong
+  every octet delivered both ways, intact; the call up: pass
+  reversals and rate changes on the way (2 each at least): pass
+levels -9 dBm0, -100 ppm: reversals 25, rate changes 5 (the caller asked 5), retrains 3; data 8064 to the caller, 11456 to us, 0 wrong
+  every octet delivered both ways, intact; the call up: pass
+  reversals and rate changes on the way (2 each at least): pass
+levels -15 dBm0, +100 ppm: reversals 25, rate changes 5 (the caller asked 5), retrains 3; data 7744 to the caller, 10944 to us, 0 wrong
+  every octet delivered both ways, intact; the call up: pass
+  reversals and rate changes on the way (2 each at least): pass
+levels -15 dBm0, -100 ppm: reversals 25, rate changes 5 (the caller asked 5), retrains 3; data 7744 to the caller, 10944 to us, 0 wrong
+  every octet delivered both ways, intact; the call up: pass
+  reversals and rate changes on the way (2 each at least): pass
+levels -21 dBm0, +100 ppm: reversals 25, rate changes 5 (the caller asked 5), retrains 3; data 7744 to the caller, 10944 to us, 0 wrong
+  every octet delivered both ways, intact; the call up: pass
+  reversals and rate changes on the way (2 each at least): pass
+levels -21 dBm0, -100 ppm: reversals 25, rate changes 5 (the caller asked 5), retrains 3; data 7744 to the caller, 10944 to us, 0 wrong
+  every octet delivered both ways, intact; the call up: pass
+  reversals and rate changes on the way (2 each at least): pass
+levels -27 dBm0, +100 ppm: reversals 25, rate changes 5 (the caller asked 5), retrains 3; data 7744 to the caller, 10944 to us, 0 wrong
+  every octet delivered both ways, intact; the call up: pass
+  reversals and rate changes on the way (2 each at least): pass
+levels -27 dBm0, -100 ppm: reversals 25, rate changes 5 (the caller asked 5), retrains 3; data 8064 to the caller, 11456 to us, 0 wrong
+  every octet delivered both ways, intact; the call up: pass
+  reversals and rate changes on the way (2 each at least): pass
+levels -33 dBm0, +100 ppm: reversals 25, rate changes 5 (the caller asked 5), retrains 3; data 7744 to the caller, 10944 to us, 0 wrong
+  every octet delivered both ways, intact; the call up: pass
+  reversals and rate changes on the way (2 each at least): pass
+levels -33 dBm0, -100 ppm: reversals 25, rate changes 5 (the caller asked 5), retrains 3; data 7744 to the caller, 10944 to us, 0 wrong
+  every octet delivered both ways, intact; the call up: pass
+  reversals and rate changes on the way (2 each at least): pass
+test_answer_hst: 1091 checks, 0 failures

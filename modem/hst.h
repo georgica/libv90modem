@@ -115,9 +115,18 @@ typedef char hst_fl_is_v32_txl_max[(HST_FL == V32_TXL_MAX) ? 1 : -1];
  * (for 6 blocks), so that the symbols after a dropout are not measured
  * against a level the dropout pulled down. Locked, such a symbol is a
  * fade: about 75 ms of them in a row (11
- * symbols at 450, 8 at 300) lose the lock. A shorter fade (a lost 20 ms
- * packet or two) keeps the lock, and its symbols' bits go out with the
- * rest, a few of them wrong: the stream has no gap. Faded symbols move
+ * symbols at 450, 8 at 300) lose the lock, unless they are a lasting
+ * drop of the level (Task 23, the Task 13 review's N1): the last 8 (450)
+ * or 5 (300) of them steady (the strongest at most twice the weakest's
+ * power: the matched filter's output of a constant-modulus signal) and
+ * on the grid, at most one off it, is a step (noise alone, of exponential
+ * power, its decisions on the grid 24 times in 45, passes both 1 time in
+ * 10^5 at 450, 1 in 550 at 300; it then holds the lock until the quality
+ * rules end it, a few symbols' bits wrong): the mean taken again from
+ * them, the lock kept. Measured (test_hst_back `lasting_drop`): 12 to 20
+ * dB down for good, the lock held at both speeds. A shorter fade (a lost
+ * 20 ms packet or two) keeps the lock, and its symbols' bits go out with
+ * the rest, a few of them wrong: the stream has no gap. Faded symbols move
  * neither the loops nor the grid history.
  *
  * Losing a confirmed lock, to a fade, to its quality or to the carrier
@@ -146,6 +155,7 @@ typedef char hst_fl_is_v32_txl_max[(HST_FL == V32_TXL_MAX) ? 1 : -1];
 #define HST_BRX_RMS 7                  /* degrees: the most RMS error for lock and grid_ok */
 #define HST_BRX_RMS_HOLD 11            /* degrees: the most RMS error to hold a lock */
 #define HST_BRX_DLY 21                 /* the most symbols the bits are held back while locked */
+#define HST_BRX_FN  8                  /* faded symbols kept: a lasting drop's test (below) */
 
 typedef struct {
     int16_t  xh[HST_BRX_XL];          /* the input at 8000 Hz */
@@ -187,6 +197,8 @@ typedef struct {
     int64_t  wsum, wp1, wds;          /* its sums: squared errors; powers, squared changes */
     int32_t  wpn, wdn;                /* the powers and the changes counted in them */
     int32_t  nfade;                   /* locked symbols 9 dB under the mean in a row */
+    int64_t  fpw[HST_BRX_FN];         /* their powers, a ring at (nfade - 1) % HST_BRX_FN ... */
+    uint32_t fok;                     /* ... and their decisions on the grid, the newest in bit 0 */
     uint8_t  dly[HST_BRX_DLY];        /* the last decisions' bits while locked, a ring (bit b: bits[b];
                                        * bit 3: the symbol 3 dB under the mean) */
     int32_t  ndly, pdly;              /* bits held back: symbols, the ring's place */
@@ -480,7 +492,8 @@ int16_t hst_gf_tick(hst_gf_t *g, int16_t in);
  * again as IDLE does (what to do about them is the scheme's):
  *   NOCARRIER  in training or data, the power low for HST_FRX_LOSS_MS:
  *          under -48 dBm0, or 10 dB under the signal's level (taken at the
- *          start, followed only while the receiver is well and within 3
+ *          start and again where data mode begins, AB being louder than
+ *          the data on some far ends; followed only while the receiver is well and within 3
  *          dB of it, and set again by a level step's gain: held, not
  *          decaying, so that line noise left after the carrier is not taken
  *          for it). Low for HST_FRX_CLAMP_MS, or 10 dB under at once: no
@@ -610,6 +623,10 @@ void hst_frx_set_code(hst_frx_t *r, int code);
 /* one line sample; returns the number of bits decided, in r->bits[] */
 int  hst_frx_tick(hst_frx_t *r, int16_t x);
 int  hst_frx_state(const hst_frx_t *r);
+/* the forward carrier (the guard's output): in training and data, not low
+ * (NOCARRIER's measure) for HST_FRX_CLAMP_MS; else over -45 dBm0 (the
+ * pump's watchdogs, Task 23) */
+int  hst_frx_carrier(const hst_frx_t *r);
 /* the equaliser (taps, carrier frequency) as it is now */
 void hst_frx_store(const hst_frx_t *r, hst_eqstore_t *s);
 /* back to listening for AB (IDLE); the next training starts from s's
@@ -680,12 +697,40 @@ void hst_frx_arm_train(hst_frx_t *r, int code);
 #endif
 #define HST_W_MAX_MS 2000
 #define HST_FAIL_MS  15000            /* ANS_HST: no MNP link this long: V90M_END_HST_FAILED */
+/* The watchdogs (spec "Retrain, watchdogs, cleardown and end codes",
+ * [OURS]; Task 23). Holding forward: no back carrier (neither back receiver
+ * locked: our own echo holds their carrier detect on) for HST_LOST_MS ends
+ * the call ANS_END_LOST. Holding back, no forward carrier (hst_frx_carrier)
+ * for HST_SILENT_ASK_MS: our 0x2R at the rate in force; for
+ * HST_SILENT_BACK_MS: the forward channel taken back (a retrain, as a
+ * reversal's unheard training is), and the first rule from there. So no
+ * call stays connected without a far signal for more than 10 s and the
+ * detectors' delays (under 12 s) */
 #define HST_LOST_MS  5000             /* holding forward: no back carrier this long: lost */
+#define HST_SILENT_ASK_MS   1000      /* holding back: no forward carrier this long: our 0x2R */
+#define HST_SILENT_BACK_MS  5000      /* ... this long: the forward channel taken back */
+/* the far end's LD (link.far_ld): the call ends ANS_END_CLEARDOWN_FAR when
+ * its carrier goes (the back receivers' lock, holding forward; the forward
+ * carrier, holding back), or HST_FAR_LD_MS after, whichever is first */
+#define HST_FAR_LD_MS       2000
+/* our cleardown with MNP up (the host's v90m_ec_release has put LD 255 out
+ * of the endpoint, tx_busy 0): the host's bits (the endpoint's flags) this
+ * long more on the channel we send, so that the LD's closing flag goes out
+ * whole (tx_busy is 0 from its first bit: at 450 bit/s the host's next
+ * look may be 15 ms before its last) and the LD's last bits leave our pulse
+ * (HST_FTX_DELAY) and the far decoder (a trellis decoder's depth, some 24
+ * symbols; a back receiver's matched filter and hold), then both carriers
+ * stop [OURS] */
+#define HST_CLR_FWD_MS        30
+#define HST_CLR_BACK_MS      200
 #define HST_ONES_N   160              /* samples of scrambled ones after each training of ours
                                          (48 symbols, V.17's segment 4) before the first data
                                          bit: the far receiver enters data on them [OURS] */
 
 #define HST_REV_DRAIN_MS   20         /* holder: our granting LNA drained, then this, then the switch [OURS] */
+#define HST_REV_TAIL       20         /* ... and from the cut this many symbols of ones (8.3 ms; V.17's
+                                         turn-off under the BinModem profile): the far decoder gives the
+                                         last frame's end (the Task 21 review's M3) [OURS] */
 #define HST_REV_GAP_MS    200         /* requester: its LNA, our back transmitter off, this, our training
                                          [OURS; BinModem 400, BM] */
 #define HST_REV_BOUND_MS 3000         /* holder switched: no forward signal this long, the forward
@@ -710,6 +755,16 @@ void hst_frx_arm_train(hst_frx_t *r, int code);
 #define HST_RC_FAILS         3
 #define HST_RC_BOUND_MS   4000
 #define HST_RC_HOLD_MS    2000
+/* Task 23 (the Task 22b review's M2): a retrain that holds data over
+ * HST_RC_HOLD_MS is a success, so a line whose receiver unlocks every few
+ * seconds retrained at one rate for ever. Each retrain the receiver's own
+ * loss of data mode asks (UNLOCKED, TRAINFAIL, NOCARRIER with the carrier
+ * back) counts in a window of HST_CY_MS opened by the first; the
+ * HST_CY_N-th within it asks the next agreed rate lower instead, and at
+ * the lowest ends the call ANS_END_RETRAIN_FAILED, as HST_RC_FAILS failed
+ * retrains within HST_DOWN_MS there do [OURS] */
+#define HST_CY_N             4
+#define HST_CY_MS        30000
 enum {
     HST_RC_NONE,
     HST_RC_WAIT,                      /* holding forward: a 0x2R/0x3R granted, our LNA gone: the
@@ -765,6 +820,12 @@ typedef struct {
     int32_t       rc_late;            /* our request done before its LNA came (the training seen, its
                                          LNA lost): that LNA, when it comes, is not a change; 0 none */
     uint32_t      rx_bad;             /* the endpoint's frame errors as last seen */
+    /* Task 23 */
+    int32_t       cy_t, cy_n;         /* holding back: unlock retrains, samples since the window's first
+                                         (-1 none); count */
+    int32_t       fq;                 /* holding back: samples without the forward carrier */
+    int32_t       ld_t;               /* samples since the far end's LD came (link.far_ld) */
+    int32_t       clr;                /* our cleardown: samples of ones still to send, 0 none */
 } hst_t;
 
 #endif

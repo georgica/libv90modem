@@ -90,6 +90,9 @@
  *                 set, `test_hst_fwd long_drift` built with -DTEST_FULL
  *                 (make hst-drift; not a case): codes 3..6, 1 and 3 dB
  *                 over their SNR of BER 1e-5, 300 s each
+ *   ab_loud       AB 4 dB over the rest of the training (codes 4, 6), then
+ *                 the line 6.5 dB down in data mode: data mode kept, no error
+ *                 from 16000 data bits on (Task 23: the level is the data's)
  *   thresholds    (`test_hst_fwd thresholds`, built with -DTEST_FULL: make
  *                 hst-thresh; not a case) the SNR of BER 1e-5 at codes
  *                 3..6 and the receiver's error there: hst_good_mse
@@ -884,7 +887,15 @@ static int fp_bit(void *user)
     p->n++;
     return b;
 }
-static double fp_tx(void *user, double rx) { (void)rx; return hst_ftx_tick(&((fpeer_t *)user)->tx); }
+/* AB (S1) this many times louder than the rest (ab_loud; 1 otherwise) */
+static double fab = 1;
+static double fp_tx(void *user, double rx)
+{
+    fpeer_t *p = (fpeer_t *)user;
+    double v = hst_ftx_tick(&p->tx);
+    (void)rx;
+    return fab != 1 && hst_ftx_seg(&p->tx) == HST_SEG_S1 ? v * fab : v;
+}
 
 /* the line: mu-law, floss dB of loss (6), test_v22bis's "mild" loop (or,
  * fharsh, an 8-tap dispersive one), 25 ms, noise fsnr dB (30) under the
@@ -1832,6 +1843,43 @@ static void zero_isi_start(void)
 }
 #endif
 
+#ifndef HST_PROFILE_BM
+/* AB louder than the data (a real modem's may be: the Task 16 review's
+ * Minor F; Task 23): AB 4 dB over the rest of the long training at codes 4
+ * and 6, then in data mode the line 6.5 dB down for good. The signal's
+ * level is the data's (taken again where data mode begins), not AB's:
+ * data mode kept, no error from 16000 data bits after the step (taken from
+ * AB, the step is 10.5 dB under it: NOCARRIER). AB 6 dB over the rest
+ * fails the training itself (TRAINFAIL; the training's start, not this
+ * case's) */
+static void ab_loud(void)
+{
+    static const int codes[2] = { 4, 6 };
+    int c;
+    for (c = 0; c < 2; c++) {
+        long ev;
+        int left = 0;
+        fres_t o;
+        fab = pow(10, 4 / 20.0);
+        fdata(codes[c], 1300u + (uint32_t)c, 20000);
+        fab = 1;
+        ev = P.n;
+        if (verbose) printf("  (before the step: state %d, %ld data bits sent)\n", hst_frx_state(&R), P.n);
+        fscale = pow(10, -6.5 / 20.0);
+        while (P.n < ev + 16000 + NB + 2000 && left < 8 * FS) {
+            ftick();
+            if (hst_frx_state(&R) != HST_FRX_DATA) { if (verbose && !left) printf("  (left data mode %ld bits after the step: state %d)\n", P.n - ev, hst_frx_state(&R)); left++; }
+        }
+        compare(&o, ev + 16000);
+        fscale = 1;
+        printf("ab_loud, code %d: AB 4 dB over the data, then the line 6.5 dB down; data mode %s; from 16000 data bits after it %ld errors in %ld bits\n",
+               codes[c], left ? "LEFT" : "kept", o.errs, o.cmp);
+        bound("data mode kept", !left);
+        bound("no error from 16000 bits after the step", o.found && o.cmp == NB && o.errs == 0);
+    }
+}
+#endif
+
 int main(int argc, char **argv)
 {
     int only;
@@ -1866,7 +1914,7 @@ int main(int argc, char **argv)
         return 2;
 #endif
     }
-    only = t_case_arg(argc, argv, 24);
+    only = t_case_arg(argc, argv, 25);
 #endif
     verbose = getenv("HST_VERBOSE") != NULL;
     if (T_CASE(only, 1)) pulse_points();
@@ -1899,6 +1947,7 @@ int main(int argc, char **argv)
     if (T_CASE(only, 22)) marks_switch();
     if (T_CASE(only, 23)) marks_missed();
     if (T_CASE(only, 24)) long_drift();
+    if (T_CASE(only, 25)) ab_loud();
 #endif
     T_REPORT("test_hst_fwd");
 }

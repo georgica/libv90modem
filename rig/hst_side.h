@@ -7,7 +7,9 @@
  * on) linked before the first sample, and at each block's end: reset at
  * CONNECTED, the rates after that and at each change, DATA_STOPPED /
  * DATA_MOVING passed on, a tick of 10 ms from CONNECTED on; once MNP is up
- * it is kept full of an English sentence, and what it reads is counted and
+ * it is kept full of an English sentence (with `quiet`, for rec_hst -R and
+ * bench_hst -k, nothing is written: we never ask for the forward channel,
+ * and the caller keeps it once it has it), and what it reads is counted and
  * hashed. The recorder and the bench call the same code on the same
  * blocks, so the bench's transmit is the recorder's, codeword for codeword
  * (v90m-replay, a sample at a time and writing nothing, follows such a
@@ -32,6 +34,9 @@ typedef struct {
     unsigned long got;                /* octets read */
     uint32_t      h;                  /* FNV-1a of them */
     long          data14400;          /* the first sample moving at 14400 after a retrain, -1 none */
+    long          back14400;          /* the first sample holding the back channel, the forward one at
+                                         14400 (after a reversal), the caller's data coming in, -1 none */
+    int           quiet;              /* nothing written */
 } hst_side;
 
 static const char hs_sentence[] = "the quick brown fox jumps over the lazy dog. ";
@@ -39,14 +44,17 @@ static const char hs_sentence[] = "the quick brown fox jumps over the lazy dog. 
 static int hs_get(void *u) { hst_side *s = (hst_side *)u; return s->on ? v90m_ec_tx_bit(s->ec) : 1; }
 static void hs_put(void *u, int b) { hst_side *s = (hst_side *)u; if (s->on) v90m_ec_rx_bit(s->ec, b); }
 
-/* 0, or -1 when the modem or the endpoint cannot be made or linked */
-static int hst_side_init(hst_side *s)
+/* 0, or -1 when the modem or the endpoint cannot be made or linked;
+ * quiet: nothing written */
+static int hst_side_init(hst_side *s, int quiet)
 {
     v90m_cfg c;
     int err;
     memset(s, 0, sizeof *s);
     s->h = 2166136261u;
     s->data14400 = -1;
+    s->back14400 = -1;
+    s->quiet = quiet;
     v90m_cfg_default(&c);
     c.modulations = V90M_MOD_V21 | V90M_MOD_V22 | V90M_MOD_V32BIS | V90M_MOD_V34 | V90M_MOD_V90 | V90M_MOD_HST;
     c.tx_level = 3963;                 /* -12 dBm0: v90m-replay's default */
@@ -90,11 +98,14 @@ static void hst_side_block(hst_side *s, const uint8_t *heard, uint8_t *sent, v90
         s->lmv = st.moving;
     }
     if (s->data14400 < 0 && st.moving && st.tx_bps == 14400 && st.modulation == V90M_CONN_HST) s->data14400 = s->n;
+    if (s->back14400 < 0 && s->got > 0 && st.moving && st.rx_bps == 14400 && st.tx_bps > 0 && st.tx_bps <= 450
+        && st.modulation == V90M_CONN_HST)
+        s->back14400 = s->n;
     if (s->on) {
         size_t k = sizeof hs_sentence - 1, w;
         uint8_t buf[256];
         v90m_ec_tick(s->ec, HS_BLOCK / 8);
-        if (v90m_ec_state(s->ec) == V90M_EC_CONNECTED)
+        if (v90m_ec_state(s->ec) == V90M_EC_CONNECTED && !s->quiet)
             for (;;) {
                 size_t off = s->wpos % k;
                 w = v90m_ec_write(s->ec, (const uint8_t *)hs_sentence + off, k - off);

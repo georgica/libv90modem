@@ -50,6 +50,8 @@
  *                signal (the library's V.32 transmitter standing in): in
  *                HST's forward band at 6 dB ERL from -10 dBm0, and with
  *                V.32's own pulse at its limit, 3 dB over the back channel
+ *   lasting_drop the signal 12, 15 and 20 dB down for good (Task 23, the
+ *                Task 13 review's N1): the lock held through the step
  *   echo_fwd     the real-line corner with the real forward transmitter
  *                (hst_ftx, data at 14400, -10 dBm0, its echo at 6 dB ERL:
  *                -16 dBm0, 17 dB over the back channel at -33 dBm0): locked,
@@ -543,6 +545,8 @@ typedef struct {
     double snr;                        /* dB below the signal over 0-4 kHz (0: 20) */
     double pre;                        /* seconds of the line's noise before the transmitter starts */
     double drop_at, drop_len;          /* seconds after it starts: the signal off, the noise on */
+    double drop_db;                    /* > 0: from drop_at on the signal this many dB down, for good
+                                        * (a lasting drop; the noise as it was) */
     double snr2, at2;                  /* the noise rises to snr2 dB below the signal at at2 s (snr2 0: never) */
     int    all;                        /* every bit given counts (each lock aligned on its own), not
                                         * only those after the last lock */
@@ -748,6 +752,7 @@ static void run_line(const line_t *ln, long want, double secs, run_t *o)
             W.restart = W.arrive + (long)((ln->drop_at + ln->drop_len) * FS);
             W.drop = W.arrive + (long)(ln->drop_at * FS);
         }
+        if (ln->drop_db > 0) W.drop = W.arrive + (long)(ln->drop_at * FS);
     }
 
     prbs_seed(ln->seed * 2654435761u + 77);
@@ -771,6 +776,7 @@ static void run_line(const line_t *ln, long want, double secs, run_t *o)
             if (t >= 0) {
                 v = hst_btx_tick(&tx);
                 if (t >= ln->drop_at && t < ln->drop_at + ln->drop_len) v = 0;
+                if (ln->drop_db > 0 && t >= ln->drop_at) v *= pow(10, -ln->drop_db / 20);
             }
             m = chan_push(&ch, v, y);
             for (k = 0; k < m; k++) {
@@ -1466,12 +1472,47 @@ static void stop_tail(void)
     }
 }
 
+/* a lasting drop (the Task 13 review's N1, Task 23): the signal 12, 15 and
+ * 20 dB down from 2 s on, and staying there, the noise as it was (30 dB
+ * under the signal before, 18 to 10 dB after; +7, -7, +3 Hz, +100 ppm):
+ * the lock held through it, at both speeds, at most 40 wrong bits (the
+ * symbols across the step) */
+static void lasting_drop(void)
+{
+    static const int db[3] = { 12, 15, 20 };
+    int s, l, seed, c;
+    for (s = 0; s < 2; s++) {
+        int bps = s ? 300 : 450;
+        for (l = 0; l < 3; l++) {
+            int bad = 0;
+            long worst = 0;
+            for (seed = 1; seed <= NSEEDS; seed++)
+                for (c = 0; c < 3; c++) {
+                    line_t ln;
+                    run_t o;
+                    memset(&ln, 0, sizeof ln);
+                    ln.bps = bps; ln.hz = offs3[c]; ln.ppm = 100; ln.snr = 30; ln.all = 1;
+                    ln.drop_at = 2.0; ln.drop_db = db[l];
+                    ln.seed = (uint32_t)(9700 + 100 * seed + 10 * c + l + bps);
+                    run_line(&ln, 1, 6.0, &o);
+                    if (o.errors > worst) worst = o.errors;
+                    if (!(o.unlocks_drop == 0 && o.locked_end && o.errors <= 40)) bad++;
+                    if (verbose) printf("  (seed %d, %+.0f Hz: %d losses of lock from the drop, locked at the end %d, %ld wrong bits)\n",
+                                        seed, offs3[c], o.unlocks_drop, o.locked_end, o.errors);
+                }
+            printf("lasting_drop %d: %d dB down from 2 s on, %d lines\n", bps, db[l], 3 * NSEEDS);
+            if (verbose) printf("  (at most %ld wrong bits a line)\n", worst);
+            bound("the lock held, at most 40 wrong bits", bad == 0);
+        }
+    }
+}
+
 static void loop_450(int c) { loop_case(450, c, 0); }
 static void loop_300(int c) { loop_case(300, c, 0); }
 
 int main(int argc, char **argv)
 {
-    int only = t_case_arg(argc, argv, 32), c;
+    int only = t_case_arg(argc, argv, 33), c;
     verbose = getenv("HST_VERBOSE") != NULL;
     if (T_CASE(only, 1)) steps();
     if (T_CASE(only, 2)) scr17();
@@ -1499,5 +1540,6 @@ int main(int argc, char **argv)
     if (T_CASE(only, 30)) echo();
     if (T_CASE(only, 31)) echo_fwd();
     if (T_CASE(only, 32)) stop_tail();
+    if (T_CASE(only, 33)) lasting_drop();
     T_REPORT("test_hst_back");
 }

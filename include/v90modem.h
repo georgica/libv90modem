@@ -188,7 +188,11 @@ typedef enum {
  * after MNP's LRs from the retrain that follows, rx_bps 450 or 300); not
  * heard, V.22bis or V.21 as without HST, that much later. Callers that send
  * CM or AA are answered exactly as without HST. A call that took HST up
- * and has no MNP link within 15 s ends with V90M_END_HST_FAILED. */
+ * and has no MNP link within 15 s ends with V90M_END_HST_FAILED. In data
+ * mode no HST call stays up without the far modem's signal for more than
+ * 12 s (V90M_END_LOST); the far modem's MNP LD ends it with
+ * V90M_END_CLEARDOWN_FAR once its carrier goes (2 s at most); ours is
+ * v90m_ec_release, v90m_ec_tx_busy 0 (at most 1 s), then v90m_cleardown. */
 #define V90M_MOD_HST      0x0400u
 
 /* the modulation of a connection (v90m_state.modulation) */
@@ -305,8 +309,10 @@ int      v90m_process_g711(v90m_t *m, const uint8_t *rx, uint8_t *tx, size_t n);
 int      v90m_process_lin_rx(v90m_t *m, const int16_t *rx, uint8_t *tx, size_t n);
 int      v90m_process_linear(v90m_t *m, const int16_t *rx, int16_t *tx, size_t n);
 
-/* Ask for a retrain. Answering: in data mode of V.92, V.90, V.34, V.32bis
- * (x2, K56flex: V90M_ESTATE). Calling: once connected in V.22bis at 2400 bit/s, V.32bis, V.34, V.90,
+/* Ask for a retrain. Answering: in data mode of V.92, V.90, V.34, V.32bis,
+ * HST (holding the fast channel our short training; holding the back
+ * channel our MNP attention 0x2R at the rate in force, the far modem's
+ * training answering it) (x2, K56flex: V90M_ESTATE). Calling: once connected in V.22bis at 2400 bit/s, V.32bis, V.34, V.90,
  * V.92. V90M_OK, or V90M_ESTATE (none of those, or one under way).
  * Calling V.90 / V.92: 70 ms of silence and Tone A, Phase 2 to data mode
  * again (some 7 to 11 s); also during a rate renegotiation; V90M_ESTATE when
@@ -321,7 +327,11 @@ int      v90m_retrain(v90m_t *m);
  * cleardown is a rate sequence with data rate 0, drn = 0, and a caller that
  * does not acknowledge it is given up to 3.5 s); V90M_ESTATE when
  * there is nothing to send (V.21, V.22, V.22bis, V.32bis, Bell, or not in
- * data mode): just stop calling v90m_process_*. x2 and K56flex (answering,
+ * data mode): just stop calling v90m_process_*. HST (answering; the host
+ * has released its endpoint and waited for v90m_ec_tx_busy 0 first): the
+ * host's bits 30 ms more holding the fast channel, 200 ms holding the back
+ * one, so that MNP's LD reaches the far modem, then both carriers stop and
+ * the call ends; V90M_OK. x2 and K56flex (answering,
  * in data mode or a rate change): V90M_OK, and the call ends at once with
  * nothing sent. */
 int      v90m_cleardown(v90m_t *m);
@@ -341,7 +351,10 @@ typedef enum {
                                    more was due past the limit
                                    (see v90m_retrain); answering x2: the client asked for
                                    a retrain in data mode or in its rate change (its
-                                   Tone A), which x2 cannot serve */
+                                   Tone A), which x2 cannot serve; answering HST,
+                                   holding the back channel at the lowest agreed rate:
+                                   3 failed retrains within 10 s, or the 4th lost data
+                                   mode within 30 s */
     V90M_END_X2_FAILED,         /* (appended) answering: the client took up x2 (its marker
                                    came) and the x2 start-up, or a rate change of
                                    the client's, did not complete */

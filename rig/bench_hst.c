@@ -15,6 +15,11 @@
  *                       tools/bench-hashes.sh. bench_hst_mark() is called 1 s and
  *                       2 s into data at 14400: the counted second holds the
  *                       forward channel at 14400 (`make cost-hst`).
+ *   bench_hst -k FILE   the same on rec_hst -R's recording (the caller takes
+ *                       the forward channel; our endpoint writes nothing):
+ *                       bench_hst_mark() 1 s and 2 s into holding the back
+ *                       channel with the caller's data at 14400 coming in: the
+ *                       counted second holds the back channel (`make cost-hst`)
  *
  *   bench_hst -g FILE [300]
  *                       write the recording: "HSTB0001", then 16-bit
@@ -179,7 +184,7 @@ volatile int16_t bench_hst_sink;
 #define CALL_LEAD 8000L                  /* rec_hst's second before the answer */
 static uint8_t call[CALL_MAX];
 static hst_side CS;
-static int bench_call(const char *path)
+static int bench_call(const char *path, int back)
 {
     FILE *f = fopen(path, "rb");
     long len, nb, i, diff = 0, first = -1;
@@ -190,14 +195,15 @@ static int bench_call(const char *path)
     fclose(f);
     nb = len / 160;
     if (nb * 80 <= CALL_LEAD) { fprintf(stderr, "bench_hst: %s is not a recording of rec_hst\n", path); return 1; }
-    if (hst_side_init(&CS)) { fprintf(stderr, "bench_hst: no answerer\n"); return 1; }
+    if (hst_side_init(&CS, back)) { fprintf(stderr, "bench_hst: no answerer\n"); return 1; }
     memset(&st, 0, sizeof st);
     for (i = CALL_LEAD / 80; i < nb; i++) {
         const uint8_t *b = call + i * 160;
         uint8_t o[HS_BLOCK];
         int k;
-        if (CS.data14400 >= 0 && CS.n == CS.data14400 + 8000) mark(1);
-        if (CS.data14400 >= 0 && CS.n == CS.data14400 + 16000) mark(2);
+        long at = back ? CS.back14400 : CS.data14400;
+        if (at >= 0 && CS.n == at + 8000) mark(1);
+        if (at >= 0 && CS.n == at + 16000) mark(2);
         hst_side_block(&CS, b, o, &st);
         for (k = 0; k < HS_BLOCK; k++) {
             h = (h ^ o[k]) * 16777619u;
@@ -205,9 +211,14 @@ static int bench_call(const char *path)
         }
         if (st.end != V90M_END_NONE) { i++; break; }
     }
-    printf("bench_hst -c: %ld samples; data at 14400 from sample %ld; our transmit differs from the recording in %ld "
-           "(first at %ld); %lu octets received; end %d\n", i * 80, CS.data14400 >= 0 ? CS.data14400 + CALL_LEAD : -1L, diff, first,
-           CS.got, (int)st.end);
+    if (back)
+        printf("bench_hst -k: %ld samples; holding the back channel, the forward one at 14400, from sample %ld; our transmit "
+               "differs from the recording in %ld (first at %ld); %lu octets received; end %d\n", i * 80,
+               CS.back14400 >= 0 ? CS.back14400 + CALL_LEAD : -1L, diff, first, CS.got, (int)st.end);
+    else
+        printf("bench_hst -c: %ld samples; data at 14400 from sample %ld; our transmit differs from the recording in %ld "
+               "(first at %ld); %lu octets received; end %d\n", i * 80, CS.data14400 >= 0 ? CS.data14400 + CALL_LEAD : -1L, diff, first,
+               CS.got, (int)st.end);
     printf("tx hash %08" PRIx32 "\nrx hash %08" PRIx32 "\n", h, CS.h);
     hst_side_free(&CS);
     return 0;
@@ -222,12 +233,12 @@ int main(int argc, char **argv)
     int mode, fired = 0;
     FILE *f;
     int32_t m1 = 2 * 8000, m2 = 3 * 8000;
-    if (argc < 3 || argv[1][0] != '-' || !argv[1][1] || !strchr("gbdnfrcsp", argv[1][1])) {
-        fprintf(stderr, "usage: bench_hst -g|-b|-d|-n|-f|-r|-c|-s|-p FILE\n");
+    if (argc < 3 || argv[1][0] != '-' || !argv[1][1] || !strchr("gbdnfrcksp", argv[1][1])) {
+        fprintf(stderr, "usage: bench_hst -g|-b|-d|-n|-f|-r|-c|-k|-s|-p FILE\n");
         return 2;
     }
     mode = argv[1][1];
-    if (mode == 'c') return bench_call(argv[2]);
+    if (mode == 'c' || mode == 'k') return bench_call(argv[2], mode == 'k');
     if (mode == 'g') return record(argv[2], argc > 3 && !strcmp(argv[3], "300") ? 300 : 450);
     if (mode == 'f') return record_fwd(argv[2], 0);
     if (mode == 's') return record_fwd(argv[2], 1);

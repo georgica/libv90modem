@@ -158,4 +158,16 @@ stop_tail 450: data to the far end's stop, 12 lines
   every bit sent given, the frame's FCS and flag included: pass
 stop_tail 300: data to the far end's stop, 12 lines
   every bit sent given, the frame's FCS and flag included: pass
-test_hst_back: 125 checks, 0 failures
+lasting_drop 450: 12 dB down from 2 s on, 24 lines
+  the lock held, at most 40 wrong bits: pass
+lasting_drop 450: 15 dB down from 2 s on, 24 lines
+  the lock held, at most 40 wrong bits: pass
+lasting_drop 450: 20 dB down from 2 s on, 24 lines
+  the lock held, at most 40 wrong bits: pass
+lasting_drop 300: 12 dB down from 2 s on, 24 lines
+  the lock held, at most 40 wrong bits: pass
+lasting_drop 300: 15 dB down from 2 s on, 24 lines
+  the lock held, at most 40 wrong bits: pass
+lasting_drop 300: 20 dB down from 2 s on, 24 lines
+  the lock held, at most 40 wrong bits: pass
+test_hst_back: 131 checks, 0 failures

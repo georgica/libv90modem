@@ -56,7 +56,10 @@ static const char *const v90a_names[] = {
     N(V90A_ERR_RI), N(V90A_ERR_PHASE4), N(V90A_ERR_B1D), N(V90A_ERR_RATE), N(V90A_ERR_CLEARDOWN),
     N(V90A_ERR_HANGUP), N(V90A_ERR_CARRIER), N(V90A_ERR_JP), N(V90A_ERR_CPD), N(V90A_ERR_RETRAINS)
 };
-static const char *const ans_names[] = { N(ANS_ERR_TIMEOUT), N(ANS_ERR_RETRAINS), N(ANS_ERR_START), N(ANS_ERR_K56_RETRAIN) };
+static const char *const ans_names[] = {
+    N(ANS_ERR_TIMEOUT), N(ANS_ERR_RETRAINS), N(ANS_ERR_START), N(ANS_ERR_K56_RETRAIN), N(ANS_ERR_HST_LINK),
+    N(ANS_ERR_HST_CARRIER)
+};
 static const char *const orig_names[] = { N(ORIG_ERR_TIMEOUT) };
 #undef N
 
@@ -331,6 +334,13 @@ int diag_err_answer(const answer_t *a, const diag_track_t *t)
     case ANS_K56:
         if (a->u.k56.error) return C(DG_K56D, a->u.k56.error);
         if (a->u.k56.state == K56D_RETRAIN) return C(DG_ANS, ANS_ERR_RETRAINS);
+        break;
+    case ANS_HST:
+        /* HST (modem/ans_hst.c): no MNP link, the far carrier gone, the
+         * retrains at the lowest rate failed */
+        if (a->end == ANS_END_HST_FAILED) return C(DG_ANS, ANS_ERR_HST_LINK);
+        if (a->end == ANS_END_LOST) return C(DG_ANS, ANS_ERR_HST_CARRIER);
+        if (a->end == ANS_END_RETRAIN_FAILED) return C(DG_ANS, ANS_ERR_RETRAINS);
         break;
     case ANS_K56RT:
         if (a->v34.p2.state == P2N_K56) return k56_start_err(a);

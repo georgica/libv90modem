@@ -227,4 +227,10 @@ long_drift code 4, 17.5 dB, 60 s: data mode kept; the gain 16840 at 10 s, 16355 
   data mode never left: pass
   the gain within 1 dB of its value at 10 s: pass
   errors in the last window no more than in the first: pass
-test_hst_fwd: 208 checks, 0 failures
+ab_loud, code 4: AB 4 dB over the data, then the line 6.5 dB down; data mode kept; from 16000 data bits after it 0 errors in 100000 bits
+  data mode kept: pass
+  no error from 16000 bits after the step: pass
+ab_loud, code 6: AB 4 dB over the data, then the line 6.5 dB down; data mode kept; from 16000 data bits after it 0 errors in 100000 bits
+  data mode kept: pass
+  no error from 16000 bits after the step: pass
+test_hst_fwd: 212 checks, 0 failures

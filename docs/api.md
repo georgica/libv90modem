@@ -287,7 +287,7 @@ engine's header has an error without its name here
 | `P2L_ERR_` | calling V.34 / V.90 / V.92 Phase 2 (modem/p2call.h) | `INFO0`, `REV`, `INFO1A`, `NO_RATE` |
 | `V34O_ERR_` | calling V.34 (modem/v34orig.h) | `PHASE2`, `TRAINING` (as V.34 answering's), `RETRAINS`, `CLEARDOWN`, `CARRIER`, `HANGUP` |
 | `V90A_ERR_` | calling V.90 / V.92 (modem/v90a.h) | `PHASE2` (as above), `SD`, `TRAIN`, `JD`, `JDP`, `DIL`, `RI`, `PHASE4`, `B1D`, `RATE`, `CLEARDOWN`, `HANGUP`, `CARRIER`, `JP`, `CPD`, `RETRAINS` |
-| `ANS_ERR_` | the answering modem's own | `TIMEOUT` (a phase ran past its limit: the backstop of Phases 2, 3 and 4, a K56flex retrain's time), `RETRAINS` (one more retrain was due past the limit), `START` (the next engine could not start with what was agreed), `K56_RETRAIN` (the K56flex client's retrain did not take K56flex up again) |
+| `ANS_ERR_` | the answering modem's own | `TIMEOUT` (a phase ran past its limit: the backstop of Phases 2, 3 and 4, a K56flex retrain's time), `RETRAINS` (one more retrain was due past the limit; HST: the retrains at the lowest agreed rate failed), `START` (the next engine could not start with what was agreed), `K56_RETRAIN` (the K56flex client's retrain did not take K56flex up again), `HST_LINK` (HST: no MNP link within 15 s, `V90M_END_HST_FAILED`), `HST_CARRIER` (HST: the far modem's carrier went, the watchdogs' `V90M_END_LOST`) |
 | `ORIG_ERR_` | the calling modem's own | `TIMEOUT` (the start-up ran past the calling modem's limit for its phase: no modulation after ANS, no Bell answerer, V.32bis, V.34, V.90) |
 
 ## Control calls

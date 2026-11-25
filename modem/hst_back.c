@@ -185,8 +185,11 @@ static int32_t fir_fold(const int16_t *h, int32_t n, const int16_t *w)
 #define CHK_EVERY 32                  /* symbols between alias checks while locked */
 #define RMS_SQ(d) (((d) * 65536 / 360) * ((d) * 65536 / 360) / 16 * HST_BRX_WIN)
 /* faded symbols in a row that lose the lock, about 75 ms: 11 at 450, 8 at
- * 300 */
+ * 300; unless the last fade_win of them are a lasting drop (hst.h), with at
+ * most one off the grid */
 static const int32_t fade_lose[2] = { 11, 8 };
+static const int32_t fade_win[2] = { 8, 5 };
+typedef char hst_fade_win_fits[(8 <= HST_BRX_FN && 5 <= HST_BRX_FN) ? 1 : -1];
 #define CONFIRM   10                  /* symbols in each of the second check's two fresh windows */
 /* the bits are held back HST_BRX_DLY symbols while locked, at both speeds:
  * past 2 x CONFIRM (no bit leaves before the second alias check on its two
@@ -265,7 +268,7 @@ static void rx_acquire(hst_brx_t *r)
     r->okhist = 0; r->locked = 0; r->grid_ok = 0;
     r->e2 = 0;
     r->nest = 0; r->wait = 0; r->nchk = 0; r->nalias = 0;
-    r->qbad = r->nfade = r->nweak = 0; rx_window_clear(r);
+    r->qbad = r->nfade = r->nweak = 0; r->fok = 0; rx_window_clear(r);
     r->ndly = r->pdly = 0; r->conf = r->nconf = 0;
     scr_init(&r->scr);
 }
@@ -585,6 +588,24 @@ static void rx_timing(hst_brx_t *r, int32_t frac, int32_t yr, int32_t yi)
     r->nest = 0; r->nsym = 0;
 }
 
+/* the faded run so far a lasting drop of the level (hst.h): its last
+ * fade_win symbols steady, the strongest at most twice the weakest, and at
+ * most one off the grid; then their mean power, else 0 */
+static int64_t fade_step(const hst_brx_t *r)
+{
+    const int32_t n = fade_win[r->lane];
+    int64_t lo = 0, hi = 0, sum = 0;
+    int32_t j;
+    if (r->nfade < n || ones(~r->fok & ((1u << n) - 1)) > 1) return 0;
+    for (j = 0; j < n; j++) {
+        int64_t p = r->fpw[(r->nfade - 1 - j) % HST_BRX_FN];
+        if (j == 0 || p < lo) lo = p;
+        if (j == 0 || p > hi) hi = p;
+        sum += p;
+    }
+    return hi <= 2 * lo ? sum / n : 0;
+}
+
 /* a symbol strobe: timing, carrier, the decision */
 static int rx_symbol(hst_brx_t *r, int32_t yr, int32_t yi)
 {
@@ -645,6 +666,18 @@ static int rx_symbol(hst_brx_t *r, int32_t yr, int32_t yi)
 
     de = rx_decide(r, d, !fade, qdiv(pw, pd, psh, 8));
     r->ndec++;
+    if (fade) {
+        r->fpw[(r->nfade - 1) % HST_BRX_FN] = pw;
+        r->fok = (r->fok << 1) | (uint32_t)(de <= (int32_t)DEG12 && de >= -(int32_t)DEG12);
+        if (r->nfade >= fade_lose[r->lane]) {
+            int64_t m = fade_step(r);
+            if (m > 0) {
+                /* a lasting drop: the level the faded symbols' (hst.h) */
+                r->pref = m;
+                r->nfade = r->nweak = 0;
+            }
+        }
+    }
     if (r->acq == ACQ_LOCK) {
         /* frequency: the decisions' error is the turn a symbol left over */
         if (!fade) r->wturn += de / (r->locked ? KDT : KDA);

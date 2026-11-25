@@ -12,7 +12,7 @@
  * Host only: the line and the caller are the tests' simulations, in
  * double.
  *
- *   rec_hst [-e ERL] [-b DBM0] [-n DBM0] [-p BPS] [-r SEED] [-x DB@MS]... [-q] SECONDS OUT
+ *   rec_hst [-e ERL] [-b DBM0] [-n DBM0] [-p BPS] [-r SEED] [-x DB@MS]... [-q] [-R] SECONDS OUT
  *
  * The line (sim/v32line): mu-law at the answerer, 6 dB loss each way, 25
  * ms each way, +1 Hz, +30 ppm on the caller's clock, the caller's own
@@ -29,6 +29,11 @@
  *               from MS ms after our data at 14400 begins, held (the real
  *               line's "a lasting level drop"); up to four
  *   -q          no summary of the back receivers' locks
+ *   -R          the caller takes the forward channel (its backlog over 64
+ *               octets, hstcall rev_backlog) and keeps it: our endpoint
+ *               writes nothing (rig/hst_side.h's quiet). SECONDS from where
+ *               we hold the back channel with the caller's data at 14400
+ *               coming in (bench_hst -k, `make cost-hst`)
  *
  * The call: the recording begins a second before the answer (200 ms of it
  * silent, as v90d's are: the replay finds our answer tone after it); then
@@ -110,7 +115,7 @@ int main(int argc, char **argv)
     v32line_cfg lc;
     hstcall_cfg hc;
     double erl = 20, back = -18, noise = -55;
-    int nx = 0, quiet = 0, arg, k, bps = 450;
+    int nx = 0, quiet = 0, arg, k, bps = 450, rev = 0;
     long seed = 19;
     struct { double db; long ms; } xs[4];
     long secs, end, d0;
@@ -121,6 +126,7 @@ int main(int argc, char **argv)
     for (arg = 1; arg < argc && argv[arg][0] == '-' && argv[arg][1]; arg++) {
         const char *o = argv[arg];
         if (!strcmp(o, "-q")) quiet = 1;
+        else if (!strcmp(o, "-R")) rev = 1;
         else if (arg + 1 < argc && !strcmp(o, "-e")) erl = atof(argv[++arg]);
         else if (arg + 1 < argc && !strcmp(o, "-b")) back = atof(argv[++arg]);
         else if (arg + 1 < argc && !strcmp(o, "-n")) noise = atof(argv[++arg]);
@@ -132,12 +138,12 @@ int main(int argc, char **argv)
         } else break;
     }
     if (argc - arg != 2 || (secs = atol(argv[arg])) <= 0) {
-        fprintf(stderr, "usage: rec_hst [-e ERL] [-b DBM0] [-n DBM0] [-p BPS] [-r SEED] [-x DB@MS]... [-q] SECONDS OUT\n");
+        fprintf(stderr, "usage: rec_hst [-e ERL] [-b DBM0] [-n DBM0] [-p BPS] [-r SEED] [-x DB@MS]... [-q] [-R] SECONDS OUT\n");
         return 2;
     }
     out = fopen(argv[arg + 1], "wb");
     if (!out) { perror(argv[arg + 1]); return 1; }
-    if (hst_side_init(&S)) { fprintf(stderr, "rec_hst: no answerer\n"); return 1; }
+    if (hst_side_init(&S, rev)) { fprintf(stderr, "rec_hst: no answerer\n"); return 1; }
     a = v90m__answer(S.m);
 
     memset(&lc, 0, sizeof lc);
@@ -148,6 +154,7 @@ int main(int argc, char **argv)
     hstcall_defaults(&hc);
     hc.level_dbm0 = (int)lrint(back + lc.loss_db);
     hc.back_bps = hc.start_bps = bps;
+    if (rev) hc.rev_backlog = 64;
     hstcall_init(&HC, &hc);
 
     /* a second before the call is answered, as v90d's recordings have:
@@ -166,7 +173,8 @@ int main(int argc, char **argv)
     while (nrec < end) {
         v90m_state st;
         block(&st);
-        if (S.data14400 >= 0 && end > S.data14400 + d0 + secs * 8000) end = S.data14400 + d0 + secs * 8000;
+        if (!rev && S.data14400 >= 0 && end > S.data14400 + d0 + secs * 8000) end = S.data14400 + d0 + secs * 8000;
+        if (rev && S.back14400 >= 0 && end > S.back14400 + d0 + secs * 8000) end = S.back14400 + d0 + secs * 8000;
         if (S.data14400 >= 0) {
             long t = S.n - S.data14400;                       /* samples into data at 14400 */
             while (xi < nx && t >= xs[xi].ms * 8) {
@@ -204,6 +212,9 @@ int main(int argc, char **argv)
         v90m_ec_get_status(S.ec, &es);
         printf("rec_hst: %ld samples; data at 14400 from sample %ld (%.3f s of the call); transmit hash %08lx\n", nrec,
                S.data14400 >= 0 ? S.data14400 + d0 : -1L, S.data14400 / 8000.0, (unsigned long)txh);
+        if (rev)
+            printf("rec_hst: holding the back channel, the forward one at 14400, from sample %ld (%.3f s of the call)\n",
+                   S.back14400 >= 0 ? S.back14400 + d0 : -1L, S.back14400 / 8000.0);
         printf("rec_hst: MNP %s, hst %d rates 0x%02X back300 %d; the answerer got %lu octets, the caller %lu (%ld wrong)\n",
                es.protocol == V90M_EC_PROTO_MNP ? "up" : "not up", es.hst, es.hst_rates, es.hst_back300, S.got,
                (unsigned long)cr, cbad);
@@ -215,5 +226,5 @@ int main(int argc, char **argv)
         printf("%s\n", ended ? " (ended)" : "");
     }
     hst_side_free(&S);
-    return S.data14400 < 0;
+    return rev ? S.back14400 < 0 : S.data14400 < 0;
 }

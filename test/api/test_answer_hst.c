@@ -56,7 +56,8 @@
  *               and reads in its putbit (preflight F5: the claim is
  *               "identical for a host that ticks by bit time")
  *   rev_caller  (Task 21) the caller's backlog once our data is in: its
- *               0x1R, our LNA; 20 ms after it drained our forward carrier
+ *               0x1R, our LNA; 20 ms after it drained, and 20 symbols of
+ *               ones from the frame's end (Task 23), our forward carrier
  *               stops and our back transmitter starts at the agreed speed;
  *               the caller trains forward at the rate in force, the long
  *               training; RATES with tx and rx exchanged, data never
@@ -109,6 +110,40 @@
  *               to 15 dB SNR, where trainings at 12000 and 9600 fail: in
  *               data at 7200 within 30 s, holding back, at most 8 retrains,
  *               none and no LN in the last 15 s; the data intact
+ * Retrain, watchdogs, cleardown and end codes (Task 23; spec "Retrain,
+ * watchdogs, cleardown and end codes"):
+ *   retrain_back  holding the back channel at 14400, v90m_retrain: our 0x26
+ *               at once, the caller's short training at 14400, a retrain
+ *               (DATA_STOPPED, DATA_MOVING, retrains 2); V90M_ESTATE while
+ *               it is pending (holding forward: hst96)
+ *   back_silent holding the back channel, the caller gone: our 0x26 1 s on,
+ *               the forward channel taken back 5 s on, V90M_END_LOST 5 s
+ *               later (ANS_ERR_HST_CARRIER); the caller gone at our switch to
+ *               the back channel: taken back 3 s on, LOST 5 s later; never
+ *               more than 12 s connected without a far signal (holding
+ *               forward: lost_fwd, 5 s)
+ *   retrain_failed  holding back at 9600, the one rate agreed, the line at
+ *               3 dB SNR: the caller's training 3 times for our 0x24, then
+ *               V90M_END_RETRAIN_FAILED (ANS_ERR_RETRAINS) within 15 s
+ *   far_ld      the caller's LD 255: V90M_END_CLEARDOWN_FAR when its
+ *               carrier goes (holding forward, 300 ms; holding back, 100 ms)
+ *               or 2 s after our endpoint had the LD (its carrier held 5 s);
+ *               no error
+ *   ours        v90m_ec_release, v90m_ec_tx_busy 0 within 1 s, then
+ *               v90m_cleardown: V90M_END_CLEARDOWN_OURS within 200 ms (the
+ *               LD's tail), our transmit silent after, the caller has LD
+ *               255; holding forward and holding back
+ *   unlock_loop the Task 22b review's M2: holding back at 12000, the lock
+ *               lost every 4 s (10 dB SNR for 0.8 s), each retrain holding
+ *               data over 2 s: 3 retrains, then one rate lower (0x24); at
+ *               9600, the lowest agreed, 3 more and V90M_END_RETRAIN_FAILED
+ *   levels      -9 to -33 dBm0 in 6 dB steps (both ways, the line without
+ *               loss), +-100 ppm, 25 dB SNR, 60 s each (TEST_SHORT 10 s)
+ *               with reversals (both ends behind) and the caller's 0x3R and
+ *               0x2R every 8 s while it holds back: every octet delivered,
+ *               intact; at least 2 reversals and 2 rate changes
+ * The no_lr and lost_fwd cases also check v90m_get_diag's error
+ * (ANS_ERR_HST_LINK, ANS_ERR_HST_CARRIER).
  *
  * Built with -DHST_PROFILE_BM (make check-hst-bm) the caller trains as
  * BinModem (V.17's long train) and, with no case named, only `rates`,
@@ -262,7 +297,7 @@ static void our_event(void *u, v90m_event ev)
     }
 }
 
-typedef struct { unsigned mods; int link, raw, bittime, alaw, max_down, max_up; } our_cfg;
+typedef struct { unsigned mods; int link, raw, bittime, alaw, max_down, max_up, level; } our_cfg;
 static void our_init(our_t *o, const our_cfg *c)
 {
     v90m_cfg mc; int err;
@@ -278,6 +313,7 @@ static void our_init(our_t *o, const our_cfg *c)
     CHECK(o->ec != NULL);
     v90m_cfg_default(&mc);
     mc.role = V90M_ROLE_ANSWER; mc.modulations = c->mods; mc.alaw = c->alaw; mc.max_down_bps = c->max_down; mc.max_up_bps = c->max_up;
+    if (c->level) mc.tx_level = c->level;
     mc.getbit = our_get; mc.putbit = our_put; mc.on_event = our_event; mc.user = o;
     o->m = v90m_create(&mc, &err);
     CHECK(o->m != NULL);
@@ -285,6 +321,8 @@ static void our_init(our_t *o, const our_cfg *c)
 }
 
 static answer_t *ans(void) { return v90m__answer(O.m); }
+/* v90m_get_diag's error: why the call ended (v90m_err_name) */
+static int diag_err(void) { v90m_diag d; v90m_get_diag(O.m, &d); return d.error; }
 
 /* the reversals as the test sees them, a ms at a time (Task 21): ours, each
  * switch of the role, with what went before it (the holder's 20 ms after
@@ -373,8 +411,9 @@ static void our_ms(our_t *o)
  * check-hst-bm runs `rates` and `rev_caller`): the caller trains as
  * BinModem does, V.17's long train, when we do; the S3 the trainings show
  * (hstcall's lens[2], our len[2]: V.17's 64-symbol bridge then); and the
- * switch after our granting LNA: 20 ms, plus V.17's 32 symbols of ones
- * (13.3 ms) under the profile */
+ * switch after our granting LNA: 20 ms, then from the cut 20 symbols of
+ * ones (8.3 ms; Task 23, the Task 21 review's M3: the far decoder gives
+ * the last frame's end), or under the profile V.17's 32 (13.3 ms) */
 #if HST_LONG_V17
 #define EXP_S3_LONG  HST_BM_BRIDGE
 #define EXP_S3_SHORT HST_BM_BRIDGE
@@ -385,10 +424,10 @@ static void our_ms(our_t *o)
 #else
 #define EXP_S3_LONG  HST_S3_LONG
 #define EXP_S3_SHORT HST_S3_SHORT
-#define EXP_SW_LO    20
-#define EXP_SW_HI    22
-#define EXP_ONES_LO  0
-#define EXP_ONES_HI  1
+#define EXP_SW_LO    28
+#define EXP_SW_HI    31
+#define EXP_ONES_LO  8
+#define EXP_ONES_HI  10
 #endif
 /* how a 0x3R is carried out: by marks, or (HST_3R_TRAINS, the BinModem
  * profile) by a training */
@@ -844,6 +883,8 @@ static void no_lr(void)
         } else {
             CHECK_EQ_I(O.end, V90M_END_HST_FAILED);
             bound("V90M_END_HST_FAILED 15 s after ANS_HST", O.hst_ms >= 0 && labs(O.end_ms - O.hst_ms - 15000) <= 1);
+            printf("  error %s\n", v90m_err_name(diag_err()));
+            CHECK(strcmp(v90m_err_name(diag_err()), "ANS_ERR_HST_LINK") == 0);
         }
     }
 }
@@ -863,6 +904,8 @@ static void lost_fwd(void)
     if (verbose) printf("  (connected %ld ms, dropped %ld, ended %ld)\n", O.conn_ms, C.drop_at, O.end_ms);
     CHECK_EQ_I(O.end, V90M_END_LOST);
     bound("V90M_END_LOST 5 s after the back carrier went (+ its release, < 300 ms)", O.conn_ms >= 0 && C.drop_at > O.conn_ms && d >= 5000 && d < 5300);
+    printf("  error %s\n", v90m_err_name(diag_err()));
+    CHECK(strcmp(v90m_err_name(diag_err()), "ANS_ERR_HST_CARRIER") == 0);
 }
 
 /* ===================== legacy_unchanged ===================== */
@@ -1039,8 +1082,8 @@ static int index_at(int ev, int from, long ms_lo, long ms_hi)
 static int count_ev(int ev, int from) { int i, n = 0; for (i = from; i < O.nev; i++) n += O.ev[i] == ev; return n; }
 
 /* the switch k, to the back channel (we granted the caller's 0x1R): 20 ms
- * after the LNA drained (+1 for the ms grid, and the frame that may have
- * begun in them) our forward carrier stops and our back transmitter
+ * after the LNA drained and the tail's ones (+1 for the ms grid, and the
+ * frame that may have begun in them) our forward carrier stops and our back transmitter
  * starts at the agreed speed; RATES there with tx and rx exchanged */
 static void rev_to_back(int k, int code, int back)
 {
@@ -1048,7 +1091,7 @@ static void rev_to_back(int k, int code, int back)
     long d = RV.sw[k] - RV.pre[k];
     if (verbose) printf("  (switch %d at %ld ms, %ld ms after the LNA drained, %ld ms after the host's last bit)\n", k, RV.sw[k], d, RV.ones_ms[k]);
     bound(HST_LONG_V17 ? "to the back channel 20 ms and V.17's turn-off after our LNA drained"
-                       : "to the back channel 20 ms after our LNA drained",
+                       : "to the back channel 20 ms and 20 symbols of ones after our LNA drained",
           RV.to[k] == HST_ROLE_BACK && RV.pre[k] >= 0 && d >= EXP_SW_LO && d <= EXP_SW_HI);
     bound("ones, no host bit, from the cut to the switch", RV.ones_ms[k] >= EXP_ONES_LO && RV.ones_ms[k] <= EXP_ONES_HI);
     bound("there our forward carrier stops, our back transmitter starts at the agreed speed",
@@ -1331,6 +1374,7 @@ typedef struct {
     int nrx; long rx_ms[NRC]; int rx_code[NRC], rx_trained[NRC];        /* the forward receiver's code, holding back */
     int last_ln, last_seg, last_mk, last_rx, left_data, last_st, last_rc, last_hseg, last_hfrx; unsigned last_ep;
     int rt_on, rt_t401; unsigned long rt_exp; long rt_ticks, rt_bad, rt_running;              /* T401 through the retrains */
+    int nhtr; long htr_ms[NRC]; int htr_code[NRC], last_hfs;            /* the caller's forward trainings */
 } rcw_t;
 static rcw_t RC;
 static void rc_init(void) { memset(&RC, 0, sizeof RC); RC.last_ln = -1; RC.last_rx = -1; }
@@ -1379,6 +1423,10 @@ static void rc_watch(void)
         printf("  (%ld ms: rc %d, order 0x%02X, rct %d, left %d, fails %d, retraining %d)\n", now_ms, (int)h->rc, (int)h->rc_order,
                (int)h->rct, (int)h->rc_left, (int)h->fl_n, a->retraining);
     RC.last_rc = h->rc;
+    if (HC.ftx.seg == HC_FS_S1 && RC.last_hfs != HC_FS_S1 && RC.nhtr < NRC) {
+        RC.htr_ms[RC.nhtr] = now_ms; RC.htr_code[RC.nhtr] = HC.ftx.code; RC.nhtr++;
+    }
+    RC.last_hfs = HC.ftx.seg;
     if (verbose && HC.ftx.seg != RC.last_hseg) printf("  (%ld ms: the caller's forward segment %d, code %d)\n", now_ms, HC.ftx.seg, HC.ftx.code);
     RC.last_hseg = HC.ftx.seg;
     if (verbose && HC.frx.state != RC.last_hfrx) printf("  (%ld ms: the caller's forward receiver %d, code %d, next %d)\n", now_ms, HC.frx.state, HC.frx.d.code, HC.frx.next_code);
@@ -1697,7 +1745,11 @@ static void recovery(void)
 /* fallback (Task 16's): holding back at 12000, the forward channel at our
  * input falls to 15 dB SNR, where trainings at 9600 fail: the policy ends
  * at 7200 (frame errors and failed retrains), in data there, and stays:
- * no retrain, no LN in the last 15 s */
+ * no retrain, no LN in the last 15 s. The line's seed (2210 since Task 23,
+ * whose 20-symbol tail at a reversal moves every later instant): at 15 dB
+ * a short training at 7200 fails 3 times in a row on about 2 lines in 5,
+ * before Task 23 as after it (seeds 2206..2225: 12 and 9 of 20 end at
+ * 7200), and the policy goes on to 4800: the training's, not the policy's */
 static void fallback(void)
 {
     hstcall_cfg hc;
@@ -1709,7 +1761,7 @@ static void fallback(void)
     hc_defaults(&hc);
     hc.rev_backlog = 64; hc.rates = (uint8_t)rates_mask(5);
     printf("fallback: holding back at 12000, the line at 15 dB SNR: down to 7200, and staying there\n");
-    rc_call(&hc, &oc, 100000000L, 2048, 2206u);
+    rc_call(&hc, &oc, 100000000L, 2048, 2210u);
     C.after_fwd = 1;
     run_ms(60000L, holding_back_data);
     xn_meas = 1;
@@ -1736,7 +1788,336 @@ static void fallback(void)
     bound("the data intact", C.bad == 0 && O.bad == 0 && O.end_ms < 0);
 }
 
-#define NCASES 24
+/* ===================== retrain, watchdogs, cleardown, end codes (Task 23) ===================== */
+/* the largest of our transmitted samples over the last ms ms */
+static int tx_peak(long ms)
+{
+    long s;
+    int m = 0;
+    for (s = nsamp - ms * 8; s < nsamp; s++) { int v = txq[s & (TXQ - 1)]; if (v < 0) v = -v; if (v > m) m = v; }
+    return m;
+}
+/* the caller's trainings from ms on */
+static int htr_from(long ms, int code)
+{
+    int k, n = 0;
+    for (k = 0; k < RC.nhtr; k++) n += RC.htr_ms[k] >= ms && (!code || RC.htr_code[k] == code);
+    return n;
+}
+
+/* retrain_back: holding the back channel at 14400, v90m_retrain: our 0x26
+ * (the rate in force), the caller's short training at 14400, a retrain
+ * (DATA_STOPPED, DATA_MOVING at rx 14400, retrains 2); one at a time
+ * (V90M_ESTATE while it is pending) */
+static void retrain_back(void)
+{
+    hstcall_cfg hc;
+    our_cfg oc = hst_ours();
+    v90m_stats ss;
+    long t0;
+    int n0, i1, i2;
+    hc_defaults(&hc);
+    hc.rev_backlog = 64;
+    printf("retrain_back: holding the back channel at 14400, v90m_retrain: our 0x26\n");
+    rc_call(&hc, &oc, 100000000L, 2048, 2301u);
+    C.after_fwd = 1;
+    run_ms(60000L, holding_back_data);
+    run_ms(now_ms + 2000, ended);
+    n0 = O.nev; t0 = now_ms;
+    CHECK_EQ_I(v90m_retrain(O.m), V90M_OK);
+    CHECK_EQ_I(v90m_retrain(O.m), V90M_ESTATE);
+    run_ms(now_ms + 10000, ended);
+    v90m_get_stats(O.m, &ss);
+    i1 = index_of(V90M_EV_DATA_STOPPED, n0); i2 = i1 < 0 ? -1 : index_of(V90M_EV_DATA_MOVING, i1);
+    rc_data_line();
+    if (verbose) printf("  (v90m_retrain at %ld ms; our LN at %ld; STOPPED %ld, MOVING %ld)\n", t0, RC.nln ? RC.ln_ms[0] : -1L,
+                        i1 >= 0 ? O.ev_ms[i1] : -1L, i2 >= 0 ? O.ev_ms[i2] : -1L);
+    bound("our 0x26 at once, our only LN", RC.nln == 1 && RC.ln[0] == 0x26 && RC.ln_ms[0] - t0 <= 2);
+    bound("the caller's training at 14400: DATA_STOPPED, then DATA_MOVING at rx 14400; retrains 2",
+          htr_from(t0, 6) == 1 && htr_from(t0, 0) == 1 && i1 >= 0 && i2 > i1 && O.ev_rx[i2] == 14400 && ss.retrains == 2);
+    bound("the data both ways intact", C.bad == 0 && O.bad == 0 && C.r == O.to_send && O.r > 4000 && O.end_ms < 0);
+}
+
+/* back_silent: the watchdogs. Holding the back channel, every carrier of
+ * the caller's off: our 0x26 1 s on, the forward channel taken back 5 s
+ * on (a retrain), V90M_END_LOST 5 s after that (ANS_ERR_HST_CARRIER); and
+ * the caller gone at our switch to the back channel (its training never
+ * comes): the forward channel taken back within 3 s, then LOST. Neither
+ * stays connected more than 12 s without a far signal */
+static void back_silent(void)
+{
+    int k;
+    for (k = 0; k < 2; k++) {
+        hstcall_cfg hc;
+        our_cfg oc = hst_ours();
+        long t_drop, d_ln = -1, d_back = -1, d_end;
+        int i26, nsw;
+        hc_defaults(&hc);
+        hc.rev_backlog = 64;
+        printf("back_silent: %s\n", k ? "the caller gone at our switch to the back channel" : "holding the back channel, the caller gone");
+        rc_call(&hc, &oc, 100000000L, 2048, 2302u + (uint32_t)k);
+        C.after_fwd = 1;
+        if (k == 0) { run_ms(60000L, holding_back_data); run_ms(now_ms + 2000, ended); }
+        else while (now_ms < 60000L && RV.n == 0 && O.end_ms < 0) run_ms(now_ms + 1, NULL);
+        t_drop = now_ms; nsw = RV.n;
+        HC.cfg.drop_at_ms = (int)HC.ms + 1;
+        run_ms(now_ms + 20000, ended);
+        i26 = rc_ln_index(0x26, 0);
+        if (i26 >= 0) d_ln = RC.ln_ms[i26] - t_drop;
+        if (RV.n > nsw) d_back = RV.sw[nsw] - t_drop;
+        d_end = O.end_ms - t_drop;
+        printf("  the forward channel taken back %s; end %d (%s)\n", RV.n > nsw && RV.to[nsw] == HST_ROLE_FWD && RV.took_back[nsw] ? "yes" : "no",
+               O.end, v90m_err_name(diag_err()));
+        if (verbose) printf("  (the caller gone at %ld ms; our 0x26 %ld ms on, taken back %ld, ended %ld)\n", t_drop, d_ln, d_back, d_end);
+        CHECK_EQ_I(O.end, V90M_END_LOST);
+        CHECK(strcmp(v90m_err_name(diag_err()), "ANS_ERR_HST_CARRIER") == 0);
+        if (k == 0) {
+            bound("our 0x26 1 s after the forward carrier went (+ its detection, < 100 ms)", d_ln >= 1000 && d_ln < 1100);
+            bound("the forward channel taken back 5 s after it went", RV.n == nsw + 1 && RV.took_back[nsw] && d_back >= 5000 && d_back < 5100);
+            bound("V90M_END_LOST 5 s after that (+ the back receivers' release, < 300 ms)", d_end >= 10000 && d_end < 10300);
+        } else {
+            bound("the forward channel taken back 3 s after the switch", RV.n == nsw + 1 && RV.took_back[nsw] && d_back >= 3000 && d_back < 3100);
+            bound("V90M_END_LOST 5 s after that", d_end >= 8000 && d_end < 8300);
+        }
+        bound("connected without a far signal at most 12 s", d_end > 0 && d_end <= 12000);
+    }
+}
+
+/* retrain_failed: holding the back channel at 9600, the one rate agreed,
+ * the line falls to 3 dB SNR: our 0x24, the caller's training, again and
+ * again; 3 failed retrains within 10 s at the lowest agreed rate end the
+ * call V90M_END_RETRAIN_FAILED (ANS_ERR_RETRAINS) */
+static void retrain_failed(void)
+{
+    hstcall_cfg hc;
+    our_cfg oc = hst_ours();
+    long t_deg;
+    int k, only24 = 1;
+    hc_defaults(&hc);
+    hc.rev_backlog = 64; hc.rates = 0x10;
+    printf("retrain_failed: holding the back channel at 9600, the one rate agreed; the line at 3 dB SNR\n");
+    rc_call(&hc, &oc, 100000000L, 2048, 2304u);
+    C.after_fwd = 1;
+    run_ms(60000L, holding_back_data);
+    xn_meas = 1;
+    run_ms(now_ms + 1000, ended);
+    xn_meas = 0;
+    xn_rms = sqrt(xn_pw / (xn_n ? xn_n : 1)) * pow(10, -3.0 / 20);
+    t_deg = now_ms;
+    run_ms(t_deg + 60000L, ended);
+    for (k = 0; k < RC.nln; k++) only24 &= RC.ln[k] == 0x24;
+    printf("  our LNs 0x24 only %d; the caller's trainings %d, at 9600 %d; end %d (%s)\n", only24, htr_from(t_deg, 0),
+           htr_from(t_deg, 4), O.end, v90m_err_name(diag_err()));
+    if (verbose) printf("  (the noise at %ld ms, the end %ld ms on)\n", t_deg, O.end_ms - t_deg);
+    CHECK_EQ_I(O.end, V90M_END_RETRAIN_FAILED);
+    CHECK(strcmp(v90m_err_name(diag_err()), "ANS_ERR_RETRAINS") == 0);
+    bound("our 0x24 alone; the caller's trainings at 9600, three", RC.nln >= 1 && only24 && htr_from(t_deg, 0) == 3 && htr_from(t_deg, 4) == 3);
+    bound("the end within 15 s of the noise", O.end_ms >= 0 && O.end_ms - t_deg <= 15000);
+    bound("the data intact", C.bad == 0 && O.bad == 0);
+}
+
+/* far_ld: the caller's LD 255 (hstcall ld_at_ms), its carrier held
+ * ld_hold_ms after it: holding the forward channel, 1 s: the call ends
+ * V90M_END_CLEARDOWN_FAR when the back carrier goes (within 300 ms); 5 s:
+ * 2 s after our endpoint had the LD; holding the back channel, 1 s: when
+ * the forward carrier goes (within 100 ms). No error (an orderly end) */
+static void far_ld(void)
+{
+    static const int hold[3] = { 1000, 5000, 1000 };
+    int k;
+    for (k = 0; k < 3; k++) {
+        hstcall_cfg hc;
+        our_cfg oc = hst_ours();
+        long t0, t_ld = -1;
+        hc_defaults(&hc);
+        if (k == 2) hc.rev_backlog = 64;
+        hc.ld_hold_ms = hold[k];
+        printf("far_ld: holding the %s channel, the caller's carrier held %d ms after its LD\n", k == 2 ? "back" : "forward", hold[k]);
+        rc_call(&hc, &oc, k == 2 ? 100000000L : 2048, 2048, 2305u + (uint32_t)k);
+        if (k == 2) { C.after_fwd = 1; run_ms(60000L, holding_back_data); }
+        else run_ms(12000L, ended);
+        run_ms(now_ms + 1000, ended);
+        t0 = now_ms;
+        HC.cfg.ld_at_ms = (int)HC.ms + 1;
+        while (now_ms < t0 + 20000 && O.end_ms < 0) {
+            run_ms(now_ms + 1, NULL);
+            if (t_ld < 0 && ans()->phase == ANS_HST && ans()->u.hst.link.far_ld) t_ld = now_ms;
+        }
+        printf("  our endpoint had the LD: %s; end %d, error %d\n", t_ld >= 0 ? "yes" : "no", O.end, diag_err());
+        if (verbose) printf("  (the LD asked at %ld ms, our endpoint had it at %ld, the caller's carriers off at %ld, ended %ld)\n",
+                            t0, t_ld, C.drop_at, O.end_ms);
+        CHECK_EQ_I(O.end, V90M_END_CLEARDOWN_FAR);
+        CHECK_EQ_I(diag_err(), 0);
+        if (k == 1) bound("2 s after our endpoint had the LD", t_ld >= 0 && O.end_ms - t_ld >= 2000 && O.end_ms - t_ld <= 2001);
+        else bound(k ? "when the forward carrier went (within 100 ms)" : "when the back carrier went (within 300 ms)",
+                   t_ld >= 0 && C.drop_at > t_ld && O.end_ms >= C.drop_at && O.end_ms - C.drop_at < (k ? 100 : 300));
+    }
+}
+
+/* ours: v90m_ec_release (LD 255), v90m_ec_tx_busy 0 within 1 s, then
+ * v90m_cleardown: V90M_END_CLEARDOWN_OURS within 200 ms (the LD's tail
+ * out), then both our carriers silent; the caller has the LD; holding the
+ * forward channel and holding the back one */
+static void ours(void)
+{
+    int k;
+    for (k = 0; k < 2; k++) {
+        hstcall_cfg hc;
+        our_cfg oc = hst_ours();
+        long t_rel, t_idle, t_clr;
+        int pk;
+        hc_defaults(&hc);
+        if (k) hc.rev_backlog = 64;
+        printf("ours: holding the %s channel: v90m_ec_release, then v90m_cleardown\n", k ? "back" : "forward");
+        rc_call(&hc, &oc, k ? 100000000L : 2048, k ? 2048 : 100000000L, 2308u + (uint32_t)k);
+        if (k) { C.after_fwd = 1; run_ms(60000L, holding_back_data); }
+        else run_ms(12000L, ended);
+        run_ms(now_ms + 1000, ended);
+        t_rel = now_ms;
+        if (verbose) printf("  (at the release: the caller's frames %d, bits %ld)\n", HC.mnp.rx_frames, HC.rx_bits);
+        v90m_ec_release(O.ec);
+        while (now_ms < t_rel + 2000 && v90m_ec_tx_busy(O.ec) > 0) run_ms(now_ms + 1, NULL);
+        t_idle = now_ms;
+        CHECK_EQ_I(v90m_cleardown(O.m), V90M_OK);
+        t_clr = now_ms;
+        run_ms(now_ms + 1000, NULL);
+        pk = tx_peak(500);
+        printf("  end %d, error %d; the caller had LD %d; our transmit's peak in the last 500 ms %d\n", O.end, diag_err(),
+               HC.mnp.rx_ld_reason, pk);
+        if (verbose) printf("  (released at %ld ms, tx_busy 0 at %ld, cleardown at %ld, ended %ld; the caller's frames bad %d, all %d, bits %ld, role %d)\n",
+                            t_rel, t_idle, t_clr, O.end_ms, HC.mnp.rx_bad, HC.mnp.rx_frames, HC.rx_bits, HC.role);
+        CHECK_EQ_I(O.end, V90M_END_CLEARDOWN_OURS);
+        CHECK_EQ_I(diag_err(), 0);
+        bound("v90m_ec_tx_busy 0 within 1 s of the release", t_idle - t_rel <= 1000);
+        bound("ended within 200 ms of v90m_cleardown, both carriers stopped", O.end_ms >= t_clr && O.end_ms - t_clr <= 200 && pk == 0);
+        bound("the caller had our LD 255", HC.mnp.rx_ld_reason == 255);
+    }
+}
+
+/* unlock_loop (the Task 22b review's M2): holding the back channel at
+ * 12000 (9600 and 12000 agreed), the caller's data stopped (no frame to
+ * lose), the line at 10 dB SNR for 0.8 s every 4 s: each time our receiver
+ * loses its lock, our 0x25 has the caller retrain it, and the data mode
+ * that follows holds more than 2 s (no failed retrain). Not for ever: the
+ * 4th loss of lock within 30 s asks one rate lower (our 0x24) instead, 3
+ * retrains at 12000 before it; at 9600, the lowest agreed, 3 more and the 4th ends the
+ * call V90M_END_RETRAIN_FAILED (ANS_ERR_RETRAINS) */
+static void unlock_loop(void)
+{
+    hstcall_cfg hc;
+    our_cfg oc = hst_ours();
+    double rms;
+    long t0, t, t4 = -1;
+    int k, n5 = 0, n4 = 0;
+    hc_defaults(&hc);
+    hc.rev_backlog = 64; hc.rates = 0x30;
+    printf("unlock_loop: holding the back channel at 12000, its lock lost every 4 s\n");
+    rc_call(&hc, &oc, 100000000L, 2048, 2307u);
+    C.after_fwd = 1;
+    run_ms(60000L, holding_back_data);
+    run_ms(now_ms + 1000, ended);
+    C.to_send = C.w;
+    xn_meas = 1;
+    run_ms(now_ms + 1000, ended);
+    xn_meas = 0;
+    rms = sqrt(xn_pw / (xn_n ? xn_n : 1)) * pow(10, -10.0 / 20);
+    t0 = now_ms;
+    for (t = 0; t < 70000 && O.end_ms < 0; t += 4000) {
+        xn_rms = rms;
+        run_ms(t0 + t + 800, ended);
+        xn_rms = 0;
+        run_ms(t0 + t + 4000, ended);
+    }
+    xn_rms = 0;
+    /* the caller's trainings from the first loss of lock: at 12000, then at 9600 */
+    for (k = 0; k < RC.nhtr; k++) {
+        if (RC.htr_ms[k] < t0) continue;
+        if (RC.htr_code[k] == 5 && n4 == 0) n5++;
+        else if (RC.htr_code[k] == 4) { if (!n4) t4 = RC.htr_ms[k]; n4++; }
+        else n5 = 100;
+    }
+    printf("  the caller's trainings: %d at 12000, then %d at 9600; end %d (%s)\n", n5, n4, O.end, v90m_err_name(diag_err()));
+    if (verbose) printf("  (the noise from %ld ms; 9600's first training at %ld, the end at %ld)\n", t0, t4, O.end_ms);
+    bound("3 retrains at 12000, then one rate lower", n5 == 3 && n4 >= 1);
+    bound("4 at 9600 (the downshift and 3 retrains), then the end", n4 == 4);
+    CHECK_EQ_I(O.end, V90M_END_RETRAIN_FAILED);
+    CHECK(strcmp(v90m_err_name(diag_err()), "ANS_ERR_RETRAINS") == 0);
+    bound("the end within 30 s of the downshift", t4 >= 0 && O.end_ms >= 0 && O.end_ms - t4 <= 30000);
+    bound("the data intact", C.bad == 0 && O.bad == 0);
+}
+
+/* levels: -9 to -33 dBm0 in 6 dB steps (both ends' transmit level, the
+ * line without loss), the caller's clock +-100 ppm, 25 dB SNR both ways,
+ * 60 s each (TEST_SHORT: 10 s) with both ends always behind (reversals)
+ * and, whenever the caller holds the back channel, its 0x3R and 0x2R in
+ * turn every 8 s (rate changes); then the backlogs drained: every octet
+ * delivered, intact, the call up */
+#ifdef TEST_SHORT
+#define LEVELS_MS 10000L
+#else
+#define LEVELS_MS 60000L
+#endif
+static void levels(void)
+{
+    static const int lv[5] = { -9, -15, -21, -27, -33 };
+    static const double loop4[] = { 0.3, 1.0, -0.5, 0.3 };
+    int i, p;
+    for (i = 0; i < 5; i++)
+        for (p = 0; p < 2; p++) {
+            hstcall_cfg hc;
+            our_cfg oc = hst_ours();
+            v32line_cfg c;
+            v90m_stats ss;
+            long next = 0;
+            int forced = 0, changes = 0, kind = 0, last_role = -1, last_code = -1;
+            uint32_t seed = 2400u + 10u * (uint32_t)i + (uint32_t)p;
+            hc_defaults(&hc);
+            hc.rev_backlog = 64; hc.level_dbm0 = lv[i];
+            oc.level = (int)lrint(v32line_rms(lv[i]));
+            our_init(&O, &oc);
+            memset(&c, 0, sizeof c);
+            c.mulaw = 1; c.loss_db = 0; c.delay = 200; c.taps = loop4; c.ntaps = 4;
+            c.near_db = 15; c.c_near_db = 15; c.far_db = c.c_far_db = 300;
+            c.noise_a_dbm0 = c.noise_c_dbm0 = lv[i] - 25; c.ppm = p ? -100 : 100; c.seed = seed;
+            v32line_init(&L, &c);
+            cal_init_hst(&hc, 100000000L, 100000000L, seed);
+            rv_init();
+            run_start();
+            while (now_ms < LEVELS_MS && O.end_ms < 0) {
+                answer_t *a;
+                run_ms(now_ms + 1, NULL);
+                a = ans();
+                if (a->phase != ANS_HST || !a->connected) continue;
+                /* the rate changes: the forward rate, within one role, after the post-agreement retrain */
+                if (a->retrains >= 1 && !a->retraining) {
+                    hst_t *h = &a->u.hst;
+                    if (h->link.role == last_role && h->link.fwd_code != last_code) changes++;
+                    last_role = h->link.role; last_code = h->link.fwd_code;
+                }
+                if (HC.linked && HC.role == HC_ROLE_BACK && HC.phase == HC_BACK && HC.ln_pend < 0 && now_ms >= next
+                    && a->u.hst.link.role == HST_ROLE_FWD && a->u.hst.rev == HST_REV_NONE && a->u.hst.rc == HST_RC_NONE
+                    && !a->retraining && a->retrains >= 1) {
+                    int code = (kind ? 0x20 : 0x30) | (HC.fwd_code == 6 ? 5 : 6);
+                    if (mnppeer_send_ln(&HC.mnp, code)) {
+                        HC.ln_pend = code;
+                        kind ^= 1; forced++; next = now_ms + 8000;
+                    }
+                }
+            }
+            C.to_send = C.w; O.to_send = O.w;
+            run_ms(now_ms + 120000L, data_done);
+            v90m_get_stats(O.m, &ss);
+            printf("levels %d dBm0, %+d ppm: reversals %u, rate changes %d (the caller asked %d), retrains %u; data %ld to the caller, %ld to us, %ld wrong\n",
+                   lv[i], p ? -100 : 100, ss.reversals, changes, forced, ss.retrains, C.r, O.r, C.bad + O.bad);
+            bound("every octet delivered both ways, intact; the call up", C.r == O.to_send && O.r == C.to_send && C.bad == 0 && O.bad == 0
+                  && O.to_send > 0 && C.to_send > 0 && O.end_ms < 0);
+#ifndef TEST_SHORT
+            bound("reversals and rate changes on the way (2 each at least)", ss.reversals >= 2 && changes >= 2);
+#endif
+        }
+}
+
+#define NCASES 31
 int main(int argc, char **argv)
 {
     int only;
@@ -1785,6 +2166,13 @@ int main(int argc, char **argv)
     if (!only || only == 22) max_up();
     if (!only || only == 23) recovery();
     if (!only || only == 24) fallback();
+    if (!only || only == 25) retrain_back();
+    if (!only || only == 26) back_silent();
+    if (!only || only == 27) retrain_failed();
+    if (!only || only == 28) far_ld();
+    if (!only || only == 29) ours();
+    if (!only || only == 30) unlock_loop();
+    if (!only || only == 31) levels();
     CHECK_EQ_I(proc_err, 0);
     if (O.m) v90m_destroy(O.m);
     if (O.ec) v90m_ec_destroy(O.ec);
