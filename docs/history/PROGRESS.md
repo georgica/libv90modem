@@ -5598,3 +5598,11 @@ unchanged; bm unchanged), new cases:
     make verify -> VERIFY PASS (862 s; golden 150 identical, test_hst_fwd's
                    re-recorded (its own); replay 636 and bench 17
                    identical; armv7hf and big-endian short-cmp 135)
+
+## hst 10: R3, MNP-only callers (2026-11-25)
+
+Fallback taken: R3 not yet made. No MNP-only modem can reach the local
+nsdiald test build, and the build itself waits on a v90d branch (`dce/dce.c`
+carries the endpoint glue). Recorded under `Unsettled` in hst-facts.md;
+`MNP_FCS2` and T400 unchanged. `test/golden/hst-recordings.sha256` is not
+created until a recording exists.

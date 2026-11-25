@@ -884,6 +884,11 @@ settles is re-tagged `[OURS -> observed]` in its section above.
 Every provisional value above and what settles it. Q is the spec's open
 question number (last table of `Evidence plan`).
 
+R3 (MNP-only callers) not yet made, 2026-11-25: no MNP-only modem is
+reachable from the local nsdiald test build, and that build waits on a v90d
+branch (the EC glue is v90d's dce/dce.c). `MNP_FCS2` (ARC, low octet first)
+and T400 (750 ms, held for an LR's start) stay as they are until R3.
+
 | item | provisional value | settled by |
 |---|---|---|
 | ANSam accepted by a Courier caller (Q1) | assumed | R2 |
