@@ -209,6 +209,7 @@ typedef struct v42ec {
     int mnp_brk;             /* MNP: our destructive break waits for its LNA; that
                                 LNA's reset flushes nothing (mnp.h, Breaks) */
     mnp2_rx_t hunt2;         /* MNP on, detection: the start-stop LR hunter */
+    int tx_bps, rx_bps;      /* v42ec_set_rates; 0 = not given */
     int t400_held;           /* MNP on: T400 ran out inside a start-stop frame and
                                 was held (V42EC_T400_LR_HOLD_MS) */
 } v42ec_t;
@@ -245,6 +246,13 @@ void   v42ec_line_stopped(v42ec_t *e);
  * with our last flag cut); frames begun later are not touched. In any case
  * LAPM polls if frames are unacknowledged (v42lapm_line_restored()). */
 void   v42ec_line_restored(v42ec_t *e);
+
+/* The line's rates in bit/s, ours and the far end's (each > 0): MNP's
+ * T401 and T404 are computed from them (A.7.5.1, Table A.10); until they
+ * are given, or before MNP starts, 2400. Kept across MNP's start, taken
+ * again at each call (a rate change); LAPM's timers are the configured
+ * ones. -1 for a rate <= 0, nothing changed. */
+int    v42ec_set_rates(v42ec_t *e, int tx_bps, int rx_bps);
 
 /* User side. v42ec_write() returns how many octets were taken (0..len);
  * data written before the connection is up is held. v42ec_read() returns

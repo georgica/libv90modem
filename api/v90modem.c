@@ -590,6 +590,11 @@ void   v90m_ec_rx_bit(v90m_ec_t *e, int bit) { v42ec_rx_bit(&e->e, bit); }
 void   v90m_ec_tick(v90m_ec_t *e, unsigned ms) { if (e) v42ec_tick(&e->e, ms); }
 void   v90m_ec_line_stopped(v90m_ec_t *e) { if (e) v42ec_line_stopped(&e->e); }
 void   v90m_ec_line_restored(v90m_ec_t *e) { if (e) v42ec_line_restored(&e->e); }
+int    v90m_ec_set_rates(v90m_ec_t *e, int tx_bps, int rx_bps)
+{
+    if (!e || v42ec_set_rates(&e->e, tx_bps, rx_bps) != 0) return V90M_EINVAL;
+    return V90M_OK;
+}
 size_t v90m_ec_write(v90m_ec_t *e, const uint8_t *d, size_t n) { return e ? v42ec_write(&e->e, d, n) : 0; }
 size_t v90m_ec_write_space(const v90m_ec_t *e) { return e ? v42ec_write_space(&e->e) : 0; }
 size_t v90m_ec_read(v90m_ec_t *e, uint8_t *d, size_t max) { return e ? v42ec_read(&e->e, d, max) : 0; }

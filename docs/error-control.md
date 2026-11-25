@@ -7,7 +7,8 @@ its own memory and no allocation after create or init:
 
 - `v90m_async_*`: start-stop characters (V.14 basic), no error control;
 - `v90m_ec_*`: a V.42 endpoint (LAPM, detection phase, start-stop fallback,
-  breaks) with V.42bis or V.44 compression.
+  breaks) with V.42bis or V.44 compression, and optionally MNP (V.42
+  Annex A) for an answering modem.
 
 Use one of them, or framing of your own. Neither makes callbacks: the
 program moves bits between the modem's callbacks and the object, and
@@ -169,8 +170,38 @@ break of ours is still pending. `v90m_ec_get_break` returns 1 with `*opt`
 and `*len10ms` when a break came, in its place among the octets read, else
 0.
 
+**MNP** (V.42 Annex A; `cfg.mnp`, answering only, off by default). With
+`mnp.enable` 1, a caller's LR in start-stop (framing mode 2) or HDLC (mode
+3) in the detection phase starts an MNP link in LAPM's place; an ODP first
+still means LAPM, and a caller that sends neither gets start-stop at T400
+as before. `v90m_ec_status.protocol` says which (`V90M_EC_PROTO_*`).
+Breaks are LNs (types 1 to 3, the three `V90M_BRK_*`); `v90m_ec_release`
+sends LD 255 and the state is `V90M_EC_DISCONNECTED` at once: keep the bits
+moving until `v90m_ec_tx_busy` is 0.
+
+- *Line rates.* MNP's T401 depends on the line's speed (A.7.5.1: the
+  time a window of LTs and an LA take, plus a round trip; T404 too, Table
+  A.10). Give the rates with `v90m_ec_set_rates(ec, st.tx_bps,
+  st.rx_bps)` after the `v90m_ec_reset` at `V90M_EV_CONNECTED`, and again
+  at each `V90M_EV_RATES`. Until then MNP counts 2400 bit/s: T401 is then
+  3.0 s (framing 3, k 8, N401 64) where 14400 bit/s needs only the 1.5 s
+  floor, and far too short below 2400 (at 300 bit/s about half the LTs
+  went twice). The rates are kept
+  through detection and taken by the link when it starts; LAPM ignores
+  them (its timers are `lapm.t401_ms` and `t403_ms`). The endpoint does
+  not read them from the modem itself: it is an object of its own with no
+  handle on a `v90m_t` (it runs as well over another modem, a recording or
+  a test rig), and the host already handles both moments, so one call
+  keeps the two objects apart.
+- *T400 at 300 bit/s.* A mode 2 LR at 300 bit/s takes about 1 s, longer
+  than T400 (750 ms). When T400 runs out while a start-stop frame is under
+  way (after its SYN DLE STX), it is held once, until that frame ends, and
+  at most 2000 ms (`V42EC_T400_LR_HOLD_MS`): an LR then gives MNP,
+  anything else start-stop at the frame's end. HDLC frames are not waited
+  for. With MNP off nothing changes.
+
 **Memory.** At most `V90M_EC_MEM_SIZE` (50 KiB; `v90m_ec_mem_size()` gives
-the exact size, 49792 octets on x86-64).
+the exact size, 50144 octets on x86-64, 49904 on 32-bit ARM).
 
 More on the V.42 code, the compression and the readings taken where the
 Recommendations leave a choice: `v42/README.md`.
@@ -187,6 +218,7 @@ if (st.connected && !ec_on) {
     v90m_ec_cfg_default(&c, originator);
     c.detect = !st.odp_bypass;
     v90m_ec_reset(ec, &c);
+    v90m_ec_set_rates(ec, st.tx_bps, st.rx_bps);    /* MNP's T401; again on V90M_EV_RATES */
     ec_on = 1;
 }
 if (ec_on) v90m_ec_tick(ec, n / 8);

@@ -445,6 +445,7 @@ static void mnp_pick(v42ec_t *e, const uint8_t *f, int len, int fr)
     e->mnp_brk = 0;
     ring_reset(&e->rxr);                 /* the LR's characters are not the user's */
     mnp_init(&e->l.mnp, &e->cfg.mnp.link);
+    if (e->tx_bps > 0) mnp_set_rates(&e->l.mnp, e->tx_bps, e->rx_bps);    /* v42ec_set_rates */
     v42hdlc_rx_set_fcs(&e->hrx, V42HDLC_FCS16);
     (void)mnp_accept_lr(&e->l.mnp, f, len, fr);    /* a refusal: LD, then DISCONNECTED */
     mnp_sync(e);
@@ -867,6 +868,14 @@ void v42ec_tick(v42ec_t *e, unsigned ms)
         v42lapm_tick(&e->l.lapm, ms);
         sync(e);
     }
+}
+
+int v42ec_set_rates(v42ec_t *e, int tx_bps, int rx_bps)
+{
+    if (tx_bps <= 0 || rx_bps <= 0) return -1;
+    e->tx_bps = tx_bps; e->rx_bps = rx_bps;
+    if (e->protocol == V42EC_PROTO_MNP) mnp_set_rates(&e->l.mnp, tx_bps, rx_bps);
+    return 0;
 }
 
 /* -------------------------------------------------------------- user side */

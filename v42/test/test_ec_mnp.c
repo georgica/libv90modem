@@ -741,6 +741,37 @@ static void t400_hold(void)
            "MNP off: at 750 ms\n", t_async, t_bad);
 }
 
+/* the line rates given (v42ec_set_rates, before MNP starts or once it is
+ * up): T401 from 300 bit/s, no LT sent again in 4 KiB each way at 300
+ * bit/s, framing 3 (with T401 computed at 2400 about half went again) */
+static void rates_300(void)
+{
+    int when;
+    for (when = 0; when < 2; when++) {
+        mnp_peer_cfg pc = peer_cfg(3);
+        v42ec_status_t s;
+        stream_t up, down;
+        int ok;
+        pc.t401_ms = 30000;
+        rig_init(&R, SRC_PEER, 1, 1, &pc);
+        R.bps = 300;
+        if (when == 0) CHECK_EQ_I(v42ec_set_rates(&R.e, 300, 300), 0);
+        rig_run(&R, 3000);
+        CHECK_EQ_I(v42ec_state(&R.e), V42EC_CONNECTED);
+        if (when == 1) CHECK_EQ_I(v42ec_set_rates(&R.e, 300, 300), 0);
+        CHECK_EQ_I(v42ec_set_rates(&R.e, 0, 300), -1);
+        stream_init(&up, 41u); stream_init(&down, 42u);
+        ok = rig_data(&R, &up, &down, 4096, R.ms + 600000);
+        v42ec_get_status(&R.e, &s);
+        CHECK(ok && up.h_out == up.h_in && down.h_out == down.h_in);
+        CHECK_EQ_I((long)s.t401_expiries, 0);
+        CHECK_EQ_I((long)s.tx_i_retx, 0);
+        printf("rates_300: rates given %s: 4 KiB each way %s at 300 bit/s in %.1f s, T401 expiries %lu, LTs again %lu\n",
+               when ? "once connected" : "before MNP", ok && up.h_out == up.h_in && down.h_out == down.h_in ? "intact" : "DAMAGED",
+               R.ms / 1000.0, s.t401_expiries, s.tx_i_retx);
+    }
+}
+
 int main(void)
 {
     odp_lapm();
@@ -761,5 +792,6 @@ int main(void)
     ln_brk();
     lr_300();
     t400_hold();
+    rates_300();
     T_REPORT("test_ec_mnp");
 }

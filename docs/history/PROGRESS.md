@@ -4281,3 +4281,29 @@ the frame's end (DLE ETX and two octets) or at 2750 ms; with MNP off, at
     build/api_test_api; qemu-arm $A5      -> 1025 / 1015 checks, 0 failures (the new pins)
     re-recorded: v42/test_ec_mnp.txt (the count line and the two new lines)
     make verify                           -> VERIFY PASS (450 s; golden 146 identical)
+
+**Line rates for MNP** (review: nothing fed the rates outside HST, so T401
+was computed at 2400 bit/s for the whole call; at 300 bit/s, framing 3,
+about half the LTs went twice). There was no call for it. New
+`v90m_ec_set_rates(ec, tx_bps, rx_bps)` (and `v42ec_set_rates`): the host
+calls it after the `v90m_ec_reset` at `V90M_EV_CONNECTED` and at each
+`V90M_EV_RATES`, with `v90m_state.tx_bps`/`rx_bps`. The endpoint keeps the
+rates through detection, hands them to the link when MNP starts, and to the
+running link at once. LAPM ignores them. Reading them through the modem was
+the other choice; it would give the endpoint a handle on a `v90m_t` it has
+never had (it runs over a recording or a rig as well), while the host
+already handles both events. Documented in `docs/error-control.md` (a new
+MNP paragraph, with the T400 hold) and `docs/api.md`.
+
+- `rates_300` (test_ec_mnp): framing 3 at 300 bit/s, the rates given
+  before MNP starts or once it is up: 4 KiB each way, no T401 expiry, no LT
+  again (27 expiries, 29 LTs again with the call a stub).
+- `test_api`: `V90M_OK` for good rates, `V90M_EINVAL` for 0, -1 and NULL.
+- `v90m_ec_mem_size()`: 50136 -> 50144 (x86-64), 49896 -> 49904 (ARMv5).
+
+    v42/build/test_ec_mnp, v42ec_set_rates a stub -> 6 failures (27 T401 expiries, 29 LTs again; -1 not refused)
+    build/api_test_api before the API call        -> does not compile (implicit declaration of v90m_ec_set_rates)
+    v42/build/test_ec_mnp                         -> test_ec_mnp: 158 checks, 0 failures (19 cases)
+    build/api_test_api; qemu-arm $A5              -> 1030 / 1020 checks, 0 failures
+    re-recorded: v42/test_ec_mnp.txt (count line, two new lines); api/test_api.txt (count line, 1025 -> 1030)
+    make verify                                   -> VERIFY PASS (458 s; golden 146 identical)

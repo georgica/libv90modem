@@ -17,4 +17,6 @@ ln_brk: the peer's LN 3: a break after 300 of the 400 octets (300 written before
 ln_brk: ours: LN 3 after 500 of 600 octets (500 written before it), then LN 2; no reset
 lr_300: an MNP caller at 300 bit/s, framing 2: state 0 at 750 ms (T400 held), then MNP; 256 octets each way intact
 t400_hold: at 300 bit/s a frame that never ends: start-stop at 2750 ms; a bad LR: at its end, 1214 ms; MNP off: at 750 ms
-test_ec_mnp: 146 checks, 0 failures
+rates_300: rates given before MNP: 4 KiB each way intact at 300 bit/s in 139.7 s, T401 expiries 0, LTs again 0
+rates_300: rates given once connected: 4 KiB each way intact at 300 bit/s in 139.7 s, T401 expiries 0, LTs again 0
+test_ec_mnp: 158 checks, 0 failures

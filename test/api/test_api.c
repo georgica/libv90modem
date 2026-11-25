@@ -2154,13 +2154,19 @@ static void test_ec_mnp_cfg(void)
     b.mnp.opt = 1; CHECK_EQ_I(v90m_ec_reset(e, &b), V90M_OK);
     b.mnp.opt = 3; CHECK_EQ_I(v90m_ec_reset(e, &b), V90M_OK);
     b.mnp.n401 = 255; b.mnp.opt = 2; CHECK_EQ_I(v90m_ec_reset(e, &b), V90M_OK);
+    /* the line rates (MNP's T401): each > 0, NULL refused; LAPM keeps its own */
+    CHECK_EQ_I(v90m_ec_set_rates(e, 14400, 14400), V90M_OK);
+    CHECK_EQ_I(v90m_ec_set_rates(e, 300, 1200), V90M_OK);
+    CHECK_EQ_I(v90m_ec_set_rates(e, 0, 1200), V90M_EINVAL);
+    CHECK_EQ_I(v90m_ec_set_rates(e, 2400, -1), V90M_EINVAL);
+    CHECK_EQ_I(v90m_ec_set_rates(NULL, 2400, 2400), V90M_EINVAL);
     {
         /* pinned as v90m_mem_size is (x86-64 and 32-bit ARM; elsewhere the
          * check holds by construction, so every target counts the same) */
 #if defined(__x86_64__)
-        size_t expect = 50136;
+        size_t expect = 50144;
 #elif defined(__arm__)
-        size_t expect = 49896;
+        size_t expect = 49904;
 #else
         size_t expect = v90m_ec_mem_size();
 #endif
