@@ -422,8 +422,22 @@ static void brk_reset(mnppeer_t *p)
     p->resets++;
 }
 
+/* Table 4, destructive, on the break's arrival: data not yet sent and
+ * data not yet delivered are discarded; nothing more goes and what comes
+ * is discarded until the acknowledgement */
+static void brk_begin(mnppeer_t *p)
+{
+    p->brk_wait = 1;
+    p->txq_n = 0;
+    p->rxq_n = 0;
+    p->t401 = 0;
+    p->unacked = 0;
+    p->la_now = 0;
+}
+
 static void link_up(mnppeer_t *p, int credit)
 {
+    int i;
     p->state = MNPP_CONNECTED;
     p->phase = PH_DATA;
     /* our reply LR carried parameter 4's lower value; bit 1 of parameter 8
@@ -437,6 +451,8 @@ static void link_up(mnppeer_t *p, int credit)
     p->zc_left = p->cfg.zero_credit_ms;
     if (p->zc_left > 0 && !p->cfg.originator) p->la_now = 1;
     p->est_t = 0;
+    /* a destructive break asked for before the link was up begins now */
+    for (i = 0; i < p->lnq_n; i++) if (p->lnq[i] == 1) brk_begin(p);
 }
 
 static void bad_frame(mnppeer_t *p, int framing)
@@ -891,17 +907,9 @@ int mnppeer_send_ln(mnppeer_t *p, int code)
 {
     if (p->lnq_n == MNPP_LNQ) return 0;
     p->lnq[p->lnq_n++] = code & 0xFF;
-    /* Table 4, destructive, on the break's arrival: data not yet sent and
-     * data not yet delivered are discarded; nothing more goes and what
-     * comes is discarded until the acknowledgement */
-    if ((code & 0xFF) == 1 && p->state == MNPP_CONNECTED) {
-        p->brk_wait = 1;
-        p->txq_n = 0;
-        p->rxq_n = 0;
-        p->t401 = 0;
-        p->unacked = 0;
-        p->la_now = 0;
-    }
+    /* the destructive break begins on its arrival; before the link is up,
+     * when the link comes up */
+    if ((code & 0xFF) == 1 && p->state == MNPP_CONNECTED) brk_begin(p);
     return 1;
 }
 

@@ -30,7 +30,9 @@
  * v42lapm_t's): the caller flushes what it holds for and from the far end
  * at each change. From its own mnp_send_ln(1) until the LNA (ln_code < 0)
  * it holds what the user sends (Table 4: "hold data until receive
- * acknowledgement"), and flushes nothing it took after the reset.
+ * acknowledgement"): that data is held until the LNA and goes after that
+ * LNA's reset, not flushed by it. Every later change of `resets` (a later
+ * break from the far end) flushes as usual.
  *
  * The facts, each with its source, are in docs/history/hst-facts.md,
  * sections `MNP frames`, `LR and 0xC0`, `Establishment`, `Data and

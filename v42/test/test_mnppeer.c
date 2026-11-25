@@ -746,6 +746,36 @@ static void raw_lna_match(void)
     printf("raw_lna_match: an older LNA, then the match, while an LT is out: no LN after it\n");
 }
 
+/* an LN 1 asked for before the link is up begins its break (Table 4) when
+ * the link comes up: the data written before is discarded, no LT goes
+ * until the LNA, and that LNA resets the sequences */
+static void raw_ln1_before_connect(void)
+{
+    static raw_t r;
+    mnp_peer_cfg b = cfg(0, 3);
+    uint8_t d[100], lna[5] = { 4, 7, 1, 1, 1 };
+    int i;
+    raw_init(&r, &b);
+    for (i = 0; i < (int)sizeof d; i++) d[i] = (uint8_t)i;
+    CHECK_EQ_I((int)mnppeer_write(&r.p, d, sizeof d), (int)sizeof d);
+    CHECK_EQ_I(mnppeer_send_ln(&r.p, 1), 1);
+    raw_frame(&r, lr_courier, (int)sizeof lr_courier, 0);
+    raw_ms(&r, 600);
+    raw_frame(&r, la_conf, (int)sizeof la_conf, 0);
+    raw_ms(&r, 300);
+    CHECK_EQ_I(mnppeer_state(&r.p), MNPP_CONNECTED);
+    CHECK_EQ_I(r.p.brk_wait, 1);
+    CHECK_EQ_I((int)r.p.txq_n, 0);
+    CHECK_EQ_I(r.p.ln_code, 1);
+    CHECK_EQ_I(r.p.tx_lt, 0);
+    raw_frame(&r, lna, 5, 0);
+    raw_ms(&r, 300);
+    CHECK_EQ_I(r.p.brk_wait, 0);
+    CHECK_EQ_I(r.p.resets, 1);
+    CHECK_EQ_I(r.p.tx_lt, 0);
+    printf("raw_ln1_before_connect: break begun at link up, data dropped, one reset at the LNA\n");
+}
+
 int main(void)
 {
     loop_mode3();
@@ -765,5 +795,6 @@ int main(void)
     raw_ld_codes();
     raw_lr_on_bad();
     raw_lna_match();
+    raw_ln1_before_connect();
     T_REPORT("test_mnppeer");
 }
