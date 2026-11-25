@@ -399,15 +399,23 @@ void    hst_ftx_stop(hst_ftx_t *t);
 int     hst_ftx_seg(const hst_ftx_t *t);
 
 /* ---------------- the forward receiver's guard high-pass ----------------
- * hst_guard (HST_GUARD_N taps, linear phase) on 16-bit samples, a doubled
- * delay line: (HST_GUARD_N + 1) / 2 multiplies a sample, pairs of samples
- * the same distance from the centre added first. Integer only, rounded to
- * nearest (ties up), saturated: the same output on every target. Delay
- * (HST_GUARD_N - 1) / 2 samples. */
-typedef char hst_guard_is_odd[(HST_GUARD_N % 2 == 1) ? 1 : -1];
+ * The input, delayed, less a low-pass: hst_guard_f on every
+ * HST_GUARD_L-th sample (HST_GF_XN of them in its line), then hst_guard_i
+ * on its sums (hst_tabs.h; tools/gen_hst_tabs.py, tab_guard). Each is
+ * linear phase: pairs of samples the same distance from the centre added
+ * first, (HST_GUARD_FN + 1) / 2 + (HST_GUARD_IN + 1) / 2 multiplies a
+ * sample (53, against 154 for the single 307-tap filter before it).
+ * Integer only: F's sums divided by 4 (truncated; under 2^30, the
+ * generator checks, so two add in an int32), I's rounded to nearest (ties
+ * up), the difference saturated: the same output on every target. Delay
+ * HST_GF_DELAY samples (162, 20 ms). */
+typedef char hst_guard_is_odd[(HST_GUARD_FN % 2 == 1 && HST_GUARD_IN % 2 == 1) ? 1 : -1];
+#define HST_GF_XN    (HST_GUARD_L * (HST_GUARD_FN - 1) + 1)
+#define HST_GF_DELAY (HST_GUARD_L * (HST_GUARD_FN - 1) / 2 + (HST_GUARD_IN - 1) / 2)
 typedef struct {
-    int16_t x[2 * HST_GUARD_N];      /* newest first from x[pos], twice */
-    int     pos;
+    int16_t x[2 * HST_GF_XN];        /* the input, newest first from x[pos], twice */
+    int32_t t[2 * HST_GUARD_IN];     /* F's sums / 4, newest first from t[tpos], twice */
+    int     pos, tpos;
 } hst_gf_t;
 void    hst_gf_init(hst_gf_t *g);
 int16_t hst_gf_tick(hst_gf_t *g, int16_t in);

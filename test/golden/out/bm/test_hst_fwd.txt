@@ -4,9 +4,10 @@ pulse_points: 30 symbols; level 3036 (V.32's 3036)
   >= 3200 Hz at most -36 dB: pass
   <= 400 Hz at most -40 dB: pass
   the level V.32's within 0.1 dB: pass
-guard: 307 taps, 154 multiplies a sample
+guard: 325 taps, 53 multiplies a sample
   linear phase: pass
   >= 560 Hz within 0.5 dB: pass
+  >= 600 Hz within 0.02 dB: pass
   <= 480 Hz at least 50 dB down: pass
 guard: 32000 samples through hst_gf_tick, 0 unlike the direct form
   hst_gf_tick is the direct form: pass
@@ -110,4 +111,4 @@ zero_isi: the pulse against itself at 1 .. 29 symbols
   the pulse's own ISI at most -40 dB: pass
 zero_isi: transmitter to receiver, 400 points of the 4-point training through the matched filter
   through the receiver's start, nothing adapted: at least 25 dB: pass
-test_hst_fwd: 123 checks, 0 failures
+test_hst_fwd: 124 checks, 0 failures

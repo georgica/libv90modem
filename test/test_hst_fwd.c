@@ -11,10 +11,12 @@
  *                 beyond, at most -40 dB at 400 Hz and below (BF §2's three
  *                 points, and room for the back channel); the line level is
  *                 V.32's for the same `level`
- *   guard         hst_guard: at least 50 dB down at 480 Hz and below (the
- *                 back channel), within 0.5 dB of 0 dB from 560 Hz up;
- *                 linear phase; hst_gf_tick (its symmetric loop) gives the
- *                 table's direct form exactly
+ *   guard         the guard high-pass (the delay less hst_guard_f(z^4)
+ *                 hst_guard_i(z)) as one filter: at least 50 dB down at 480
+ *                 Hz and below (the back channel), within 0.5 dB of 0 dB
+ *                 from 560 Hz up and 0.02 dB from 600 Hz up (the forward
+ *                 signal's band); linear phase; hst_gf_tick (its symmetric
+ *                 loops on rings) gives the plain cascade's integers exactly
  *   v32_default   a v32tx without v32tx_set_pulse, answering and calling,
  *                 through each role's transmit modes, gives the same 10 000
  *                 samples and echo canceller references as 0.6.0 (FNV-1a
@@ -351,7 +353,8 @@ static void pulse_points(void)
     bound("the level V.32's within 0.1 dB", fabs(20 * log10(rms / rms_v32)) <= 0.1);
 }
 
-static double fir_db(const int16_t *h, int n, double f)
+/* a filter's gain in dB at f, its taps Q15 (in doubles) */
+static double fir_db(const double *h, int n, double f)
 {
     double re = 0, im = 0;
     int i;
@@ -362,37 +365,68 @@ static double fir_db(const int16_t *h, int n, double f)
     return 10 * log10((re * re + im * im) / (32768.0 * 32768.0) + 1e-30);
 }
 
+/* the guard as one filter: the delay less hst_guard_f(z^L) hst_guard_i(z) */
+#define GN (HST_GUARD_L * (HST_GUARD_FN - 1) + HST_GUARD_IN)
+static double gtap[GN];
+static void guard_taps(void)
+{
+    int i, j;
+    memset(gtap, 0, sizeof gtap);
+    for (i = 0; i < HST_GUARD_FN; i++)
+        for (j = 0; j < HST_GUARD_IN; j++)
+            gtap[HST_GUARD_L * i + j] -= (double)hst_guard_f[i] * hst_guard_i[j] / 32768.0;
+    gtap[HST_GF_DELAY] += 32768.0;
+}
+
 static void guard(void)
 {
     static hst_gf_t g;
-    double f, lo = 1e9, hi = -1e9, stop = -1e9, d;
+    static int16_t x[HST_GF_XN];
+    static int32_t t[HST_GUARD_IN];
+    double f, lo = 1e9, hi = -1e9, flo = 1e9, fhi = -1e9, stop = -1e9, d;
     int i, n, sym = 1, bad = 0;
-    int16_t x[HST_GUARD_N];
-    for (i = 0; i < HST_GUARD_N; i++) sym &= hst_guard[i] == hst_guard[HST_GUARD_N - 1 - i];
-    for (f = 560; f <= 4000; f += 1) { d = fir_db(hst_guard, HST_GUARD_N, f); if (d < lo) lo = d; if (d > hi) hi = d; }
-    for (f = 0; f <= 480; f += 1) { d = fir_db(hst_guard, HST_GUARD_N, f); if (d > stop) stop = d; }
-    printf("guard: %d taps, %d multiplies a sample\n", HST_GUARD_N, (HST_GUARD_N + 1) / 2);
-    if (verbose) printf("  (>= 560 Hz %.3f to %.3f dB, <= 480 Hz at most %.2f dB)\n", lo, hi, stop);
+    guard_taps();
+    for (i = 0; i < HST_GUARD_FN; i++) sym &= hst_guard_f[i] == hst_guard_f[HST_GUARD_FN - 1 - i];
+    for (i = 0; i < HST_GUARD_IN; i++) sym &= hst_guard_i[i] == hst_guard_i[HST_GUARD_IN - 1 - i];
+    sym &= HST_GF_DELAY * 2 == GN - 1;
+    for (f = 560; f <= 4000; f += 1) {
+        d = fir_db(gtap, GN, f);
+        if (d < lo) lo = d;
+        if (d > hi) hi = d;
+        if (f >= 600 && d < flo) flo = d;
+        if (f >= 600 && d > fhi) fhi = d;
+    }
+    for (f = 0; f <= 480; f += 1) { d = fir_db(gtap, GN, f); if (d > stop) stop = d; }
+    printf("guard: %d taps, %d multiplies a sample\n", GN, (HST_GUARD_FN + 1) / 2 + (HST_GUARD_IN + 1) / 2);
+    if (verbose) printf("  (>= 560 Hz %.3f to %.3f dB, >= 600 Hz %.4f to %.4f dB, <= 480 Hz at most %.2f dB)\n",
+                        lo, hi, flo, fhi, stop);
     bound("linear phase", sym);
     bound(">= 560 Hz within 0.5 dB", lo >= -0.5 && hi <= 0.5);
+    bound(">= 600 Hz within 0.02 dB", flo >= -0.02 && fhi <= 0.02);
     bound("<= 480 Hz at least 50 dB down", stop <= -50);
 
-    /* hst_gf_tick against the table's direct form, on random samples, then
-     * random full-scale ones: the same integers */
+    /* hst_gf_tick against the plain cascade (F on every L-th sample, its
+     * sums over 4, I, rounded, the delayed input less it), on random
+     * samples, then random full-scale ones: the same integers */
     memset(x, 0, sizeof x);
+    memset(t, 0, sizeof t);
     hst_gf_init(&g);
     prbs = 0x31415u;
     for (n = 0; n < 4 * FS; n++) {
         int64_t acc = 0;
+        int32_t y;
         int16_t in;
         prbs = prbs * 1664525u + 1013904223u;
         in = (int16_t)(n < 2 * FS ? (int32_t)(prbs >> 16) - 32768 : ((prbs >> 31) ? 32767 : -32768));
         memmove(x + 1, x, sizeof x - sizeof x[0]);
         x[0] = in;
-        for (i = 0; i < HST_GUARD_N; i++) acc += (int64_t)hst_guard[i] * x[i];
-        acc = (acc + (1 << 14)) >> 15;
-        acc = acc > 32767 ? 32767 : acc < -32768 ? -32768 : acc;
-        bad += hst_gf_tick(&g, in) != acc;
+        for (i = 0; i < HST_GUARD_FN; i++) acc += (int64_t)hst_guard_f[i] * x[HST_GUARD_L * i];
+        memmove(t + 1, t, sizeof t - sizeof t[0]);
+        t[0] = (int32_t)(acc / 4);
+        for (acc = 0, i = 0; i < HST_GUARD_IN; i++) acc += (int64_t)hst_guard_i[i] * t[i];
+        y = x[HST_GF_DELAY] - (int32_t)((acc + (1 << 27)) >> 28);
+        y = y > 32767 ? 32767 : y < -32768 ? -32768 : y;
+        bad += hst_gf_tick(&g, in) != y;
     }
     printf("guard: %d samples through hst_gf_tick, %d unlike the direct form\n", 4 * FS, bad);
     bound("hst_gf_tick is the direct form", bad == 0);
@@ -1045,7 +1079,7 @@ static void fdata(int code, uint32_t seed, long bits)
 
 /* the caller stops in data mode: NOCARRIER within HST_FRX_LOSS_MS + 200 ms
  * of its last symbol, no bit from 200 ms after it on (the line's 25 ms,
- * the pulse's ring, the guard's 19 ms, the power falling 30 dB), NOCARRIER
+ * the pulse's ring, the guard's 20 ms, the power falling 30 dB), NOCARRIER
  * still 3 s later */
 static void carrier_loss(void)
 {
