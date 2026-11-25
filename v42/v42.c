@@ -289,7 +289,6 @@ void v42ec_init(v42ec_t *e, const v42ec_cfg_t *cfg)
     e->txr.buf = e->txbuf; e->txr.size = sizeof e->txbuf;
     e->rxr.buf = e->rxbuf; e->rxr.size = sizeof e->rxbuf;
     e->t400 = e->t_est = -1;
-    e->link_state = HST_LINK_NONE;
     e->hst_win = -1;
     v42hdlc_tx_init(&e->htx);
     v42hdlc_rx_init(&e->hrx);
@@ -453,14 +452,14 @@ static void mnp_pick(v42ec_t *e, const uint8_t *f, int len, int fr)
     mnp_init(&e->l.mnp, &e->cfg.mnp.link);
     if (e->tx_bps > 0) mnp_set_rates(&e->l.mnp, e->tx_bps, e->rx_bps);    /* v42ec_set_rates */
     v42hdlc_rx_set_fcs(&e->hrx, V42HDLC_FCS16);
-    if (e->link_get && e->link_state == HST_LINK_ON && f != e->lr_cap) {
-        /* kept for v42ec_reset: the LR's LI octets and the LI (is_lr: LI <= 254) */
-        int n = f[0] + 1 < V42EC_LR_CAP ? f[0] + 1 : V42EC_LR_CAP;
-        memcpy(e->lr_cap, f, (size_t)n);
-        e->lr_cap_len = n; e->lr_cap_fr = fr;
+    if (e->hst_call) {
+        /* kept for the reset at this call's CONNECTED: the LI and its LI
+         * octets, at most V42EC_LR_CAP (is_lr: an LI of at most 254) */
+        memcpy(e->lr_cap, f, (size_t)f[0] + 1);
+        e->lr_cap_len = f[0] + 1; e->lr_cap_fr = fr;
     }
     /* a refusal: LD, then DISCONNECTED */
-    if (mnp_accept_lr(&e->l.mnp, f, len, fr) == 0 && e->link_state == HST_LINK_ON)
+    if (mnp_accept_lr(&e->l.mnp, f, len, fr) == 0 && e->hst_call)
         e->agreed_due = 1;
     mnp_sync(e);
 }
@@ -488,7 +487,7 @@ static void mnp_sync(v42ec_t *e)
         }
     }
     switch (m->state) {
-    case MNP_S_CONNECTED:    e->state = V42EC_CONNECTED; break;
+    case MNP_S_CONNECTED:    e->state = V42EC_CONNECTED; e->lr_cap_len = 0; break;
     case MNP_S_DISCONNECTED: finish(e, m->reason); return;
     default:                 e->state = V42EC_ESTABLISH; return;
     }
@@ -603,22 +602,36 @@ static void mnp_rx_bit(v42ec_t *e, int bit)
 /* ----------------------------------------------------------- the HST link */
 static void rx_line(v42ec_t *e, int bit);
 
-/* The modem's decision in *state (HST_LINK_NONE unlinked) and, while
- * HST_LINK_ON, the mailbox: the pre-connect ring drained into the receive
- * path, the pump's rates taken for T401 when they change, the LRs'
- * agreement told. Called at the top of v42ec_tx_bit, v42ec_rx_bit and
- * v42ec_tick (hst_link.h). */
+/* The modem's decision in *state (HST_LINK_NONE unlinked) and, on an HST
+ * call, the mailbox: the pre-connect ring drained into the receive path,
+ * the pump's rates taken for T401 when they change, the LRs' agreement
+ * told. Called at the top of v42ec_tx_bit, v42ec_rx_bit and v42ec_tick
+ * (hst_link.h). NONE before any ON is final for the call: get is not asked
+ * again until the next init or reset. */
 static hst_link_t *link_poll(v42ec_t *e, int *state)
 {
     hst_link_t *L;
     int b;
 
     *state = HST_LINK_NONE;
-    if (!e->link_get) return NULL;
+    if (!e->link_get || e->link_none) return NULL;
     L = e->link_get(e->link_ctx, state);
-    e->link_state = *state;
-    if (*state != HST_LINK_ON || !L) return NULL;
+    if (*state != HST_LINK_ON || !L) {
+        /* not (or no longer) in ANS_HST: nothing of the pump's is ours */
+        e->lr_cap_len = 0;
+        e->agreed_due = 0;
+        if (!e->hst_call && *state != HST_LINK_UNDECIDED) {
+            *state = HST_LINK_NONE;
+            e->link_none = 1;
+        }
+        return NULL;
+    }
+    if (!e->hst_call) {
+        e->hst_call = 1;                    /* HST to the call's end (D19) */
+        e->t400 = -1;
+    }
     while ((b = hst_pre_get(L)) >= 0) rx_line(e, b);
+    e->link_r = L->pre_r;
     if (L->tx_bps > 0 && L->rx_bps > 0 && (L->tx_bps != e->tx_bps || L->rx_bps != e->rx_bps))
         (void)v42ec_set_rates(e, L->tx_bps, L->rx_bps);
     if (e->agreed_due) {
@@ -629,7 +642,7 @@ static hst_link_t *link_poll(v42ec_t *e, int *state)
     return L;
 }
 
-/* HST_LINK_ON: an LR may still start MNP (detection, or LAPM's
+/* an HST call: an LR may still start MNP (detection, or LAPM's
  * establishment before LAPM has taken anything) */
 static int hst_hunting(const v42ec_t *e)
 {
@@ -638,18 +651,22 @@ static int hst_hunting(const v42ec_t *e)
             || (e->state == V42EC_ESTABLISH && e->l.lapm.established == 0));
 }
 
-/* HST_LINK_ON, T400's place (decision 19): from the tick that sees our
+/* An HST call, T400's place (decision 19): from the tick that sees our
  * training out, V42EC_HST_WINDOW_MS for an LR, then NO_EC (no start-stop,
- * whatever cfg.fallback says). 1 when it has ended the endpoint. */
+ * whatever cfg.fallback says). L NULL (the modem has left ANS_HST before
+ * the window began): it begins at once. A window that has run out stays
+ * at 0, so a reset cannot start it again. 1 when it has ended the
+ * endpoint. */
 static int hst_window(v42ec_t *e, const hst_link_t *L, unsigned ms)
 {
     if (!hst_hunting(e)) return 0;
     if (e->hst_win < 0) {
-        if (L && L->trained) e->hst_win = V42EC_HST_WINDOW_MS;
+        if (!L || L->trained) e->hst_win = V42EC_HST_WINDOW_MS;
         return 0;
     }
     e->hst_win -= (int)ms;
     if (e->hst_win > 0) return 0;
+    e->hst_win = 0;
     if (e->protocol == V42EC_PROTO_LAPM) v42lapm_abort(&e->l.lapm, V42LAPM_R_PROTOCOL);
     finish(e, V42EC_R_NO_EC);
     return 1;
@@ -660,12 +677,13 @@ void v42ec_set_link(v42ec_t *e, hst_link_get_fn get, void *ctx)
     if (!e->cfg.mnp.enable) get = NULL;     /* MNP off or an originator */
     e->link_get = get;
     e->link_ctx = get ? ctx : NULL;
-    if (!get) {
-        e->link_state = HST_LINK_NONE;
-        e->hst_win = -1;
-        e->lr_cap_len = 0;
-        e->agreed_due = 0;
-    }
+    /* no HST call in progress for this link yet */
+    e->hst_call = 0;
+    e->link_none = 0;
+    e->hst_win = -1;
+    e->link_r = 0;
+    e->lr_cap_len = 0;
+    e->agreed_due = 0;
 }
 
 int v42ec_linked(const v42ec_t *e) { return e->link_get != NULL; }
@@ -674,16 +692,26 @@ void v42ec_reset(v42ec_t *e, const v42ec_cfg_t *cfg)
 {
     hst_link_get_fn get = e->link_get;
     void *ctx = e->link_ctx;
-    int st = e->link_state, win = e->hst_win, n = e->lr_cap_len, fr = e->lr_cap_fr;
+    int keep = 0, win = e->hst_win, n = e->lr_cap_len, fr = e->lr_cap_fr;
+    unsigned r = e->link_r;
     uint8_t lr[V42EC_LR_CAP];
 
-    if (n > 0) memcpy(lr, e->lr_cap, (size_t)n);
+    /* the reset at this HST call's CONNECTED: ON now, nothing sent since
+     * the last start, the same mailbox (its ring read count not gone back) */
+    if (get && e->hst_call && !e->tx_seen) {
+        int st;
+        hst_link_t *L = get(ctx, &st);
+        keep = st == HST_LINK_ON && L && L->pre_r - r < 0x80000000u;
+    }
+    if (keep && n > 0) memcpy(lr, e->lr_cap, (size_t)n);
     v42ec_init(e, cfg);
     if (!get) return;
     v42ec_set_link(e, get, ctx);
-    if (!e->link_get) return;               /* MNP off: unlinked */
-    e->link_state = st;
+    if (!e->link_get || !keep) return;      /* MNP off: unlinked; or a new call */
+    e->hst_call = 1;
+    e->t400 = -1;
     e->hst_win = win;
+    e->link_r = r;
     if (n > 0) mnp_pick(e, lr, n, fr);      /* answered again; kept again */
 }
 
@@ -753,6 +781,7 @@ static int hdlc_bit(v42ec_t *e)
 
 int v42ec_tx_bit(v42ec_t *e)
 {
+    e->tx_seen = 1;
     if (e->link_get) {
         int ls;
         (void)link_poll(e, &ls);            /* an LR in the ring is answered now */
@@ -954,10 +983,10 @@ void v42ec_tick(v42ec_t *e, unsigned ms)
     if (ms > 1000000u) ms = 1000000u;       /* as v42lapm_tick: past every timer, and an int */
 
     /* linked: T400 is held while the modem has not decided and counts
-     * once it has decided against HST (HST_LINK_NONE, as unlinked); on
-     * HST the window takes its place */
-    if (ls == HST_LINK_ON && hst_window(e, L, ms)) return;
-    if (e->t400 >= 0 && ls != HST_LINK_UNDECIDED && ls != HST_LINK_ON) {
+     * once it has decided against HST (HST_LINK_NONE, as unlinked); on an
+     * HST call the window takes its place for the whole call */
+    if (e->hst_call && hst_window(e, L, ms)) return;
+    if (e->t400 >= 0 && !e->hst_call && ls != HST_LINK_UNDECIDED) {
         e->t400 -= (int)ms;
         if (e->t400 <= 0) {
             /* 7.2.1.2, 7.2.1.3: no error-correcting peer; MNP on, an LR
@@ -974,7 +1003,7 @@ void v42ec_tick(v42ec_t *e, unsigned ms)
             return;
         }
     }
-    if (e->t_est >= 0) {
+    if (e->t_est >= 0 && !(e->hst_call && hst_hunting(e))) {   /* HST: the window's */
         e->t_est -= (int)ms;
         if (e->t_est <= 0) {
             v42lapm_abort(&e->l.lapm, V42LAPM_R_PROTOCOL);

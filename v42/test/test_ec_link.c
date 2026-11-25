@@ -408,6 +408,216 @@ static void plain_mnp_over_link(void)
            hu_in == hu_out && hd_in == hd_out ? "intact" : "DAMAGED", t401_2400, E.l.mnp.t401_ms);
 }
 
+/* ---- the next call on the same endpoint: a caller at 2400 bit/s ---- */
+static v42ec_t O;                      /* an originator with V.42 (ODP, LAPM) */
+
+/* our endpoint E against a caller: 0, an originator with V.42; 1, one
+ * without error control (characters after mark). ms of it; our bits'
+ * FNV-1a in *h, the ms E left detection in *t_left (-1 never); returns
+ * E's protocol */
+static int call_run(int caller, int ms, uint32_t *h, int *t_left)
+{
+    int t, acc = 0, ci = 0;
+    v42ec_cfg_t oc;
+    static const char text[] = "hello, no error control here\r\n";
+    *h = 2166136261u;
+    *t_left = -1;
+    v42ec_cfg_default(&oc, 1);
+    v42ec_init(&O, &oc);
+    cb_n = cb_i = 0;
+    for (t = 0; t < 120; t++) cbit(1);
+    if (caller == 1)
+        for (ci = 0; text[ci]; ci++) {
+            int b;
+            cbit(0);
+            for (b = 0; b < 8; b++) cbit(((unsigned char)text[ci] >> b) & 1);
+            cbit(1); cbit(1);
+        }
+    for (t = 1; t <= ms; t++) {
+        v42ec_tick(&E, 1);
+        if (caller == 0) v42ec_tick(&O, 1);
+        acc += 2400;
+        while (acc >= 1000) {
+            int y = v42ec_tx_bit(&E), x;
+            acc -= 1000;
+            if (caller == 0) x = v42ec_tx_bit(&O);
+            else x = cb_i < cb_n ? cb[cb_i++] : 1;
+            v42ec_rx_bit(&E, x);
+            if (caller == 0) v42ec_rx_bit(&O, y);
+            *h = (*h ^ (uint32_t)y) * 16777619u;
+        }
+        if (*t_left < 0 && v42ec_state(&E) != V42EC_DETECT) *t_left = t;
+    }
+    return ep_proto();
+}
+
+/* a linked endpoint whose modem says NONE (from CONNECTED on: not an HST
+ * call) is the unlinked one, bit for bit, with an ODP caller and with one
+ * without error control */
+static void none_same_as_unlinked(void)
+{
+    uint32_t h[2][2];
+    int p[2][2], tl[2][2], c, l;
+    for (c = 0; c < 2; c++)
+        for (l = 0; l < 2; l++) {
+            ep_init(l, HST_LINK_NONE);
+            p[c][l] = call_run(c, 4000, &h[c][l], &tl[c][l]);
+        }
+    CHECK_EQ_I(p[0][0], V42EC_PROTO_LAPM);
+    CHECK_EQ_I(p[1][0], V42EC_PROTO_ASYNC);
+    CHECK_EQ_I(tl[1][0], 750);
+    for (c = 0; c < 2; c++) {
+        CHECK_EQ_I(p[c][1], p[c][0]);
+        CHECK_EQ_I(tl[c][1], tl[c][0]);
+        CHECK(h[c][1] == h[c][0]);
+    }
+    printf("none_same_as_unlinked: ODP caller: protocol %d, our bits %s; no EC: start-stop at %d ms, our bits %s\n",
+           p[0][1], h[0][1] == h[0][0] ? "the same" : "DIFFER", tl[1][1], h[1][1] == h[1][0] ? "the same" : "DIFFER");
+}
+
+/* an HST call with its LR taken, then the next call on the same
+ * endpoint, reset at its CONNECTED: nothing of the first call is kept */
+static void two_calls(void)
+{
+    uint32_t h0[2], h1[2];
+    int p0[2], p1[2], tl0[2], tl1[2], c, t, ok, at, end = -1, proto_reset;
+
+    for (c = 0; c < 2; c++) {
+        /* the reference: an unlinked endpoint's call */
+        ep_init(0, HST_LINK_NONE);
+        p0[c] = call_run(c, 4000, &h0[c], &tl0[c]);
+        /* call 1: HST, the LR taken during our training, answered, data */
+        ep_init(1, HST_LINK_ON);
+        caller_lr(4);
+        for (t = 0; t < 1400; t++) { if (t % 20 < 9) pump_bits(1); v42ec_tick(&E, 1); }
+        S.L.trained = 1;
+        ok = our_lr_first(&at);
+        CHECK(ok);
+        /* call 2: not HST, the modem says NONE at CONNECTED; the host resets */
+        memset(&S.L, 0, sizeof S.L);
+        S.state = HST_LINK_NONE;
+        v42ec_reset(&E, &C);
+        CHECK_EQ_I(v42ec_linked(&E), 1);
+        CHECK_EQ_I(ep_proto(), V42EC_PROTO_NONE);
+        p1[c] = call_run(c, 4000, &h1[c], &tl1[c]);
+        CHECK_EQ_I(p1[c], p0[c]);
+        CHECK_EQ_I(tl1[c], tl0[c]);
+        CHECK(h1[c] == h0[c]);
+    }
+
+    /* call 1: HST, LR taken, window started, ended before CONNECTED (no
+     * bit sent); call 2: HST again, a new mailbox, no LR yet: no replay,
+     * and its own window from its own training */
+    ep_init(1, HST_LINK_ON);
+    caller_lr(4);
+    for (t = 0; t < 1400; t++) { if (t % 20 < 9) pump_bits(1); v42ec_tick(&E, 1); }
+    S.L.trained = 1;
+    for (t = 0; t < 3000; t++) v42ec_tick(&E, 1);
+    memset(&S.L, 0, sizeof S.L);
+    S.state = HST_LINK_ON;
+    S.L.trained = 1;
+    v42ec_reset(&E, &C);
+    proto_reset = ep_proto();
+    CHECK_EQ_I(proto_reset, V42EC_PROTO_NONE);
+    for (t = 1; t <= 8000 && end < 0; t++) {
+        v42ec_tick(&E, 1);
+        if (v42ec_state(&E) == V42EC_DISCONNECTED) end = t;
+    }
+    CHECK_NEAR(end, 5000, 1);
+    /* call 1: HST, LR taken and answered (bits sent); call 2: HST, a new
+     * mailbox the host ticks through its training (its ring read further
+     * than call 1's), no LR yet: the reset at its CONNECTED replays nothing */
+    ep_init(1, HST_LINK_ON);
+    caller_lr(4);
+    for (t = 0; t < 1400; t++) { if (t % 20 < 9) pump_bits(1); v42ec_tick(&E, 1); }
+    ok = our_lr_first(&at);
+    CHECK(ok);
+    memset(&S.L, 0, sizeof S.L);
+    cb_n = cb_i = 0;
+    for (t = 0; t < 2000; t++) { if (t % 20 < 9) pump_bits(1); v42ec_tick(&E, 1); }
+    CHECK(S.L.pre_r > 630);
+    v42ec_reset(&E, &C);
+    CHECK_EQ_I(ep_proto(), V42EC_PROTO_NONE);
+
+    printf("two_calls: HST then ODP: protocol %d, our bits %s; HST then no EC: start-stop at %d ms, our bits %s; "
+           "HST then HST: protocol %d after the reset, NO_EC %d ms later\n",
+           p1[0], h1[0] == h0[0] ? "as unlinked" : "DIFFER", tl1[1], h1[1] == h0[1] ? "as unlinked" : "DIFFER",
+           proto_reset, end);
+}
+
+/* ON is for the whole call: a later NONE while hunting gives neither T400
+ * nor start-stop, and the window (started then, or kept) ends with NO_EC */
+static int on_then_none_run(int trained_at, int none_at)
+{
+    int t, end = -1, async = 0;
+    ep_init(1, HST_LINK_ON);
+    for (t = 1; t <= 10000 && end < 0; t++) {
+        if (t == trained_at) S.L.trained = 1;
+        if (t == none_at) S.state = HST_LINK_NONE;
+        v42ec_tick(&E, 1);
+        if (t > none_at) {
+            int acc;
+            for (acc = 0; acc < 2; acc++) { v42ec_rx_bit(&E, 1); (void)v42ec_tx_bit(&E); }
+        }
+        if (v42ec_state(&E) == V42EC_ASYNC) async = 1;
+        if (v42ec_state(&E) == V42EC_DISCONNECTED) end = t;
+    }
+    CHECK(!async);
+    CHECK_EQ_I(ep_reason(), V42EC_R_NO_EC);
+    return end;
+}
+
+static void on_then_none(void)
+{
+    int e1 = on_then_none_run(0, 1000), e2 = on_then_none_run(1400, 2000);
+    CHECK_NEAR(e1, 1000 + 5000, 1);
+    CHECK_NEAR(e2, 1400 + 5000, 1);
+    printf("on_then_none: NONE at 1000 ms before training's end: NO_EC at %d ms; trained at 1400, NONE at 2000: NO_EC at %d ms\n",
+           e1, e2);
+}
+
+/* a window that ran past zero on a coarse tick is not started again by a
+ * reset */
+static void window_overshoot(void)
+{
+    int st;
+    ep_init(1, HST_LINK_ON);
+    S.L.trained = 1;
+    v42ec_tick(&E, 3000);                /* the window starts */
+    v42ec_tick(&E, 3000);
+    v42ec_tick(&E, 3000);                /* and runs out, 1000 ms past */
+    CHECK_EQ_I(v42ec_state(&E), V42EC_DISCONNECTED);
+    v42ec_reset(&E, &C);                 /* still this call: ON, nothing sent */
+    v42ec_tick(&E, 1);
+    st = v42ec_state(&E);
+    CHECK_EQ_I(st, V42EC_DISCONNECTED);
+    CHECK_EQ_I(ep_reason(), V42EC_R_NO_EC);
+    printf("window_overshoot: run out on a 3000 ms tick, reset: state %d at the next tick\n", st);
+}
+
+/* the ring: counters that wrap, and a full ring dropping its oldest bits */
+static int pat(unsigned i) { return (int)((i * 7u ^ (i >> 3)) & 1u); }
+
+static void ring_overflow(void)
+{
+    unsigned i, start = 0xFFFFFFFFu - 5u;
+    int refused = 0, bad = 0, b, n = 0;
+    memset(&S.L, 0, sizeof S.L);
+    S.L.pre_w = S.L.pre_r = start;
+    for (i = 0; i < 1100; i++) if (hst_pre_put(&S.L, pat(i)) < 0) refused++;
+    CHECK_EQ_I(refused, 1100 - HST_PRE_BITS);
+    CHECK_EQ_I(S.L.pre_lost, 1100 - HST_PRE_BITS);
+    while ((b = hst_pre_get(&S.L)) >= 0) {
+        if (b != pat((unsigned)(1100 - HST_PRE_BITS + n))) bad++;
+        n++;
+    }
+    CHECK_EQ_I(n, HST_PRE_BITS);
+    CHECK_EQ_I(bad, 0);
+    CHECK_EQ_I(S.L.pre_r, S.L.pre_w);
+    printf("ring_overflow: 1100 bits across the counters' wrap: %lu lost, the newest %d read back, %d wrong\n",
+           S.L.pre_lost, n, bad);
+}
+
 int main(void)
 {
     undecided_holds_t400();
@@ -415,5 +625,10 @@ int main(void)
     window();
     reset_keeps();
     plain_mnp_over_link();
+    none_same_as_unlinked();
+    two_calls();
+    on_then_none();
+    window_overshoot();
+    ring_overflow();
     T_REPORT("test_ec_link");
 }

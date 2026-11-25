@@ -229,15 +229,20 @@ typedef struct v42ec {
     int tx_bps, rx_bps;      /* v42ec_set_rates; 0 = not given */
     int t400_held;           /* MNP on: T400 ran out inside a start-stop frame and
                                 was held (V42EC_T400_LR_HOLD_MS) */
-    /* the HST link (v42ec_set_link), kept by v42ec_reset with the window
-     * and the caller's LR: link_state, HST_LINK_* as last heard (NONE
-     * unlinked); hst_win, ms left of the HST window, -1 not started;
-     * lr_cap, the LR that started MNP on HST (its length, 0 none, and
-     * framing); agreed_due, the mailbox is still to hear of the LRs'
-     * agreement */
+    /* the HST link (v42ec_set_link). Per call: hst_call, the modem has
+     * said ON (latched: the call is HST to its end); link_none, it has
+     * said NONE before any ON (latched: get is not asked again until the
+     * next init or reset); hst_win, ms left of the HST window, -1 not
+     * started; lr_cap, the LR that started MNP on this HST call (its
+     * length, 0 none, and framing; dropped once MNP is connected);
+     * agreed_due, the mailbox is still to hear of the LRs' agreement;
+     * link_r, the ring's read count at the last poll; tx_seen, a bit has
+     * been transmitted since init. v42ec_reset keeps the per-call part
+     * only for the reset at this call's CONNECTED (see there). */
     hst_link_get_fn link_get;
     void *link_ctx;
-    int link_state, hst_win;
+    int hst_call, link_none, hst_win, tx_seen;
+    unsigned link_r;
     int lr_cap_len, lr_cap_fr, agreed_due;
     uint8_t lr_cap[V42EC_LR_CAP];
 } v42ec_t;
@@ -252,22 +257,31 @@ void   v42ec_cfg_default(v42ec_cfg_t *cfg, int originator);
 /* Start. Call when the modem reports its data mode is up (7.2). A clean
  * start: no HST link. */
 void   v42ec_init(v42ec_t *e, const v42ec_cfg_t *cfg);
-/* Start again with cfg (e from v42ec_init), keeping the HST link, the pre-connect ring's
- * unread bits (they are the pump's) and an LR already taken through the
- * link, which is answered again; the window keeps counting from our
- * training's end. With cfg->mnp.enable 0 (or an originator) it is
- * v42ec_init: unlinked. Without a link it is v42ec_init. The rates of
+/* Start again with cfg (e from v42ec_init), keeping the HST link. With
+ * cfg->mnp.enable 0 (or an originator), or without a link, it is
+ * v42ec_init: unlinked. The ring's unread bits are the pump's and stay.
+ * The HST call in progress (an LR already taken, which is answered again,
+ * and the window, which keeps counting from our training's end) is kept
+ * only for the reset at that call's CONNECTED: get says ON now, nothing
+ * has been transmitted since v42ec_init or the last reset, and the
+ * mailbox is the one polled before (its ring has not gone back: the pump
+ * starts each call with a zeroed mailbox). Otherwise nothing of an
+ * earlier call is kept. A frame half-received before the reset is lost
+ * (the caller sends its LR again within the window). The rates of
  * v42ec_set_rates are forgotten (the pump's come again). */
 void   v42ec_reset(v42ec_t *e, const v42ec_cfg_t *cfg);
 /* Link to an HST pump (hst_link.h): get(ctx, &state) is called from
- * v42ec_tx_bit, v42ec_rx_bit and v42ec_tick. NULL get unlinks; so does
- * MNP off (cfg.mnp.enable 0, or an originator): nothing is linked. Linked,
- * the endpoint holds T400 while the state is HST_LINK_UNDECIDED, is the
- * unlinked one from HST_LINK_NONE on (T400 counted from there), and on
- * HST_LINK_ON drains the pre-connect ring into its receive path, writes
- * the LRs' agreement into the mailbox, takes the pump's rates for T401
- * when they change, and has the HST window in T400's place (no start-stop:
- * NO_EC; fallback does not apply). */
+ * v42ec_tx_bit, v42ec_rx_bit, v42ec_tick and v42ec_reset. NULL get
+ * unlinks; so does MNP off (cfg.mnp.enable 0, or an originator): nothing
+ * is linked. Linking forgets any HST call in progress. Linked, the
+ * endpoint holds T400 while the state is HST_LINK_UNDECIDED; from
+ * HST_LINK_NONE on it is the unlinked one (T400 counted from there, get
+ * not asked again in this call); once HST_LINK_ON has been seen the call
+ * is HST to its end: it drains the pre-connect ring into its receive
+ * path, writes the LRs' agreement into the mailbox, takes the pump's
+ * rates for T401 when they change, and has the HST window in T400's
+ * place (no start-stop: NO_EC; fallback does not apply; a later state
+ * other than ON starts the window at once if it has not started). */
 void   v42ec_set_link(v42ec_t *e, hst_link_get_fn get, void *ctx);
 /* 1 when linked */
 int    v42ec_linked(const v42ec_t *e);

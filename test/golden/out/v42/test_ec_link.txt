@@ -3,4 +3,9 @@ lr_from_ring: ticks: protocol MNP, our LR out at bit 16; no tick: protocol 0, th
 window: trained at 1400 ms; mark: state 0 at 751 ms, NO_EC at 6400 ms; flags: state 1 at 751 ms, NO_EC at 6400 ms
 reset_keeps: captured LR: linked 1, our LR out at bit 16; LR in the ring: out at bit 16; mnp.enable 0: linked 0, start-stop at 750 ms
 plain_mnp_over_link: agreed 1, rates 0x00, back300 0; state 2 at 6500 ms; 3000 octets each way intact; T401 3027 ms at 2400, 1914 ms at 9600/450
-test_ec_link: 52 checks, 0 failures
+none_same_as_unlinked: ODP caller: protocol 1, our bits the same; no EC: start-stop at 750 ms, our bits the same
+two_calls: HST then ODP: protocol 1, our bits as unlinked; HST then no EC: start-stop at 750 ms, our bits as unlinked; HST then HST: protocol 0 after the reset, NO_EC 5001 ms later
+on_then_none: NONE at 1000 ms before training's end: NO_EC at 6000 ms; trained at 1400, NONE at 2000: NO_EC at 6400 ms
+window_overshoot: run out on a 3000 ms tick, reset: state 5 at the next tick
+ring_overflow: 1100 bits across the counters' wrap: 76 lost, the newest 1024 read back, 0 wrong
+test_ec_link: 92 checks, 0 failures

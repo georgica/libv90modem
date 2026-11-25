@@ -6,17 +6,27 @@
  * a get function and a context given to v42ec_set_link(): get returns the
  * modem's decision in *state and, only while it is HST_LINK_ON, the
  * mailbox (NULL otherwise). The endpoint calls it from v42ec_tx_bit,
- * v42ec_rx_bit and v42ec_tick only, on the host's thread: no concurrency.
+ * v42ec_rx_bit, v42ec_tick and v42ec_reset only, on the host's thread: no
+ * concurrency. get has no side effects: it only reports.
  *
  *   HST_LINK_UNDECIDED  the modem has not decided yet (ANSam, the HST
  *                       wait, any training not yet connected): the
  *                       endpoint holds T400;
- *   HST_LINK_NONE       connected or ended on another path: the endpoint
- *                       is the unlinked one, T400 counted from here;
+ *   HST_LINK_NONE       connected or ended on another path, reported from
+ *                       the sample that raises CONNECTED on, and final for
+ *                       the call: the endpoint is the unlinked one, T400
+ *                       counted from here, and get is not asked again
+ *                       until the endpoint's next init or reset;
  *   HST_LINK_ON         an HST call (ANS_HST): no T400, no start-stop; the
  *                       endpoint hunts for an LR from the first bit of the
  *                       pre-connect ring until our training ends plus
- *                       V42EC_HST_WINDOW_MS, then NO_EC.
+ *                       V42EC_HST_WINDOW_MS, then NO_EC. ON lasts the
+ *                       whole call: the endpoint latches it, and a later
+ *                       NONE (the modem left ANS_HST) gives neither T400
+ *                       nor start-stop (an unstarted window starts then).
+ *
+ * The pump starts each call with a zeroed mailbox (the endpoint's reset
+ * at CONNECTED tells calls apart by it).
  *
  * The pre-connect ring: from ANS_HST until the modem is connected the pump
  * appends the back receiver's bits (hst_pre_put); the endpoint drains them
@@ -25,7 +35,15 @@
  * line bits for detection and an LR sent during our training is answered
  * at our first transmitted bit. pre_w and pre_r count bits and wrap (a
  * multiple of HST_PRE_BITS); bit i is bit i % 8 of pre[(i % HST_PRE_BITS)
- * / 8]. A full ring drops the new bit and counts it in pre_lost.
+ * / 8]. A full ring drops its oldest bit for the new one and counts it in
+ * pre_lost, so the bits the endpoint reads stay continuous with the first
+ * one putbit brings. HST_PRE_BITS covers 2.27 s at 450 bit/s, more than
+ * our forward training (1.4 s, provisional, decision 4): a ring that is
+ * never drained before CONNECTED (a host that does not tick the endpoint
+ * then) still holds an LR sent during it.
+ *
+ * The pump stops appending at the sample where putbit starts: no bit
+ * reaches the endpoint both ways.
  *
  * This header includes nothing of modem/: modem/ includes it. */
 #ifndef V90D_HST_LINK_H
@@ -60,18 +78,20 @@ typedef struct {
 
 typedef hst_link_t *(*hst_link_get_fn)(void *ctx, int *state);   /* state: HST_LINK_* */
 
-/* The pump: one received bit into the ring. 0, or -1 when full (counted). */
+/* The pump: one received bit into the ring. 0, or -1 when it was full
+ * and its oldest bit has been dropped (counted). */
 static inline int hst_pre_put(hst_link_t *l, int bit)
 {
     unsigned i;
     uint8_t m;
-    if (l->pre_w - l->pre_r >= HST_PRE_BITS) { l->pre_lost++; return -1; }
+    int full = l->pre_w - l->pre_r >= HST_PRE_BITS;
+    if (full) { l->pre_r++; l->pre_lost++; }
     i = l->pre_w % HST_PRE_BITS;
     m = (uint8_t)(1u << (i % 8));
     if (bit) l->pre[i / 8] = (uint8_t)(l->pre[i / 8] | m);
     else l->pre[i / 8] = (uint8_t)(l->pre[i / 8] & (uint8_t)~m);
     l->pre_w++;
-    return 0;
+    return full ? -1 : 0;
 }
 
 /* The endpoint: the oldest bit (0 or 1), or -1 when the ring is empty. */

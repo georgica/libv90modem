@@ -4436,3 +4436,34 @@ to the modem", D18, D19), with a stub pump; the pump itself is Task 18.
     build/api_test_api                         -> api: 1030 checks, 0 failures
     new golden: v42/test_ec_link.txt
     make verify                                -> VERIFY PASS (442 s; golden 148 identical, replay 636 runs, bench 17, ubsan, a7, big-endian, fixed)
+
+Review fixes (task-7-review.md):
+
+- C1: the HST state is per call. `v42ec_reset` keeps the window and a
+  captured LR only for the reset at this HST call's CONNECTED: `get` says
+  ON now, nothing has been transmitted since the last start (`tx_seen`),
+  and the mailbox is the same one (its ring read count has not gone back;
+  the pump zeroes the mailbox per call). `link_poll` drops the captured LR
+  and a pending `agreed` whenever the state is not ON; `v42ec_set_link`
+  forgets any call in progress. The captured LR is dropped once MNP is
+  connected (M3).
+- I1: ON latches (`hst_call`) for the call: a later NONE gives neither
+  T400 nor start-stop; an unstarted window starts then; no LR: NO_EC.
+  `hst_link.h` says ON lasts the whole call.
+- M1: a full ring drops its oldest bit; the header ties HST_PRE_BITS to
+  the training. M4: a window that ran out stays at 0. M5: dead clamp and
+  guard gone. M6: `establish_ms` does not run while an HST call hunts.
+  M7: NONE before any ON is final for the call: `get` is not asked again
+  until the next init or reset. M8: `none_same_as_unlinked`.
+- `hst_link.h` states for Tasks 9 and 18: `get` has no side effects, says
+  NONE from the sample that raises CONNECTED on a non-HST call; the pump
+  stops appending to the ring when putbit starts.
+- `v90m_ec_mem_size()`: 50440 -> 50448 (x86-64), 50188 -> 50200 (ARMv5).
+
+    v42/build/test_ec_link on 09f74c2's v42 -> 19 failures (two_calls: LR replayed, protocol 2; on_then_none: start-stop; window_overshoot; ring_overflow: 512 wrong)
+    v42/build/test_ec_link                  -> test_ec_link: 92 checks, 0 failures (10 cases)
+    mutations (reset without tx_seen; without the ring-count test) -> 1, 2 failures
+    make -s -C v42 test                     -> ALL TESTS PASS
+    build/api_test_api                      -> api: 1030 checks, 0 failures
+    re-recorded: v42/test_ec_link.txt (its own: five new lines, the count)
+    make verify                             -> VERIFY PASS (441 s; golden 148 identical, replay 636, bench 17, ubsan, a7, big-endian, fixed)

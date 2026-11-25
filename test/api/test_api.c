@@ -2164,9 +2164,9 @@ static void test_ec_mnp_cfg(void)
         /* pinned as v90m_mem_size is (x86-64 and 32-bit ARM; elsewhere the
          * check holds by construction, so every target counts the same) */
 #if defined(__x86_64__)
-        size_t expect = 50440;
+        size_t expect = 50448;
 #elif defined(__arm__)
-        size_t expect = 50188;
+        size_t expect = 50200;
 #else
         size_t expect = v90m_ec_mem_size();
 #endif
