@@ -394,6 +394,55 @@ Measured against `sim/hstcall` only; no real HST modem has called it yet.
 - **The back channel's bits go on through our retrains** (the forward
   channel alone trains): the endpoint gets them while data is stopped at
   the API.
+- **Rate changes by marks (0x3R, Task 22a, the DSP half; the policy
+  follows):** our transmitter sends 36 symbols of ones at the old code and
+  36 at the new, its scrambler, differential and trellis encoders running
+  on (`hst_ftx_marks_switch`); our receiver, armed (`hst_frx_arm_switch`),
+  waits for 24 symbols of decoded ones, decodes the new code as well from
+  where they end (the last 24 points again, then at most 48 symbols of
+  both), and switches on 24 symbols of ones at the new code, its
+  descrambler and differential memory taken from the last of the old
+  code's ones. Nothing is adapted from 8 symbols of ones on until the
+  switch: fed the old code's decisions on the new code's points for 20-odd
+  symbols, the carrier loop was kicked and the data after the marks lost
+  for 200 symbols (46 of 144 switches in a sweep of every pair of codes 3..6
+  at 30, 26 and 22 dB, 4 seeds each; with the hold, 2 of 144, both at 22 dB
+  to 14400, under 14400's 23.5 dB). Codes 3..6 only: with 4800 on either
+  side the transmitter trains instead. Armed, S or S-bar for 16 symbols (a
+  training instead of the marks, as BinModem does) or 2 s without a
+  switch gives the acquisition at the new code (`test_hst_fwd`
+  `marks_switch`, `marks_missed`). Never run against a real HST modem: R2
+  (spec, "Evidence") is to show where the new rate starts.
+- **"Good" for the upshift** (`hst_good_mse`, `make hst-thresh`): our
+  receiver on v32line, a long training on a 40 dB line, then white noise
+  added to the SNR (against the signal at the receiver, 0-4 kHz), runs of
+  20 s of data each until 2 000 000 bits or 200 errors a point (a lost
+  lock counts as 200), going down by 0.5 dB to the second point over
+  1e-5:
+
+  | code | rate | SNR at BER 1e-5 | the receiver's error 3 dB above | `hst_good_mse` |
+  |---|---|---|---|---|
+  | 3 | 7200 | 13.5 dB | -17.76 dB | 1098 |
+  | 4 | 9600 | 16.5 dB | -20.54 dB | 579 |
+  | 5 | 12000 | 21.0 dB | -23.78 dB | 274 |
+  | 6 | 14400 | 23.5 dB | -24.13 dB | 253 |
+
+  Near the crossing the errors come as events (a burst, or a lost lock),
+  not as a smooth curve: at 12000, 20.5 dB had 26 errors in 2 000 000 bits,
+  20.0 and 19.5 none, 19.0 a lost lock. The crossing is taken at the
+  first point over 1e-5 going down, so it errs high. The receiver's error
+  flattens at about -24.5 dB (28 dB of SNR and up), so 14400's "good"
+  (-24.13 dB) needs a line of 26.5 dB or better and has only 0.4 dB in
+  hand on the cleanest line.
+- **The forward receiver's gain loop drifts on a noisy line.** In data
+  mode the gain loop holds the points' power at the set's while the
+  equaliser, adapting toward the decisions, shrinks it a little below
+  (more so the more noise): the gain climbs and the equaliser shrinks
+  against it without end. At 7200 with 19 dB of SNR the gain went from 1.0
+  to 3.2 in 80 s and the receiver failed at 120 s (the input clipped);
+  at 30 dB it holds. Not fixed here (it changes the receiver's data mode);
+  the thresholds above are measured in 20 s runs so that it does not
+  enter them.
 
 ## Included tables (x2)
 
@@ -570,6 +619,13 @@ CPU"); 0.5.0's in brackets:
 - **V.42:** an endpoint at 56 kbit/s both ways costs 5.21 / 9.08 / 9.48 M a
   second with no compression / V.42bis / V.44 (`make cost-v42`; before
   0.6.0's V.42 work: 7.96 / 11.81 / 12.19).
+- **HST's forward receiver (0.7.0 work):** 25.40 M instructions a second
+  in 14400 data mode (`make cost-hst-fwd`; the budget 26 M), unchanged by
+  the switch by marks while none is armed. A switch by marks from 12000 to
+  14400 costs 636 945 instructions in the 20 ms from where both codes are
+  decoded (the new code's decoder run over 24 points kept, then both
+  decoders, the switch 23 symbols in): 31.70 M a second for those 20 ms
+  (the bench's loop taken off), against the plan's 40 M.
 - **HST's back channel (0.7.0 work):** the two back
   receivers (450 and 300) on one band-pass, as the pump runs them while it
   holds the forward channel, cost 1.89 M instructions a second with the

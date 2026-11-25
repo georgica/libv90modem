@@ -8,6 +8,7 @@
  * which HST's forward channel uses whichever end sends (BF §2, [FW]); so
  * v32tx scrambles for us and its scrambler runs on from the training into
  * the data, with no second copy of it (plan ruling F7). */
+#include <stddef.h>
 #include "hst.h"
 #include "sintab.h"
 #include "fixmath.h"
@@ -45,6 +46,8 @@ void hst_ftx_init(hst_ftx_t *t, int level, v32_getbit_fn getbit, void *user)
     t->left = 0;
     t->code = HST_OPEN_CODE;
     t->d0 = 0;
+    t->marks = 0;
+    t->mcode = t->code;
 }
 
 /* Under HST_PROFILE_BM every training is V.17's long train, the opening
@@ -57,6 +60,7 @@ void hst_ftx_train(hst_ftx_t *t, int code, int long_form)
     static const int8_t k_v17[4] = { K_S, K_COND, K_BRIDGE, K_ONES };
     int i, v17 = HST_LONG_V17;
     t->code = code < 2 ? 2 : code > 6 ? 6 : code;
+    t->marks = 0;
     for (i = 0; i < 4; i++) t->kind[i] = v17 ? k_v17[i] : k_hst[i];
     if (v17) {
         t->len[0] = HST_BM_AB; t->len[1] = HST_BM_COND;
@@ -82,6 +86,7 @@ void hst_ftx_stop(hst_ftx_t *t)
     v32tx_set_mode(&t->tx, V32_TX_SILENCE);
     t->seg = HST_SEG_OFF;
     t->left = 0;
+    t->marks = 0;
 }
 
 static int scr1(hst_ftx_t *t) { return v32_scramble(&t->tx.scr, t->tx.answer, 1); }
@@ -111,6 +116,15 @@ static void next_symbol(hst_ftx_t *t)
         if (t->seg != HST_SEG_DATA) t->left = t->len[t->seg - HST_SEG_S1];
     }
     if (t->seg == HST_SEG_DATA) {
+        if (t->marks > 0) {
+            /* ones, the rate changed half-way; set as the mode directly:
+             * v32tx_set_mode from data would start its count, and with it
+             * the encoders, again (from ones back to data it does not) */
+            if (t->marks-- == HST_MARKS_SYMS / 2) t->code = t->mcode;
+            t->tx.rate = t->code - 2;
+            t->tx.mode = V32_TX_ONES;
+            return;
+        }
         t->tx.rate = t->code - 2;
         v32tx_set_mode(&t->tx, V32_TX_DATA);
         return;
@@ -301,6 +315,11 @@ static void mf_taps(int32_t *cr, int32_t *ci)
 /* back to listening for AB, in state `why` */
 static void listen(hst_frx_t *r, int why)
 {
+    if (r->sw_code) {                 /* armed: the acquisition at the new code */
+        r->code = r->sw_code;
+        r->sw_code = 0;
+        r->sw_win = 0;
+    }
     qamrx_stop(&r->q);                /* its ring and its power go on; no points */
     r->state = r->listen = why;
     r->abrun = 0;
@@ -329,6 +348,10 @@ void hst_frx_init(hst_frx_t *r)
     v32_vit_init(&r->vit, 1);
     r->eq.valid = 0;
     r->code = HST_OPEN_CODE;
+    r->sw_code = 0; r->sw_left = 0; r->sw_ones = 0; r->sw_win = 0; r->sw_run = 0;
+    r->sw_dscr.reg = 0; r->sw_y = 0; r->sw_alt = 0; r->sw_sh = 0; r->sw_pos = 0;
+    for (i = 0; i < HST_SW_RING; i++) r->sw_zr[i] = r->sw_zi[i] = 0;
+    v32_vit_init(&r->vit2, 1);
     r->n40 = 0; r->ph6 = 0;
     r->lr = r->li = r->ur = r->ui = 0;
     r->pw = r->pref = 0;
@@ -343,6 +366,8 @@ void hst_frx_init(hst_frx_t *r)
 void hst_frx_set_code(hst_frx_t *r, int code)
 {
     code = code < 2 ? 2 : code > 6 ? 6 : code;
+    r->sw_code = 0;                   /* a switch armed is off */
+    r->sw_win = 0;
     if (r->state == HST_FRX_DATA && code != r->code && code > 2) v32_vit_init(&r->vit, code - 2);
     r->code = code;
 }
@@ -619,10 +644,19 @@ static void clock_only(hst_frx_t *r)
     qamrx_update(&r->q, r->q.zr, r->q.zi, QRX_TIMING, MU_DATA);
 }
 
+static int  sw_training(hst_frx_t *r, int32_t zr, int32_t zi);
+static int  sw_symbol(hst_frx_t *r, int32_t zr, int32_t zi, int32_t *dr, int32_t *di);
+
 static void symbol(hst_frx_t *r)
 {
     int32_t zr = r->q.zr, zi = r->q.zi, dr = 0, di = 0;
     int k, st = 0, x, y;
+    if (r->sw_code && --r->sw_left <= 0) {
+        /* armed 2 s without a switch: the generic acquisition */
+        hst_frx_store(r, &r->eq);
+        listen(r, HST_FRX_UNLOCKED);
+        return;
+    }
     if (r->off >= FCD_CLAMP || r->pw * 10 < r->pref) {
         /* no carrier (yet): nothing decided, nothing adapted, no bits; the
          * carrier's phase moves on, and the clock's correction (a zero
@@ -679,6 +713,12 @@ static void symbol(hst_frx_t *r)
         return;
     }
     /* data */
+    if (r->sw_code && sw_training(r, zr, zi)) {
+        /* armed, S or S-bar: a training instead; from the equaliser as it is */
+        hst_frx_store(r, &r->eq);
+        listen(r, HST_FRX_IDLE);
+        return;
+    }
     if (r->code == 2) {
         int q = decode(r, 0, v32_abcd_label[st]);
         if (r->trn >= 0) {
@@ -692,7 +732,12 @@ static void symbol(hst_frx_t *r)
         if (r->gstep) clock_only(r);
         else qamrx_update(&r->q, dr, di, QRX_EQ | QRX_CARRIER | QRX_TIMING, r->fast ? MU_DFAST : MU_DATA);
     } else {
-        vit_point(r, zr, zi, &dr, &di);
+        if (!r->sw_code) vit_point(r, zr, zi, &dr, &di);
+        else if (sw_symbol(r, zr, zi, &dr, &di)) {
+            /* both codes decoded: the decision not known, nothing adapted */
+            clock_only(r);
+            return;
+        }
         if (r->gstep) clock_only(r);
         else qamrx_update(&r->q, dr, di, QRX_EQ | QRX_CARRIER | QRX_TIMING | QRX_DENSE, r->fast ? MU_DFAST : MU_DATA);
     }
@@ -700,7 +745,10 @@ static void symbol(hst_frx_t *r)
     hold(r, dr, di);
     gain(r);
     if (r->bad >= HST_FRX_LOCK_SYMS) {
-        r->eq.valid = 0;
+        /* armed, the likelier cause is the far end's new code: the
+         * equaliser is kept for the acquisition */
+        if (r->sw_code) hst_frx_store(r, &r->eq);
+        else r->eq.valid = 0;
         r->nbits = 0;                 /* nothing from the symbol that lost it */
         listen(r, HST_FRX_UNLOCKED);
     }
@@ -737,3 +785,135 @@ int hst_frx_tick(hst_frx_t *r, int16_t x)
     if (qamrx_tick(&r->q, (int16_t)v)) symbol(r);
     return r->nbits;
 }
+
+/* ---------------- a switch by marks (hst.h) ---------------- */
+
+void hst_ftx_marks_switch(hst_ftx_t *t, int new_code)
+{
+    new_code = new_code < 2 ? 2 : new_code > 6 ? 6 : new_code;
+    if (t->seg != HST_SEG_DATA) t->code = new_code;
+    else if (t->code == 2 || new_code == 2) hst_ftx_train(t, new_code, 0);
+    else {
+        t->mcode = new_code;
+        t->marks = HST_MARKS_SYMS;
+    }
+}
+int hst_ftx_marking(const hst_ftx_t *t) { return t->marks; }
+/* make hst-thresh (docs/limits.md): BER 1e-5 at 13.5, 16.5, 21.0, 23.5 dB
+ * of SNR at codes 3..6; the receiver's error 3 dB above, -17.76, -20.54,
+ * -23.78, -24.13 dB (65536 = 0 dB) */
+const int32_t hst_good_mse[7] = { 0, 0, 0, 1098, 579, 274, 253 };
+int32_t hst_frx_mse(const hst_frx_t *r) { return r->state == HST_FRX_DATA ? r->mlock : 4 << 16; }
+/* Armed, S or S-bar (V.32's, ours, V.17's segment 1): HST_SW_ALT symbols
+ * in a row each within 1.2 units of A..D, alternating A B or C D */
+static int sw_training(hst_frx_t *r, int32_t zr, int32_t zi)
+{
+    int st = slice4(zr, zi), x, y, p1 = (int)(r->sw_sh & 3u), p2 = (int)((r->sw_sh >> 2) & 3u);
+    int64_t er, ei;
+    v32_state_point(st, &x, &y);
+    er = zr - (int64_t)x * U; ei = zi - (int64_t)y * U;
+    if (er * er + ei * ei <= OFF2_MIN && st == p2 && (st ^ p1) == 1) r->sw_alt++;
+    else r->sw_alt = 0;
+    r->sw_sh = ((r->sw_sh << 2) | (uint32_t)st) & 0xFu;
+    return r->sw_alt >= HST_SW_ALT;
+}
+
+/* a label of the new code's decoder: its bits, ones or not */
+static void sw_new(hst_frx_t *r, int label)
+{
+    int n = r->sw_code, y = (int)r->sw_y, q, i, ones = 1;
+    if (label < 0) return;
+    q = v32_decode_bits(n - 2, label, &y);
+    r->sw_y = y;
+    for (i = n - 1; i >= 0; i--) ones &= v32_descramble(&r->sw_dscr, 0, (q >> i) & 1);
+    r->sw_run = ones ? r->sw_run + 1 : 0;
+}
+
+/* The ones at the code in force have ended, after HST_SW_ONES or more,
+ * at the label just decoded (the point V32_VDEPTH - 1 before this one):
+ * the new code's decoder from there, on the points kept (that one to this
+ * one), every state alike; its descrambler and differential memory as the
+ * last of the ones left the code in force's: the transmitter's encoders
+ * run on through the change */
+static void sw_start(hst_frx_t *r, const v32_scr_t *d0, int y0)
+{
+    int k, out = -1;
+    r->sw_dscr = *d0;
+    r->sw_y = y0;
+    v32_vit_init(&r->vit2, r->sw_code - 2);
+    for (k = 0; k < 8; k++) r->vit2.pm[k] = 0;
+    for (k = V32_VDEPTH - 1; k >= 0; k--) {
+        int j = (r->sw_pos - 1 - k) & (HST_SW_RING - 1);
+        out = v32_vit_step(&r->vit2, r->sw_zr[j] / 2, r->sw_zi[j] / 2, NULL);
+    }
+    r->sw_win = HST_SW_WIN;
+    r->sw_run = 0;
+    sw_new(r, out);
+}
+
+/* a label decided at the code in force, armed: its bits given unless both
+ * codes are being decoded; the ones counted, and where they end after
+ * HST_SW_ONES, the new code's decoder started */
+static void sw_watch(hst_frx_t *r, int label)
+{
+    v32_scr_t d0 = r->dscr;
+    int y0 = (int)r->yprev, n0 = (int)r->nbits, ones = 1, k;
+    data_bits(r, label);
+    for (k = n0; k < r->nbits; k++) ones &= r->bits[k];
+    if (r->sw_win) { r->nbits = n0; return; }
+    if (ones) {
+        if (r->sw_ones < HST_SW_IDLE) r->sw_ones++;
+        return;
+    }
+    if (r->sw_ones >= HST_SW_ONES && r->code > 2 && r->sw_code > 2) {
+        r->nbits = n0;
+        sw_start(r, &d0, y0);
+    }
+    r->sw_ones = 0;
+}
+
+/* A data symbol at code 3..6, armed; 1 when the decision (*dr, *di) is
+ * not to be adapted on: while both codes are decoded, at the switch, and
+ * from HST_SW_HOLD symbols of ones decoded (the points coming in then are
+ * HST_SW_HOLD + V32_VDEPTH - 1 into the ones, and the new code's come from
+ * HST_MARKS_SYMS / 2 on, its decisions wrong at the code in force: fed
+ * them for 20-odd symbols, the carrier loop was kicked off and the data
+ * after the marks lost for 200 symbols) to HST_SW_IDLE (ones going on that
+ * long are an idle line, not marks) */
+static int sw_symbol(hst_frx_t *r, int32_t zr, int32_t zi, int32_t *dr, int32_t *di)
+{
+    int hard, x, y, out, win = r->sw_win != 0;
+    r->sw_zr[r->sw_pos] = zr; r->sw_zi[r->sw_pos] = zi;
+    r->sw_pos = (r->sw_pos + 1) & (HST_SW_RING - 1);
+    out = v32_vit_step(&r->vit, zr / 2, zi / 2, &hard);
+    v32_point(r->code - 2, hard, &x, &y);
+    *dr = x * U; *di = y * U;
+    if (out >= 0) sw_watch(r, out);
+    if (!win) return r->sw_win != 0 || (r->sw_ones >= HST_SW_HOLD && r->sw_ones < HST_SW_IDLE);
+    sw_new(r, v32_vit_step(&r->vit2, zr / 2, zi / 2, NULL));
+    if (r->sw_run >= HST_SW_RUN) {
+        /* the switch: the new code's decoders are the receiver's */
+        r->vit = r->vit2;
+        r->dscr = r->sw_dscr;
+        r->yprev = r->sw_y;
+        r->code = r->sw_code;
+        r->sw_code = 0;
+        r->sw_win = 0;
+    } else if (--r->sw_win == 0) r->sw_ones = 0;   /* none: the code in force goes on */
+    return 1;
+}
+
+void hst_frx_arm_switch(hst_frx_t *r, int new_code)
+{
+    new_code = new_code < 2 ? 2 : new_code > 6 ? 6 : new_code;
+    if (r->state != HST_FRX_DATA) {
+        hst_frx_set_code(r, new_code);
+        return;
+    }
+    if (new_code == r->code) { r->sw_code = 0; r->sw_win = 0; return; }
+    r->sw_code = new_code;
+    r->sw_left = HST_SW_SYMS;
+    r->sw_ones = r->sw_win = r->sw_run = 0;
+    r->sw_alt = 0; r->sw_sh = 0;
+}
+int hst_frx_armed(const hst_frx_t *r) { return r->sw_code; }

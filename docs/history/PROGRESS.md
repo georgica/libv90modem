@@ -5819,3 +5819,45 @@ Sizes: `hstcall_t` 165712 octets (x86-64), test side only. Host run 33 s
   The extra delay is 9 samples (1.1 ms), far inside every event's slack.
 - Only the forward receiver's own goldens changed. Review fixes M1, M2
   (comments); M3 to M5 are wording and are left.
+
+## hst 22a: rate changes by marks, the DSP half (2026-11-25)
+
+- **Transmitter** (`hst_ftx_marks_switch`, `hst_ftx_marking`): 36 symbols
+  of ones at the code in force, 36 at the new, then data; v32tx's mode is
+  set to ones directly so that its count (and with it the scrambler,
+  differential and trellis encoders) runs on. Outside data the code is
+  only set; with 4800 on either side the short training instead.
+- **Receiver** (`hst_frx_arm_switch`, `hst_frx_armed`, `hst_frx_mse`):
+  armed in data mode, the decoder's ones are counted; where they end after
+  24 symbols, the new code's Viterbi decoder (every state alike) is run
+  over the last 24 points (a ring of 32 kept while armed), its descrambler
+  and differential memory taken from the old code's after its last ones;
+  both are decoded for at most 48 symbols, no bits given; 24 symbols of
+  ones at the new code switch the receiver to the new decoder. Nothing is
+  adapted from 8 symbols of ones to the switch (or 48 symbols of ones: an
+  idle line). Armed: S or S-bar 16 symbols (a training instead), 2 s with
+  no switch, or a lost lock (its equaliser then kept) gives the
+  acquisition at the new code. `hst_frx_set_code` disarms. The receiver's
+  behaviour with nothing armed is unchanged: `test_hst_fwd`'s 21 earlier
+  cases print the same, and `bench_hst -r` the same line as at e1498b4.
+- **Tests:** `test_hst_fwd` `marks_switch` (6 -> 5, 4 -> 6: no bit lost
+  outside the marks, 276 and 216 bits of ones between the data) and
+  `marks_missed` (the marks lost to a cut, a training 1 s on, at 6 -> 5 and
+  4 -> 6; a training instead; armed and nothing: the acquisition at 2.0 s),
+  202 checks. Both seen failing on stubs first. A scratch sweep of every
+  pair of codes 3..6 at 30, 26 and 22 dB, 4 seeds (not committed): 46 of 144
+  bad before the hold on adaptation, 2 after (22 dB to 14400).
+- **Thresholds** (`make hst-thresh`, `test_hst_fwd thresholds` under
+  -DTEST_FULL, about 20 min on the host): BER 1e-5 at 13.5 / 16.5 / 21.0 /
+  23.5 dB at codes 3..6; `hst_good_mse` 1098 / 579 / 274 / 253 (the
+  receiver's error 3 dB above: -17.76 / -20.54 / -23.78 / -24.13 dB).
+  Table in docs/limits.md. Found on the way: the gain loop drifts against
+  the equaliser on noisy lines (7200, 19 dB: the gain x3.2 in 80 s, failure
+  at 120 s); measured in 20 s runs, reported, not fixed.
+- **CPU** (`make cost-hst-fwd`, ARMv5 armv5-eabi--uclibc 2023.08-1): 14400
+  data mode 25 396 881 instructions a second (25.40 M, unchanged); a switch
+  12000 -> 14400, `bench_hst -s`/`-p`: 636 945 instructions over the 20 ms
+  from the parallel decode's start, 31.70 M a second (budget 40 M).
+- **Memory:** `hst_frx_t` 4080 -> 4960 octets x86-64 (a second v32_vit_t,
+  588; the ring, 256), `hst_ftx_t` 200 -> 208; `hst_t` 10040 -> 10928, under
+  12 KB; the union and `v90m_mem_size()` unchanged.

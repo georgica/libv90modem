@@ -75,6 +75,17 @@
  *   harsh_dropout 100 ms at 9600 on an 8-tap line with 16 dB of loss, at
  *                 +-7 Hz x +-100 ppm, 3 seeds each (1 in the short set):
  *                 every run recovered
+ *   marks_switch  6 -> 5 and 4 -> 6 by marks (hst_ftx_marks_switch, the
+ *                 receiver armed by hst_frx_arm_switch) in data mode: data
+ *                 mode kept, the new code, no bit lost outside the 72 mark
+ *                 symbols (only ones between the data before and after)
+ *   marks_missed  the marks missed (a cut over them), the caller training 1 s
+ *                 on; a training instead of the marks; armed and nothing
+ *                 sent: back in data mode at the new code within 2 s, or
+ *                 the acquisition at 2 s, then no error
+ *   thresholds    (`test_hst_fwd thresholds`, built with -DTEST_FULL: make
+ *                 hst-thresh; not a case) the SNR of BER 1e-5 at codes
+ *                 3..6 and the receiver's error there: hst_good_mse
  *
  * The program also runs under make check-hst-bm (HST_PROFILE_BM), where
  * every training is V.17's long train; there cases 4 and on are
@@ -97,6 +108,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 #include "test.h"
 #include "../v32/v32.h"
 #ifndef HST_FWD_RECORD
@@ -842,6 +854,8 @@ typedef struct {
 } fpeer_t;
 static uint8_t txb[NLOG], rxb[NLOG];
 static long    nrx;
+#define TXR 8192                   /* the caller's last bits, for the threshold runs */
+static uint8_t txr[TXR];
 
 static int fp_bit(void *user)
 {
@@ -850,6 +864,7 @@ static int fp_bit(void *user)
     p->r = p->r * 1664525u + 1013904223u;
     b = (int)(p->r >> 27) & 1;
     if (p->n < NLOG) txb[p->n] = (uint8_t)b;
+    txr[p->n & (TXR - 1)] = (uint8_t)b;
     p->n++;
     return b;
 }
@@ -891,6 +906,13 @@ static fpeer_t   P;
 /* a tick of the line: the caller's sample, times fscale (a level step, or
  * 0: the line cut), to the receiver; its bits logged */
 static double fscale = 1;
+#ifdef TEST_FULL
+/* the threshold runs' added noise: white, RMS fxn (0: none); its own generator */
+static double fxn;
+static uint32_t fxr = 1;
+static double fx_uniform(void) { fxr = fxr * 1664525u + 1013904223u; return ((fxr >> 8) + 0.5) / 16777216.0; }
+static double fx_gauss(void) { return sqrt(-2 * log(fx_uniform())) * cos(2 * PI * fx_uniform()); }
+#endif
 static void ftick(void)
 {
     int16_t x = v32line_tick(&L, 0, fp_tx, &P);
@@ -899,6 +921,12 @@ static void ftick(void)
         double v = floor(x * fscale + 0.5);
         x = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
     }
+#ifdef TEST_FULL
+    if (fxn > 0) {
+        double v = floor(x + fxn * fx_gauss() + 0.5);
+        x = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+    }
+#endif
     n = hst_frx_tick(&R, x);
     for (k = 0; k < n; k++) { if (nrx < NLOG) rxb[nrx] = R.bits[k]; nrx++; }
 }
@@ -1308,6 +1336,247 @@ static void harsh_dropout(void)
     printf("harsh_dropout: 100 ms at 9600, harsh line, +-7 Hz x +-100 ppm: %d of %d runs not recovered\n", bad, runs);
     bound("every run: data mode kept, no error from 4000 bits after the cut", bad == 0);
 }
+
+/* ---- rate changes by marks (spec "Rate changes"; hst_ftx_marks_switch, hst_frx_arm_switch) ---- */
+
+/* the rx index of the caller's data bit 0, found by its bits from `from`
+ * (64 of them) among those received; LONG_MIN when not found */
+static long find_off(long from)
+{
+    long k, j;
+    if (from + 64 > P.n || from + 64 > NLOG) return LONG_MIN;
+    for (k = 0; k + 64 <= nrx && k + 64 <= NLOG; k++) {
+        for (j = 0; j < 64 && rxb[k + j] == txb[from + j]; j++) ;
+        if (j == 64) return k - from;
+    }
+    return LONG_MIN;
+}
+
+/* the errors of the caller's bits [a, b) against those received from off */
+static long errs_in(long off, long a, long b)
+{
+    long j, e = 0;
+    for (j = a; j < b && j < NLOG; j++)
+        if (off + j < 0 || off + j >= nrx || off + j >= NLOG || rxb[off + j] != txb[j]) e++;
+    return e;
+}
+
+/* Our transmitter switches 6 -> 5 and 4 -> 6 by marks in data mode, the
+ * receiver armed for it: the receiver at the new code, never out of data
+ * mode, and no bit lost outside the 72 mark symbols: the data before them
+ * (from its 300th bit) and NB bits after them without error, and between
+ * the two only ones, no more than the marks' bits */
+static void marks_switch(void)
+{
+    static const int from[2] = { 6, 4 }, to[2] = { 5, 6 };
+    int c;
+    for (c = 0; c < 2; c++) {
+        long d, n, offb, offa, eb = -1, ea = -1, gap = -1, zeros = 0, k;
+        int left = 0;
+        fdata(from[c], 1500u + (uint32_t)c, 4000);
+        left |= hst_frx_state(&R) != HST_FRX_DATA;
+        hst_frx_arm_switch(&R, to[c]);
+        for (n = 0; n < FS / 10; n++) { ftick(); left |= hst_frx_state(&R) != HST_FRX_DATA; }
+        d = P.n;
+        hst_ftx_marks_switch(&P.tx, to[c]);
+        while (P.n < d + NB + 4000 && n < 40L * FS) { ftick(); n++; left |= hst_frx_state(&R) != HST_FRX_DATA; }
+        offb = find_off(300);
+        offa = find_off(d + 2000);
+        if (offb != LONG_MIN && offa != LONG_MIN) {
+            eb = errs_in(offb, 300, d);
+            ea = errs_in(offa, d, d + NB);
+            gap = offa - offb;
+            for (k = offb + d; k < offa + d && k < NLOG; k++) zeros += !rxb[k];
+        }
+        printf("marks_switch %d -> %d: data mode %s, code %d, armed %d; %ld errors before the marks, %ld in %ld after; "
+               "%ld bits between, %ld zeros\n", from[c], to[c], left ? "LEFT" : "kept", R.code, hst_frx_armed(&R),
+               eb, ea, NB, gap, zeros);
+        bound("data mode kept, at the new code, disarmed", !left && R.code == to[c] && hst_frx_armed(&R) == 0);
+        bound("no error before the marks, nor in NB bits after them", eb == 0 && ea == 0);
+        bound("only ones between, at most the marks' bits", gap >= 0 && gap <= 36L * (from[c] + to[c]) && zeros == 0);
+    }
+}
+
+/* The receiver misses the marks (a 100 ms cut over them) and decodes the
+ * new code at the old: 6 -> 5 and 4 -> 6, the caller training (short) at
+ * the new code 1 s on, as its recovery would. Armed for 6 -> 5, the caller
+ * trains at 5 at once instead of the marks (as BinModem does): the
+ * receiver, locked at 6, takes its S for a training instead. Each is in
+ * data mode at the new code within 2 s of the marks (or the training), no
+ * error from the 41st data symbol. Armed for 6 -> 5 and nothing at all:
+ * at the 2 s the acquisition takes over (UNLOCKED, the code 5, disarmed);
+ * a short training at 5 then: data mode, no error from the 41st data
+ * symbol */
+static void marks_missed(void)
+{
+    enum { MISSED, INSTEAD, NOTHING };
+    static const int from[4] = { 6, 4, 6, 6 }, to[4] = { 5, 6, 5, 5 }, how[4] = { MISSED, MISSED, INSTEAD, NOTHING };
+    static const char *name[3] = { "the marks missed, a training 1 s on", "a training instead", "no marks" };
+    int c;
+    for (c = 0; c < 4; c++) {
+        long n = 0, at = -1, lost = -1, t0;
+        fres_t o;
+        fdata(from[c], 1600u + (uint32_t)c, 4000);
+        hst_frx_arm_switch(&R, to[c]);
+        if (how[c] == MISSED) {
+            hst_ftx_marks_switch(&P.tx, to[c]);
+            fscale = 0;
+            for (; n < FS / 10; n++) ftick();
+            fscale = 1;
+            for (; n < FS; n++) ftick();
+        }
+        if (how[c] != NOTHING) {
+            t0 = n;
+            nrx = 0; P.n = 0;
+            hst_ftx_train(&P.tx, to[c], 0);
+            for (; n < t0 + fsecs(to[c], 0) * FS && P.n < NB + 2000; n++) {
+                int was = hst_frx_state(&R);
+                ftick();
+                if (at < 0 && was != HST_FRX_DATA && hst_frx_state(&R) == HST_FRX_DATA) at = n;
+            }
+            compare(&o, 40L * to[c]);
+            printf("marks_missed %d -> %d, %s: data mode again %s, code %d, armed %d; "
+                   "from the 41st data symbol %ld errors in %ld bits\n", from[c], to[c], name[how[c]],
+                   at >= 0 && at <= 2 * FS ? "within 2 s" : "LATE OR NEVER", R.code, hst_frx_armed(&R), o.errs, o.cmp);
+            if (verbose) printf("  (data mode %.1f ms after the marks or the training; the first good data bit %ld)\n", at / 8.0, o.last);
+            bound("in data mode at the new code within 2 s", at >= 0 && at <= 2 * FS && R.code == to[c] && hst_frx_armed(&R) == 0);
+        } else {
+            for (; n < 3 * FS; n++) {
+                ftick();
+                if (lost < 0 && hst_frx_state(&R) != HST_FRX_DATA) lost = n;
+            }
+            printf("marks_missed %d -> %d, %s: the acquisition %s, state %d, code %d, armed %d\n", from[c], to[c], name[how[c]],
+                   lost >= 2 * FS - FS / 10 && lost <= 2 * FS + FS / 10 ? "at 2 s" : "NOT AT 2 s",
+                   hst_frx_state(&R), R.code, hst_frx_armed(&R));
+            if (verbose) printf("  (out of data mode %.1f ms after arming)\n", lost / 8.0);
+            bound("the acquisition at 2 s, at the new code", lost >= 2 * FS - FS / 10 && lost <= 2 * FS + FS / 10
+                  && hst_frx_state(&R) == HST_FRX_UNLOCKED && R.code == to[c] && hst_frx_armed(&R) == 0);
+            ftrain(&o, to[c], 0, fsecs(to[c], 0));
+            compare(&o, 40L * to[c]);
+            printf("marks_missed %d -> %d, then a short training: data mode %s; from the 41st data symbol %ld errors in %ld bits\n",
+                   from[c], to[c], o.data_at >= 0 ? "reached" : "NOT reached", o.errs, o.cmp);
+        }
+        bound("then no error from the 41st data symbol", o.found && o.cmp == NB && o.errs == 0);
+    }
+}
+
+#ifdef TEST_FULL
+/* ---- the thresholds of "good" (hst_good_mse; spec "Rate changes"):
+ * `test_hst_fwd thresholds`, built with -DTEST_FULL (make hst-thresh).
+ * Each code 3..6: a long training on a 40 dB line, then white noise added
+ * after the line to the SNR asked for (against the signal's power at the
+ * receiver, over 0-4 kHz, as fline's), 1 s to settle, then TH_SEG s of
+ * data; runs so (each its own seeds) until TH_NB data bits or TH_ERRS
+ * errors are counted, and the receiver's error (hst_frx_mse) averaged. From TH_START(code) down by 0.5 dB to two
+ * points over 1e-5; the SNR of BER 1e-5 between the last point under it
+ * and the first over, log BER linear in dB; hst_good_mse the receiver's
+ * error there, 3 dB lower ---- */
+#define TH_NB   2000000L
+#define TH_ERRS 200L
+#define TH_SEG  20L                /* s of data a run (a training each): the gain loop drifts
+                                    * against the equaliser over minutes on a noisy line */
+static double fsig_dbm0(void)
+{
+    double g = 0, re, im;
+    int f, k, n = 0;
+    for (f = 600; f <= 3000; f += 10, n++) {
+        for (re = im = 0, k = 0; k < 4; k++) { re += floop[k] * cos(2 * PI * f * k / FS); im -= floop[k] * sin(2 * PI * f * k / FS); }
+        g += re * re + im * im;
+    }
+    return dbm0_of(FLEVEL * pow(10, -floss / 20.0) * sqrt(g / n));
+}
+
+typedef struct { double snr, ber, mse_db; long errs, bits; } th_t;
+
+/* one run: a training, the noise added, 1 s, then up to TH_SEG s of data
+ * counted into o; 0 when it never got to data mode */
+static int th_run(int code, double snr, uint32_t seed, th_t *o, double *msum, long *ms)
+{
+    double line = 40, sig, nt, nl;
+    long off, n, k, nmax = TH_SEG * FS;
+    fxn = 0;
+    fsnr = line;
+    fdata(code, seed, 20000);
+    fsnr = 30;
+    if (hst_frx_state(&R) != HST_FRX_DATA) return 0;
+    sig = v32line_rms(fsig_dbm0());
+    nt = sig * pow(10, -snr / 20);
+    nl = sig * pow(10, -line / 20);
+    fxn = nt > nl ? sqrt(nt * nt - nl * nl) : 0;
+    fxr = seed * 2654435761u + 1u;
+    for (n = 0; n < FS; n++) ftick();
+    off = find_off(P.n - 4000);
+    if (off == LONG_MIN) { fxn = 0; return 0; }
+    for (n = 0; n < nmax && o->bits < TH_NB && o->errs < TH_ERRS; n++) {
+        long i0 = nrx;
+        ftick();
+        if (hst_frx_state(&R) != HST_FRX_DATA) { o->errs = TH_ERRS; break; }
+        for (k = 0; k < nrx - i0; k++) {
+            long j = i0 + k - off;
+            if (j < 0 || j < P.n - TXR) continue;
+            o->bits++;
+            o->errs += R.bits[k] != txr[j & (TXR - 1)];
+        }
+        if ((n & 63) == 0) { *msum += hst_frx_mse(&R); (*ms)++; }
+    }
+    fxn = 0;
+    return 1;
+}
+
+/* a point: runs (each its own seed) until TH_NB bits or TH_ERRS errors */
+static void th_point(int code, double snr, uint32_t seed, th_t *o)
+{
+    double msum = 0;
+    long ms = 0;
+    int run;
+    o->snr = snr; o->errs = 0; o->bits = 0; o->ber = 0.5; o->mse_db = 0;
+    for (run = 0; o->bits < TH_NB && o->errs < TH_ERRS; run++)
+        if (!th_run(code, snr, seed + 7919u * (uint32_t)run, o, &msum, &ms)) { o->bits = 0; return; }
+    o->ber = o->bits ? (double)o->errs / o->bits : 0.5;
+    o->mse_db = ms ? 10 * log10(msum / ms / 65536) : 0;
+}
+
+static void thresholds(void)
+{
+    static const double start[7] = { 0, 0, 0, 18.0, 21.5, 24.5, 28.0 };
+    int code;
+    printf("thresholds: BER against SNR at codes 3..6 (TH_NB %ld bits a point, TH_ERRS %ld, runs of TH_SEG %ld s)\n",
+           TH_NB, TH_ERRS, TH_SEG);
+    for (code = 3; code <= 6; code++) {
+        th_t pt[64];
+        int np = 0, fails = 0, hi = -1, lo = -1, i;
+        double t, lb_hi, lb_lo, s5, m3 = 0, g;
+        for (i = 0; i < 64; i++) {
+            th_t *p = &pt[np++];
+            th_point(code, start[code] - 0.5 * i, 1700u + 100u * (uint32_t)code + (uint32_t)i, p);
+            printf("  code %d, SNR %5.1f dB: %ld errors in %ld bits, BER %.2e, receiver's error %.2f dB\n",
+                   code, p->snr, p->errs, p->bits, p->ber, p->mse_db);
+            fflush(stdout);
+            if (p->ber <= 1e-5 && !fails) hi = np - 1;
+            else if (p->ber > 1e-5) { if (!fails) lo = np - 1; if (++fails >= 2) break; }
+            if (p->snr < 5) break;
+        }
+        if (hi < 0 || lo < 0) { printf("code %d: no crossing found\n", code); continue; }
+        /* BER 1e-5 between the last point under it and the first over it, going down */
+        lb_hi = log10(pt[hi].ber > 0 ? pt[hi].ber : 0.5 / pt[hi].bits);
+        lb_lo = log10(pt[lo].ber);
+        t = lb_hi > lb_lo ? (lb_hi + 5) / (lb_hi - lb_lo) : 0;
+        if (t < 0) t = 0;
+        s5 = pt[hi].snr + t * (pt[lo].snr - pt[hi].snr);
+        /* the receiver's error 3 dB above that SNR, between the points either side */
+        if (s5 + 3 >= pt[0].snr) m3 = pt[0].mse_db;
+        else for (i = 0; i + 1 < np; i++)
+            if (pt[i].snr >= s5 + 3 && pt[i + 1].snr <= s5 + 3) {
+                double u = (pt[i].snr - (s5 + 3)) / (pt[i].snr - pt[i + 1].snr);
+                m3 = pt[i].mse_db + u * (pt[i + 1].mse_db - pt[i].mse_db);
+                break;
+            }
+        g = 65536 * pow(10, m3 / 10);
+        printf("code %d: BER 1e-5 at SNR %.2f dB; at %.2f dB the receiver's error %.2f dB: hst_good_mse %ld%s\n",
+               code, s5, s5 + 3, m3, (long)floor(g + 0.5), s5 + 3 >= pt[0].snr ? " (above the sweep: its first point)" : "");
+    }
+}
+#endif
 #else
 static void acq_v17(void)
 {
@@ -1395,10 +1664,20 @@ static void zero_isi(void)
 
 int main(int argc, char **argv)
 {
+    int only;
 #ifdef HST_PROFILE_BM
-    int only = t_case_arg(argc, argv, 7);
+    only = t_case_arg(argc, argv, 7);
 #else
-    int only = t_case_arg(argc, argv, 21);
+    if (argc == 2 && strcmp(argv[1], "thresholds") == 0) {
+#ifdef TEST_FULL
+        thresholds();
+        return 0;
+#else
+        printf("thresholds: build with -DTEST_FULL (make hst-thresh)\n");
+        return 2;
+#endif
+    }
+    only = t_case_arg(argc, argv, 23);
 #endif
     verbose = getenv("HST_VERBOSE") != NULL;
     if (T_CASE(only, 1)) pulse_points();
@@ -1428,6 +1707,8 @@ int main(int argc, char **argv)
     if (T_CASE(only, 19)) lock_loss();
     if (T_CASE(only, 20)) carrier_stop_noisy();
     if (T_CASE(only, 21)) harsh_dropout();
+    if (T_CASE(only, 22)) marks_switch();
+    if (T_CASE(only, 23)) marks_missed();
 #endif
     T_REPORT("test_hst_fwd");
 }
