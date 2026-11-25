@@ -31,6 +31,9 @@ The host suite:
 - `check-headers`: every header under `api/`, `modem/`, `v34/`, `v90/`,
   `v92/`, `v32/`, `v42/` and `include/` compiles alone with only `-I. -Iinclude`
   (each includes what it uses, by a path relative to itself);
+- `check-diag-names`: every error an engine's header defines has its name
+  in `v90m_err_name` (`tools/check-diag-names.sh`, with `test_diag
+  --names`; `diag names: 117, each engine error named`);
 - the tests of the subdirectories `v34`, `v90`, `v92`, `v42` and `v32`.
 
 It ends with `ALL HOST CHECKS PASS`. The simulated peers and channels are

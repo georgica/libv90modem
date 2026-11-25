@@ -96,10 +96,12 @@ first: below, "K56flex".) The menu decides:
 
 `v90m_get_diag` (0.6.1) says, also after the end, why the call ended in
 the engines' own words (`error`, named by `v90m_err_name`: a start-up that
-failed in V.90's Phase 2 because no INFO1a came is `P2D_ERR_INFO1A`), the
-phase it ended in (`phase`) and the modulation V.8 or the legacy detection
-chose (`selected`, set as soon as it is chosen: a call that never finished
-its training still says V.90). docs/api.md has the names.
+failed in V.90's Phase 2 because no INFO1a came is `P2D_ERR_INFO1A`; 0
+after an orderly cleardown), the phase it ended in (`phase`), the
+modulation V.8 or the legacy detection chose (`selected`, set as soon as
+it is chosen: a call that never finished its training still says V.90)
+and whether data mode was reached (`data_reached`). The start-up failed
+when the call ended with `data_reached` 0. docs/api.md has the names.
 
 `v90m_get_stats` adds the receiver's signal to error (`snr_db10`, 0.1 dB),
 the round-trip delay measured in the handshake (`rtd`, samples: V.34, V.90,

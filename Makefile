@@ -16,6 +16,8 @@
 #                        no allocation outside api/v90modem.o
 #   make check-headers   every header compiles alone with -I. -Iinclude (its includes
 #                        relative to itself); make check runs it
+#   make check-diag-names  every engine error has its name in v90m_err_name
+#                        (tools/check-diag-names.sh); make check runs it
 #   make check-version   the Makefile's VERSION is the header's V90M_VERSION_*, README's
 #                        "This is X" and docs/getting-started.md's .so names; make
 #                        check runs it
@@ -298,6 +300,10 @@ API_INC := -Iinclude -Itest -Isim -Imodem -Iv90 -Iv92 -Iv34
 # the renegotiation test reaches the engines' handles: the development archive alone
 $(BUILD)/api_test_reneg: test/api/test_reneg.c $(DEV) include/v90modem.h api/v90modem_priv.h
 	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -Iapi -o $@ $< $(DEV) $(LDLIBS)
+# every error an engine's header defines has a name (tools/check-diag-names.sh)
+.PHONY: check-diag-names
+check-diag-names: $(BUILD)/api_test_diag tools/check-diag-names.sh
+	@tools/check-diag-names.sh $(abspath $(BUILD))/api_test_diag
 # the cross-built libraries, built once per make run, before any test program
 # that links them (several of those at once, each building the same library,
 # raced under -j). The archives are targets of their own, made by that one
@@ -370,7 +376,7 @@ endif
 test-times:
 	@tools/par-run.sh --merge $(BUILD)/test-times.txt tools/test-times.txt && echo "tools/test-times.txt: from $(BUILD)/test-times.txt"
 
-check: test-all test-api test-examples test-fixtures check-symbols check-soname check-version check-headers
+check: test-all test-api test-examples test-fixtures check-symbols check-soname check-version check-headers check-diag-names
 	@echo "ALL HOST CHECKS PASS"
 # Golden outputs (tools/golden.sh): every program of make check, its output
 # (less host timing) against test/golden/out/<dir>/<prog>.txt. golden runs

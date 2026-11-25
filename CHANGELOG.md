@@ -13,16 +13,23 @@ this library's own answering modem, never against a real modem or server.
 Added:
 - Start-up diagnostics, either role: `v90m_get_diag` fills a `v90m_diag`
   with the cause of the end in the engines' own words (`error`, named by
-  `v90m_err_name`, e.g. `P2D_ERR_INFO1A`; 0 while the call goes on), the
-  phase reached (`phase`, `v90m_phase`: tone, V.8, Phases 2 to 4, the
-  start-up of the modulations without phases, data) and the modulation V.8
-  or the legacy detection chose (`selected`, a `v90m_conn`, set as soon as
-  it is chosen, whether or not training finishes). Kept after the end until
-  `v90m_reset`. The names are diagnostic text, not an enum: they do not
-  change within 0.6.x; the numbers may. A struct and function of their own
-  rather than fields appended to `v90m_state` or `v90m_stats`, so that a
-  program built against 0.6.0 still runs on 0.6.1's shared library.
-  `V90M_MEM_SIZE` and `v90m_mem_size()` are unchanged.
+  `v90m_err_name`, e.g. `P2D_ERR_INFO1A`; 0 while the call goes on and
+  after an orderly cleardown once data mode was reached), the phase
+  reached (`phase`, `v90m_phase`: tone, V.8, Phases 2 to 4, the start-up
+  of the modulations without phases, data), the modulation chosen
+  (`selected`, a `v90m_conn`: set from V.8's JM or the legacy detection as
+  soon as it is chosen, whether or not training finishes, and then
+  following the call to the modulation in force) and whether data mode
+  was reached (`data_reached`). The start-up failed if, and only if, the
+  call ended with `data_reached` 0. `v90m_phase_name` and
+  `v90m_conn_name` give short names for a log line. Kept after the end
+  until `v90m_reset`. The names are diagnostic text, not an enum: they do
+  not change within 0.6.x; the numbers may. A struct and function of
+  their own rather than fields appended to `v90m_state` or `v90m_stats`,
+  so that a program built against 0.6.0 still runs on 0.6.1's shared
+  library; `v90m_diag` keeps its size within 0.6 likewise.
+  `V90M_MEM_SIZE` and `v90m_mem_size()` are unchanged. `make check` now
+  fails when an engine's error has no name (`check-diag-names`).
 
 Fixed:
 - Answering role, V.90 and V.92: a caller that lost our INFO1d and started

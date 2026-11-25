@@ -216,36 +216,58 @@ stay as they were.
 
 Added in 0.6.1. `void v90m_get_diag(const v90m_t *m, v90m_diag *d)`: how
 far the call got, what it chose and why it ended, either role, in one
-place, for a log line such as `start-up failed (P2D_ERR_INFO1A, phase 2,
-V.90)`. Cheap, fine after every sample, and kept after the end until
+place, for a log line such as `start-up failed (P2D_ERR_INFO1A, phase2,
+V.92)`. Cheap, fine after every sample, and kept after the end until
 `v90m_reset`. A struct and a function of their own: `v90m_state` and
 `v90m_stats` keep their size within 0.6 (a program built against 0.6.0
-runs on 0.6.1's shared library).
+runs on 0.6.1's shared library), and so does `v90m_diag` from 0.6.1 on.
+
+**The start-up failed if, and only if, the call ended and data mode was
+never reached**: `v90m_state.end != V90M_END_NONE && !d.data_reached`. A
+retrain that fails after data mode (`V90M_END_RETRAIN_FAILED`, `phase`
+2, 3 or 4) is not a start-up failure: `data_reached` is 1. So in C:
+
+```c
+v90m_state st; v90m_diag d;
+v90m_get_state(m, &st); v90m_get_diag(m, &d);
+if (st.end != V90M_END_NONE && !d.data_reached)
+    log("start-up failed (%s, %s, %s)", v90m_err_name(d.error),
+        v90m_phase_name(d.phase), v90m_conn_name(d.selected));
+```
 
 | `v90m_diag` | |
 |---|---|
-| `error` | why the call ended, as the modem's engines say it: `v90m_err_name(error)`; 0 while the call goes on. After a start-up that failed, the deepest cause with a name (an engine's own, such as `P2D_ERR_INFO1A`, or the modem's own limit, such as `ANS_ERR_TIMEOUT`); after a connection, how it was lost or cleared down (`P34_ERR_CARRIER`, `P34_ERR_HANGUP`, ...) |
-| `phase` | `v90m_phase` now; after the end, the phase the call ended in |
-| `selected` | `v90m_conn`: the modulation chosen, from V.8's JM or, for a modem without V.8, once its signal is heard, whether or not its training finishes; `V90M_CONN_NONE` before. It then follows the call: V.92 once Phase 2 agrees PCM upstream, V.34 once a V.90 caller's INFO1a selects it, x2 or K56flex at their point of no return, the modulation in force once connected. V.8's V.22 item (V.22 or V.22bis): `V90M_CONN_V22BIS` until the connection says which |
+| `error` | why the call ended, as the modem's engines say it: `v90m_err_name(error)`. 0 while the call goes on, and after an orderly cleardown (ours or the far end's, `V90M_END_CLEARDOWN_OURS` / `_FAR`) once data mode was reached. A start-up that failed: the deepest cause with a name (an engine's own, such as `P2D_ERR_INFO1A`, or the modem's own limit, such as `ANS_ERR_TIMEOUT`). After data mode: how the call was lost (`P34_ERR_CARRIER`, `ANS_ERR_RETRAINS`, ...) |
+| `phase` | `v90m_phase` now; after the end, the phase the call ended in (a retrain goes back to Phase 2; V.92's and V.34's failed trainings are retrains, so such a start-up ends in Phase 2) |
+| `selected` | `v90m_conn`: the modulation chosen, from V.8's JM or, for a modem without V.8, once its signal is heard, whether or not its training finishes; `V90M_CONN_NONE` before. It then follows the call to the modulation in force: V.92 once Phase 2 agrees PCM upstream, V.34 once a V.90 caller's INFO1a selects it, x2 or K56flex at their point of no return, the connection's once connected. V.8's V.22 item (V.22 or V.22bis): `V90M_CONN_V22BIS` until the connection says which |
+| `data_reached` | 1 once data mode was reached this call (user data moved both ways: `v90m_state.moving`), kept after the end |
 
-`v90m_phase`:
+`v90m_phase` (its `v90m_phase_name` in brackets):
 
 | | |
 |---|---|
-| `V90M_PHASE_NONE` (0) | before the first sample |
-| `V90M_PHASE_TONE` | answering: the silence and our answer tone (with K56flex, V.8bis before them); calling: listening for the answer tone |
-| `V90M_PHASE_V8` | V.8: CM, JM, CJ |
-| `V90M_PHASE_PHASE2` | V.34, V.90, V.92, x2, K56flex: Phase 2, a retrain's too |
-| `V90M_PHASE_PHASE3` | ... Phase 3 |
-| `V90M_PHASE_PHASE4` | ... Phase 4 |
-| `V90M_PHASE_TRAIN` | V.21, V.22, V.22bis, V.32bis, Bell, which have no phases: their start-up; also a caller without V.8 being waited for, and calling, the wait for a pre-V.8 or Bell answerer's signal |
-| `V90M_PHASE_DATA` | data mode, rate renegotiations included (and V.22bis's and V.32bis's retrains) |
+| `V90M_PHASE_NONE` (0, `none`) | before the first sample |
+| `V90M_PHASE_TONE` (`tone`) | answering: the silence and our answer tone (with K56flex, V.8bis before them); calling: listening for the answer tone |
+| `V90M_PHASE_V8` (`v8`) | V.8: CM, JM, CJ |
+| `V90M_PHASE_PHASE2` (`phase2`) | V.34, V.90, V.92, x2, K56flex: Phase 2, a retrain's too |
+| `V90M_PHASE_PHASE3` (`phase3`) | ... Phase 3 |
+| `V90M_PHASE_PHASE4` (`phase4`) | ... Phase 4 |
+| `V90M_PHASE_TRAIN` (`train`) | V.21, V.22, V.22bis, V.32bis, Bell, which have no phases: their start-up; also a caller without V.8 being waited for, and calling, the wait for a pre-V.8 or Bell answerer's signal |
+| `V90M_PHASE_DATA` (`data`) | data mode, rate renegotiations included (and V.22bis's and V.32bis's retrains) |
+
+`const char *v90m_phase_name(v90m_phase p)` and `const char
+*v90m_conn_name(v90m_conn c)`: short names for a log line, never NULL,
+`"?"` outside the enum, the same within 0.6.x. Modulations: `none`,
+`V.21`, `V.22`, `V.22bis`, `V.90`, `V.34`, `V.32bis`, `V.92`, `Bell 103`,
+`Bell 212A`, `x2`, `K56flex`.
 
 `const char *v90m_err_name(int code)`: the name of an `error`, `"none"`
 for 0, `"?"` for a number that is no error; never NULL. The names are
 diagnostic text, not an enum: the numbers behind them may change in any
 version, the names do not within 0.6.x. Most are the engines' own (the
-header named in brackets, for the detail):
+header named in brackets, for the detail); `make check` fails when an
+engine's header has an error without its name here
+(`tools/check-diag-names.sh`):
 
 | prefix | where | names |
 |---|---|---|

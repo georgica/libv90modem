@@ -84,7 +84,11 @@ ROWS(p2l_names, DG_COUNT_P2L) ROWS(v34o_names, DG_COUNT_V34O) ROWS(v90a_names, D
 ROWS(ans_names, DG_COUNT_ANS) ROWS(orig_names, DG_COUNT_ORIG)
 #undef ROWS
 /* a family's numbers stay below the next family's base */
-typedef char dg_fits[DG_COUNT_V90A < 100 && DG_COUNT_X2D < 100 && DG_COUNT_P34 < 100 ? 1 : -1];
+typedef char dg_fits[DG_COUNT_V8 < 100 && DG_COUNT_V21 < 100 && DG_COUNT_V22 < 100 && DG_COUNT_V32 < 100
+                     && DG_COUNT_P2D < 100 && DG_COUNT_P34 < 100 && DG_COUNT_V92D < 100 && DG_COUNT_P2N < 100
+                     && DG_COUNT_DX < 100 && DG_COUNT_V34A < 100 && DG_COUNT_X2D < 100 && DG_COUNT_K56D < 100
+                     && DG_COUNT_P2L < 100 && DG_COUNT_V34O < 100 && DG_COUNT_V90A < 100 && DG_COUNT_ANS < 100
+                     && DG_COUNT_ORIG < 100 ? 1 : -1];
 
 const char *v90m_err_name(int code)
 {
@@ -95,6 +99,21 @@ const char *v90m_err_name(int code)
     if (f >= DG_NFAM || n == 0 || (unsigned)n >= fam[f].n || !fam[f].name[n]) return "?";
     return fam[f].name[n];
 }
+
+const char *v90m_phase_name(v90m_phase p)
+{
+    static const char *const n[] = { "none", "tone", "v8", "phase2", "phase3", "phase4", "train", "data" };
+    return (unsigned)p < sizeof n / sizeof n[0] ? n[p] : "?";
+}
+
+const char *v90m_conn_name(v90m_conn c)
+{
+    static const char *const n[] = { "none", "V.21", "V.22", "V.22bis", "V.90", "V.34", "V.32bis", "V.92",
+                                      "Bell 103", "Bell 212A", "x2", "K56flex" };
+    return (unsigned)c < sizeof n / sizeof n[0] ? n[c] : "?";
+}
+/* one name per value of each enum */
+typedef char dg_phase_names[V90M_PHASE_DATA == 7 && V90M_CONN_K56FLEX == 11 ? 1 : -1];
 
 /* ------------------------------------------- the phase and the choice */
 /* V.8's choice (JM), as the modems go on with it (answer.c tick_v8,
