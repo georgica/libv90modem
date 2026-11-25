@@ -213,9 +213,10 @@ double hc_ftx_tick(hc_ftx *t);
  * shifted a strobe each way), and the taps' centre of energy held weakly at
  * the middle. In data, 16 alternating symbols on the 4 points are a new
  * training: trained again from the equaliser it has, at the code set by
- * hc_frx_set_code. Carrier lost (under -48 dBm0, or 10 dB under the
- * signal's level, for 100 ms; from 3 dB under, nothing adapted and the
- * equaliser kept as it was): listening
+ * hc_frx_set_code. Carrier lost (12 dB under its recent peak, which falls
+ * 3 dB a second, or under -48 dBm0, for 100 ms; while the 5 ms power is 3
+ * dB under the 50 ms power nothing adapts, and the equaliser is kept as
+ * that begins; a real step down clears it in some 50 ms): listening
  * again, the equaliser kept (from data) for the next AB, which then starts
  * from it, the carrier's phase taken from 8 symbols' fourth power. hc_frx_arm: 0x3R,
  * both rates decoded (the equaliser frozen) until 16 symbols of ones come
@@ -253,8 +254,8 @@ typedef struct {
     double   bbr[HC_FBB], bbi[HC_FBB];
     /* power and AB */
     double   pw;                          /* guard output power, leaky */
-    double   pref;                        /* the signal's level since the AB */
-    int      fading;                      /* 3 dB under it: nothing adapted */
+    double   e50, epk, pkfall;            /* the power over 50 ms; its highest, falling 3 dB a second */
+    int      dip;                         /* pw 3 dB under e50: nothing adapted */
     double   r6r, r6i, r30r, r30i;        /* 600 and 3000 Hz, leaky */
     long     abrun, low;
     double   thr_on, thr_off;
@@ -322,11 +323,12 @@ typedef struct {
     int     lr_delay_ms;   /* the LR no earlier than this after the back channel starts (0: straight after
                               the preamble) */
     struct { int code, at_ms, kind; } force_more[3];   /* further forced requests (kind 0: none),
-                              each sent at its time once no LN of ours is outstanding */
+                              each on its own, sent at its time once no LN of ours is outstanding */
     int     ignore_lna;    /* the first N LNAs to our own LNs are not acted on (as if lost):
                               no reversal, no rate change follows (Task 21's rev_lost) */
     int     ignore_ln;     /* the first N LNs from the answerer are not acted on (its LNA still goes) */
-    int     ld_hold_ms;    /* carrier held this long after the LD has gone (0: 1000, BinModem's [BM]) */
+    int     ld_hold_ms;    /* carrier held this long after the LD has gone (0: 1000: BinModem's ATH holds
+                              the line 1000 ms for its LD to get out, hst-facts `Cleardown` [BM]) */
 } hstcall_cfg;
 
 /* back 450, start 450, rates 0x7C (codes 2..6), flags 0x01, level -12 */
@@ -368,7 +370,7 @@ typedef struct {
     int      rate_rx;      /* an 0x2R or 0x3R from the answerer, done once our LNA has gone (-1 none) */
     int      hold;         /* the rest of the symbol after that LNA: ones, then the marks or training */
     int      conf_going;   /* the confirming LA is on the line */
-    int      nforce;       /* forced requests sent */
+    int      nforce;       /* forced requests sent: bit 0 request 0, bits 1..3 force_more[0..2] */
     int      lnas_ignored, lns_ignored;
     int      ld_sent;      /* LD asked; its carrier stop pending */
     long     ld_off;

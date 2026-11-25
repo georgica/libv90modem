@@ -56,9 +56,12 @@
  *   turn_back     reversed, our 0x16: hstcall back on the back channel, our
  *                 short training at 6 met by the equaliser hstcall kept when
  *                 it left that role; data intact, reversals 2
- *   forced_twice  two forced requests in one call (0x24, then 0x25)
+ *   forced_twice  three forced requests in one call: request 0 (0x24),
+ *                 force_more[1] set alone (0x25), force_more[2] (0x26)
  *   rev_lost      ignore_lna: hstcall's 0x1R acknowledged, and it never
- *                 trains
+ *                 trains (its forward transmitter never on)
+ *   ignore_ln     reversed, our 0x35 acknowledged and ignored: no marks,
+ *                 both ends stay at 6, data intact
  *   knobs         lr_delay_ms (no frame before it); ld_hold_ms, 1000 by
  *                 default and 3000 (the carrier held that long after the LD)
  *
@@ -881,22 +884,49 @@ static void turn_back(void)
     bound("the data both ways, intact", intact());
 }
 
-/* hstcall's two forced requests (0x24, then 0x25) in one call: we hold the
- * forward channel and retrain at each */
+/* hstcall's forced requests in one call: request 0 (0x24), force_more[1]
+ * alone (0x25; [0] unset) and force_more[2] (0x26); we hold the forward
+ * channel and retrain at each */
 static void forced_twice(void)
 {
     hstcall_cfg cfg;
     hstcall_defaults(&cfg);
     cfg.force_rate_code = 4; cfg.force_kind = 0x20; cfg.force_rate_at_ms = 6000;
-    cfg.force_more[0].code = 5; cfg.force_more[0].kind = 0x20; cfg.force_more[0].at_ms = 9000;
+    cfg.force_more[1].code = 5; cfg.force_more[1].kind = 0x20; cfg.force_more[1].at_ms = 9000;
+    cfg.force_more[2].code = 6; cfg.force_more[2].kind = 0x20; cfg.force_more[2].at_ms = 12000;
     call_start(&HC, &cfg, 94u);
     X.to_hc = 8000; X.to_ans = 300;
-    run_to(&HC, 14L * FS, 0);
+    run_to(&HC, 10L * FS, 0);
+    printf("forced: by 10 s %d LNs taken by us, hstcall code %d\n", A.lns_taken, HC.fwd_code);
+    bound("request 0 and force_more[1] taken, hstcall at code 5", A.lns_taken == 2 && HC.fwd_code == 5);
+    run_to(&HC, 16L * FS, 0);
     run_to(&HC, 40L * FS, 1);
-    printf("forced_twice: %d LNs taken by us, hstcall code %d, its receiver at %d\n", A.lns_taken, HC.fwd_code, HC.frx.d.code);
-    data_line("forced_twice");
-    bound("both requests taken, hstcall and its receiver at code 5",
-          A.lns_taken == 2 && HC.fwd_code == 5 && HC.frx.d.code == 5 && hc_frx_state(&HC.frx) == HC_FRX_DATA);
+    printf("forced: %d LNs taken by us, hstcall code %d, its receiver at %d\n", A.lns_taken, HC.fwd_code, HC.frx.d.code);
+    data_line("forced");
+    bound("force_more[2] taken too, hstcall and its receiver at code 6",
+          A.lns_taken == 3 && HC.fwd_code == 6 && HC.frx.d.code == 6 && hc_frx_state(&HC.frx) == HC_FRX_DATA);
+    bound("the data both ways, intact", intact());
+}
+
+/* ignore_ln: hstcall holding the forward channel acknowledges our 0x35 but
+ * does nothing: no marks, it stays at 6; our receiver, armed on the LNA,
+ * gives the switch up and goes on at 6; data intact */
+static void ignore_ln(void)
+{
+    hstcall_cfg cfg;
+    int ok;
+    hstcall_defaults(&cfg);
+    cfg.ignore_ln = 1;
+    ok = reversed_call(&HC, &cfg, 1, 97u);
+    A.send_code = 0x35; A.send_at = A.ms + 500;
+    X.to_hc += 1000; X.to_ans += 6000;
+    run_to(&HC, X.n + 5L * FS, 0);
+    run_to(&HC, X.n + 30L * FS, 1);
+    printf("ignore_ln: hstcall code %d, ours %d, our LN acknowledged %d\n", HC.fwd_code, A.hfrx.d.code, A.my_ln < 0);
+    data_line("ignore_ln");
+    bound("reversed first", ok);
+    bound("our 0x35 acknowledged, ignored: hstcall and our receiver still at 6",
+          A.my_ln < 0 && HC.lns_ignored == 1 && HC.fwd_code == 6 && A.hfrx.d.code == 6 && hc_frx_state(&A.hfrx) == HC_FRX_DATA);
     bound("the data both ways, intact", intact());
 }
 
@@ -914,7 +944,8 @@ static void rev_lost(void)
     printf("rev_lost: hstcall role %d phase %d reversals %d; us role %d, our receiver state %d\n", HC.role, HC.phase,
            HC.reversals, A.role, hst_frx_state(&A.frx));
     bound("we turned on the LN; hstcall stayed on the back channel and never trained",
-          A.role == 1 && HC.role == HC_ROLE_BACK && HC.reversals == 0 && hst_frx_state(&A.frx) != HST_FRX_DATA);
+          A.role == 1 && HC.role == HC_ROLE_BACK && HC.reversals == 0 && HC.lnas_ignored == 1 && !HC.trained
+          && !HC.ftx.on && hst_frx_state(&A.frx) != HST_FRX_DATA && hst_frx_state(&A.frx) != HST_FRX_TRAIN);
 }
 
 /* lr_delay_ms: no frame before it; ld_hold_ms: the carrier held that long
@@ -1011,9 +1042,9 @@ int main(int argc, char **argv)
     /* the rest do not depend on the profile: run in the default build only */
     (void)tone; (void)back_to_ours; (void)back_from_ours; (void)fwd_to_ours;
     (void)marks_self; (void)coexist; (void)link_case; (void)reversal; (void)stored_eq;
-    (void)holder_rates; (void)turn_back; (void)forced_twice; (void)rev_lost; (void)knobs;
+    (void)holder_rates; (void)turn_back; (void)forced_twice; (void)rev_lost; (void)knobs; (void)ignore_ln;
 #else
-    int only = t_case_arg(argc, argv, 19);
+    int only = t_case_arg(argc, argv, 18);
     verbose = getenv("HST_VERBOSE") != NULL;
     if (T_CASE(only, 1)) tone();
     if (T_CASE(only, 2)) back_to_ours(450);
@@ -1032,6 +1063,7 @@ int main(int argc, char **argv)
     if (T_CASE(only, 15)) forced_twice();
     if (T_CASE(only, 16)) rev_lost();
     if (T_CASE(only, 17)) knobs();
+    if (T_CASE(only, 18)) ignore_ln();
 #endif
     T_REPORT("test_hstcall");
 }

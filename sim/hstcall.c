@@ -511,6 +511,7 @@ void hc_frx_init(hc_frx *r, int code)
         for (y = 0; y < 4; y++) r->vnext[s][y] = conv_next(s, y >> 1, y & 1, &r->vy0[s]);
     r->thr_on = rms_of(-43) * rms_of(-43);
     r->thr_off = rms_of(-48) * rms_of(-48);
+    r->pkfall = pow(10.0, -0.3 / FS);         /* 3 dB a second */
     r->state = HC_FRX_IDLE;
     r->next_code = code < 2 ? 2 : code > 6 ? 6 : code;
     dec_reset(&r->d, r->next_code);
@@ -730,9 +731,9 @@ static void frx_symbol(hc_frx *r)
             r->snb = 0;
         }
     }
-    /* the signal fading (3 dB under its level): nothing adapted (the
-     * normalised steps on a fading input would wreck the taps) */
-    if (r->fading) { mu = 0; kp = 0; kf = 0; }
+    /* the input dipping (see hc_frx_tick): nothing adapted, since the
+     * normalised steps on a vanishing input would wreck the taps */
+    if (r->dip) { mu = 0; kp = 0; kf = 0; }
     er = qr - dr; ei = qi - di;
     r->mse += (er * er + ei * ei - r->mse) / 64;
     /* training: the error over every point, 16 symbols, kept for 16 */
@@ -787,7 +788,7 @@ static void frx_symbol(hc_frx *r)
 static void frx_listen(hc_frx *r)
 {
     r->state = HC_FRX_IDLE;
-    r->abrun = 0; r->low = 0; r->fading = 0;
+    r->abrun = 0; r->low = 0; r->dip = 0;
     r->r6r = r->r6i = r->r30r = r->r30i = 0;
     r->armed = 0;
 }
@@ -817,7 +818,7 @@ int hc_frx_tick(hc_frx *r, double x)
             r->ts = t0 + k * T;
             r->tstep = T / 2;
             r->tdrift = 0; r->tadj = 0;
-            r->pref = r->pw;
+            r->e50 = r->epk = r->pw;
             r->half = 0;
             memset(r->xr, 0, sizeof r->xr); memset(r->xi, 0, sizeof r->xi);
             r->theta = 0;
@@ -843,11 +844,22 @@ int hc_frx_tick(hc_frx *r, double x)
     }
     /* carrier lost: under -48 dBm0, or 10 dB under the signal's level (its
      * power in training and data, followed slowly while within 6 dB) */
-    if (r->pw > r->pref / 4) r->pref += (r->pw - r->pref) / 4096;
-    r->low = r->pw < r->thr_off || r->pw < r->pref / 10 ? r->low + 1 : 0;
-    /* fading: the equaliser kept as it was before (once, as it begins) */
-    if (r->pw < r->pref / 2) { if (!r->fading) hc_frx_keep(r); r->fading = 1; }
-    else r->fading = 0;
+    /* Three measures of the guard's output power: pw over 5 ms, e50 over
+     * 50 ms, and epk, the highest pw, falling 3 dB a second. QAM's power
+     * over 5 ms (12 symbols) stays within a dB or two of its mean, and a
+     * far transmitter that stops rings out in some 15 symbols (6 ms), so:
+     *  - a dip, pw 3 dB under e50: the input is going (or stepped down).
+     *    Nothing adapts during it, and the equaliser is kept as it begins.
+     *    A real step down ends the dip once e50 has followed, about 50 ms;
+     *  - the carrier gone, pw 12 dB under epk (or under -48 dBm0) for
+     *    100 ms. 12 dB, not less: a line's level, once a call is up, does
+     *    not step that far; epk's slow fall lets a gentle drift through
+     *    and catches a stop. */
+    r->e50 += (r->pw - r->e50) / 400;
+    r->epk = r->pw > r->epk * r->pkfall ? r->pw : r->epk * r->pkfall;
+    r->low = r->pw < r->thr_off || r->pw * 16 < r->epk ? r->low + 1 : 0;
+    if (r->pw * 2 < r->e50) { if (!r->dip) hc_frx_keep(r); r->dip = 1; }
+    else r->dip = 0;
     if (r->low > 800) {
         frx_listen(r);
         r->nbits = 0;
@@ -1100,18 +1112,19 @@ static void every_ms(hstcall_t *c)
             else ln_done(c, was);
         }
     }
-    if (c->linked && c->ln_pend < 0 && c->nforce < 4) {
-        int at, kind, rc;
-        if (c->nforce == 0) { at = c->cfg.force_rate_at_ms; kind = c->cfg.force_kind; rc = c->cfg.force_rate_code; }
-        else {
-            at = c->cfg.force_more[c->nforce - 1].at_ms; kind = c->cfg.force_more[c->nforce - 1].kind;
-            rc = c->cfg.force_more[c->nforce - 1].code;
-        }
-        if (at <= 0 || kind == 0) c->nforce = 4;          /* no more */
-        else if (c->ms >= at) {
-            c->nforce++;
+    /* forced requests: request 0 (force_rate_*) and force_more[0..2], each
+     * set (kind and time non-zero) on its own, the earliest index first */
+    if (c->linked && c->ln_pend < 0) {
+        int i;
+        for (i = 0; i < 4; i++) {
+            int at = i ? c->cfg.force_more[i - 1].at_ms : c->cfg.force_rate_at_ms;
+            int kind = i ? c->cfg.force_more[i - 1].kind : c->cfg.force_kind;
+            int rc = i ? c->cfg.force_more[i - 1].code : c->cfg.force_rate_code;
+            if ((c->nforce >> i & 1) || at <= 0 || kind == 0 || c->ms < at) continue;
+            c->nforce |= 1 << i;
             c->ln_pend = (kind & 0xF0) | (rc & 0x0F);
             mnppeer_send_ln(m, c->ln_pend);
+            break;
         }
     }
     if (c->linked && c->cfg.rev_backlog > 0 && c->phase == HC_BACK && c->ln_pend < 0

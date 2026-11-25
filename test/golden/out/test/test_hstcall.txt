@@ -134,9 +134,11 @@ turn_back: 7024 of 7024 octets to hstcall, 3300 of 3300 to us, 0 wrong
   reversed first: pass
   hstcall back on the back channel, reversals 2, its receiver in data at 6: pass
   the data both ways, intact: pass
-forced_twice: 2 LNs taken by us, hstcall code 5, its receiver at 5
-forced_twice: 8000 of 8000 octets to hstcall, 300 of 300 to us, 0 wrong
-  both requests taken, hstcall and its receiver at code 5: pass
+forced: by 10 s 2 LNs taken by us, hstcall code 5
+  request 0 and force_more[1] taken, hstcall at code 5: pass
+forced: 3 LNs taken by us, hstcall code 6, its receiver at 6
+forced: 8000 of 8000 octets to hstcall, 300 of 300 to us, 0 wrong
+  force_more[2] taken too, hstcall and its receiver at code 6: pass
   the data both ways, intact: pass
 rev_lost: hstcall role 0 phase 1 reversals 0; us role 1, our receiver state 0
   we turned on the LN; hstcall stayed on the back channel and never trained: pass
@@ -149,4 +151,9 @@ knobs: ld_hold_ms 1000, the LD out, then the carrier
 knobs: ld_hold_ms 3000, the LD out, then the carrier
   the LD received: pass
   the carrier held for ld_hold_ms after the LD, then off within 60 ms: pass
-test_hstcall: 102 checks, 0 failures
+ignore_ln: hstcall code 6, ours 6, our LN acknowledged 1
+ignore_ln: 2024 of 2024 octets to hstcall, 9000 of 9000 to us, 0 wrong
+  reversed first: pass
+  our 0x35 acknowledged, ignored: hstcall and our receiver still at 6: pass
+  the data both ways, intact: pass
+test_hstcall: 106 checks, 0 failures

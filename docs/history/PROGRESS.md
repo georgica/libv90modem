@@ -5624,3 +5624,21 @@ Sizes: `hstcall_t` 165712 octets (x86-64), test side only. Host run 33 s
   (M13); header notes (M6-M8, static only); the HST96 facts row reworded
   (M10); `back_to_ours` and `back_from_ours` split per speed (19 cases).
 - Host run 39 s, short set 13 s.
+
+### hst 17, review fixes 2 (2026-11-25)
+
+- **N1:** hstcall's forward receiver had taken over hst_frx's carrier-level
+  rule (a level set at AB, followed slowly, loss at 10 dB under it). Its
+  own now, from the facts' -48 dBm0 floor and its own reasoning: three
+  measures of the guard's power, 5 ms, 50 ms, and the highest 5 ms value
+  falling 3 dB a second; a dip (5 ms 3 dB under 50 ms) freezes the loops
+  and keeps the equaliser, and a real step down clears it in some 50 ms
+  (it used to hold about a second); the carrier is gone at 12 dB under the
+  peak, or under -48 dBm0, for 100 ms. `stored_eq` again 0 errors in all
+  32 runs (24 to 33 dB, 0 and -7 Hz -100 ppm, 4 seeds); `turn_back` passes.
+- `force_more` entries each work alone; `forced_twice` uses request 0,
+  `force_more[1]` alone and `force_more[2]`; `ignore_ln` has its own case;
+  `rev_lost` also checks that hstcall's forward transmitter never came on.
+  The case count was 19 for 17 cases since the first fix round; now 18 for
+  18. LD hold 1000 ms by default: BinModem's ATH holds the line that long
+  for its LD (`Cleardown`, [BM]).
