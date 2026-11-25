@@ -78,19 +78,27 @@ before the first sample; resetting at `CONNECTED` is harmless:
    an LR the caller sent during our training, which is answered at our
    first bit. Give the rates with `v90m_ec_set_rates` after that reset and
    at each `V90M_EV_RATES`, as for any MNP call.
-4. For the next call, `v90m_reset(m, ...)` drops the link: link again
-   before its first sample. `v90m_ec_destroy`, or a `v90m_ec_reset` with
-   `mnp.enable` 0, unlinks. Keep the modem alive while it is linked:
-   destroy the endpoint before the modem (both read the modem's link).
+4. For the next call, link again before its first sample, whether you
+   reset the modem (`v90m_reset`) or create a new one: both start
+   unlinked.
 
-A host may instead feed and tick the linked endpoint from the first sample
-on and never reset it. Until the modem connects on another path, the
+The link is two-way, and either side ends it: `v90m_destroy` and
+`v90m_reset` of the modem; `v90m_ec_destroy` of the endpoint, a
+`v90m_ec_reset` with `mnp.enable` 0, or linking it to another modem.
+Linking a second endpoint to a modem unlinks the first. So the two may be
+destroyed in either order, and one endpoint may serve a new modem per
+call. An unlinked endpoint (its modem gone, say) is the plain one, with
+T400 counted from its next tick.
+
+A host may also feed and tick the linked endpoint from the first sample
+on, through the start-up. Until the modem connects on another path, the
 endpoint holds T400; from then on it is the unlinked endpoint, with T400
-counted from `CONNECTED`. An endpoint that is not reset between two calls
-starts again by itself at an HST call's first bit (it sees the new call's
-mailbox). A frame half-received when the endpoint is reset is lost, and
-the caller repeats it (an LR, within the HST window of our training's end
-plus 5 s).
+counted from `CONNECTED`. Between calls, reset the endpoint as usual:
+without that reset it starts again by itself only when the next call is
+an HST call (it sees the new call's mailbox); a following non-HST call
+would meet the last call's state, as with any endpoint that is not reset.
+A frame half-received when the endpoint is reset is lost, and the caller
+repeats it (an LR, within the HST window of our training's end plus 5 s).
 
 **The detection phase** (V.42 7.2.1). The originator sends the ODP until
 two ADPs are seen, or the answerer's flags (an answerer without the

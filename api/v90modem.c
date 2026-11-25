@@ -68,6 +68,8 @@ struct v90m {
     int16_t  last_snr, last_rtd;    /* the last measured while data moves; -1 before the first */
     diag_track_t diag;          /* v90m_get_diag: as the last sample before the end left it */
     uint8_t  data_reached;      /* data moved both ways this call (v90m_get_diag) */
+    v90m_ec_t *hst_ec;          /* the endpoint linked to us for HST (v90m_ec_link_hst), NULL none:
+                                   the link is two-way, so either side can end it */
     union { answer_t a; orig_t o; } u;     /* by cfg.role */
 };
 
@@ -194,6 +196,8 @@ static void setup(v90m_t *m, const v90m_cfg *cfg)
     }
 }
 
+static void hst_drop_ec(v90m_t *m);
+
 int v90m_reset(v90m_t *m, const v90m_cfg *cfg)
 {
     int r;
@@ -201,6 +205,7 @@ int v90m_reset(v90m_t *m, const v90m_cfg *cfg)
     /* from a callback: the block under way runs on the modem as it is */
     if (m->busy) return V90M_ESTATE;
     if ((r = check_cfg(cfg)) != V90M_OK) return r;
+    hst_drop_ec(m);             /* a new call: the endpoint links again */
     setup(m, cfg);
     return V90M_OK;
 }
@@ -236,6 +241,7 @@ v90m_t *v90m_create(const v90m_cfg *cfg, int *err)
 void v90m_destroy(v90m_t *m)
 {
     if (!m) return;
+    hst_drop_ec(m);             /* the endpoint keeps no address of ours */
     /* from a callback: v90m_process_* ends the block and frees it */
     if (m->busy) { m->dead = 1; return; }
     if (m->owned) free(m);
@@ -554,13 +560,15 @@ void v90m_ec_cfg_default(v90m_ec_cfg *c, int originator)
     cfg_out(c, &i);
 }
 
-/* ---- the HST link (v90m_ec_link_hst): the endpoint's get, over the
- * modem's side of the mailbox (modem/answer.h); ctx is the v90m_t. A
- * modem the host has since reset to the calling role is no HST call */
+/* ---- the HST link (v90m_ec_link_hst), two-way: the endpoint's get has
+ * the modem as its context, and the modem has the endpoint in hst_ec.
+ * Every change goes through hst_pair and hst_unpair, which keep the two
+ * consistent, so neither side ever holds the address of an object that
+ * is gone: the modem's destroy and reset end the link from its side. */
 static hst_link_t *api_hst_get(void *ctx, int *state)
 {
     v90m_t *m = ctx;
-    if (ORIGINATING(m)) { *state = HST_LINK_NONE; return NULL; }
+    if (ORIGINATING(m)) { *state = HST_LINK_NONE; return NULL; }   /* not reached: a reset unlinks */
     return answer_hst_link(&m->u.a, state);
 }
 
@@ -570,12 +578,28 @@ static v90m_t *linked_modem(const v90m_ec_t *e)
     return v42ec_linked(&e->e) && e->e.link_get == api_hst_get ? (v90m_t *)e->e.link_ctx : NULL;
 }
 
-/* the endpoint lets go of m: the link bit goes while m has not decided (it
- * would offer HST with nobody to answer the caller's LR); after that the
- * decision is made and the call keeps it */
-static void unlink_modem(v90m_t *m)
+/* end e's link, from either side: the modem's bit goes while it has not
+ * decided (it would offer HST with nobody to answer the caller's LR);
+ * after that the decision is made and the call keeps it */
+static void hst_release(v90m_t *m, const v90m_ec_t *e)
 {
-    if (m && !ORIGINATING(m) && !answer_hst_decided(&m->u.a)) m->u.a.cfg.modes &= ~ANS_MODE_HST_LINKED;
+    if (!m) return;
+    if (m->hst_ec == e) m->hst_ec = NULL;
+    if (!ORIGINATING(m) && !answer_hst_decided(&m->u.a)) m->u.a.cfg.modes &= ~ANS_MODE_HST_LINKED;
+}
+
+static void hst_unpair(v90m_ec_t *e)
+{
+    hst_release(linked_modem(e), e);
+    v42ec_set_link(&e->e, NULL, NULL);
+}
+
+/* the modem's side: its endpoint, if still linked to it, lets go */
+static void hst_drop_ec(v90m_t *m)
+{
+    v90m_ec_t *e = m->hst_ec;
+    m->hst_ec = NULL;
+    if (e && linked_modem(e) == m) hst_unpair(e);
 }
 
 /* a checked configuration: v42ec_reset keeps the HST link (decision 18),
@@ -589,7 +613,7 @@ int v90m_ec_reset(v90m_ec_t *e, const v90m_ec_cfg *cfg)
     m = linked_modem(e);
     cfg_in(&c, cfg);
     v42ec_reset(&e->e, &c);
-    if (m && !v42ec_linked(&e->e)) unlink_modem(m);
+    if (m && !v42ec_linked(&e->e)) hst_release(m, e);   /* MNP off: the link ends both ways */
     return V90M_OK;
 }
 
@@ -626,19 +650,18 @@ v90m_ec_t *v90m_ec_create(const v90m_ec_cfg *cfg, int *err)
 void v90m_ec_destroy(v90m_ec_t *e)
 {
     if (!e) return;
-    unlink_modem(linked_modem(e));
-    v42ec_set_link(&e->e, NULL, NULL);
+    hst_unpair(e);              /* the modem keeps no address of ours */
     if (e->owned) free(e);
 }
 
 int v90m_ec_link_hst(v90m_ec_t *e, v90m_t *m)
 {
-    v90m_t *was;
     /* an originator's endpoint has MNP off (v42ec_init) */
     if (!e || !m || !e->e.cfg.mnp.enable || ORIGINATING(m)) return V90M_EINVAL;
     if (answer_hst_decided(&m->u.a)) return V90M_ESTATE;
-    was = linked_modem(e);
-    if (was != m) unlink_modem(was);
+    hst_unpair(e);              /* from the modem it had, if any */
+    hst_drop_ec(m);             /* one endpoint per modem: the one it had lets go */
+    m->hst_ec = e;
     m->u.a.cfg.modes |= ANS_MODE_HST_LINKED;
     v42ec_set_link(&e->e, api_hst_get, m);
     return V90M_OK;

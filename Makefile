@@ -8,6 +8,7 @@
 #   make test-times      tools/test-times.txt (the pool's order, longest first) from
 #                        the run times of the last runs ($(BUILD)/test-times.txt)
 #   make check-ubsan     the host suite with undefined behaviour trapped (clang)
+#   make check-asan-hstlink  the HST link's lifetimes (test_ec_hstlink, test_api) under ASan (clang)
 #   make golden          make check, then every program's output against its golden copy
 #                        (test/golden/out, tools/golden.sh); golden-record writes them
 #   make bench-hashes    the benches' transmit and receive hashes on the host against
@@ -452,6 +453,16 @@ check-arm: $(addprefix $(BUILD)/arm_,$(TESTS)) $(SUB_PROGS_ARM) test-api-arm
 # compute differently on another target or compiler; any of them fails.
 UBSAN_CC    ?= clang
 UBSAN_FLAGS := -std=c99 -O1 -g -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=undefined
+# the HST link's lifetimes under clang's AddressSanitizer: every destroy
+# order and a new modem per call leave no address of a freed object
+# (test/api/test_ec_hstlink.c, lifetimes); the API tests link two archives
+# with the same objects, hence no ODR indicators
+ASAN_FLAGS := -std=c99 -O1 -g -Wall -Wextra -Werror -fsanitize=address -fno-sanitize-address-use-odr-indicator -fno-omit-frame-pointer
+.PHONY: check-asan-hstlink
+check-asan-hstlink:
+	@$(MAKE) -s BUILD=$(BUILD)/asan CC=clang CFLAGS="$(ASAN_FLAGS)" $(BUILD)/asan/api_test_ec_hstlink $(BUILD)/asan/api_test_api
+	@$(BUILD)/asan/api_test_ec_hstlink > $(BUILD)/asan/hstlink.log 2>&1 && $(BUILD)/asan/api_test_api > $(BUILD)/asan/api.log 2>&1 \
+	 && echo "ASAN HST LINK CLEAN" || { tail -30 $(BUILD)/asan/hstlink.log $(BUILD)/asan/api.log; echo "ASAN HST LINK FAILED"; exit 1; }
 check-ubsan:
 	@$(MAKE) -s BUILD=$(BUILD)/ubsan CC=$(UBSAN_CC) CFLAGS="$(UBSAN_FLAGS)" test-all test-api test-fixtures
 	@echo "ALL UBSAN CHECKS PASS"

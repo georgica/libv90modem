@@ -205,11 +205,11 @@ static void call_start(call_t *k, int kind, unsigned mods, int link, int always)
     cal_init(&k->c, kind);
 }
 
-/* the endpoint first: linked, it lets go of the modem (which must still be there) */
+/* the modem first, as getting-started's program does: the link is two-way */
 static void call_done(call_t *k)
 {
-    v90m_ec_destroy(k->a.ec);
     v90m_destroy(k->a.m);
+    v90m_ec_destroy(k->a.ec);
     if (k->c.ec) v90m_ec_destroy(k->c.ec);
 }
 
@@ -337,6 +337,90 @@ static void role_change(void)
     v90m_destroy(f);
 }
 
+/* The link is two-way: every order of destroy, a new modem per call, and a
+ * second endpoint on the same modem leave no address of a freed object
+ * behind (under ASan: make check-asan-hstlink). A linked endpoint
+ * whose modem is gone is the unlinked endpoint: T400 at 750 ms. */
+static v90m_t *mk_ans(void) { v90m_cfg c; int err; v90m_cfg_default(&c); c.modulations |= V90M_MOD_HST; return v90m_create(&c, &err); }
+static v90m_ec_t *mk_ec(void) { v90m_ec_cfg ec; int err; v90m_ec_cfg_default(&ec, 0); ec.mnp.enable = 1; return v90m_ec_create(&ec, &err); }
+static int ec_linked(v90m_ec_t *e) { return v42ec_linked(v90m__ec(e)); }
+static int t400_run(v90m_ec_t *e)
+{
+    int t = 0;
+    while (t < 3000 && v90m_ec_state(e) == V90M_EC_DETECT) { v90m_ec_tick(e, 1); t++; }
+    return t;
+}
+
+static void lifetimes(void)
+{
+    v90m_ec_cfg ec; v90m_t *m, *m2; v90m_ec_t *e, *e2;
+    int l[8], t1, t3, b2, bb[3];
+    v90m_ec_cfg_default(&ec, 0); ec.mnp.enable = 1;
+    /* 0: the modem first, then the endpoint */
+    m = mk_ans(); e = mk_ec();
+    CHECK_EQ_I(v90m_ec_link_hst(e, m), V90M_OK);
+    v90m_destroy(m);
+    l[0] = ec_linked(e);
+    v90m_ec_destroy(e);
+    /* 1: the endpoint ticked after its modem is gone */
+    m = mk_ans(); e = mk_ec();
+    CHECK_EQ_I(v90m_ec_link_hst(e, m), V90M_OK);
+    v90m_destroy(m);
+    t1 = t400_run(e);
+    v90m_ec_destroy(e);
+    /* 2: a new modem per call, one endpoint: link the new one */
+    m = mk_ans(); e = mk_ec();
+    CHECK_EQ_I(v90m_ec_link_hst(e, m), V90M_OK);
+    v90m_destroy(m);
+    m2 = mk_ans();
+    CHECK_EQ_I(v90m_ec_link_hst(e, m2), V90M_OK);
+    l[1] = ec_linked(e);
+    b2 = linked_bit(m2);
+    v90m_ec_destroy(e);
+    l[2] = linked_bit(m2);
+    v90m_destroy(m2);
+    /* 3: a new modem per call, the endpoint reset with MNP on, then ticked */
+    m = mk_ans(); e = mk_ec();
+    CHECK_EQ_I(v90m_ec_link_hst(e, m), V90M_OK);
+    v90m_destroy(m);
+    CHECK_EQ_I(v90m_ec_reset(e, &ec), V90M_OK);
+    l[3] = ec_linked(e);
+    t3 = t400_run(e);
+    v90m_ec_destroy(e);
+    /* a second endpoint on the same modem: the first lets go */
+    m = mk_ans(); e = mk_ec(); e2 = mk_ec();
+    CHECK_EQ_I(v90m_ec_link_hst(e, m), V90M_OK);
+    CHECK_EQ_I(v90m_ec_link_hst(e2, m), V90M_OK);
+    l[4] = ec_linked(e); l[5] = ec_linked(e2);
+    v90m_ec_destroy(e);                          /* not linked: the modem keeps e2's link */
+    bb[0] = linked_bit(m);
+    v90m_destroy(m);                             /* the modem first: e2 lets go */
+    l[6] = ec_linked(e2);
+    v90m_ec_destroy(e2);
+    /* the documented order still works */
+    m = mk_ans(); e = mk_ec();
+    CHECK_EQ_I(v90m_ec_link_hst(e, m), V90M_OK);
+    v90m_ec_destroy(e);
+    bb[1] = linked_bit(m);
+    v90m_destroy(m);
+    /* the modem's reset ends the link from its side */
+    m = mk_ans(); e = mk_ec();
+    CHECK_EQ_I(v90m_ec_link_hst(e, m), V90M_OK);
+    { v90m_cfg c; v90m_cfg_default(&c); c.modulations |= V90M_MOD_HST; CHECK_EQ_I(v90m_reset(m, &c), V90M_OK); }
+    l[7] = ec_linked(e);
+    bb[2] = linked_bit(m);
+    v90m_ec_destroy(e);
+    v90m_destroy(m);
+    CHECK_EQ_I(l[0], 0); CHECK_EQ_I(t1, 750); CHECK_EQ_I(l[1], 1); CHECK_EQ_I(b2, 1); CHECK_EQ_I(l[2], 0);
+    CHECK_EQ_I(l[3], 0); CHECK_EQ_I(t3, 750);
+    CHECK_EQ_I(l[4], 0); CHECK_EQ_I(l[5], 1); CHECK_EQ_I(bb[0], 1); CHECK_EQ_I(l[6], 0);
+    CHECK_EQ_I(bb[1], 0); CHECK_EQ_I(l[7], 0); CHECK_EQ_I(bb[2], 0);
+    printf("lifetimes: modem first: endpoint linked %d; ticked after: start-stop at %d ms; new modem: linked %d (bit %d, "
+           "%d after the endpoint's destroy); reset with MNP on: linked %d, start-stop at %d ms; second endpoint: first %d, "
+           "second %d, bit %d after the first's destroy, second %d after the modem's; modem reset: endpoint %d, bit %d\n",
+           l[0], t1, l[1], b2, l[2], l[3], t3, l[4], l[5], bb[0], l[6], l[7], bb[2]);
+}
+
 /* HST offered and linked, a V.22bis caller with MNP: everything as with HST
  * not offered and no link (no HST engine yet); the documented host */
 static void hst_offered_now(void)
@@ -370,6 +454,7 @@ int main(void)
     linked_v32_noec();
     relink_after_reset();
     role_change();
+    lifetimes();
     hst_offered_now();
     T_REPORT("test_ec_hstlink");
 }
