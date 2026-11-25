@@ -4628,14 +4628,81 @@ Memory: `v90m_mem_size()` 106320 (x86-64), 106016 (ARMv5), unchanged;
 unchanged (the link lives in `v42ec_t` since Task 7; the modem is the
 link's context).
 
+Review fixes (task-9-review.md), on top of the merge of tracks B and C
+(d327d20):
+
+- I1: the link is two-way. `struct v90m` holds the linked endpoint
+  (`hst_ec`). `v90m_destroy` and `v90m_reset` end the link from the
+  modem's side; `v90m_ec_destroy`, a reset with MNP off, and linking
+  elsewhere end it from the endpoint's; a second endpoint linked to a
+  modem unlinks the first. Neither side keeps the address of a freed
+  object, so either destroy order is safe, as is a new modem per call.
+  The pointer is paid for by narrowing `answer_t`'s `x2_offered`,
+  `k56_offered` and `k56_agreed` (0/1, never address-taken) to
+  `uint8_t`: `answer_t` 106208 -> 106200, `struct v90m` unchanged
+  (106320 x86-64, 106016 ARMv5).
+- N1 gap: a call that went HST but drained no bit left `link_r` at 0, so
+  the next call's zeroed mailbox was not seen as new. The endpoint now
+  marks a mailbox it has polled ON (`hst_link_t.ep_seen`, written by the
+  endpoint); an unmarked one is a new call's. `hst_link.h` states the
+  pump's rule for Task 18: within a call it never zeroes the mailbox,
+  clears `ep_seen`, or moves `pre_r` back (reversal, retrain, rate change,
+  a return to the HST phase).
+- m2: the never-reset paragraph of error-control.md narrowed (the
+  self-restart covers only a following HST call). m5: tools/x2-peer
+  bounds its name tables (`NAME()`).
+- Tests: `test_ec_hstlink lifetimes` (the reviewer's four paths, a
+  second endpoint, the documented order, the modem's reset), clean under
+  clang ASan (`make check-asan-hstlink`, new); with the modem-side unlink
+  removed ASan reports heap-use-after-free in `hst_unpair`. The
+  reviewer's probe (build/tmp/rv9/uaf.c) is clean in modes 0 to 4.
+  `test_ec_link`: `new_mailbox` with a call 1 that drained no bit (5
+  failures before `ep_seen`), and `wrap_same_call` (the read count
+  across 2^32 within a call: no restart).
+
+    build/api_test_ec_hstlink          -> test_ec_hstlink: 93 checks, 0 failures
+    v42/build/test_ec_link             -> test_ec_link: 116 checks, 0 failures
+    build/api_test_api                 -> api: 1067 checks, 0 failures (golden unchanged)
+    make check-asan-hstlink            -> ASAN HST LINK CLEAN
+    re-recorded (this task's own): api/test_ec_hstlink.txt, v42/test_ec_link.txt
+    ARMv5 (test-api-arm, $A5)          -> api 0 failures (pins 106016 / 50200), test_ec_hstlink 93/0
+    make verify                        -> VERIFY PASS (513 s; golden 154 identical, replay 636,
+                                          bench 17, ubsan, armv7hf, big-endian, fixed)
+
+Review fixes, round 2 (task-9-rereview.md):
+
+- N-I1: linking (`v42ec_set_link` with a get, which `v90m_ec_link_hst`
+  calls) starts the endpoint afresh, as `v42ec_init` with its
+  configuration: the link is for a call the modem has not decided yet. A
+  host that ticks the endpoint from the first sample, never resets it,
+  and only links again between calls no longer meets call 2 in call 1's
+  end state (its training-time LR drained into a DISCONNECTED, ASYNC or
+  connected endpoint and dropped). Unlinking (NULL get) changes nothing
+  else. `test_ec_link relink_next_call` (stub pump: an HST call 2's LR
+  from our training answered at bit 16; 5 failures before) and
+  `test_ec_hstlink relink_between_calls` (real modems: a new modem for
+  call 2, linked again and nothing else, LAPM and data both calls; 2
+  failures before).
+- N-m1: the header's `v90m_ec_init` comment: destroy an endpoint in
+  caller memory before that memory is freed or initialised again.
+
+    v42/build/test_ec_link             -> test_ec_link: 124 checks, 0 failures
+    build/api_test_ec_hstlink          -> test_ec_hstlink: 109 checks, 0 failures
+    make check-asan-hstlink            -> ASAN HST LINK CLEAN
+    make verify                        -> VERIFY PASS (497 s; golden 154 identical, replay 636,
+                                          bench 17, ubsan, armv7hf, big-endian, fixed)
+    re-recorded (this task's own): api/test_ec_hstlink.txt, v42/test_ec_link.txt
+
 ### For the local nsdiald test build (D22)
 
 What the library side provides for the BinModem-over-SIP, Courier and R3
 calls. Run on this machine only (`127.0.0.1:5070`), never deployed.
 
 - **Library:** branch `hst` of libv90modem (worktree `~/hst-wt`), the
-  commit "api: V90M_MOD_HST, V90M_CONN_HST, V90M_END_HST_FAILED,
-  reversals, v90m_ec_link_hst (milestone 2)" or later. `VERSION` still
+  commit "api: relinking starts the endpoint's next call (review
+  fixes)" or later (the two before it had a use-after-free on a modem
+  destroyed while linked, and lost an HST caller's training-time LR on a
+  relink without a reset: do not use them). `VERSION` still
   says 0.6.1; 0.7.0 will change the SONAME (structs changed: link
   statically, or rebuild nsdiald against this tree).
 - **What works now:** MNP (V.42 Annex A, framing modes 2 and 3) on the
@@ -4666,10 +4733,14 @@ calls. Run on this machine only (`127.0.0.1:5070`), never deployed.
   4. getbit/putbit to `v90m_ec_tx_bit`/`v90m_ec_rx_bit`, `v90m_ec_tick`
      every block. Our cleardown: `v90m_ec_release`, keep the bits moving
      until `v90m_ec_tx_busy` is 0 (MNP's LD 255), then `v90m_cleardown`.
-  5. Next call: `v90m_reset(m, &cfg)`, then link again before its first
-     sample. Keep the modem alive while linked: at the end
-     `v90m_ec_destroy(ec)` (which unlinks) before `v90m_destroy(m)`; the
-     other order reads freed memory.
+  5. Next call: `v90m_reset(m, &cfg)`, or a new modem per call
+     (`v90m_destroy` then `v90m_create`): either way the modem starts
+     unlinked, so link again before its first sample. Linking starts the
+     endpoint's call afresh (as `v90m_ec_reset` would), so a
+     `v90m_ec_reset` between calls is optional. One endpoint may serve
+     every call. The link is two-way: destroy the two in either order. An
+     endpoint in your own memory (`v90m_ec_init`): `v90m_ec_destroy` it
+     before freeing or re-initialising that memory.
 - **Log per call** (`v90m_ec_get_status`): `protocol`
   (`V90M_EC_PROTO_*`), `state`, `reason`, `mnp_framing`, `mnp_opt`,
   `mnp_streamlined`, `hst`, `hst_rates`, `hst_back300`, `attn_tx`,
@@ -5527,6 +5598,14 @@ unchanged; bm unchanged), new cases:
     make verify -> VERIFY PASS (862 s; golden 150 identical, test_hst_fwd's
                    re-recorded (its own); replay 636 and bench 17
                    identical; armv7hf and big-endian short-cmp 135)
+
+## hst 10: R3, MNP-only callers (2026-11-25)
+
+Fallback taken: R3 not yet made. No MNP-only modem can reach the local
+nsdiald test build, and the build itself waits on a v90d branch (`dce/dce.c`
+carries the endpoint glue). Recorded under `Unsettled` in hst-facts.md;
+`MNP_FCS2` and T400 unchanged. `test/golden/hst-recordings.sha256` is not
+created until a recording exists.
 
 ## hst 17: sim/hstcall, an HST caller written from the facts; coexistence of the two channels (2026-11-25)
 

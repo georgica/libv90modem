@@ -606,14 +606,14 @@ static void window_overshoot(void)
  * 5 s. */
 static int new_mailbox_run(int lr1, int lr2, int *st_before)
 {
-    int t, at = -1, end = -1, down = 0;
+    int t, at = -1, end = -1, down = 0, bits1 = lr1 >= 0;
     ep_init(1, HST_LINK_ON);
-    if (lr1) caller_lr(4);
+    if (lr1 > 0) caller_lr(4);
     else cb_n = cb_i = 0;
-    for (t = 0; t < 1400; t++) { if (t % 20 < 9) pump_bits(1); v42ec_tick(&E, 1); }
+    for (t = 0; t < 1400; t++) { if (bits1 && t % 20 < 9) pump_bits(1); v42ec_tick(&E, 1); }
     S.L.trained = 1;
-    for (t = 0; t < 3100; t++) { if (t % 20 < 9) pump_bits(1); v42ec_tick(&E, 1); }
-    CHECK_EQ_I(ep_proto(), lr1 ? V42EC_PROTO_MNP : V42EC_PROTO_NONE);
+    for (t = 0; t < 3100; t++) { if (bits1 && t % 20 < 9) pump_bits(1); v42ec_tick(&E, 1); }
+    CHECK_EQ_I(ep_proto(), lr1 > 0 ? V42EC_PROTO_MNP : V42EC_PROTO_NONE);
     S.state = HST_LINK_UNDECIDED;
     for (t = 0; t < 3000; t++) v42ec_tick(&E, 1);
     *st_before = v42ec_state(&E);
@@ -650,13 +650,72 @@ static int new_mailbox_run(int lr1, int lr2, int *st_before)
 
 static void new_mailbox(void)
 {
-    int s1 = -1, s2 = -1, at, end;
+    int s1 = -1, s2 = -1, s3 = -1, at, end, at3;
     at = new_mailbox_run(0, 1, &s1);
     end = new_mailbox_run(1, 0, &s2);
+    at3 = new_mailbox_run(-1, 1, &s3);          /* call 1 drained no bit at all */
     CHECK_EQ_I(s1, V42EC_DISCONNECTED);
     CHECK_EQ_I(s2, V42EC_ESTABLISH);
+    CHECK_EQ_I(s3, V42EC_DISCONNECTED);
     printf("new_mailbox: no reset between calls; call 1 no LR (state %d at call 2), call 2 with an LR: our LR out at bit %d; "
-           "call 1 MNP (state %d), call 2 without an LR: NO_EC %d ms after its training\n", s1, at, s2, end);
+           "call 1 MNP (state %d), call 2 without an LR: NO_EC %d ms after its training; "
+           "call 1 without a bit (state %d), call 2 with an LR: our LR out at bit %d\n", s1, at, s2, end, s3, at3);
+}
+
+/* The ISP note's host: the endpoint fed and ticked from the first sample,
+ * never reset, linked again (only) between calls. Call 1: HST, its LR taken
+ * during our training and answered (MNP establishing). Call 2: the host
+ * links again (v42ec_set_link, as v90m_ec_link_hst does) while the modem
+ * is in its ANSam (UNDECIDED); then HST on a new, zeroed mailbox, its
+ * caller's LR during our training: answered at our first bit. */
+static void relink_next_call(void)
+{
+    int t, ok1, ok2, at1 = -1, at2 = -1, proto_after;
+    ep_init(1, HST_LINK_ON);
+    caller_lr(4);
+    for (t = 0; t < 1400; t++) { if (t % 20 < 9) pump_bits(1); v42ec_tick(&E, 1); }
+    S.L.trained = 1;
+    ok1 = our_lr_first(&at1);
+    CHECK(ok1);
+    for (t = 0; t < 500; t++) { if (t % 20 < 9) pump_bits(1); v42ec_tick(&E, 1); }
+    memset(&S.L, 0, sizeof S.L);
+    S.state = HST_LINK_UNDECIDED;
+    v42ec_set_link(&E, stub_get, &S);            /* the next call's link */
+    proto_after = ep_proto();
+    CHECK_EQ_I(proto_after, V42EC_PROTO_NONE);
+    CHECK_EQ_I(v42ec_state(&E), V42EC_DETECT);
+    for (t = 0; t < 3000; t++) v42ec_tick(&E, 1);
+    CHECK_EQ_I(v42ec_state(&E), V42EC_DETECT);   /* T400 held */
+    S.state = HST_LINK_ON;
+    caller_lr(4);
+    for (t = 0; t < 1400; t++) { if (t % 20 < 9) pump_bits(1); v42ec_tick(&E, 1); }
+    CHECK_EQ_I(ep_proto(), V42EC_PROTO_MNP);
+    CHECK_EQ_I(v42ec_state(&E), V42EC_ESTABLISH);
+    S.L.trained = 1;
+    ok2 = our_lr_first(&at2);
+    CHECK(ok2);
+    CHECK_EQ_I(at2, 16);
+    printf("relink_next_call: never reset, linked again between calls: protocol %d after the link; "
+           "call 2's LR from training: our LR %s at bit %d\n", proto_after, ok2 ? "out" : "MISSING", at2);
+}
+
+/* the ring's counters wrap within a call (pre_r from 0xFFFFFFF0 on): the
+ * same call, no restart; the caller's LR across the wrap is answered */
+static void wrap_same_call(void)
+{
+    int t, ok, at = -1;
+    ep_init(1, HST_LINK_ON);
+    S.L.pre_w = S.L.pre_r = 0xFFFFFFF0u;
+    caller_lr(4);
+    for (t = 0; t < 1400; t++) { if (t % 20 < 9) pump_bits(1); v42ec_tick(&E, 1); }
+    CHECK(S.L.pre_r < 0x1000u);                  /* wrapped */
+    CHECK_EQ_I(ep_proto(), V42EC_PROTO_MNP);
+    S.L.trained = 1;
+    ok = our_lr_first(&at);
+    CHECK(ok);
+    CHECK_EQ_I(at, 16);
+    printf("wrap_same_call: read count across 2^32 (now %u): protocol %d, our LR %s at bit %d\n",
+           S.L.pre_r, ep_proto(), ok ? "out" : "MISSING", at);
 }
 
 /* the ring: counters that wrap, and a full ring dropping its oldest bits */
@@ -694,6 +753,8 @@ int main(void)
     on_then_none();
     window_overshoot();
     new_mailbox();
+    wrap_same_call();
+    relink_next_call();
     ring_overflow();
     T_REPORT("test_ec_link");
 }

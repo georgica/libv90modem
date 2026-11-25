@@ -26,10 +26,15 @@
  *                       nor start-stop (an unstarted window starts then).
  *
  * The pump starts each call with a zeroed mailbox: the endpoint tells
- * calls apart by it (its ring read count going back), at its reset at
- * CONNECTED and at every poll, so that an endpoint the host drives before
- * CONNECTED and never resets between calls starts again at a new call's
- * first ON.
+ * calls apart by it (ep_seen 0, or the ring's read count gone back), at
+ * its reset at CONNECTED and at every poll, so that an endpoint the host
+ * drives before CONNECTED and never resets between calls starts again at
+ * a new call's first ON. The rule for the pump that follows from it:
+ * within a call it never zeroes the mailbox, clears ep_seen, or moves
+ * pre_r back, whatever happens to the call (a channel reversal, a
+ * retrain, a rate change, coming back to the HST phase after another
+ * state used the storage the mailbox lives in). Any of those would read
+ * as a new call, and the endpoint would drop its MNP link mid-call.
  *
  * After the LRs (the HST profile, v42/mnp.h): the endpoint writes agreed,
  * agreed_rates and back300 once, la_rx when the link is up, rev_lna_sent
@@ -90,6 +95,8 @@ typedef struct {
     int      far_ld;          /* the far end sent LD */
     int      ep_idle;         /* after our last bit: between frames, at an octet boundary
                                  (a frame's closing flag is all out) */
+    int      ep_seen;         /* the endpoint has polled this mailbox ON: 0 in a new call's
+                                 zeroed mailbox, which is how the endpoint knows it */
 } hst_link_t;
 
 typedef hst_link_t *(*hst_link_get_fn)(void *ctx, int *state);   /* state: HST_LINK_* */

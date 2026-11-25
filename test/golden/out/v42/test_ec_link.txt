@@ -7,6 +7,8 @@ none_same_as_unlinked: ODP caller: protocol 1, our bits the same; no EC: start-s
 two_calls: HST then ODP: protocol 1, our bits as unlinked; HST then no EC: start-stop at 750 ms, our bits as unlinked; HST then HST: protocol 0 after the reset, NO_EC 5001 ms later
 on_then_none: NONE at 1000 ms before training's end: NO_EC at 6000 ms; trained at 1400, NONE at 2000: NO_EC at 6400 ms
 window_overshoot: run out on a 3000 ms tick, reset: state 5 at the next tick
-new_mailbox: no reset between calls; call 1 no LR (state 5 at call 2), call 2 with an LR: our LR out at bit 16; call 1 MNP (state 1), call 2 without an LR: NO_EC 5001 ms after its training
+new_mailbox: no reset between calls; call 1 no LR (state 5 at call 2), call 2 with an LR: our LR out at bit 16; call 1 MNP (state 1), call 2 without an LR: NO_EC 5001 ms after its training; call 1 without a bit (state 5), call 2 with an LR: our LR out at bit 16
+wrap_same_call: read count across 2^32 (now 614): protocol 2, our LR out at bit 16
+relink_next_call: never reset, linked again between calls: protocol 0 after the link; call 2's LR from training: our LR out at bit 16
 ring_overflow: 1100 bits across the counters' wrap: 76 lost, the newest 1024 read back, 0 wrong
-test_ec_link: 105 checks, 0 failures
+test_ec_link: 124 checks, 0 failures

@@ -204,11 +204,11 @@ typedef struct {
                                 for the rest of the call when a V.92 start-up failed or the
                                 line did not carry the lowest PCM upstream rate */
     int        v92_data;     /* this V.92 engine has reached data mode */
-    /* x2 */
-    int        x2_offered;   /* ANS_MODE_X2 with V.34, on a mu-law line */
-    /* K56flex */
-    int        k56_offered;  /* ANS_MODE_K56 with V.34, on a mu-law line: ANS_V8BIS first */
-    int        k56_agreed;   /* the client's MS carried the K56flex block (we sent ACK(1));
+    /* x2 and K56flex: flags of one octet each, so that the API's modem can
+     * hold its HST endpoint's address without growing (v90m_mem_size) */
+    uint8_t    x2_offered;   /* ANS_MODE_X2 with V.34, on a mu-law line */
+    uint8_t    k56_offered;  /* ANS_MODE_K56 with V.34, on a mu-law line: ANS_V8BIS first */
+    uint8_t    k56_agreed;   /* the client's MS carried the K56flex block (we sent ACK(1));
                                 x2 is then not offered in this call */
 } answer_t;
 

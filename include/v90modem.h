@@ -273,7 +273,8 @@ void     v90m_cfg_default(v90m_cfg *cfg);
  * range), V90M_ENOTSUP, V90M_ENOMEM; V90M_OK otherwise. */
 v90m_t  *v90m_create(const v90m_cfg *cfg, int *err);
 /* Or in memory of the caller's, at least v90m_mem_size() octets, aligned for
- * any type (nothing is allocated; v90m_destroy() then does nothing). Errors
+ * any type (nothing is allocated; v90m_destroy() then frees nothing, but
+ * still ends an HST link: call it before the memory is reused). Errors
  * as v90m_create, and V90M_EINVAL for mem NULL or misaligned, V90M_ENOMEM
  * for len too small. */
 size_t   v90m_mem_size(void);
@@ -577,7 +578,10 @@ void        v90m_ec_cfg_default(v90m_ec_cfg *cfg, int originator);
 /* create / init: NULL on failure, *err as for v90m_create / v90m_init
  * (V90M_EINVAL for a value outside the ranges above); reset: V90M_OK, or
  * V90M_EINVAL for e or cfg NULL or a value outside them, the endpoint left
- * as it was */
+ * as it was. An endpoint in memory of the caller's (v90m_ec_init): call
+ * v90m_ec_destroy before that memory is freed or initialised again; it
+ * frees nothing, but ends an HST link (v90m_ec_link_hst), without which
+ * the modem keeps the endpoint's address */
 v90m_ec_t  *v90m_ec_create(const v90m_ec_cfg *cfg, int *err);
 size_t      v90m_ec_mem_size(void);
 v90m_ec_t  *v90m_ec_init(void *mem, size_t len, const v90m_ec_cfg *cfg, int *err);
@@ -601,10 +605,15 @@ int         v90m_ec_set_rates(v90m_ec_t *e, int tx_bps, int rx_bps);
  * has connected (or ended) on another path, and is then the unlinked
  * endpoint; on an HST call it takes the caller's bits from the start of
  * the line, so an LR sent during our training is kept. v90m_ec_reset keeps
- * the link (resetting at V90M_EV_CONNECTED is harmless); a reset with
- * mnp.enable 0, or v90m_ec_destroy, unlinks. v90m_reset(m) starts a new
- * call without the link: link again. Keep m while linked: destroy the
- * endpoint (or reset it with mnp.enable 0) before m. V90M_OK;
+ * the link (resetting at V90M_EV_CONNECTED is harmless). The link is
+ * two-way, and either side ends it: v90m_destroy or v90m_reset of m;
+ * v90m_ec_destroy, a reset with mnp.enable 0, or a link to another modem
+ * of e; a second endpoint linked to m unlinks the first. So either may be
+ * destroyed first, and e may serve a new modem per call: link again after
+ * v90m_create or v90m_reset, before the first sample. Linking starts e's
+ * call afresh, as v90m_ec_reset with its configuration does (the link is
+ * for a call m has not decided yet), so linking again between calls
+ * without a reset is enough. V90M_OK;
  * V90M_EINVAL for e or m NULL, e with mnp.enable 0 or an originator, or m
  * calling; V90M_ESTATE once m has decided. */
 int         v90m_ec_link_hst(v90m_ec_t *e, v90m_t *m);

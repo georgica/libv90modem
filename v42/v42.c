@@ -640,8 +640,9 @@ static void hst_tx_after(v42ec_t *e, hst_link_t *L)
  * told, the HST profile's exchange (mnp_hst_poll; ms the tick's, 0 at a
  * bit). Called at the top of v42ec_tx_bit, v42ec_rx_bit and v42ec_tick
  * (hst_link.h). NONE before any ON is final for the call: get is not asked
- * again until the next init or reset. A mailbox whose ring read count is
- * behind the last one polled is a new call's: the endpoint starts again. */
+ * again until the next init or reset. A mailbox we have not marked
+ * (ep_seen), or whose ring read count is behind the last one polled, is a
+ * new call's: the endpoint starts again. */
 static hst_link_t *link_poll(v42ec_t *e, int *state, unsigned ms)
 {
     hst_link_t *L;
@@ -660,9 +661,10 @@ static hst_link_t *link_poll(v42ec_t *e, int *state, unsigned ms)
         }
         return NULL;
     }
-    if (L->pre_r - e->link_r >= 0x80000000u) {
-        /* the ring's read count has gone back: a new, zeroed mailbox, so a
-         * new call, and a host that did not reset us between the two.
+    if (e->hst_call && (!L->ep_seen || L->pre_r - e->link_r >= 0x80000000u)) {
+        /* a mailbox we have not marked, or whose ring's read count has gone
+         * back: a new, zeroed one, so a new call, and a host that did not
+         * reset us between the two.
          * Start again as v42ec_reset would for a new call: nothing of the
          * last call is kept (its window, a captured LR, its protocol) */
         v42ec_cfg_t c = e->cfg;
@@ -675,6 +677,7 @@ static hst_link_t *link_poll(v42ec_t *e, int *state, unsigned ms)
         e->hst_call = 1;                    /* HST to the call's end (D19) */
         e->t400 = -1;
     }
+    L->ep_seen = 1;
     while ((b = hst_pre_get(L)) >= 0) rx_line(e, b);
     e->link_r = L->pre_r;
     if (L->tx_bps > 0 && L->rx_bps > 0 && (L->tx_bps != e->tx_bps || L->rx_bps != e->rx_bps))
@@ -727,6 +730,14 @@ static int hst_window(v42ec_t *e, const hst_link_t *L, unsigned ms)
 void v42ec_set_link(v42ec_t *e, hst_link_get_fn get, void *ctx)
 {
     if (!e->cfg.mnp.enable) get = NULL;     /* MNP off or an originator */
+    if (get) {
+        /* a link is for a call not yet decided: start that call afresh,
+         * as v42ec_reset with our configuration would, so that a host
+         * that links again between calls without a reset still meets the
+         * next caller's LR in detection */
+        v42ec_cfg_t c = e->cfg;
+        v42ec_init(e, &c);
+    }
     e->link_get = get;
     e->link_ctx = get ? ctx : NULL;
     /* no HST call in progress for this link yet */
@@ -753,7 +764,7 @@ void v42ec_reset(v42ec_t *e, const v42ec_cfg_t *cfg)
     if (get && e->hst_call && !e->tx_seen) {
         int st;
         hst_link_t *L = get(ctx, &st);
-        keep = st == HST_LINK_ON && L && L->pre_r - r < 0x80000000u;
+        keep = st == HST_LINK_ON && L && L->ep_seen && L->pre_r - r < 0x80000000u;
     }
     if (keep && n > 0) memcpy(lr, e->lr_cap, (size_t)n);
     v42ec_init(e, cfg);
