@@ -4350,3 +4350,13 @@ second MNP peer from it for Task 10 on this evidence.
     qemu-arm $A5 build/arm/api_test_mnp_call (short) -> 155 checks, 0 failures, identical to the host -DTEST_FORCE_SHORT build
     new golden: api/test_mnp_call.txt
     make verify                                      -> VERIFY PASS (439 s; golden 147 identical; ran in a7 short 155/0, big-endian 161/0, ubsan 161/0)
+
+Milestone 1 gate, on fd2b148 (log: build/verify-phase-m1.log):
+
+    make verify-phase RECS=$RECS ARM_CC=$A5 -> VERIFY-PHASE PASS (23176 s)
+      armv5    ALL ARM CHECKS PASS (2468 s)
+      ports    15 of 15 targets identical to host-gcc (full: armv5-uclibc s390x-glibc riscv64-musl);
+               m68k-uclibc: 225 of 235 identical (8 lines only with printf's rounding), 10 skipped (quick)
+      armv7hf  short-cmp: 141 programs identical
+      benches  host = qemu hashes: 10 benches; crd: 106 recordings, 0 CRd detections
+      costs    17 lines in build/costs.txt (V.34 107 %, k56 102 %, x2 181 % of V.90 data mode)
