@@ -114,8 +114,10 @@ int     v32tx_symbol_due(const v32tx_t *t);
  * complex taps (the carrier folded in, phase counted from the symbol's
  * start), Q14, in v32_txh's layout [phase][symbol age][re, im]. The gain set
  * by v32tx_init assumes V.32's line RMS per unit symbol gain. Set it before
- * the first symbol; the echo canceller's reference keeps V.32's pulse. An
- * out-of-range `len` leaves the pulse as it was. */
+ * the first symbol. With another pulse than V.32's no echo canceller's
+ * reference is made (`ref` stays as it was, 0 from v32tx_init: HST's
+ * forward channel has no canceller). An out-of-range `len` leaves the pulse
+ * as it was. */
 void    v32tx_set_pulse(v32tx_t *t, const int16_t *taps, int len);
 void    v32tx_set_mode(v32tx_t *t, v32_txmode mode);
 int16_t v32tx_tick(v32tx_t *t);

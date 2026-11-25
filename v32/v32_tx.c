@@ -107,13 +107,18 @@ int16_t v32tx_tick(v32tx_t *t)
     int j, n = t->pulse_len;
     t->newsym = 0;
     if (t->acc >= 10) { t->acc -= 10; next_symbol(t); t->newsym = 1; }
-    h = t->pulse + 2 * n * t->acc; w = v32_ech[t->acc];
+    h = t->pulse + 2 * n * t->acc;
     for (j = 0; j < n; j++)
         acc += t->br[j + V32_TXD] * h[2 * j] - t->bi[j + V32_TXD] * h[2 * j + 1];
-    for (j = 0; j < V32_TXL; j++)
-        ref += t->br[j] * w[j][0] - t->bi[j] * w[j][1];
-    v = ((int64_t)ref * t->gain + (1 << 13)) >> 14;
-    t->ref = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+    /* the echo canceller's reference, with V.32's own pulse only: another
+     * pulse's user (HST's forward channel) has no canceller */
+    if (t->pulse == &v32_txh[0][0][0]) {
+        w = v32_ech[t->acc];
+        for (j = 0; j < V32_TXL; j++)
+            ref += t->br[j] * w[j][0] - t->bi[j] * w[j][1];
+        v = ((int64_t)ref * t->gain + (1 << 13)) >> 14;
+        t->ref = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+    }
     v = ((int64_t)acc * t->gain + (1 << 13)) >> 14;
     t->acc += 3;
     if (v > 32767) v = 32767; else if (v < -32768) v = -32768;

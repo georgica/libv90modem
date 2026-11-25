@@ -5819,3 +5819,83 @@ Sizes: `hstcall_t` 165712 octets (x86-64), test side only. Host run 33 s
   The extra delay is 9 samples (1.1 ms), far inside every event's slack.
 - Only the forward receiver's own goldens changed. Review fixes M1, M2
   (comments); M3 to M5 are wording and are left.
+
+## hst 19: replay -H, hst_scan forward, rtp2rec, rec_hst / bench_hst, cost-hst (milestone 4) (2026-11-25)
+
+- **`v90m-replay -H`:** HST offered and the V.42 endpoint linked (MNP on,
+  `v90m_ec_link_hst` after the reset, before the first sample; the rates
+  after the reset at CONNECTED and at each change; DATA_STOPPED / MOVING
+  passed on). The report ends with `HST:` lines when the modem entered
+  the HST wait: the wait and what the detector heard, our forward
+  training's segments and codes, the back receivers' locks, connected,
+  the rates, MNP's agreed rates and its confirming LA, reversals and the
+  end; times in ms, integers. The phase names were Task 18's.
+- **The replay proof's seventh set, `hst` (`-H`):** `tools/replay-proof.sh
+  check` first failed with `replay proof: no manifest lines for hst` (a new
+  pre-check: a set the manifest never recorded). `record`: 742 runs; `git
+  diff test/golden/replay.sha256` is 318 added `hst/` lines and nothing
+  else. Over the reports: the 105 recordings whose caller sent CM or AA
+  give under `-H` exactly their `base` trace, bits and exit code (`cmp` of
+  all three); the one whose caller sent neither (`v21a`, V.21 forced)
+  enters HST_WAIT and its report says `no back channel detected: phase
+  V22` after 650 ms. No detector hit. `diff REF` compares only the sets
+  REF's own proof has (so `diff v0.6.0` leaves out `hst`).
+- **`tools/rec_hst.c`, `rig/hst_side.h`, `bench_hst -c`:** a whole HST call
+  (sim/hstcall at 450 calling the answerer through the public API, 10 ms
+  blocks as a host runs it; MNP up, the retrain to 14400, text both ways)
+  recorded in v90m-replay's format, and replayed into the answerer alone
+  on the host and the target: our transmit is the recording's to the last
+  codeword. `tools/bench-hashes.sh check` first failed with `bench
+  hashes: no hst line in test/golden/bench.txt` (a new pre-check: a JOBS
+  line the file has no hashes for); recorded: `hst tx b785bad2`, `hst rx
+  2744ba91`, the other 17 lines unchanged. `v90m-replay -H` follows the
+  recording until the endpoint starts sending text (8.855 s, data at 14400
+  from 8.850 s).
+- **`hst-scan -f`:** the forward channel on each side through hst_frx at
+  every code 2..6: each training's segments by point statistics (AB, CD,
+  TRN, data) and lengths in symbols, the data's constellation (the code
+  that decodes it best) and how the receiver left it; a training heard in
+  data restarts the receivers from their equaliser. On rec_hst's call,
+  what we sent: AB 188 / CD 66 / TRN 3099 symbols, 32 points (code 4,
+  9600, 33.5 dB); then AB 180 / CD 66 / TRN 203, 128 points (code 6, 14400,
+  28.6 dB). Over the 106 private recordings: no training heard.
+- **`tools/rtp2rec.py`:** a pcap or pcapng capture's two G.711 RTP
+  directions (RFC 2198 over G.711 too) to the replay format for R1 / R2:
+  placed by RTP timestamp, lined up by first arrival, lost packets silence
+  (counted), the answerer's stream named (`--sent`) or found by its answer
+  tone. `--self-test` (pcap IPv4; pcapng IPv6 with RFC 2198; loss,
+  reordering, a wrapping timestamp; `--sent`) passes; with the redundant
+  blocks left out (a stub) the RFC 2198 case fails.
+- **`test/fixtures/replay-hst.sh`** (in `make check`'s fixtures): bench
+  replay exact, `-H`'s section (450 found within W, trainings at codes 4
+  and 6, 9600 then 14400 / 450, MNP 0x7C, transmit the recording's until
+  data at 14400), no HST without `-H`, `hst-scan -b` and `-f` (segment
+  lengths within 10 symbols, constellations 32 then 128). Against e1498b4's
+  v90m-replay and hst-scan it fails (no `-H` section, `cannot open -f`).
+  `replay-opts.sh`'s usage check now names `-H`.
+- **`make cost-hst ARM_CC=$A5`: `cost-hst: holding forward 13.19 M/s`**
+  (target 15). First count 16.64 M: the bench processed and polled a
+  sample at a time, and `v32tx_tick` computed V.32's echo canceller's
+  reference for HST's pulse too. Now the bench runs 10 ms blocks (as a
+  host does) and `v32tx_tick` makes the reference only with V.32's own
+  pulse (no golden or hash changed). qprof of the counted second: forward
+  transmitter 3.8 M, back receivers 1.7 M, V.42 / MNP and the per-bit HST
+  link polls 3.3 M, G.711 1.7 M, answerer and API per sample 1.9 M.
+- **Echo corner with the real forward transmitter** (Task 13 carry):
+  `test_hst_back` case 31 `echo_fwd` (first failing to compile: `echo_t`
+  has no member `f`): hst_ftx at 14400, -10 dBm0, 6 dB ERL, the back
+  channel at -33 dBm0: locked, 0 errors, no loss of lock at 450 and 300.
+  Margin (HST_VERBOSE): error-free to -6 dB ERL (12 dB more echo), first
+  errors at -7 dB. A whole call (rec_hst -e) loses an LR during our long
+  training from 0 dB ERL (3 dB past the corner; costs 2.3-2.7 s).
+  `test_hst_back`'s golden re-recorded: the count line and case 31's lines.
+- **N1, a lasting 10-15 dB drop** (Task 13 carry): `rec_hst -x DB@MS`.
+  -12 to -20 dB: every line loses the back lock 140-160 ms after the drop
+  and locks again 180-1130 ms later; no call ends (5 s watchdog), MNP
+  resends. -10 dB: 0 of 12 at 450, 5 of 12 at 300. No fix here: holding
+  the lock through a lasting step is Task 23's.
+- x86-64 only (owner's rule): `make check`, `tools/golden.sh check`,
+  `tools/replay-proof.sh check` (742 identical), `tools/bench-hashes.sh
+  check` (19 identical), `make check-ubsan`, `make check-fixed`; the ARM,
+  big-endian and port-matrix gates (`make verify`'s armv7hf and bigend
+  stages, `make verify-phase`) move to Task 26.

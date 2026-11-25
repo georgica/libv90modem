@@ -1,5 +1,5 @@
 #!/bin/sh
-# Replay proof: every private recording through v90m-replay in six flag sets;
+# Replay proof: every private recording through v90m-replay in seven flag sets;
 # what the tool prints, the bits it decides and its exit code, hashed against
 # test/golden/replay.sha256.
 #
@@ -8,7 +8,8 @@
 #   tools/replay-proof.sh diff REF    replay with this tree and with the tool
 #                                     built from git REF (git archive), print
 #                                     the first 20 lines of the diff of each
-#                                     trace that differs
+#                                     trace that differs; only the sets REF's
+#                                     own proof has (hst: -H, new in 0.7.0)
 #
 # RECS (default /home/georgica/sync-build/live-050) holds the recordings; they
 # are private and never in the repository: test/golden/recordings.sha256 is
@@ -26,6 +27,7 @@ if [ "${1:-}" = --job ]; then
     base) o="" ;;       v92) o="-9" ;;
     x2) o="-x" ;;       x2-v92) o="-x -9" ;;
     k56) o="-k" ;;      k56-v92) o="-k -9" ;;
+    hst) o="-H" ;;
     *) exit 2 ;;
     esac
     w=$RP_OUT/$set/$rec.d
@@ -50,7 +52,8 @@ RECS=${RECS:-/home/georgica/sync-build/live-050}
 MAN=$ROOT/test/golden/replay.sha256
 RECMAN=$ROOT/test/golden/recordings.sha256
 JOBS=$(nproc 2>/dev/null || echo 4)
-SETS="base v92 x2 x2-v92 k56 k56-v92"
+SETS="base v92 x2 x2-v92 k56 k56-v92 hst"
+NSETS=7
 export LC_ALL=C
 mode=${1:-}
 case $mode in
@@ -62,6 +65,12 @@ esac
 
 if [ "${V90M_NO_RECS:-}" = 1 ]; then echo "replay proof: skipped (V90M_NO_RECS)"; exit 0; fi
 if [ "$mode" = check ] && [ ! -f "$MAN" ]; then echo "replay proof: no test/golden/replay.sha256"; exit 1; fi
+# a set the manifest has never recorded (a new one: record it first)
+if [ "$mode" = check ]; then
+    for s in $SETS; do
+        grep -q "  $s/" "$MAN" || { echo "replay proof: no manifest lines for $s"; exit 1; }
+    done
+fi
 [ -d "$RECS" ] || { echo "replay proof: no recordings in $RECS (V90M_NO_RECS=1 skips)"; exit 1; }
 (cd "$RECS" && sha256sum -c --quiet "$RECMAN" >/dev/null 2>&1) || {
     echo "replay proof: the recordings in $RECS are not those of test/golden/recordings.sha256:"
@@ -69,7 +78,7 @@ if [ "$mode" = check ] && [ ! -f "$MAN" ]; then echo "replay proof: no test/gold
     exit 1
 }
 RECLIST=$(awk '{ sub(/\.raw$/, "", $2); print $2 }' "$RECMAN")
-NRUNS=$(( $(echo "$RECLIST" | wc -l) * 6 ))
+NRUNS=$(( $(echo "$RECLIST" | wc -l) * NSETS ))
 TMPDIR=${TMPDIR:-/tmp}; export TMPDIR
 mkdir -p "$TMPDIR" "$BUILD" || exit 1
 
@@ -121,6 +130,14 @@ diff)
     rm -rf "$rd"; mkdir -p "$rd" || exit 1
     git archive "$ref" | tar -x -C "$rd" || { echo "replay proof: no such ref $ref"; exit 1; }
     env -u BUILD make -s -C "$rd" BUILD=build build/v90m-replay >&2 || { echo "replay proof: building $ref failed"; exit 1; }
+    # only the sets REF's own proof has (hst is new in 0.7.0)
+    rs=
+    for s in $SETS; do
+        if grep -Eq "(^|[[:space:]])$s\) o=" "$rd/tools/replay-proof.sh" 2>/dev/null; then rs="$rs $s"
+        else echo "replay proof: set $s is not in $ref, not compared"; fi
+    done
+    SETS=$rs
+    NRUNS=$(( $(echo "$RECLIST" | wc -l) * $(echo $SETS | wc -w) ))
     ROUT=$rd/out
     run_all "$rd/build/v90m-replay" "$ROUT" 0
     hashes "$ROUT" > "$rd/hashes"

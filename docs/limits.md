@@ -394,6 +394,44 @@ Measured against `sim/hstcall` only; no real HST modem has called it yet.
 - **The back channel's bits go on through our retrains** (the forward
   channel alone trains): the endpoint gets them while data is stopped at
   the API.
+- **Our own echo, holding the forward channel: about 12 dB of margin in
+  data, 3 dB while we train.** The spec's real-line corner is our forward
+  signal at -10 dBm0 coming back at 6 dB echo return loss (-16 dBm0, 17 dB
+  over a back channel received at -33 dBm0, with white noise 20 dB under
+  it). With the real forward transmitter (`hst_ftx`, data at 14400) as
+  the echo, `test_hst_back` `echo_fwd` gives no bit in error and no loss
+  of lock at both speeds (2 x 20000 bits a speed); with `HST_VERBOSE` it
+  lowers the ERL a dB at a time over 4 lines (+-7 Hz, +-100 ppm), 80000
+  bits a step: none in error down to -6 dB ERL (echo -4 dBm0, 29 dB over
+  the back channel), the first errors at -7 dB (8 at 450, 3 at 300) and
+  -8 dB (239, 70), never a loss of lock. That margin is our pulse's: it is
+  some 40 dB down at 400 Hz and below (V.32's pulse, the Task 13 stand-in,
+  failed at 13 dB less echo). A whole call (`tools/rec_hst -e ERL -b -33
+  -n -53`, our level -12 dBm0, 6 seeds a step) is tighter while we train:
+  the caller's LR arrives during our long training, and its AB (600 Hz
+  and 3000 Hz) costs the back receiver its lock where data does not. Up
+  to 1 dB ERL (echo -13 dBm0, 20 dB over the back channel) every call
+  reaches 14400 at the same time as on a clean line; at 0 dB the 300
+  bit/s calls (6 of 6) and 2 of 6 at 450 lose the LR once, and MNP's
+  resend puts data 2.3-2.7 s later; the calls still come up. Measured
+  against `sim/hstcall` and our own transmitter, not a real line.
+- **A lasting level drop of the back channel loses its lock for 0.2 to
+  1.2 s, and the call carries on** (the Task 13 review's N1). `tools/rec_hst
+  -x DB@1000` drops the caller's signal by DB 1 s into data at 14400 and
+  holds it there; 450 and 300 bit/s, the back channel at -18 or -23 dBm0
+  before the drop, noise at -55 or -48 dBm0, 3 seeds each (12 lines a
+  step and speed). At -10 dB no line at 450 loses its lock, at 300 5 of 12
+  do (locked again 360-1150 ms later). At -12, -15, -18 and -20 dB every
+  line loses it, 140 ms (450) or 150-160 ms (300) after the drop, and
+  locks again: 180-750 ms later at 450 (320-890 ms after the drop),
+  270-1130 ms later at 300 (420-1280 ms after it). No call ends: the 5 s watchdog is far
+  off, and MNP resends what was lost (over the next 19 s the answerer
+  gets 576-640 octets where an undropped line gets 832 at 450, 256-384 at
+  -20 dB from -23 dBm0 with -48 dBm0 noise; at 300 256-448 against 576).
+  The loss is the receiver's fade rule taking the drop for the back
+  channel's end, and it re-acquires at the new level. Holding the lock
+  through a lasting step is Task 23's (level-step residuals), with the
+  forward receiver's.
 
 ## Included tables (x2)
 
@@ -587,6 +625,23 @@ CPU"); 0.5.0's in brackets:
   2000 ms while the band holds energy) when nothing else runs; its high
   band is 1.26 M of that. In ANS_HST the detector's receivers carry on
   without its two bands (`hst_det_rx`): the 1.89 M above.
+- **HST holding the forward channel (0.7.0 work): 13.19 M instructions a
+  second** (`make cost-hst`, target 15 M): a whole simulated call
+  (`tools/rec_hst`: `sim/hstcall` calling, MNP up, the retrain to 14400,
+  text both ways) replayed into the answerer alone through the public API
+  in 10 ms blocks (`rig/bench_hst -c`), the second from 1 s into data at
+  14400 counted, the bench's own loop and its endpoint's text included.
+  By qemu's profile (`tools/qprof`) about 3.8 M is the forward
+  transmitter (`v32tx_tick` with HST's 30-symbol pulse 3.15 M), 1.7 M the
+  two back receivers, 3.3 M V.42 / MNP with the HST link (the link polled
+  at every bit: `link_poll` 1.05 M, `mnp_hst_poll` 0.82 M, `v42ec_tx_bit`
+  0.90 M), 1.7 M G.711 (encoding what we send, decoding what we hear),
+  1.9 M the answerer's and the API's per-sample work. The first count was
+  16.64 M: a bench that processed and polled a sample at a time (1.3 M of
+  harness) and V.32's echo canceller's reference computed for HST too
+  (1.12 M; `v32tx_tick` now makes it only with V.32's own pulse: HST has
+  no canceller). Polling the HST link once per tick rather than per bit
+  is the next lever (some 2 M).
 
 ## Not implemented
 

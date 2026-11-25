@@ -153,7 +153,7 @@ grep -q '^ *[0-9.]* s    V.42 frame in: 2 octets, address 0x03 (C/R 1), control 
 grep -q '^V.42 frames in: [1-9][0-9]* with a good FCS, 0 bad$' e.fr || bad "-F: no count"
 echo "  -F: $(grep -c 'V.42 frame in:' e.fr) frames of the caller, nothing else changed"
 "$R" -Z v21a.raw > l.out 2> l.err; rc=$?
-if [ $rc -ne 2 ] || ! grep -q -- '-B\] \[-M\] \[-F\]' l.err; then bad "the usage message does not list -B, -M, -F"; fi
+if [ $rc -ne 2 ] || ! grep -q -- '-B\] \[-H\] \[-M\] \[-F\]' l.err; then bad "the usage message does not list -B, -H, -M, -F"; fi
 
 [ $fail -eq 0 ] && echo "replay options: pass"
 [ $fail -eq 0 ] || { echo "REPLAY OPTIONS FAILED"; exit 1; }

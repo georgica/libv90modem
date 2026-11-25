@@ -33,6 +33,7 @@ v90c     rec_v90c 100 5 @           bench_v90c
 v92c     rec_v90c 100 5 @ v92       bench_v90c
 bell103  rec_bell 103 3 @           bench_bell
 bell212  rec_bell 212 3 @           bench_bell
+hst      rec_hst  3 @               bench_hst -c
 "
 
 # --one NAME: record and replay one call; its hash lines to D/NAME.hash
@@ -62,6 +63,12 @@ fi
 mode=${1:-}
 case $mode in check|record) ;; *) echo "usage: tools/bench-hashes.sh check|record" >&2; exit 2 ;; esac
 [ "$mode" = record ] || [ -f "$GOLD" ] || { echo "bench hashes: no test/golden/bench.txt"; exit 1; }
+# a call the golden file has never recorded (a new JOBS line: record it first)
+if [ "$mode" = check ]; then
+    for n in $(echo "$JOBS" | awk 'NF { print $1 }'); do
+        grep -q "^$n " "$GOLD" || { echo "bench hashes: no $n line in test/golden/bench.txt"; exit 1; }
+    done
+fi
 mkdir -p "$D" || exit 1
 progs=$(echo "$JOBS" | awk 'NF { print $2; for (i = 3; i <= NF; i++) if ($i ~ /^bench_/) print $i }' | sort -u)
 make -s -C "$ROOT" -j"$(nproc 2>/dev/null || echo 4)" BUILD="$B" $(for p in $progs; do echo "$B/$p"; done) || exit 1

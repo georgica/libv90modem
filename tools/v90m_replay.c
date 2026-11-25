@@ -2,7 +2,7 @@
  * it made of it, phase by phase. The tool to run on a recording that comes
  * with a bug report (README: "Reporting a bug").
  *
- *   v90m-replay [-a] [-9] [-x] [-k] [-B] [-M] [-F] [-u BPS] [-d BPS] [-l DBM0 | -r RMS] [-e SAMPLES] [-P CODE] [-s SAMPLE] [-b FILE] RECORDING
+ *   v90m-replay [-a] [-9] [-x] [-k] [-B] [-H] [-M] [-F] [-u BPS] [-d BPS] [-l DBM0 | -r RMS] [-e SAMPLES] [-P CODE] [-s SAMPLE] [-b FILE] RECORDING
  *
  *   -a          A-law line (mu-law otherwise)
  *   -9          V.92 offered (PCM upstream up to 48000 bit/s unless -u)
@@ -14,6 +14,17 @@
  *               V90M_MOD_BELL212A), as a host may offer them (nsdiald's
  *               sidecar lists them as bell103, bell212): without them a
  *               caller without V.8 hears no 2225 Hz from us after 4 s
+ *   -H          HST offered (V90M_MOD_HST) and the V.42 endpoint linked
+ *               to the modem for it (MNP on, v90m_ec_link_hst before the
+ *               first sample; the rates given at CONNECTED and each
+ *               change; DATA_STOPPED / DATA_MOVING passed on), as a host
+ *               offering HST does. A caller that sent neither CM nor AA
+ *               then meets the HST wait, and the report ends with an "HST"
+ *               section: the wait and what the detector heard, the
+ *               training segments we sent, the back receivers' locks, the
+ *               rates (ours, the far end's, the ones MNP agreed), the
+ *               reversals and how the call ended. A caller that sent CM or
+ *               AA gets exactly the report it gets without -H
  *   -M          in data mode transmit mark only (binary 1, the idle line)
  *               in place of what the V.42 endpoint sends: "our transmit
  *               differs in 0" then proves the recording modem sent nothing
@@ -54,6 +65,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 #include <math.h>
 #include "v90modem_priv.h"
 #include "v90_pcm.h"
@@ -231,7 +243,88 @@ static void x2_down(const x2tx_t *t, uint8_t sent)
     }
 }
 
-static int opt_alaw, opt_v92, opt_x2, opt_k56, opt_bell, opt_hund = -1200, opt_up, opt_down = 56000, opt_echo = -1, opt_code;
+/* -H: the HST section of the report, gathered as the call goes (u.hst is
+ * the answerer's union: what it holds is read while the phase is HST's).
+ * Times are the recording's, in ms rounded from the sample count, printed
+ * in integers */
+#define HST_EV 96
+static struct {
+    int  on;                   /* ANS_HST_WAIT was entered */
+    long wait_at, end_at;      /* the wait's start; the sample it ended (detected or not) */
+    int  det;                  /* HST_DET_450 / _300, 0 nothing */
+    int  after;                /* the phase the wait went to */
+    int  seg, lock[2], tx, rx, agreed, la_rx;
+    long conn_at;
+    unsigned reversals;
+    int  nev, lost;
+    char ev[HST_EV][96];
+} H;
+static const char *seg_name(int s)
+{
+    static const char *n[] = { "off", "S1 (AB)", "S2 (CD)", "S3 (TRN)", "S4 (ones)", "data" };
+    return s >= 0 && s <= HST_SEG_DATA ? n[s] : "?";
+}
+static void hst_ev(long i, const char *fmt, ...)
+{
+    va_list ap;
+    int k;
+    if (H.nev >= HST_EV) { H.lost++; return; }
+    k = snprintf(H.ev[H.nev], sizeof H.ev[0], "%4ld.%03ld s  ", (i + 4) / 8 / 1000, (i + 4) / 8 % 1000);
+    va_start(ap, fmt);
+    vsnprintf(H.ev[H.nev] + k, sizeof H.ev[0] - (size_t)k, fmt, ap);
+    va_end(ap);
+    H.nev++;
+}
+static void hst_watch(const answer_t *a, const v90m_state *st, long i)
+{
+    if (!H.on) {
+        if (a->phase != ANS_HST_WAIT) return;
+        H.on = 1; H.wait_at = i; H.end_at = -1; H.conn_at = -1; H.seg = -1; H.lock[0] = H.lock[1] = -1;
+    }
+    if (H.end_at < 0 && a->phase != ANS_HST_WAIT) {
+        H.end_at = i; H.after = (int)a->phase;
+        if (a->phase == ANS_HST) H.det = a->u.hst.lane ? HST_DET_300 : HST_DET_450;
+    }
+    if (a->phase == ANS_HST) {
+        const hst_t *h = &a->u.hst;
+        int k, sg = hst_ftx_seg(&h->ftx);
+        if (sg != H.seg) { H.seg = sg; hst_ev(i, "our forward transmitter: %s, code %d", seg_name(sg), (int)h->ftx.code); }
+        for (k = 0; k < 2; k++) {
+            int l = hst_brx_locked(&h->det.rx[k]);
+            if (l != H.lock[k]) { H.lock[k] = l; hst_ev(i, "back receiver %d: %s", k ? 300 : 450, l ? "locked" : "not locked"); }
+        }
+        if (h->link.agreed && !H.agreed) {
+            H.agreed = 1;
+            hst_ev(i, "MNP agreed: rates 0x%02X, back channel %d", h->link.agreed_rates, h->link.back300 ? 300 : 450);
+        }
+        if (h->link.la_rx && !H.la_rx) { H.la_rx = 1; hst_ev(i, "the caller's confirming LA: MNP up"); }
+        H.reversals = h->reversals;
+    }
+    if (st->connected && H.conn_at < 0) { H.conn_at = i; hst_ev(i, "connected: modulation %d, tx %d", (int)a->modulation, st->tx_bps); }
+    if (st->connected && (st->tx_bps != H.tx || st->rx_bps != H.rx)) {
+        H.tx = st->tx_bps; H.rx = st->rx_bps;
+        hst_ev(i, "rates: %d bit/s sent, %d received", H.tx, H.rx);
+    }
+}
+static void hst_report(const v90m_state *st)
+{
+    int k;
+    static const char *ph[] = { "V8", "V22", "V21", "FAILED", "P2", "P3", "V90", "RETRAIN", "V34", "V32", "V32_SIL", "P3X",
+                                "V92", "X2", "V8BIS", "K56", "K56RT", "HST_WAIT", "HST" };
+    if (!H.on) return;
+    printf("HST: the wait began at %ld.%03ld s", (H.wait_at + 4) / 8 / 1000, (H.wait_at + 4) / 8 % 1000);
+    if (H.end_at < 0) printf(" and had not ended\n");
+    else {
+        printf("; after %ld ms, ", (H.end_at - H.wait_at) / 8);
+        if (H.det) printf("the detector heard a back channel at %d bit/s\n", H.det == HST_DET_300 ? 300 : 450);
+        else printf("no back channel detected: phase %s\n", H.after >= 0 && H.after < (int)(sizeof ph / sizeof ph[0]) ? ph[H.after] : "?");
+    }
+    for (k = 0; k < H.nev; k++) printf("HST: %s\n", H.ev[k]);
+    if (H.lost) printf("HST: %d events more, not kept\n", H.lost);
+    if (H.det) printf("HST: reversals %u; the end %d\n", H.reversals, (int)st->end);
+}
+
+static int opt_alaw, opt_v92, opt_x2, opt_k56, opt_bell, opt_hst, opt_hund = -1200, opt_up, opt_down = 56000, opt_echo = -1, opt_code;
 static long opt_rms;    /* -r, 0 = from opt_hund */
 
 static void configure(v90m_cfg *c, int lin)
@@ -239,7 +332,7 @@ static void configure(v90m_cfg *c, int lin)
     v90m_cfg_default(c);
     c->modulations = V90M_MOD_V21 | V90M_MOD_V22 | V90M_MOD_V32BIS | V90M_MOD_V34 | V90M_MOD_V90 | (opt_v92 ? V90M_MOD_V92 : 0)
                      | (opt_x2 ? V90M_MOD_X2 : 0) | (opt_k56 ? V90M_MOD_K56 : 0)
-                     | (opt_bell ? V90M_MOD_BELL103 | V90M_MOD_BELL212A : 0);
+                     | (opt_bell ? V90M_MOD_BELL103 | V90M_MOD_BELL212A : 0) | (opt_hst ? V90M_MOD_HST : 0);
     c->tx_level = opt_rms ? (int)opt_rms : level_rms(opt_hund);
     c->max_down_bps = opt_down;
     c->max_up_bps = opt_up ? opt_up : opt_v92 ? 48000 : 33600;
@@ -270,6 +363,7 @@ int main(int argc, char **argv)
         else if (!strcmp(o, "-x")) opt_x2 = 1;
         else if (!strcmp(o, "-k")) opt_k56 = 1;
         else if (!strcmp(o, "-B")) opt_bell = 1;
+        else if (!strcmp(o, "-H")) opt_hst = 1;
         else if (!strcmp(o, "-M")) opt_mark = 1;
         else if (!strcmp(o, "-F")) opt_frames = 1;
         else if (arg + 1 < argc && !strcmp(o, "-b")) bits_path = argv[++arg];
@@ -285,9 +379,10 @@ int main(int argc, char **argv)
         else break;
     }
     if (bad || arg >= argc || !(f = fopen(argv[arg], "rb"))) {
-        fprintf(stderr, "usage: v90m-replay [-a] [-9] [-x] [-k] [-B] [-M] [-F] [-u BPS] [-d BPS] [-l DBM0 | -r RMS] [-e SAMPLES] [-P CODE] [-s SAMPLE] [-b FILE] RECORDING\n"
+        fprintf(stderr, "usage: v90m-replay [-a] [-9] [-x] [-k] [-B] [-H] [-M] [-F] [-u BPS] [-d BPS] [-l DBM0 | -r RMS] [-e SAMPLES] [-P CODE] [-s SAMPLE] [-b FILE] RECORDING\n"
                         "  -l: a number with up to two decimals, e.g. -14.4; -r: the transmit rms, 1..16384;\n"
                         "  -s: a sample index, 0 or more; -B: Bell 103 and 212A offered too;\n"
+                        "  -H: HST offered, the V.42 endpoint linked (MNP on);\n"
                         "  -M: mark only in data mode; -F: print the caller's V.42 frames\n");
         return 2;
     }
@@ -328,8 +423,10 @@ int main(int argc, char **argv)
     }
 
     v90m_ec_cfg_default(&ecc, 0);
+    if (opt_hst) ecc.mnp.enable = 1;
     ec = v90m_ec_create(&ecc, &err);
     v90m_reset(m, &c);
+    if (opt_hst && (err = v90m_ec_link_hst(ec, m)) != V90M_OK) { fprintf(stderr, "v90m_ec_link_hst: %d\n", err); return 1; }
     trace_reset();
     tr_on = 1;
     for (i = start >= 0 ? start : ans - k0; i < r.n; i++) {
@@ -354,6 +451,21 @@ int main(int argc, char **argv)
         if (st.connected && !ec_on) {
             v90m_ec_reset(ec, &ecc);
             ec_on = 1;
+        }
+        if (opt_hst) {
+            /* the host pattern for HST (docs/error-control.md): the rates
+             * after the reset and at each change, the line's stops */
+            static int ltx, lrx, lmv, stopped;
+            if (ec_on && (st.tx_bps != ltx || st.rx_bps != lrx) && st.tx_bps > 0 && st.rx_bps > 0) {
+                ltx = st.tx_bps; lrx = st.rx_bps;
+                v90m_ec_set_rates(ec, ltx, lrx);
+            }
+            if (ec_on && st.moving != lmv) {
+                if (lmv) { v90m_ec_line_stopped(ec); stopped = 1; }
+                else if (stopped) { v90m_ec_line_restored(ec); stopped = 0; }
+                lmv = st.moving;
+            }
+            hst_watch(a, &st, i);
         }
         if (ec_on && i % 8 == 0) v90m_ec_tick(ec, 1);
         {
@@ -390,6 +502,7 @@ int main(int argc, char **argv)
         printf("modulation %d, %d bit/s down, %d up, SNR %.1f dB, round trip %d, echo delay %d, %u retrains, %u renegotiations; %ld bits received\n",
                (int)sx.modulation, sx.tx_bps, sx.rx_bps, sx.snr_db10 / 10.0, sx.rtd, sx.echo_delay, sx.retrains, sx.renegotiations, bits_rx);
     }
+    if (opt_hst) { v90m_state st; v90m_get_state(m, &st); hst_report(&st); }
     for (i = 0; i < 120; i++) if (dsec[i]) printf("  second %ld: %ld samples differ\n", i, dsec[i]);
     printf("%ld samples; after the answer our transmit differs from the recording in %ld (first at %.3f s)\n", r.n, diff, first / 8000.0);
     if (txbits) printf("downstream frames decoded %ld, not levels %ld\n", tx_frames, tx_bad);

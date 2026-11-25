@@ -148,4 +148,10 @@ echo 450: the back channel at -33 dBm0 under our forward signal's echo, V.32's p
   locked, no bit in error, no loss of lock: pass
 echo 300: the back channel at -33 dBm0 under our forward signal's echo, V.32's pulse at -30 dBm0 (-24 dBm0, 6 dB ERL), 2 lines
   locked, no bit in error, no loss of lock: pass
-test_hst_back: 120 checks, 0 failures
+echo_fwd: the echo's source
+  hst_ftx in data at 14400: pass
+echo_fwd 450: the back channel at -33 dBm0 under the echo of hst_ftx at 14400 (-10 dBm0, 6 dB ERL), 2 lines
+  locked, no bit in error, no loss of lock: pass
+echo_fwd 300: the back channel at -33 dBm0 under the echo of hst_ftx at 14400 (-10 dBm0, 6 dB ERL), 2 lines
+  locked, no bit in error, no loss of lock: pass
+test_hst_back: 123 checks, 0 failures

@@ -50,6 +50,11 @@
  *                signal (the library's V.32 transmitter standing in): in
  *                HST's forward band at 6 dB ERL from -10 dBm0, and with
  *                V.32's own pulse at its limit, 3 dB over the back channel
+ *   echo_fwd     the real-line corner with the real forward transmitter
+ *                (hst_ftx, data at 14400, -10 dBm0, its echo at 6 dB ERL:
+ *                -16 dBm0, 17 dB over the back channel at -33 dBm0): locked,
+ *                no bit in error, no loss of lock, at both speeds. With
+ *                HST_VERBOSE, the margin: ERL 6 dB and down, 4 lines a step
  *
  * The output (the golden file) holds exact integers and one pass or fail
  * line per bound; the measured values, from the test's own floating-point
@@ -545,7 +550,8 @@ typedef struct {
     double efwd;                       /* our forward signal's level, dBm0, whose echo comes back
                                         * (0: none) */
     double erl;                        /* its echo return loss, dB */
-    int    eband;                      /* the echo's spectrum: 0 V.32's pulse, 1 HST's forward band */
+    int    eband;                      /* the echo's spectrum: 0 V.32's pulse, 1 HST's forward band,
+                                        * 2 the real forward transmitter (hst_ftx) */
 } line_t;
 
 typedef struct {
@@ -645,7 +651,9 @@ static void score_epochs(long nrx, long nlog, int bps, run_t *o)
  * slightly optimistic, not conservative: at 0 dB ERL it gives no error
  * where hst-c's real forward transmitter gives 17 in 160000 (Task 13
  * review); Task 19 asserts the corner with the real transmitter and must
- * not relax anything to match this model. */
+ * not relax anything to match this model. band 2 is that transmitter:
+ * hst_ftx, its long training at 14400 run through (not heard) at init, then
+ * random data at 14400. */
 #define EHPN 255
 typedef struct {
     v32tx_t  t;
@@ -654,6 +662,7 @@ typedef struct {
     int32_t  h[EHPN];                  /* the high-pass, Q15 (integer: fast under qemu's soft float) */
     int16_t  x[2 * EHPN];              /* V.32's output, twice over (a ring read without wrapping) */
     int      band, p;
+    hst_ftx_t f;                       /* band 2 */
 } echo_t;
 static int echo_bit(void *u)
 {
@@ -671,6 +680,12 @@ static void echo_init(echo_t *e, double fwd_dbm0, double erl, int band, uint32_t
     v32tx_init(&e->t, 1, (int)lrint(v32line_rms(fwd_dbm0)), echo_bit, e);
     e->t.rate = 4;
     v32tx_set_mode(&e->t, V32_TX_DATA);
+    if (band == 2) {
+        long n;
+        hst_ftx_init(&e->f, (int)lrint(v32line_rms(fwd_dbm0)), echo_bit, e);
+        hst_ftx_train(&e->f, 6, 1);
+        for (n = 0; n < 2 * FS && !hst_ftx_in_data(&e->f); n++) (void)hst_ftx_tick(&e->f);
+    }
     for (i = 0; i < EHPN; i++) {
         int k = i - EHPN / 2;
         double lp = k == 0 ? 2 * 550.0 / FS : sin(2 * PI * 550.0 * k / FS) / (PI * k);
@@ -681,9 +696,11 @@ static void echo_init(echo_t *e, double fwd_dbm0, double erl, int band, uint32_t
 }
 static double echo_tick(echo_t *e)
 {
-    int16_t v = v32tx_tick(&e->t);
+    int16_t v;
     int64_t f = 0;
     int i;
+    if (e->band == 2) return e->g * hst_ftx_tick(&e->f);
+    v = v32tx_tick(&e->t);
     if (!e->band) return e->g * v;
     e->x[e->p] = e->x[e->p + EHPN] = v;                    /* x[p .. p + EHPN - 1]: the newest first, backwards */
     for (i = 0; i < EHPN; i++) f += (int64_t)e->h[i] * e->x[e->p + EHPN - i];
@@ -1331,12 +1348,69 @@ static void echo(void)
         }
 }
 
+/* "Holding forward" with the real forward transmitter (the Task 13
+ * review's carry): echo_t's eband 2, hst_ftx sending data at 14400 at
+ * -10 dBm0, its echo at 6 dB ERL (-16 dBm0); the back channel at -33 dBm0
+ * under white noise 20 dB below it, two lines a speed. With HST_VERBOSE the
+ * margin: the same from ERL 6 dB down a dB at a time (to -16) until two
+ * steps in a row fail, four lines (+-7 Hz, +-100 ppm) a step: the errors,
+ * losses of lock and lines never locked */
+static void echo_line(int bps, int c, double erl, run_t *o)
+{
+    line_t ln;
+    memset(&ln, 0, sizeof ln);
+    ln.bps = bps; ln.hz = offs[c & 3].hz; ln.ppm = offs[c & 3].ppm;
+    ln.level = v32line_rms(-33);
+    ln.efwd = -10; ln.erl = erl; ln.eband = 2;
+    ln.seed = (uint32_t)(0xF0E + bps + 7 * c);
+    run_line(&ln, NBITS_ECHO, 0, o);
+}
+static void echo_fwd(void)
+{
+    static echo_t P;
+    int s, c;
+    /* the echo is the real transmitter's: hst_ftx past its training, in
+     * data at 14400 */
+    echo_init(&P, -10, 6, 2, 1u);
+    (void)echo_tick(&P);
+    printf("echo_fwd: the echo's source\n");
+    bound("hst_ftx in data at 14400", hst_ftx_in_data(&P.f) && P.f.code == 6);
+    for (s = 0; s < 2; s++) {
+        int bps = s ? 300 : 450, bad = 0;
+        for (c = 0; c < 2; c++) {
+            run_t o;
+            echo_line(bps, c ? 3 : 0, 6, &o);
+            if (!(o.lock_at >= 0 && o.nbits == NBITS_ECHO && o.errors == 0 && o.unlocks == 0)) bad++;
+            if (verbose)
+                printf("  (line %d: locked %.1f ms after the preamble's start, %ld errors in %ld, %d losses of lock)\n",
+                       c, o.lock_at * 1000.0 / FS, o.errors, o.nbits, o.unlocks);
+        }
+        printf("echo_fwd %d: the back channel at -33 dBm0 under the echo of hst_ftx at 14400 (-10 dBm0, 6 dB ERL), 2 lines\n", bps);
+        bound("locked, no bit in error, no loss of lock", bad == 0);
+        if (verbose) {
+            int e, failing = 0;
+            for (e = 6; e >= -16 && failing < 2; e--) {
+                long errs = 0, bits = 0;
+                int unl = 0, nolock = 0;
+                for (c = 0; c < 4; c++) {
+                    run_t o;
+                    echo_line(bps, c, e, &o);
+                    errs += o.errors; bits += o.nbits; unl += o.unlocks; nolock += o.lock_at < 0;
+                }
+                printf("  (margin, %d: ERL %+d dB, echo %+d dBm0, %d dB over the back channel: %ld errors in %ld bits, "
+                       "%d losses of lock, %d lines unlocked)\n", bps, e, -10 - e, 23 - e, errs, bits, unl, nolock);
+                failing = errs || unl || nolock ? failing + 1 : 0;
+            }
+        }
+    }
+}
+
 static void loop_450(int c) { loop_case(450, c, 0); }
 static void loop_300(int c) { loop_case(300, c, 0); }
 
 int main(int argc, char **argv)
 {
-    int only = t_case_arg(argc, argv, 30), c;
+    int only = t_case_arg(argc, argv, 31), c;
     verbose = getenv("HST_VERBOSE") != NULL;
     if (T_CASE(only, 1)) steps();
     if (T_CASE(only, 2)) scr17();
@@ -1362,5 +1436,6 @@ int main(int argc, char **argv)
     if (T_CASE(only, 28)) grid_ok();
     if (T_CASE(only, 29)) first_bit();
     if (T_CASE(only, 30)) echo();
+    if (T_CASE(only, 31)) echo_fwd();
     T_REPORT("test_hst_back");
 }

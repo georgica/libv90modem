@@ -40,6 +40,10 @@
 #                        data mode (rig/bench_hst.c)
 #   make cost-hst-back   ARM instructions a second of HST's two back receivers on one
 #                        band-pass, and of the detector (rig/bench_hst.c)
+#   make bench-hst       a whole HST call (tools/rec_hst) replayed into the answerer
+#                        alone on the host and the target (rig/bench_hst -c)
+#   make cost-hst        ARM instructions a second of that call holding the forward
+#                        channel: data at 14400 (forward transmitter, back receivers, MNP)
 #   make bench-v90       record a simulated V.90 call, replay it on the host and
 #                        under qemu, through the internals and the public API
 #   make bench-x2        the same for x2 (a call of the simulated client); cost-x2 counts
@@ -445,9 +449,11 @@ verify:
 verify-phase:
 	@$(if $(RECS),RECS=$(RECS)) tools/verify-phase.sh
 # recordings of real calls (test/fixtures/fixtures.txt) through the replay tool
-test-fixtures: $(BUILD)/v90m-replay $(BUILD)/rec_orig
+test-fixtures: $(BUILD)/v90m-replay $(BUILD)/rec_orig $(BUILD)/rec_hst $(BUILD)/hst-scan $(BUILD)/bench_hst
 	@echo "== real-modem recordings =="; test/fixtures/check.sh $(abspath $(BUILD))/v90m-replay
 	@echo "== v90m-replay -s, -l, -r, -B, -M and -F =="; test/fixtures/replay-opts.sh $(abspath $(BUILD))/v90m-replay $(abspath $(BUILD))/rec_orig
+	@echo "== HST: v90m-replay -H, hst-scan -b and -f, bench_hst -c =="; test/fixtures/replay-hst.sh $(abspath $(BUILD))/v90m-replay \
+	   $(abspath $(BUILD))/rec_hst $(abspath $(BUILD))/hst-scan $(abspath $(BUILD))/bench_hst
 # every ARM program of every directory in one pool (logs in $(BUILD)/arm_log);
 # each case of a SPLIT_TESTS program a run of its own (arm_test_p34:N);
 # ARM_SKIP=FILE leaves out the programs it lists (tools/ports-slow.txt)
@@ -940,12 +946,39 @@ cost-hst-fwd: $(BUILD)/bench_hst $(BUILD)/bench_hst.arm
 	   r) echo "HST forward receiver, 14400 data mode: $$((c - loop)) ARM instructions a second ($$c with the bench's loop, $$loop)"; echo "  ($$h)" ;; \
 	   esac; \
 	 done
-$(BUILD)/bench_hst: rig/bench_hst.c $(MODEM_SRC) $(HDRS)
+# ---- a whole HST call: tools/rec_hst records sim/hstcall calling our
+# answerer (the public API, MNP on, its endpoint linked and full of text;
+# rig/hst_side.h) in v90m-replay's format; bench_hst -c replays it into the
+# answerer alone, on the host and the target, and prints its transmit and
+# receive hashes (tools/bench-hashes.sh: the "hst" line). cost-hst counts
+# the ARM instructions of the second from 1 s into data at 14400 (marked
+# where the trace enters bench_hst_mark): holding the forward channel,
+# our forward transmitter at 14400, the two back receivers and MNP with
+# data both ways, the bench's loop and its endpoint's text included ----
+HST_REC := $(BUILD)/hst_call.rec
+.PHONY: bench-hst cost-hst
+bench-hst: $(BUILD)/rec_hst $(BUILD)/bench_hst $(BUILD)/bench_hst.arm
+	$(abspath $(BUILD))/rec_hst 3 $(HST_REC) | tail -3
+	$(abspath $(BUILD))/bench_hst -c $(HST_REC)
+	$(QEMU) $(abspath $(BUILD))/bench_hst.arm -c $(HST_REC)
+cost-hst: $(BUILD)/rec_hst $(BUILD)/bench_hst $(BUILD)/bench_hst.arm
+	@$(abspath $(BUILD))/rec_hst 3 $(HST_REC) > /dev/null || { echo "cost-hst: rec_hst failed"; exit 1; }; \
+	 h=$$($(abspath $(BUILD))/bench_hst -c $(HST_REC)); a=$$($(QEMU) $(abspath $(BUILD))/bench_hst.arm -c $(HST_REC)); \
+	 [ "$$h" = "$$a" ] || { echo "bench_hst -c: host '$$h', target '$$a'"; exit 1; }; \
+	 pc=$$(nm $(BUILD)/bench_hst.arm | sed -n 's/^\([0-9a-f]*\) T bench_hst_mark$$/\1/p'); \
+	 c=$$($(CNT) $(abspath $(BUILD))/bench_hst.arm -c $(HST_REC) 2>&1 >/dev/null \
+	    | awk -v pc="/00000000$$pc/" 'BEGIN { k = 0 } /^Trace/ { if (index($$0, pc)) k++; n[k]++ } END { print n[1] + 0 }'); \
+	 echo "$$h" | sed -n '1p'; \
+	 echo "cost-hst: holding forward $$(awk -v c=$$c 'BEGIN { printf "%.2f", c / 1e6 }') M/s ($$c ARM instructions in a second of data at 14400)"
+$(BUILD)/rec_hst: tools/rec_hst.c rig/hst_side.h $(SIM_SRC) $(MODEM_SRC) $(API_SRC) $(V42_SRC) api/v90modem_diag.h $(HDRS) $(wildcard v42/*.h)
 	@mkdir -p $(BUILD)
-	$(CC) $(T_CFLAGS) -o $@ rig/bench_hst.c $(MODEM_SRC) $(LDLIBS)
-$(BUILD)/bench_hst.arm: rig/bench_hst.c $(MODEM_SRC) $(HDRS)
+	$(CC) $(T_CFLAGS) -Iinclude -Iapi -o $@ tools/rec_hst.c $(API_SRC) $(SIM_SRC) $(MODEM_SRC) $(V42_SRC) $(LDLIBS)
+$(BUILD)/bench_hst: rig/bench_hst.c rig/hst_side.h $(MODEM_SRC) $(API_SRC) $(V42_SRC) api/v90modem_diag.h $(HDRS) $(wildcard v42/*.h)
 	@mkdir -p $(BUILD)
-	$(ARM_CC) $(T_CFLAGS) -static -o $@ rig/bench_hst.c $(MODEM_SRC) $(LDLIBS)
+	$(CC) $(T_CFLAGS) -Iinclude -Iapi -o $@ rig/bench_hst.c $(API_SRC) $(MODEM_SRC) $(V42_SRC) $(LDLIBS)
+$(BUILD)/bench_hst.arm: rig/bench_hst.c rig/hst_side.h $(MODEM_SRC) $(API_SRC) $(V42_SRC) api/v90modem_diag.h $(HDRS) $(wildcard v42/*.h)
+	@mkdir -p $(BUILD)
+	$(ARM_CC) $(T_CFLAGS) -Iinclude -Iapi -static -o $@ rig/bench_hst.c $(API_SRC) $(MODEM_SRC) $(V42_SRC) $(LDLIBS)
 # ---- V.42 on the target: rig/bench_v42 runs two endpoints back to back,
 # both directions full of text; cost-v42 counts the ARM instructions of
 # 56000 more line bits each way (one second at 56 kbit/s), the difference of

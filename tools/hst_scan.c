@@ -2,8 +2,8 @@
  * (docs/history/hst-facts.md, "Evidence"), and the back-channel detector
  * of ANS_HST_WAIT (modem/hst_back.c, hst_det) over what the answerer heard.
  *
- *   hst-scan [-a] [-b] FILE...          (make hst-scan RECS=<dir>: -b over
- *   hst-scan -w [-b] FILE.wav...         every recording)
+ *   hst-scan [-a] [-b | -f] FILE...     (make hst-scan RECS=<dir>: -b over
+ *   hst-scan -w [-b | -f] FILE.wav...    every recording)
  *
  * FILE: as v90m-replay reads it (per 10 ms, 80 codewords heard then 80
  * sent, mu-law, or A-law with -a; or "V90DLIN1", then 80 16-bit linear
@@ -22,6 +22,20 @@
  * its first bits are ones (the preamble), and the HDLC frames in its bits,
  * as headers and parameters only (an LR's parameters; an LT's N(S) and
  * length, never its data). Exits 1 when anything was detected.
+ *
+ * With -f, on each channel: the forward channel (modem/hst_fwd.c's
+ * receiver, hst_frx, one at each rate code 2..6 on the same samples).
+ * Each training it hears, its segments by the statistics of the points
+ * the receiver decides, 8 symbols at a time: an alternation of A and B
+ * (AB, V.32's S), of C and D (CD, S-bar), the 4 points A..D at random
+ * (TRN), or points off those 4 (data); each with its start and length in
+ * symbols (AB from where the receiver heard its two tones: it needs 40 ms
+ * of them before it starts). Then the data's constellation: the rate code
+ * whose receiver decodes the data best (the highest signal to error 256
+ * symbols in, among those still in data mode), its size in points and its
+ * rate; and how the receiver left it (carrier lost, unlocked, the next
+ * training). A training heard in data starts the receivers again from the
+ * equaliser they had. Exits 1 when a training was heard.
  *
  * Host tool, not installed. Its analysis of tones is in double precision;
  * the detector and the receivers are the library's. */
@@ -218,6 +232,130 @@ static void frame_out(const char *name, double t, const uint8_t *f, int len)
     printf("\n");
 }
 
+/* ---- -f ---- */
+enum { SEG_NONE, SEG_AB, SEG_CD, SEG_ALT, SEG_TRN, SEG_DATA };
+static const char *seg_n[] = { "none", "AB", "CD", "alternation", "TRN", "data" };
+static const int set_size[7] = { 0, 0, 4, 16, 32, 64, 128 };
+
+/* nearest of A B C D (as modem/hst_fwd.c decides them in training) */
+static int slice4(int32_t zr, int32_t zi)
+{
+    int64_t a = 2 * (int64_t)zr - zi, b = 2 * (int64_t)zi + zr;
+    if (a >= 0) return b >= 0 ? 2 : 1;
+    return b >= 0 ? 3 : 0;
+}
+
+static double snr_db(const hst_frx_t *r)
+{
+    int64_t num = 0, den = 0;
+    if (!hst_frx_snr(r, &num, &den) || den <= 0 || num <= 0) return 0;
+    return 10 * log10((double)num / (double)den);
+}
+
+static int scan_f(const char *name, int c, const char *side)
+{
+    static hst_frx_t rx[7];
+    int k, cur = SEG_NONE, cand = SEG_NONE, ncand = 0, trainings = 0, lst = -1, pending = 0;
+    long n, seg_at = 0, cand_at = 0, nsym = 0, data_sym = -1, ab_at = -1, restart_at = -1;
+    int lab[8], off[8], i;
+    long last_nsym = -1;
+    for (k = 2; k <= 6; k++) { hst_frx_init(&rx[k]); hst_frx_set_code(&rx[k], k); }
+    for (i = 0; i < 8; i++) lab[i] = off[i] = 0;
+    for (n = 0; n < nch[c]; n++) {
+        int st6;
+        for (k = 2; k <= 6; k++) (void)hst_frx_tick(&rx[k], ch[c][n]);
+        st6 = hst_frx_state(&rx[6]);
+        /* the receiver started: AB was heard HST_FRX_AB_MS before */
+        if ((st6 == HST_FRX_TRAIN || st6 == HST_FRX_DATA) && lst != HST_FRX_TRAIN && lst != HST_FRX_DATA) {
+            ab_at = restart_at >= 0 ? restart_at : n - HST_FRX_AB_MS * FS / 1000;
+            trainings++;
+            printf("%s: %s: forward training heard%s: AB from about %.3f s\n", name, side,
+                   restart_at >= 0 ? " in data" : "", ab_at / (double)FS);
+            restart_at = -1;
+            cur = SEG_AB; seg_at = ab_at; cand = SEG_NONE; ncand = 0; data_sym = -1; nsym = 0; pending = 0;
+            last_nsym = rx[6].nsym;
+        }
+        if ((lst == HST_FRX_TRAIN || lst == HST_FRX_DATA) && st6 != HST_FRX_TRAIN && st6 != HST_FRX_DATA) {
+            static const char *why[] = { "", "", "", "", "the carrier lost", "unlocked", "no data mode (training failed)" };
+            printf("%s: %s:   %s from %.3f s, then the receiver stopped at %.3f s: %s\n", name, side, seg_n[cur],
+                   seg_at / (double)FS, n / (double)FS, st6 >= 0 && st6 <= HST_FRX_TRAINFAIL ? why[st6] : "?");
+            cur = SEG_NONE;
+        }
+        lst = st6;
+        if ((st6 != HST_FRX_TRAIN && st6 != HST_FRX_DATA) || rx[6].nsym == last_nsym) continue;
+        last_nsym = rx[6].nsym;
+        /* a symbol: its decision among A..D and whether it is off them */
+        {
+            int32_t zr = rx[6].hzr[0], zi = rx[6].hzi[0];
+            int x, y, kind;
+            int64_t dr, di, er, ei;
+            int na = 0;
+            int st = slice4(zr, zi);
+            v32_state_point(st, &x, &y);
+            dr = (int64_t)x * HST_FRX_U; di = (int64_t)y * HST_FRX_U;
+            er = zr - dr; ei = zi - di;
+            for (i = 7; i > 0; i--) { lab[i] = lab[i - 1]; off[i] = off[i - 1]; }
+            lab[0] = st;
+            off[0] = 10 * (er * er + ei * ei) > dr * dr + di * di;          /* error over -10 dB */
+            nsym++;
+            if (nsym < 8) continue;
+            for (i = 0; i < 8; i++) na += off[i];
+            if (na >= 4) kind = SEG_DATA;
+            else {
+                int alt = lab[0] != lab[1];
+                for (i = 2; i < 8 && alt; i++) alt = lab[i] == lab[i - 2];
+                if (!alt) kind = SEG_TRN;
+                else {
+                    int lo = lab[0] < lab[1] ? lab[0] : lab[1], hi = lab[0] ^ lab[1] ^ lo;
+                    kind = lo == 0 && hi == 1 ? SEG_AB : lo == 2 && hi == 3 ? SEG_CD : SEG_ALT;
+                }
+            }
+            if (kind == cur) ncand = 0;
+            else {
+                if (kind != cand) { cand = kind; ncand = 0; cand_at = n - 7 * FS / 2400; }
+                if (++ncand >= 8) {
+                    /* a new segment, 8 symbols long by now: the last one's length */
+                    printf("%s: %s:   %s from %.3f s, %ld symbols\n", name, side, seg_n[cur], seg_at / (double)FS,
+                           (long)((cand_at - seg_at) * 2400 / FS));
+                    if (cur == SEG_DATA && (cand == SEG_AB || cand == SEG_CD || cand == SEG_ALT)) {
+                        /* a training in data: every receiver listens again,
+                         * from its equaliser, for the rest of the AB */
+                        hst_eqstore_t eq;
+                        for (k = 2; k <= 6; k++) { hst_frx_store(&rx[k], &eq); hst_frx_restore(&rx[k], &eq); }
+                        restart_at = cand_at;
+                        lst = HST_FRX_IDLE;
+                        cur = SEG_NONE; pending = 0;
+                        continue;
+                    }
+                    cur = cand; seg_at = cand_at; ncand = 0;
+                    if (cur == SEG_DATA) { data_sym = nsym; pending = 1; }
+                }
+            }
+        }
+        /* 256 symbols into data: the code that decodes it best */
+        if (pending && nsym - data_sym >= 256) {
+            int best = 0;
+            double bs = -100;
+            pending = 0;
+            printf("%s: %s:   the data's signal to error by rate code:", name, side);
+            for (k = 2; k <= 6; k++) {
+                int in = hst_frx_state(&rx[k]) == HST_FRX_DATA;
+                double v = snr_db(&rx[k]);
+                printf(" %d: %s%.1f dB", k, in ? "" : "(not in data) ", v);
+                if (in && v > bs) { bs = v; best = k; }
+            }
+            printf("\n");
+            if (best) printf("%s: %s:   constellation: %d points, code %d, %d bit/s\n", name, side, set_size[best], best, 2400 * best);
+            else printf("%s: %s:   constellation: none of codes 2..6 decodes it\n", name, side);
+        }
+    }
+    if (cur != SEG_NONE)
+        printf("%s: %s:   %s from %.3f s to the end, %ld symbols\n", name, side, seg_n[cur], seg_at / (double)FS,
+               (long)((n - seg_at) * 2400 / FS));
+    printf("%s: %s: %.1f s, %d forward trainings heard\n", name, side, nch[c] / (double)FS, trainings);
+    return trainings;
+}
+
 static int scan_b(const char *name)
 {
     static hst_det_t d;
@@ -269,14 +407,15 @@ static int scan_b(const char *name)
 
 int main(int argc, char **argv)
 {
-    int arg = 1, alaw = 0, wav = 0, back = 0, hits = 0;
+    int arg = 1, alaw = 0, wav = 0, back = 0, fwd = 0, hits = 0;
     for (; arg < argc && argv[arg][0] == '-'; arg++) {
         if (!strcmp(argv[arg], "-a")) alaw = 1;
         else if (!strcmp(argv[arg], "-w")) wav = 1;
         else if (!strcmp(argv[arg], "-b")) back = 1;
+        else if (!strcmp(argv[arg], "-f")) fwd = 1;
         else break;
     }
-    if (arg >= argc) { fprintf(stderr, "usage: hst-scan [-a] [-w] [-b] FILE...\n"); return 2; }
+    if (arg >= argc || (back && fwd)) { fprintf(stderr, "usage: hst-scan [-a] [-w] [-b | -f] FILE...\n"); return 2; }
     for (; arg < argc; arg++) {
         FILE *f = fopen(argv[arg], "rb");
         long len;
@@ -285,6 +424,11 @@ int main(int argc, char **argv)
         fclose(f);
         if (wav ? load_wav(len, argv[arg]) : load_rec(len, alaw)) return 2;
         if (back) hits += scan_b(argv[arg]) > 0;
+        else if (fwd) {
+            int t = scan_f(argv[arg], 0, "heard");
+            if (nchan > 1) t += scan_f(argv[arg], 1, "sent");
+            hits += t > 0;
+        }
         else {
             tones(0, argv[arg], "heard");
             if (nchan > 1) tones(1, argv[arg], "sent");
