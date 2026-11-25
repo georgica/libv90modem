@@ -385,7 +385,9 @@ Every wait of a call is bounded, and every end of a call has an end code
 
 - **Phase 2, answering** (V.90, V.92, V.34, x2, K56flex): the INFO
   exchange ends 20 s after its start (or a restart V.34 counts), and V.90's
-  recovery (9.2.1.2.3) is tried at most 4 times. Behind those, a backstop
+  recovery (9.2.1.2.3) is tried at most 4 times, and a caller's INFO0a
+  after the INFO0 exchange (9.2.1.2.1: it lost our INFO1d, or started over)
+  takes Phase 2 back to INFO0 at most twice (0.6.1). Behind those, a backstop
   ends the call when V.90's or V.92's Phase 2 (a retrain's included) or
   V.34's lasts 30 s, or V.90's or V.92's Phases 3 and 4 last 60 s. A normal
   Phase 2 takes 3 to 5 s.

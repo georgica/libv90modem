@@ -11,6 +11,7 @@
 #pragma GCC visibility pop
 #include "v90modem_priv.h"
 #include "v90modem_fields.h"
+#include "v90modem_diag.h"
 #include "../modem/pcmenc.h"
 #include "../modem/v14.h"
 #include "../v90/v90_pcm.h"
@@ -61,9 +62,12 @@ struct v90m {
     uint8_t  reneg_pending;     /* data stopped, not in a retrain: counts when it moves again, becomes
                                    a retrain, or the call ends other than by a cleardown */
     uint8_t  meas_tick;         /* samples since the SNR and round trip were last kept */
-    int      was_mod, was_tx, was_rx;
+    uint8_t  was_mod;           /* V90M_CONN_* (they fit 8 bits) */
+    int      was_tx, was_rx;
     unsigned renegotiations;
     int16_t  last_snr, last_rtd;    /* the last measured while data moves; -1 before the first */
+    diag_track_t diag;          /* v90m_get_diag: as the last sample before the end left it */
+    uint8_t  data_reached;      /* data moved both ways this call (v90m_get_diag) */
     union { answer_t a; orig_t o; } u;     /* by cfg.role */
 };
 
@@ -298,21 +302,39 @@ static void keep_measures(v90m_t *m, int orig)
     if (v >= 0) m->last_rtd = v;
 }
 
+/* the diagnostics after a sample that did not end the call */
+static uint8_t iphase_of(const v90m_t *m, int orig) { return (uint8_t)(orig ? m->u.o.phase : m->u.a.phase); }
+static void diag_track(v90m_t *m, int orig)
+{
+    if (orig) diag_track_orig(&m->diag, &m->u.o);
+    else diag_track_answer(&m->diag, &m->u.a);
+}
+
 /* after each sample: only reads the modem, on the side orig says */
 static inline void after(v90m_t *m, int orig)
 {
     int moving, rx, connected = connected_of(m, orig), failed = failed_of(m, orig);
-    if (!connected && !m->was_connected && !failed) return;   /* start-up: nothing to report */
+    if (!connected && !m->was_connected && !failed) {          /* start-up: nothing to report */
+        diag_track(m, orig);
+        return;
+    }
     moving = moving_of(m, orig);
+    /* the diagnostics keep the last sample before the end; while data
+     * moves in the same phase of the modem they cannot change (the phase
+     * reached is data mode, and a retrain, which may stay in that phase of
+     * the modem, stops the data first) */
+    if (moving) m->data_reached = 1;
+    if (!failed && !(moving && m->diag.phase == V90M_PHASE_DATA && m->diag.iphase == iphase_of(m, orig)))
+        diag_track(m, orig);
     rx = rx_of(m, orig);
     /* kept only while data moves: a retrain's figures are not the call's */
     if (moving && connected && !failed && (uint8_t)(++m->meas_tick & 127) == 0) keep_measures(m, orig);
     if (connected && !m->was_connected) {
         m->was_connected = 1;
-        m->was_mod = mod_of(m, orig); m->was_tx = tx_of(m, orig); m->was_rx = rx;
+        m->was_mod = (uint8_t)mod_of(m, orig); m->was_tx = tx_of(m, orig); m->was_rx = rx;
         event(m, V90M_EV_CONNECTED);
     } else if (m->was_connected && (mod_of(m, orig) != m->was_mod || tx_of(m, orig) != m->was_tx || rx != m->was_rx)) {
-        m->was_mod = mod_of(m, orig); m->was_tx = tx_of(m, orig); m->was_rx = rx;
+        m->was_mod = (uint8_t)mod_of(m, orig); m->was_tx = tx_of(m, orig); m->was_rx = rx;
         event(m, V90M_EV_RATES);
     }
     if (moving != m->was_moving) {
@@ -458,6 +480,21 @@ void v90m_get_stats(const v90m_t *m, v90m_stats *st)
     }
     if (st->snr_db10 < 0) st->snr_db10 = m->last_snr;
     if (st->rtd < 0) st->rtd = m->last_rtd;
+}
+
+void v90m_get_diag(const v90m_t *m, v90m_diag *d)
+{
+    v90m_end e;
+    if (!m || !d) return;
+    d->phase = (v90m_phase)m->diag.phase;
+    d->selected = (v90m_conn)m->diag.sel;
+    d->data_reached = m->data_reached;
+    /* an orderly cleardown after data mode is no failure; otherwise the
+     * cause, read from the engine that ran last (nothing changes it after
+     * the end) */
+    e = end_of(m);
+    if (m->data_reached && (e == V90M_END_CLEARDOWN_OURS || e == V90M_END_CLEARDOWN_FAR)) d->error = 0;
+    else d->error = ORIGINATING(m) ? diag_err_orig(&m->u.o, &m->diag) : diag_err_answer(&m->u.a, &m->diag);
 }
 
 answer_t *v90m__answer(v90m_t *m) { return &m->u.a; }

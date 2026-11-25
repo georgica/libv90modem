@@ -27,7 +27,7 @@ User documentation is in `docs/`.
 
 | | what |
 |---|---|
-| `api/` | the public API over everything below: configuration, the block calls, events found by reading the modem's state after each sample, stats; start-stop (V.14) and V.42 objects |
+| `api/` | the public API over everything below: configuration, the block calls, events found by reading the modem's state after each sample, stats, the start-up diagnostics (`v90modem_diag.c`); start-stop (V.14) and V.42 objects |
 | `modem/` | answering modem: V.8, V.21 and Bell 103, V.22bis/V.22 and Bell 212A, V.14, V.90 Phase 2 (`p2d`), Phases 3/4 and data (`p34d`); V.34 answering (`p2ans`, `v34mp`, `v34mod`, `v34dx`, `v34ans`); x2 (`x2d`) and K56flex (`k56d`). One V.34 upstream receiver, `v34up` (on `qamrx`, `ec`, `v34train`), serves `p34d`, `v34dx`, `x2d` and `k56d`. The sequencer `answer` keeps V.8, the dispatch, the end codes and the backstop; each group of phases is a scheme behind `ans_scheme_t` (`ans_scheme.h`): `ans_legacy.c` (V.21, Bell, V.22bis / V.22 / Bell 212A, V.32bis), `ans_v90.c` (Phase 2, V.90, V.92), `ans_v34.c`, `ans_x2.c`, `ans_k56.c` (V.8bis, K56flex), entered by a phase table. Calling modem: V.8 (`v8orig`), V.34 (`p2call`, `v34orig`), the V.90 / V.92 analogue modem (`v90a` with `v90arx`, `v90dil`, `v90adec`; for V.92 `pcmtx`, `v92aseq` and `v92/v92_enc`); `v90a.c` keeps init, the tick, the public calls and the end, `v90a_up90.c` V.90's V.34 upstream, `v90a_up92.c` V.92's Phase 3 and PCM upstream, `v90a_down.c` the downstream sequences and the designs, `v90a_watch.c` the time limits, the receiver's watch, renegotiation and retrain (shared declarations in `v90a_priv.h`); Bell 212A and 103 (`belltone`, the 2225 Hz answer tone); the sequencer `orig`, whose engines after V.8 share one union. Shared helpers: `p2common` (what the three Phase 2 exchanges share), `seqhunt` (the frame-sync hunter), `clock.h` (clocks past 2^31 samples), `fixdiv.h`, `divrcp.h`, `fixmath.h`, `interp2.h` (exact cheaper arithmetic), `compiler.h` (the only compiler extensions, each with a C99 fallback) |
 | `v32/` | V.32bis / V.32 (4800 to 14400 bit/s), answering (`v32.c`) and calling (`v32_call.c`) |
 | `v34/` | V.34 coding: training point sequences, data encoder and decoder (trellis, shell mapping, non-linear encoder) |
@@ -50,6 +50,21 @@ compares the modem's state with the one before to report `V90M_EV_*`
 The bit callbacks are called by the modem itself, inside that sample, at
 the moment a bit is needed or decided: a V.42 endpoint (or a framer) on the
 other side sees exactly the timing it would see sample by sample.
+
+`api/v90modem_diag.c` (the start-up diagnostics, `v90m_get_diag`) reads the
+modem too, never changes it: after each sample that did not end the call
+it keeps the modem's phase, the furthest public phase reached (it never
+goes back) and the modulation chosen, and whether data mode was reached
+(`data_reached`: user data moved both ways, the same signal as
+`v90m_state.moving`); while data moves, the phase reached is data and
+the modem's own phase is the one last tracked, a sample skips the
+tracking (most of data mode: a retrain stops the data first); the cause of the end is read when asked, from the
+engine of that last phase, whose state nothing changes after the end. An
+orderly cleardown after data mode reads error 0; the start-up failed if
+the call ended and data mode was never reached. An error code is a
+family (an engine's enum of errors, or one of the causes no engine
+numbers) times 100 plus the engine's own number, named by the engine's own
+name.
 
 Everything but the `v90m_*` functions has hidden visibility: the shared
 library exports nothing else, and the static library is linked into one

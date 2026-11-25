@@ -144,7 +144,7 @@ void dpskrx_init(dpskrx_t *r, int fc)
         r->hunt[h].pr = r->hunt[h].pi = 0; r->hunt[h].pos = 0;
         for (i = 0; i < 128; i++) r->hunt[h].hist[i] = 0;
     }
-    r->expect = 0;
+    r->expect = 0; r->expect2 = 0; r->flen = 0;
 }
 
 void dpskrx_expect(dpskrx_t *r, int payload_bits)
@@ -152,7 +152,14 @@ void dpskrx_expect(dpskrx_t *r, int payload_bits)
     int h, i;
     if (payload_bits > INFO_MAX_BITS - 16) payload_bits = INFO_MAX_BITS - 16;
     r->expect = payload_bits;
+    r->expect2 = 0;
     for (h = 0; h < 3; h++) for (i = 0; i < 128; i++) r->hunt[h].hist[i] = 0;
+}
+
+void dpskrx_expect_also(dpskrx_t *r, int payload_bits)
+{
+    if (payload_bits > INFO_MAX_BITS - 16) payload_bits = INFO_MAX_BITS - 16;
+    r->expect2 = (uint8_t)payload_bits;
 }
 
 int dpskrx_level(const dpskrx_t *r)
@@ -163,23 +170,41 @@ int dpskrx_level(const dpskrx_t *r)
     return r->carrier ? (int)isqrt_u64((uint64_t)(r->pw / 2)) : 0;
 }
 
-/* one differential bit for hunter h; returns 1 when a clean frame completed */
-static int hunt_bit(dpskrx_t *r, int h, int bit)
+/* a clean frame of payload length len that ended lag bits before hunter
+ * h's last bit? */
+static int frame_ends(dpskrx_t *r, int h, int len, int lag)
 {
-    uint8_t *hs = r->hunt[h].hist;
-    int n = 8 + r->expect, start, k;
+    const uint8_t *hs = r->hunt[h].hist;
+    int start = r->hunt[h].pos - (8 + len) - lag, k;
     uint8_t pl[INFO_MAX_BITS];
-    hs[r->hunt[h].pos] = (uint8_t)bit;
-    r->hunt[h].pos = (r->hunt[h].pos + 1) & 127;
-    if (!r->expect) return 0;
-    start = r->hunt[h].pos - n;
     for (k = 0; k < 8; k++) if (hs[(start + k) & 127] != SYNC[k]) return 0;
-    for (k = 0; k < r->expect; k++) pl[k] = hs[(start + 8 + k) & 127];
-    if (!info_check(pl, r->expect)) return 0;
-    for (k = 0; k < r->expect; k++) r->frame[k] = pl[k];
+    if (len < 16) return 0;     /* the CRC alone is 16 (and keeps gcc sure pl is set) */
+    for (k = 0; k < len; k++) pl[k] = hs[(start + 8 + k) & 127];
+    if (!info_check(pl, len)) return 0;
+    for (k = 0; k < len; k++) r->frame[k] = pl[k];
+    r->flen = (uint8_t)len;
     r->fill = 0;
     for (k = 1; k <= 4; k++) r->fill = (uint8_t)(r->fill | (hs[(start - k) & 127] << (k - 1)));
     return 1;
+}
+
+/* one differential bit for hunter h; returns 1 when a clean frame completed */
+static int hunt_bit(dpskrx_t *r, int h, int bit)
+{
+    r->hunt[h].hist[r->hunt[h].pos] = (uint8_t)bit;
+    r->hunt[h].pos = (r->hunt[h].pos + 1) & 127;
+    if (!r->expect) return 0;
+    if (frame_ends(r, h, r->expect, 0)) return 1;
+    if (!r->expect2) return 0;
+    /* The second length is taken only one bit after a frame of the first
+     * with the same sync would have ended, and did not: the start of a
+     * longer frame whose CRC happens to hold as a shorter one (1 in 2^16 of
+     * them) is never taken for the shorter. The one bit more is for the
+     * other hunters: each samples a symbol within one symbol of this one,
+     * so one that has the longer frame clean has reported it (and cleared
+     * every history) by then. The shorter frame arrives (expect - expect2
+     * + 1) bits late; the history holds the 8 + expect + 1 + 4 it needs. */
+    return frame_ends(r, h, r->expect2, r->expect > r->expect2 ? r->expect - r->expect2 + 1 : 0);
 }
 
 int dpskrx_tick(dpskrx_t *r, int16_t x)
