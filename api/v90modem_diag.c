@@ -100,20 +100,22 @@ const char *v90m_err_name(int code)
     return fam[f].name[n];
 }
 
+static const char *const phase_names[] = { "none", "tone", "v8", "phase2", "phase3", "phase4", "train", "data" };
+static const char *const conn_names[] = { "none", "V.21", "V.22", "V.22bis", "V.90", "V.34", "V.32bis", "V.92",
+                                          "Bell 103", "Bell 212A", "x2", "K56flex" };
+/* one name per value of each enum: a table's size is its enum's last value + 1 */
+typedef char dg_phase_rows[sizeof phase_names / sizeof phase_names[0] == (unsigned)DG_LAST_PHASE + 1 ? 1 : -1];
+typedef char dg_conn_rows[sizeof conn_names / sizeof conn_names[0] == (unsigned)DG_LAST_CONN + 1 ? 1 : -1];
+
 const char *v90m_phase_name(v90m_phase p)
 {
-    static const char *const n[] = { "none", "tone", "v8", "phase2", "phase3", "phase4", "train", "data" };
-    return (unsigned)p < sizeof n / sizeof n[0] ? n[p] : "?";
+    return (unsigned)p < sizeof phase_names / sizeof phase_names[0] ? phase_names[p] : "?";
 }
 
 const char *v90m_conn_name(v90m_conn c)
 {
-    static const char *const n[] = { "none", "V.21", "V.22", "V.22bis", "V.90", "V.34", "V.32bis", "V.92",
-                                      "Bell 103", "Bell 212A", "x2", "K56flex" };
-    return (unsigned)c < sizeof n / sizeof n[0] ? n[c] : "?";
+    return (unsigned)c < sizeof conn_names / sizeof conn_names[0] ? conn_names[c] : "?";
 }
-/* one name per value of each enum */
-typedef char dg_phase_names[V90M_PHASE_DATA == 7 && V90M_CONN_K56FLEX == 11 ? 1 : -1];
 
 /* ------------------------------------------- the phase and the choice */
 /* V.8's choice (JM), as the modems go on with it (answer.c tick_v8,

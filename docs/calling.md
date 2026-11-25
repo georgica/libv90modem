@@ -160,7 +160,11 @@ that stopped the data (V.32bis, V.34, V.90, V.92). `echo_delay` in the stats
 and `odp_bypass` in the state are always -1 and 0 when calling.
 `v90m_get_diag` (0.6.1) gives, as answering, the cause of the end in the
 engines' words (`V8_ERR_NO_TONE`, `P2L_ERR_REV`, `V90A_ERR_SD`, ...), the
-phase it ended in and the modulation JM chose (docs/api.md).
+furthest phase the call reached (it never goes back) and the modulation
+chosen, and `data_reached`, whether data mode was reached. An orderly
+cleardown, ours or the far end's, after data mode reads error 0. The
+start-up failed if, and only if, the call ended and `data_reached` is 0
+(docs/api.md).
 
 ## Configuration that matters here
 

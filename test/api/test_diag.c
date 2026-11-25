@@ -202,6 +202,7 @@ static void test_failures(void)
     CHECK(startup_failed(&c.s, &c.d));
     CHECK(c.d.error != 0 && strcmp(v90m_err_name(c.d.error), "?") != 0);
     CHECK(c.d.selected == V90M_CONN_V92 || c.d.selected == V90M_CONN_V90);
+    CHECK_EQ_I(c.d.phase, V90M_PHASE_PHASE3); CHECK_EQ_I(c.d.data_reached, 0);
 
     /* V.34 chosen in V.8, silence from the answerer's Phase 3 on: the
      * failed training is a retrain (V.34 11.5), whose Phase 2 fails */
@@ -211,6 +212,7 @@ static void test_failures(void)
     CHECK(startup_failed(&c.s, &c.d));
     CHECK(c.d.error != 0 && strcmp(v90m_err_name(c.d.error), "?") != 0);
     CHECK_EQ_I(c.d.selected, V90M_CONN_V34);
+    CHECK_EQ_I(c.d.phase, V90M_PHASE_PHASE3); CHECK_EQ_I(c.d.data_reached, 0);
 
     /* V.32bis chosen in V.8, and the caller never answers our AC */
     pair(V90M_MOD_V32BIS, V90M_MOD_V32BIS | V90M_MOD_V22, V90M_PHASE_TRAIN, DATA_NONE, V90M_CONN_NONE, 60, &c, &a);
@@ -354,6 +356,12 @@ static void test_connected(void)
     CHECK_EQ_I(a.d.phase, V90M_PHASE_DATA);              /* the furthest reached */
     CHECK(a.d.error != 0 && strcmp(v90m_err_name(a.d.error), "?") != 0);
     CHECK_EQ_I(a.d.selected, V90M_CONN_V90);
+    CHECK_EQ_I(c.s.end, V90M_END_RETRAIN_FAILED);        /* the caller's side of it */
+    CHECK_EQ_I(c.d.data_reached, 1);
+    CHECK(!startup_failed(&c.s, &c.d));
+    CHECK_EQ_I(c.d.phase, V90M_PHASE_DATA);
+    CHECK(starts(v90m_err_name(c.d.error), "V90A_ERR_"));
+    CHECK_EQ_I(c.d.selected, V90M_CONN_V90);
 
     pair(V90M_MOD_V22, V90M_MOD_V22, CUT_NEVER, DATA_CHECK, V90M_CONN_V22BIS, 10, &c, &a);
     show("V.22bis to data mode (no cleardown signal: the call goes on)", &c, &a);

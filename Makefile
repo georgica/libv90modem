@@ -16,7 +16,7 @@
 #                        no allocation outside api/v90modem.o
 #   make check-headers   every header compiles alone with -I. -Iinclude (its includes
 #                        relative to itself); make check runs it
-#   make check-diag-names  every engine error has its name in v90m_err_name
+#   make check-diag-names  every engine error has its name in v90m_err_name, and every phase and modulation in its name helper
 #                        (tools/check-diag-names.sh); make check runs it
 #   make check-version   the Makefile's VERSION is the header's V90M_VERSION_*, README's
 #                        "This is X" and docs/getting-started.md's .so names; make

@@ -66,6 +66,12 @@ enum {
     ORIG_ERR_TIMEOUT = 1    /* the start-up ran past the calling modem's limit for its phase */
 };
 
+/* the last value of the public enums the name helpers cover: a value added to
+ * v90m_phase or v90m_conn needs its name in api/v90modem_diag.c and this
+ * changed (tools/check-diag-names.sh checks that it is the enum's last) */
+#define DG_LAST_PHASE V90M_PHASE_DATA
+#define DG_LAST_CONN  V90M_CONN_K56FLEX
+
 /* the number of codes in family f (1 .. that); 0 for none */
 #define DG_COUNT_V8   V8_ERR_NO_CM
 #define DG_COUNT_V21  V21_ERR_CARRIER

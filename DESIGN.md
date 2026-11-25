@@ -53,9 +53,15 @@ other side sees exactly the timing it would see sample by sample.
 
 `api/v90modem_diag.c` (the start-up diagnostics, `v90m_get_diag`) reads the
 modem too, never changes it: after each sample that did not end the call
-it keeps the modem's phase, the public phase and the modulation chosen;
-the cause of the end is read when asked, from the engine of that last
-phase, whose state nothing changes after the end. An error code is a
+it keeps the modem's phase, the furthest public phase reached (it never
+goes back) and the modulation chosen, and whether data mode was reached
+(`data_reached`: user data moved both ways, the same signal as
+`v90m_state.moving`); while data moves, the phase reached is data and
+the modem's own phase is the one last tracked, a sample skips the
+tracking (most of data mode: a retrain stops the data first); the cause of the end is read when asked, from the
+engine of that last phase, whose state nothing changes after the end. An
+orderly cleardown after data mode reads error 0; the start-up failed if
+the call ended and data mode was never reached. An error code is a
 family (an engine's enum of errors, or one of the causes no engine
 numbers) times 100 plus the engine's own number, named by the engine's own
 name.

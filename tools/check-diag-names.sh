@@ -28,6 +28,15 @@ for f in V8_ERR_:api/v90modem_diag.h V21_ERR_:api/v90modem_diag.h V22_ERR_:api/v
     fi
     n=$((n + $(printf '%s\n' "$have" | grep -c .)))
 done
+# the name helpers' tables end at the public enums' last values
+for e in v90m_phase:PHASE v90m_conn:CONN; do
+    last=$(awk -v t="${e%%:*}" '/typedef enum/ {buf=""; inenum=1; next} inenum && $0 ~ "}[ ]*" t ";" {print buf; exit} inenum {buf=buf $0 "\n"}' "$ROOT/include/v90modem.h" \
+           | sed 's,/\*.*\*/,,; s,/\*.*,,' | grep -oE 'V90M_[A-Z0-9_]+' | tail -1)
+    def=$(sed -n "s/^#define DG_LAST_${e#*:}[ ]*//p" "$ROOT/api/v90modem_diag.h" | tr -d ' ')
+    if [ -z "$last" ] || [ "$last" != "$def" ]; then
+        echo "diag names: ${e%%:*}'s last value is ${last:-?} but DG_LAST_${e#*:} is ${def:-?}: name the new value"; fail=1
+    fi
+done
 total=$(printf '%s\n' "$got" | grep -c .)
 [ "$n" -eq "$total" ] || { echo "diag names: $total names printed, $n in the families' headers"; fail=1; }
 [ $fail -eq 0 ] && echo "diag names: $n, each engine error named"
