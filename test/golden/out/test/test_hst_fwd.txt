@@ -159,4 +159,42 @@ level_step +6 dB, code 4: state 3; from 16000 data bits after it 0 errors in 100
 lock_loss: the carrier 40 Hz off at 14400: UNLOCKED in time; 0 bits after it; 2 s later state 5
   UNLOCKED within HST_FRX_LOCK_SYMS + 0.3 s, and kept: pass
   no bits after it: pass
-test_hst_fwd: 162 checks, 0 failures
+carrier_stop_noisy, 30 dB line, no loss, code 2: carrier or lock lost in time; 0 bits from 200 ms; 1 s on in data mode: no
+  NOCARRIER or UNLOCKED within 600 ms: pass
+  no bits from 200 ms, not back in data mode: pass
+carrier_stop_noisy, 30 dB line, no loss, code 4: carrier or lock lost in time; 0 bits from 200 ms; 1 s on in data mode: no
+  NOCARRIER or UNLOCKED within 600 ms: pass
+  no bits from 200 ms, not back in data mode: pass
+carrier_stop_noisy, 30 dB line, no loss, code 6: carrier or lock lost in time; 0 bits from 200 ms; 1 s on in data mode: no
+  NOCARRIER or UNLOCKED within 600 ms: pass
+  no bits from 200 ms, not back in data mode: pass
+carrier_stop_noisy, 25 dB line, no loss, code 2: carrier or lock lost in time; 0 bits from 200 ms; 1 s on in data mode: no
+  NOCARRIER or UNLOCKED within 600 ms: pass
+  no bits from 200 ms, not back in data mode: pass
+carrier_stop_noisy, 25 dB line, no loss, code 4: carrier or lock lost in time; 0 bits from 200 ms; 1 s on in data mode: no
+  NOCARRIER or UNLOCKED within 600 ms: pass
+  no bits from 200 ms, not back in data mode: pass
+carrier_stop_noisy, 25 dB line, no loss, code 6: carrier or lock lost in time; 0 bits from 200 ms; 1 s on in data mode: no
+  NOCARRIER or UNLOCKED within 600 ms: pass
+  no bits from 200 ms, not back in data mode: pass
+carrier_stop_noisy, 20 dB line, code 2: carrier or lock lost in time; 0 bits from 200 ms; 1 s on in data mode: no
+  NOCARRIER or UNLOCKED within 600 ms: pass
+  no bits from 200 ms, not back in data mode: pass
+carrier_stop_noisy, 20 dB line, code 4: carrier or lock lost in time; 0 bits from 200 ms; 1 s on in data mode: no
+  NOCARRIER or UNLOCKED within 600 ms: pass
+  no bits from 200 ms, not back in data mode: pass
+carrier_stop_noisy, 20 dB line, code 6: carrier or lock lost in time; 0 bits from 200 ms; 1 s on in data mode: no
+  NOCARRIER or UNLOCKED within 600 ms: pass
+  no bits from 200 ms, not back in data mode: pass
+carrier_stop_noisy, -40 dBm0 noise, code 2: carrier or lock lost in time; 0 bits from 200 ms; 1 s on in data mode: no
+  NOCARRIER or UNLOCKED within 600 ms: pass
+  no bits from 200 ms, not back in data mode: pass
+carrier_stop_noisy, -40 dBm0 noise, code 4: carrier or lock lost in time; 0 bits from 200 ms; 1 s on in data mode: no
+  NOCARRIER or UNLOCKED within 600 ms: pass
+  no bits from 200 ms, not back in data mode: pass
+carrier_stop_noisy, -40 dBm0 noise, code 6: carrier or lock lost in time; 0 bits from 200 ms; 1 s on in data mode: no
+  NOCARRIER or UNLOCKED within 600 ms: pass
+  no bits from 200 ms, not back in data mode: pass
+harsh_dropout: 100 ms at 9600, harsh line, +-7 Hz x +-100 ppm: 0 of 12 runs not recovered
+  every run: data mode kept, no error from 4000 bits after the cut: pass
+test_hst_fwd: 187 checks, 0 failures

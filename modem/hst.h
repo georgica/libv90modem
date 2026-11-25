@@ -175,17 +175,21 @@ int16_t hst_gf_tick(hst_gf_t *g, int16_t in);
  *          power at the set's (a level step of the line)
  * and three states the receiver ends in by itself, each listening for AB
  * again as IDLE does (what to do about them is the scheme's):
- *   NOCARRIER  the power under -48 dBm0 for HST_FRX_LOSS_MS in training or
- *          data. From HST_FRX_CLAMP_MS on, or as soon as the power is 10
- *          dB under its slow average, no bits come and nothing is adapted
- *          (the gain loop neither); should the power come back (over -45
- *          dBm0, and within 10 dB) before the loss, all goes on: a
- *          dropout. The equaliser and frequency are kept for the next
- *          training
- *   UNLOCKED   in data mode the error (over 256 symbols), for
- *          HST_FRX_LOCK_SYMS symbols, near what noise alone gives after
- *          the rate's decisions (-5.8, -12.8, -15.8, -19, -21.9 dB at codes
- *          2..6)
+ *   NOCARRIER  in training or data, the power low for HST_FRX_LOSS_MS:
+ *          under -48 dBm0, or 10 dB under the signal's level (taken at the
+ *          start, followed only while the receiver is well and within 3
+ *          dB of it, and set again by a level step's gain: held, not
+ *          decaying, so that line noise left after the carrier is not taken
+ *          for it). Low for HST_FRX_CLAMP_MS, or 10 dB under at once: no
+ *          bits, nothing adapted but the clock. Once counting, it counts
+ *          until the power is back (over -45 dBm0 and within 9 dB of the
+ *          level): back before HST_FRX_LOSS_MS, all goes on (a dropout).
+ *          The equaliser and frequency are kept for the next training
+ *   UNLOCKED   in data mode the error over 256 symbols above the rate's
+ *          lock threshold (lock_mse in hst_fwd.c: 1 dB under the noise
+ *          floor of its hard decisions; the thresholds are -5.8, -12.8,
+ *          -15.8, -19.0, -21.9 dB at codes 2..6) for HST_FRX_LOCK_SYMS
+ *          symbols, the gain loop's freezes included
  *   TRAINFAIL  no data mode HST_FRX_TRAIN_SYMS symbols after the start
  *          (S1's rest, S2 and the long S3 are 3220 or so)
  * The data bits come descrambled (GPC), in the order sent (HST sends each
@@ -203,7 +207,7 @@ enum {
 #define HST_FRX_AB_MS        40  /* AB heard this long before the receiver starts */
 #define HST_FRX_HOLD        100  /* symbols under -20 dB before tracking */
 #define HST_FRX_CLAMP_MS     20  /* no carrier this long: no bits, nothing adapted */
-#define HST_FRX_LOSS_MS     300  /* ... this long: NOCARRIER (a 100 ms dropout survives) */
+#define HST_FRX_LOSS_MS     200  /* ... this long: NOCARRIER (a 100 ms dropout survives) */
 #define HST_FRX_LOCK_SYMS  1200  /* data mode: symbols of poor error before UNLOCKED (0.5 s;
                                   * a 1 dB step at 14400 takes some 1000 to settle) */
 #define HST_FRX_TRAIN_SYMS 3600  /* symbols of training at most */
@@ -236,7 +240,7 @@ typedef struct {
     int32_t    abrun;                 /* samples AB has been there */
     /* training and data */
     int32_t    off;                   /* samples the carrier has been off */
-    int64_t    pslow;                 /* the power, slowly (2^-12 a sample) */
+    int64_t    pref;                  /* the signal's level (see NOCARRIER) */
     int32_t    mlock;                 /* data mode: the error over 256 symbols */
     int32_t    bad;                   /* data symbols it has been poor (lock_mse) */
     int32_t    g;                     /* the data mode's gain on qamrx's input, Q14 */
@@ -250,7 +254,7 @@ typedef struct {
     int32_t    fast;                  /* still on the fast steps */
     uint32_t   offw;                  /* off the 4 points: the last 8 symbols, bit 0 the newest */
     int32_t    mse;                   /* |e|^2 / |d|^2 (65536 = 0 dB), smoothed over 16 symbols */
-    int32_t    mse0;                  /* mse before the last 8 points */
+    int32_t    mse0;                  /* mse before the last 8 points, while none is off */
     int32_t    msh[8];                /* mse over the last 8 symbols */
     int32_t    hzr[8], hzi[8];        /* the last 8 points, for the decoder at the switch */
     uint32_t   sh;                    /* the last 8 decisions (A..D), 2 bits each, the newest lowest */

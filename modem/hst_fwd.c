@@ -188,18 +188,21 @@ int16_t hst_gf_tick(hst_gf_t *g, int16_t in)
 #define AB_PW_MIN  ((int64_t)112 * 112)   /* -43 dBm0 (RMS 112) */
 #define AB_RUN     (HST_FRX_AB_MS * 8)
 #define DPH600     322122547u      /* 600 / 8000 of 2^32, set to 0 every 40 samples */
-/* the carrier in training and data: off under -48 dBm0 (RMS 62), on again
- * over -45 dBm0 (RMS 88) */
+/* the carrier in training and data: low under -48 dBm0 (RMS 62) or 10 dB
+ * under the signal's level (pref); back over -45 dBm0 (RMS 88) and within
+ * 9 dB of it */
 #define FCD_OFF     ((int64_t)62 * 62)
 #define FCD_ON      ((int64_t)88 * 88)
 #define FCD_CLAMP   (HST_FRX_CLAMP_MS * 8)
 #define FCD_LOSS    (HST_FRX_LOSS_MS * 8)
-/* Data mode: the error over 256 symbols (mlock) over lock_mse[code] for
- * HST_FRX_LOCK_SYMS is UNLOCKED: 1 dB under what noise alone gives after
- * hard decisions (a uniform error over the set's cell, s^2 / 6 against the
- * set's power: -4.8, -11.8, -14.8, -18.0, -20.9 dB at codes 2..6; a flat
- * -10 dB never fires at 14400). A receiver getting over a level step is
- * well under it; the error over 16 symbols, nearer, put some of them out */
+/* The lock thresholds: data mode's error over 256 symbols (mlock) above
+ * lock_mse[code] for HST_FRX_LOCK_SYMS is UNLOCKED. Each is 1 dB under the
+ * noise floor of the rate's hard decisions (noise alone, decided to the
+ * nearest point, gives a uniform error over the set's cell: s^2 / 6 against
+ * the set's power, -4.8, -11.8, -14.8, -18.0, -20.9 dB at codes 2..6), so
+ * the thresholds are -5.8, -12.8, -15.8, -19.0, -21.9 dB (a flat -10 dB
+ * never fires at 14400). A receiver getting over a level step is well
+ * under them; the error over 16 symbols, nearer, put some of them out */
 static const int32_t lock_mse[7] = { 0, 0, 17238, 3439, 1724, 825, 423 };
 /* decisions on the 4 points */
 #define MU_FAST    9               /* qamrx_update's steps: training (8 diverges; at 10
@@ -310,7 +313,7 @@ void hst_frx_init(hst_frx_t *r)
     r->code = HST_OPEN_CODE;
     r->n40 = 0; r->ph6 = 0;
     r->lr = r->li = r->ur = r->ui = 0;
-    r->pw = r->pslow = 0;
+    r->pw = r->pref = 0;
     r->l0r = r->l0i = r->u0r = r->u0i = 0;
     listen(r, HST_FRX_IDLE);
     train_reset(r);
@@ -394,7 +397,7 @@ static void start(hst_frx_t *r)
     }
     r->state = HST_FRX_TRAIN;
     train_reset(r);
-    r->pslow = r->pw;
+    r->pref = r->pw;
 }
 
 /* AB: both band-edge tones, a sample (the power is the tick's); 1 when it
@@ -526,7 +529,23 @@ static void hold(hst_frx_t *r, int32_t dr, int32_t di)
     if (r->state == HST_FRX_DATA) {
         r->mlock += (int32_t)((e2 - r->mlock) / 256);
         if (r->mlock <= lock_mse[r->code]) r->bad = 0;
-        else if (!r->gstep) r->bad++;  /* not while a level step is being set right */
+        else r->bad++;                /* the gain loop's freezes too: one that does not end
+                                       * (the power over 10 dB down) is a loss */
+    }
+}
+
+/* x / (2 pt), pt = set_pw[code] U^2 = set_pw x 2^20, exactly as the 64-bit
+ * division would give it (two truncating divisions by positive numbers
+ * are one), with no 64-bit division by a variable: x / 2^21 (here |x| <
+ * 2^47, the quotient under 2^26), then by the set's power as a constant */
+typedef char u_is_2_10[(U == 1024) ? 1 : -1];
+static int32_t div_2pt(int64_t x, int code)
+{
+    int32_t y = (int32_t)(x / ((int64_t)1 << 21));
+    switch (set_pw[code]) {
+    case 42: return y / 42;
+    case 41: return y / 41;
+    default: return y / 40;
     }
 }
 
@@ -537,6 +556,7 @@ static void gain_set(hst_frx_t *r, int64_t pt, int64_t pz)
     r->g = (int32_t)(g < G_MIN ? G_MIN : g > G_MAX ? G_MAX : g);
     r->pz = r->pz8 = r->pzl = pt;
     r->gcnt = -G_FLUSH;
+    r->pref = r->pw;                  /* the signal's level is the new one */
 }
 
 /* the data mode's gain loop, on a point */
@@ -565,22 +585,31 @@ static void gain(hst_frx_t *r)
         if (step) return;
     } else r->gcnt = 0;
     {
-        /* g d / 2 pt, then 2^-8 or 2^-10 (constant divisions: no 64-bit
-         * division by a variable a second time on ARMv5) */
-        int64_t q = r->g * d / (2 * pt);
-        r->g += (int32_t)(d > pt / 16 || d < -pt / 16 ? q / 256 : q / 1024);
+        /* g d / 2 pt, then 2^-8 or 2^-10 */
+        int32_t q = div_2pt(r->g * d, r->code);
+        r->g += d > pt / 16 || d < -pt / 16 ? q / 256 : q / 1024;
     }
     r->g = r->g < G_MIN ? G_MIN : r->g > G_MAX ? G_MAX : r->g;
+}
+
+/* qamrx's update with nothing adapted but the clock: its own point as the
+ * decision, a zero error, so that the timing loop's integrator still
+ * corrects the clock (flags 0 stopped it: a 100 ms dropout at 9600 with
+ * 100 ppm then lost lock) */
+static void clock_only(hst_frx_t *r)
+{
+    qamrx_update(&r->q, r->q.zr, r->q.zi, QRX_TIMING, MU_DATA);
 }
 
 static void symbol(hst_frx_t *r)
 {
     int32_t zr = r->q.zr, zi = r->q.zi, dr = 0, di = 0;
     int k, st = 0, x, y;
-    if (r->off >= FCD_CLAMP || r->pw * 10 < r->pslow) {
+    if (r->off >= FCD_CLAMP || r->pw * 10 < r->pref) {
         /* no carrier (yet): nothing decided, nothing adapted, no bits; the
-         * carrier's phase moves on; the level taken as it was */
-        qamrx_update(&r->q, 0, 0, 0, MU_DATA);
+         * carrier's phase moves on, and the clock's correction (a zero
+         * error: its integrator alone); the level taken as it was */
+        clock_only(r);
         if (r->state == HST_FRX_DATA) r->pz = r->pz8 = r->pzl = (int64_t)set_pw[r->code] * U * U;
         r->gcnt = 0;
         return;
@@ -601,10 +630,14 @@ static void symbol(hst_frx_t *r)
         thr = thr < OFF2_MIN ? OFF2_MIN : thr > OFF2_MAX ? OFF2_MAX : thr;
         off = er * er + ei * ei > thr;
         r->offw = ((r->offw << 1) | (uint32_t)off) & 0xFFu;
-        /* the error before the last 8 points (once taken only when none of
-         * them was off, which biased it low on a poor line: data mode was
-         * declared at 6 dB) */
-        r->mse0 = r->msh[r->nsym & 7];
+        /* the error before the last 8 points, while none of them is off,
+         * then held: so that data's first points, which raise the error,
+         * do not shut the gate before 4 of them are counted (on a 20 dB
+         * line the error is near -19 dB, and the hold never comes). Taken
+         * from before the window (the error over 16 symbols 8 back does
+         * not overlap it): r->mse itself, taken then, was biased low on a
+         * poor line, and data mode was declared at 6 dB */
+        if (r->offw == 0) r->mse0 = r->msh[r->nsym & 7];
         r->msh[r->nsym & 7] = r->mse;
         r->sh = ((r->sh << 2) | (uint32_t)st) & 0xFFFFu;
         if (r->nsym >= 8 && ((r->sh ^ (r->sh >> 4)) & 0x0FFFu) == 0 && (r->sh & 3u) != ((r->sh >> 2) & 3u)) r->alt = 0;
@@ -613,8 +646,9 @@ static void symbol(hst_frx_t *r)
          * equaliser, adapted on them, would wander everywhere else. A point
          * off the 4 is likely data's, and its decision wrong: nothing is
          * adapted on it (the carrier's phase moves on) */
-        qamrx_update(&r->q, dr, di, off ? 0 : TRAIN_FLAGS(r->fast) & (r->alt > 0 && r->nsym > 8 ? ~0 : ~QRX_EQ),
-                     r->fast ? MU_FAST : MU_SLOW);
+        if (off) clock_only(r);
+        else qamrx_update(&r->q, dr, di, TRAIN_FLAGS(r->fast) & (r->alt > 0 && r->nsym > 8 ? ~0 : ~QRX_EQ),
+                          r->fast ? MU_FAST : MU_SLOW);
         power(r, dr, di);
         hold(r, dr, di);
         for (n = 0, w = r->offw; w; w &= w - 1) n++;
@@ -637,11 +671,12 @@ static void symbol(hst_frx_t *r)
             put_bit(r, v32_descramble(&r->dscr, 0, (q >> 1) & 1));
             put_bit(r, v32_descramble(&r->dscr, 0, q & 1));
         }
-        qamrx_update(&r->q, dr, di, r->gstep ? 0 : QRX_EQ | QRX_CARRIER | QRX_TIMING, r->fast ? MU_DFAST : MU_DATA);
+        if (r->gstep) clock_only(r);
+        else qamrx_update(&r->q, dr, di, QRX_EQ | QRX_CARRIER | QRX_TIMING, r->fast ? MU_DFAST : MU_DATA);
     } else {
         vit_point(r, zr, zi, &dr, &di);
-        qamrx_update(&r->q, dr, di, r->gstep ? 0 : QRX_EQ | QRX_CARRIER | QRX_TIMING | QRX_DENSE,
-                     r->fast ? MU_DFAST : MU_DATA);
+        if (r->gstep) clock_only(r);
+        else qamrx_update(&r->q, dr, di, QRX_EQ | QRX_CARRIER | QRX_TIMING | QRX_DENSE, r->fast ? MU_DFAST : MU_DATA);
     }
     power(r, dr, di);
     hold(r, dr, di);
@@ -664,16 +699,20 @@ int hst_frx_tick(hst_frx_t *r, int16_t x)
         if (ab_hear(r, y)) start(r);
         return 0;
     }
-    /* the carrier: a dropout clamps; a loss is NOCARRIER, its equaliser kept */
-    if (r->pw < FCD_OFF) {
-        if (r->off < FCD_LOSS) r->off++;
-        if (r->off >= FCD_LOSS) {
+    /* the carrier: a dropout clamps; a loss is NOCARRIER, its equaliser
+     * kept. Once counting, the count goes on until the power is back (a
+     * level between the two would otherwise clamp for ever) */
+    if (r->pw < FCD_OFF || r->pw * 10 < r->pref || (r->off > 0 && (r->pw <= FCD_ON || r->pw * 8 <= r->pref))) {
+        if (++r->off >= FCD_LOSS) {
             hst_frx_store(r, &r->eq);
             listen(r, HST_FRX_NOCARRIER);
             return 0;
         }
-    } else if (r->pw > FCD_ON) r->off = 0;
-    r->pslow += (r->pw - r->pslow) / 4096;
+    } else {
+        r->off = 0;
+        /* the level follows the signal while the receiver is well, within 3 dB */
+        if (!r->gstep && r->pw * 2 > r->pref && r->pw < 2 * r->pref) r->pref += (r->pw - r->pref) / 4096;
+    }
     /* rounded (an arithmetic shift, DESIGN.md): y itself at G_ONE */
     v = (int32_t)(((int64_t)y * r->g + (1 << 13)) >> 14);
     v = v > 32767 ? 32767 : v < -32768 ? -32768 : v;

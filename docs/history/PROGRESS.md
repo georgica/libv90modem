@@ -4692,10 +4692,11 @@ signal. 10^5 data bits a case (BER < 1e-5), 10^4 under TEST_SHORT.
     300 ms, all goes on. The equaliser and frequency are kept for the next
     training.
   - `HST_FRX_UNLOCKED`: in data mode the error over 256 symbols above
-    `lock_mse[code]` for 1200 symbols. The thresholds are 1 dB under what
-    noise alone gives after the rate's hard decisions (s^2 / 6 over the
-    set's power: -4.8, -11.8, -14.8, -18.0, -20.9 dB at codes 2..6). A flat
-    -10 dB never fires at 14400, where garbage reads -21 dB.
+    `lock_mse[code]` for 1200 symbols. The thresholds, -5.8, -12.8,
+    -15.8, -19.0, -21.9 dB at codes 2..6, are 1 dB under the noise floor
+    of the rate's hard decisions (noise alone, decided to the nearest
+    point: s^2 / 6 over the set's power, -4.8, -11.8, -14.8, -18.0, -20.9
+    dB). A flat -10 dB never fires at 14400, where garbage reads -21 dB.
   - `HST_FRX_TRAINFAIL`: no data mode 3600 symbols after the start.
   - The data-mode gate's `mse0` is now the error 8 symbols back. Taken
     only when none of the last 8 points was off, it was biased low on a
@@ -4769,3 +4770,75 @@ init option (V.34 untouched). The Viterbi decoder stays as it is (V.32bis's).
                    re-recorded (its own); replay 636 and bench 17 identical:
                    V.34, V.90/V.92 and k56d unchanged by the qamrx additions;
                    armv7hf and big-endian short-cmp 135 identical)
+
+### hst 16, review fixes, second round (2026-11-25)
+
+- **Carrier loss against the data's level.** A loss went unseen when the
+  line's noise, left after the carrier, stayed above -48 dBm0: the
+  receiver stayed in data mode at full rate (30 and 25 dB lines), or saw
+  it only after 6-10 s (20 dB, -40 dBm0 of noise). The relative clamp
+  compared with a mean that decayed (2^-12 a sample), so it let go after
+  some 2 s; and the gain loop's freeze, which a power more than 10 dB
+  down never ends, kept the lock count at 0.
+  - Low is now under -48 dBm0, or 10 dB under the signal's level `pref`.
+    That level is taken at the start, follows the signal only while the
+    receiver is well and within 3 dB of it, and is set again with a level
+    step's gain: held, not decaying.
+  - Low for HST_FRX_LOSS_MS (now 200 ms) is NOCARRIER.
+  - Once counting, the count goes on until the power is back (over -45
+    dBm0 and within 9 dB of the level). A level between the two no longer
+    clamps for ever (the dead band).
+  - The lock count runs through the gain loop's freezes as well.
+- **The clock through clamps and freezes.** The clamp, the gain loop's
+  freezes and training's off-grid points called qamrx_update with no
+  flags, and with QRX_TIMING off qamrx's clock integrator is not applied.
+  A 100 ms dropout at 9600 on the harsh line at -7 Hz lost lock on 3 of
+  12 seeds. They now pass the point as its own decision with QRX_TIMING
+  alone (`clock_only`): a zero error, the integrator still on (the
+  reviewer's variant). The harsh line: 12 of 12 recovered, 0 errors
+  (`harsh_dropout`).
+- **The data gate's `mse0`**: the error 8 symbols back, but taken only
+  while none of the last 8 points is off, then held. Round 1's "8 back"
+  rose with data's first points and shut the gate before 4 were counted:
+  on a 20 dB line, where the error sits near -19 dB and the hold never
+  comes, 9600's long training ended in TRAINFAIL on 2 of 24 seeds. The
+  error taken from before the window does not overlap it: not the
+  selection bias that declared data mode at 6 dB.
+- **Gain loop division.** `g d / 2pt` is computed as `(g d / 2^21) /
+  set_pw[code]`, the second a 32-bit division by a constant (two
+  truncating divisions by positive numbers are one, so the result is
+  exactly the 64-bit division's). There is no 64-bit division by a
+  variable.
+- **Names.** "The lock thresholds" (-5.8 ... -21.9 dB, `lock_mse`) and
+  "the noise floor of the rate's hard decisions" (-4.8 ... -20.9 dB) are
+  named so in hst.h, hst_fwd.c and here.
+- **Ruling:** no fourth qamrx function. UNLOCKED, then the scheme's
+  retrain, is acceptable for the level steps that do not recover.
+
+`test_hst_fwd` (golden re-recorded: 162 -> 187 checks, the old lines
+unchanged; bm unchanged), new cases:
+
+| case | what it checks |
+|---|---|
+| `carrier_stop_noisy` | the caller stops, the noise left above -48 dBm0 (30 and 25 dB lines with no loss, a 20 dB line, -40 dBm0 of noise; codes 2, 4, 6): NOCARRIER at 275 ms on every one, no bits from 200 ms |
+| `harsh_dropout` | 12 runs recovered, 0 errors |
+
+    seed sweep (scratch, 24 seeds, 10^4 bits): acq_*, offsets, stored_eq,
+                   trn_as_ones, carrier_*, train_fail, lock_loss,
+                   carrier_stop_noisy, harsh_dropout: 0 failures;
+                   level_step: 91 of 96 runs clean, 5 end UNLOCKED (-1 dB
+                   at 14400 twice, +3 dB at 14400 once, +6 dB at 9600
+                   twice); dropout (mild line): 2 of 24 slow at 14400
+                   (errors past 4000 bits, data mode kept); on 72 more
+                   seeds 3 slow, the same 3 of 72 with round 1's receiver:
+                   not new
+    build/test_hst_fwd -> test_hst_fwd: 187 checks, 0 failures
+    make check-hst-bm -> test_hst_fwd: 123 checks, 0 failures (unchanged)
+    clang -fsanitize=undefined, both profiles -> identical to gcc's
+    qemu-arm ARMv5 short set -> 187 checks, 0 failures, identical to the
+                   host's -DTEST_FORCE_SHORT (498 s; tools/test-times.txt)
+    CPU, ARMv5, the bench as before (14400 data): 30.67 M; the receiver
+                   alone about 29.7 M; no 64-bit division in the profile
+    make verify -> VERIFY PASS (862 s; golden 150 identical, test_hst_fwd's
+                   re-recorded (its own); replay 636 and bench 17
+                   identical; armv7hf and big-endian short-cmp 135)

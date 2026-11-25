@@ -52,8 +52,9 @@
  *                 -40 dB; through the transmitter and the receiver as it
  *                 starts (matched filter, AB's timing, nothing adapted;
  *                 noiseless, no line): 25 dB or more
- *   carrier_loss  the caller stops in data mode (codes 2, 4, 6): NOCARRIER
- *                 within HST_FRX_LOSS_MS + 200 ms, no bits from 200 ms on
+ *   carrier_loss  the caller stops in data mode, the line quiet (codes 2,
+ *                 4, 6): NOCARRIER within HST_FRX_LOSS_MS + 200 ms, no bits
+ *                 from 200 ms on
  *   carrier_return the line cut 1 s at 14400: NOCARRIER; the data back
  *                 without a training: still NOCARRIER, no bits; a short
  *                 training then starts from the equaliser kept at the loss
@@ -65,6 +66,13 @@
  *                 mode: data mode kept, no error from 16000 data bits on
  *   lock_loss     the line's carrier 40 Hz off at 14400: UNLOCKED within
  *                 HST_FRX_LOCK_SYMS + 0.3 s, no bits after it
+ *   carrier_stop_noisy  the caller stops, the line's noise left above -48
+ *                 dBm0 (30 and 25 dB lines with no loss, a 20 dB line, -40
+ *                 dBm0 of noise; codes 2, 4, 6): NOCARRIER or UNLOCKED
+ *                 within 600 ms, no bits from 200 ms on
+ *   harsh_dropout 100 ms at 9600 on an 8-tap line with 16 dB of loss, at
+ *                 +-7 Hz x +-100 ppm, 3 seeds each (1 in the short set):
+ *                 every run recovered
  *
  * The program also runs under make check-hst-bm (HST_PROFILE_BM), where
  * every training is V.17's long train; there cases 4 and on are
@@ -813,25 +821,31 @@ static int fp_bit(void *user)
 }
 static double fp_tx(void *user, double rx) { (void)rx; return hst_ftx_tick(&((fpeer_t *)user)->tx); }
 
-/* the line: mu-law, 6 dB of loss, test_v22bis's "mild" loop, 25 ms, noise
- * 30 dB under the signal at the answerer; hz and ppm of offset */
+/* the line: mu-law, floss dB of loss (6), test_v22bis's "mild" loop (or,
+ * fharsh, an 8-tap dispersive one), 25 ms, noise fsnr dB (30) under the
+ * signal at the answerer, or at fnoise dBm0 when that is over -200; hz and
+ * ppm of offset */
 static const double floop[] = { 0.3, 1.0, -0.5, 0.3 };
+static const double fhloop[] = { 0.12, 0.45, 1.0, -0.55, 0.32, -0.2, 0.1, -0.05 };
+static double fsnr = 30, floss = 6, fnoise = -300;
+static int fharsh;
 static double dbm0_of(double rms) { return 20 * log10(rms / v32line_rms(0)); }
-static double fsnr = 30;          /* the line's SNR, dB */
 static void fline(v32line_t *l, double hz, double ppm, uint32_t seed)
 {
     v32line_cfg c;
+    const double *tp = fharsh ? fhloop : floop;
+    int nt = fharsh ? 8 : 4;
     double g = 0, re, im;
     int f, k, n = 0;
     for (f = 600; f <= 3000; f += 10, n++) {          /* the loop's mean power gain over the band */
-        for (re = im = 0, k = 0; k < 4; k++) { re += floop[k] * cos(2 * PI * f * k / FS); im -= floop[k] * sin(2 * PI * f * k / FS); }
+        for (re = im = 0, k = 0; k < nt; k++) { re += tp[k] * cos(2 * PI * f * k / FS); im -= tp[k] * sin(2 * PI * f * k / FS); }
         g += re * re + im * im;
     }
     memset(&c, 0, sizeof c);
-    c.mulaw = 1; c.loss_db = 6; c.delay = 200; c.taps = floop; c.ntaps = 4;
+    c.mulaw = 1; c.loss_db = floss; c.delay = 200; c.taps = tp; c.ntaps = nt;
     c.near_db = c.far_db = c.c_near_db = c.c_far_db = 300;
     c.noise_c_dbm0 = -300;
-    c.noise_a_dbm0 = dbm0_of(FLEVEL * pow(10, -6 / 20.0) * sqrt(g / n)) - fsnr;
+    c.noise_a_dbm0 = fnoise > -200 ? fnoise : dbm0_of(FLEVEL * pow(10, -floss / 20.0) * sqrt(g / n)) - fsnr;
     c.freq_offset = hz; c.ppm = ppm; c.seed = seed;
     v32line_init(l, &c);
 }
@@ -865,9 +879,9 @@ typedef struct {
 } fres_t;
 
 /* the caller's data in the receiver's bits, by the place of the last 64
- * bits received among those sent; then the errors over NB bits from data
+ * bits received among those sent; then the errors over nb bits from data
  * bit `from` */
-static void compare(fres_t *o, long from)
+static void compare_n(fres_t *o, long from, long nb)
 {
     long i0 = nrx - 64, k, j;
     o->found = 0; o->off = 0; o->errs = o->cmp = 0; o->last = 0;
@@ -881,10 +895,11 @@ static void compare(fres_t *o, long from)
     o->off = i0 - k;
     for (j = 0; j < P.n && o->off + j < nrx && j < NLOG; j++) {
         if (o->off + j < 0) continue;
-        if (rxb[o->off + j] != txb[j]) { o->last = j + 1; if (j >= from && j < from + NB) o->errs++; }
-        if (j >= from && j < from + NB) o->cmp++;
+        if (rxb[o->off + j] != txb[j]) { o->last = j + 1; if (j >= from && j < from + nb) o->errs++; }
+        if (j >= from && j < from + nb) o->cmp++;
     }
 }
+static void compare(fres_t *o, long from) { compare_n(o, from, NB); }
 
 /* a training at `code` (long or short) from silence, then data until the
  * caller has sent NB + 2000 bits; the receiver as it is (hst_frx_init, or
@@ -1184,6 +1199,81 @@ static void lock_loss(void)
     bound("UNLOCKED within HST_FRX_LOCK_SYMS + 0.3 s, and kept", at >= 0 && at <= HST_FRX_LOCK_SYMS * 10 / 3 + FS * 3 / 10 && hst_frx_state(&R) == HST_FRX_UNLOCKED);
     bound("no bits after it", after == 0);
 }
+
+/* The caller stops in data mode and the line's noise stays, above -48
+ * dBm0: on a 30 dB and a 25 dB line with no loss (noise about -44 and -39
+ * dBm0), on a 20 dB line, and with -40 dBm0 of noise; codes 2, 4, 6.
+ * NOCARRIER or UNLOCKED within 600 ms of the stop, no bits from 200 ms
+ * on, and data mode not back 1 s on */
+static void carrier_stop_noisy(void)
+{
+    static const double snr[4] = { 30, 25, 20, 0 }, loss[4] = { 0, 0, 6, 6 }, noise[4] = { -300, -300, -300, -40 };
+    static const char *name[4] = { "30 dB line, no loss", "25 dB line, no loss", "20 dB line", "-40 dBm0 noise" };
+    static const int codes[3] = { 2, 4, 6 };
+    int l, c;
+    for (l = 0; l < 4; l++) for (c = 0; c < 3; c++) {
+        long n, at = -1, n0, after = 0;
+        int st;
+        fsnr = snr[l]; floss = loss[l]; fnoise = noise[l];
+        fdata(codes[c], 1300u + 10u * (uint32_t)l + (uint32_t)codes[c], 4000);
+        fsnr = 30; floss = 6; fnoise = -300;
+        if (noise[l] > -200) fnoise = -300;
+        hst_ftx_stop(&P.tx);
+        for (n = 0; n < FS; n++) {
+            n0 = nrx;
+            ftick();
+            if (n >= FS / 5) after += nrx - n0;
+            st = hst_frx_state(&R);
+            if (at < 0 && (st == HST_FRX_NOCARRIER || st == HST_FRX_UNLOCKED)) at = n;
+        }
+        st = hst_frx_state(&R);
+        printf("carrier_stop_noisy, %s, code %d: carrier or lock lost %s; %ld bits from 200 ms; 1 s on in data mode: %s\n",
+               name[l], codes[c], at >= 0 && at <= FS * 6 / 10 ? "in time" : "LATE OR NEVER", after, st == HST_FRX_DATA ? "yes" : "no");
+        if (verbose) printf("  (state %d %.1f ms after the stop)\n", st, at / 8.0);
+        bound("NOCARRIER or UNLOCKED within 600 ms", at >= 0 && at <= FS * 6 / 10);
+        bound("no bits from 200 ms, not back in data mode", after == 0 && st != HST_FRX_DATA);
+    }
+}
+
+/* A 100 ms cut at 9600 on the harsh line (8 taps, 16 dB of loss), at the
+ * four corners of +-7 Hz and +-100 ppm, three seeds each (one in the short
+ * set): data mode kept, no error in the HD_NB bits from 4000 data bits
+ * after the cut. (Before the clock's correction went on through the
+ * clamp, 3 of 12 lost lock.) */
+#ifdef TEST_SHORT
+#define HD_SEEDS 1
+#else
+#define HD_SEEDS 3
+#endif
+#define HD_NB 20000L
+static void harsh_dropout(void)
+{
+    int k, sd, bad = 0, runs = 0;
+    for (k = 0; k < 4; k++) for (sd = 0; sd < HD_SEEDS; sd++) {
+        double hz = (k & 1) ? 7 : -7, ppm = (k & 2) ? 100 : -100;
+        int left = 0;
+        long n, ev;
+        fres_t o;
+        fharsh = 1; floss = 16;
+        fstart(4, hz, ppm, 1400u + 10u * (uint32_t)k + (uint32_t)sd);
+        nrx = 0; P.n = 0;
+        hst_ftx_train(&P.tx, 4, 1);
+        frun_bits(4000, 8);
+        ev = P.n;
+        fscale = 0;
+        for (n = 0; n < FS / 10; n++) { ftick(); left |= hst_frx_state(&R) != HST_FRX_DATA; }
+        fscale = 1;
+        while (P.n < ev + 4000 + HD_NB + 2000) { ftick(); left |= hst_frx_state(&R) != HST_FRX_DATA; }
+        fharsh = 0; floss = 6;
+        compare_n(&o, ev + 4000, HD_NB);
+        runs++;
+        bad += left || !o.found || o.cmp != HD_NB || o.errs != 0;
+        if (verbose) printf("  (%+d Hz %+d ppm seed %d: %s, %ld errors in %ld, the last %ld bits after the cut)\n",
+                            (int)hz, (int)ppm, sd, left ? "LEFT" : "kept", o.errs, o.cmp, o.last - ev);
+    }
+    printf("harsh_dropout: 100 ms at 9600, harsh line, +-7 Hz x +-100 ppm: %d of %d runs not recovered\n", bad, runs);
+    bound("every run: data mode kept, no error from 4000 bits after the cut", bad == 0);
+}
 #else
 static void acq_v17(void)
 {
@@ -1274,7 +1364,7 @@ int main(int argc, char **argv)
 #ifdef HST_PROFILE_BM
     int only = t_case_arg(argc, argv, 7);
 #else
-    int only = t_case_arg(argc, argv, 19);
+    int only = t_case_arg(argc, argv, 21);
 #endif
     verbose = getenv("HST_VERBOSE") != NULL;
     if (T_CASE(only, 1)) pulse_points();
@@ -1302,6 +1392,8 @@ int main(int argc, char **argv)
     if (T_CASE(only, 17)) train_fail();
     if (T_CASE(only, 18)) level_step();
     if (T_CASE(only, 19)) lock_loss();
+    if (T_CASE(only, 20)) carrier_stop_noisy();
+    if (T_CASE(only, 21)) harsh_dropout();
 #endif
     T_REPORT("test_hst_fwd");
 }
