@@ -14,6 +14,9 @@
 #include "hst_tabs.h"
 #include "../v32/v32.h"
 
+/* v32tx's history is as long as the forward pulse, and no longer */
+typedef char hst_fl_is_v32_txl_max[(HST_FL == V32_TXL_MAX) ? 1 : -1];
+
 /* ---------------- the back channel's transmitter ---------------- */
 #define HST_BTX_PRE_MS 300            /* preamble: scrambled ones [OURS] */
 

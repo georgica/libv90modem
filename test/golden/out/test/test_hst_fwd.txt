@@ -1,0 +1,4 @@
+pulse_points: 30 symbols; 700-2900 Hz -0.13 to 0.02 dB, 600 Hz -3.19, 3000 Hz -3.19, >= 3200 Hz -45.6, <= 400 Hz -45.9; level 3036 (V.32's 3036)
+guard: 407 taps, >= 560 Hz -0.02 to 0.02 dB, 250-500 Hz at most -51.4 dB
+v32_default: line 0x62AA7B75, reference 0x3C258E9C
+test_hst_fwd: 16 checks, 0 failures

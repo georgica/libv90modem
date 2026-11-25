@@ -189,9 +189,11 @@ firmware's DSP (BF §3).
 - The DSP sample rate is 7200 Hz (BF §0). [FW]
 - Our pulse: root-raised-cosine with beta = 1/12. Flat to (1 - beta) x 1200 =
   1100 Hz, -3 dB at 1200 Hz, nominally zero beyond 1300 Hz; the channel spans
-  500 to 3100 Hz. `gen_hst_tabs.py` makes the table about 24 symbols long,
-  for -40 dB at 400 Hz and below; a unit test checks the three firmware
-  points (SPEC D11; spec "Forward channel: transmitter"). [OURS]
+  500 to 3100 Hz. `gen_hst_tabs.py` makes the table 30 symbols long
+  (Kaiser window, beta 1.75), for -40 dB at 400 Hz and below with the -3 dB
+  points within 0.2 dB (at 24 symbols the window pulls them to about -3.5
+  dB); a unit test checks the three firmware points (SPEC D11; spec
+  "Forward channel: transmitter"; hst 14 in PROGRESS.md). [OURS]
 - `v32tx` gets a pulse-table pointer and length defaulting to V.32's own 25 %
   table, so V.32's output stays byte-identical (spec "`v32tx` change"). [OURS]
 - Guard filters: a high-pass before the forward receiver (stop below 480 Hz,

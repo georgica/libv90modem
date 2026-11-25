@@ -4398,3 +4398,43 @@ preamble included, on 22.5 + 45 k within 1.6 degrees, each step within 2.6),
     make bench-hashes  -> bench hashes: 17 identical
     make verify        -> VERIFY PASS (692 s; golden 148 identical, test_hst_back's new;
                           armv7hf and big-endian short-cmp identical; ubsan pass)
+
+## hst 14: the forward pulse, v32tx's pulse pointer, guard filter (2026-11-25)
+
+`v32tx_t` gains `const int16_t *pulse; int pulse_len;` (v32tx_init: `v32_txh`,
+`V32_TXL`) and `v32tx_set_pulse()`. The symbol history grows to
+`V32_TXL_MAX + V32_TXD` (`V32_TXL_MAX` 30 = `HST_FL`, a compile-time check in
+`modem/hst.h`); the shift and the line filter are bounded by the pulse in use,
+the echo canceller's reference keeps V.32's pulse. `sizeof(v32tx_t)` 112 -> 160
+on x86-64 (148 on ARMv5); `sizeof(v32_t)` 36472 -> 36520; `answer_t` and
+`v90m_mem_size()` unchanged (106320 x86-64, 106016 ARMv5: test_api on both).
+
+`tools/gen_hst_tabs.py` (extended: `tab_fpulse`, `tab_guard`; `design()` takes
+the transition width that starts its search, default unchanged, so the
+earlier tables are byte-identical):
+- `hst_fpulse[10][HST_FL][2]`: RRC beta 1/12, Kaiser window, v32_txh's layout,
+  scaled to V.32's line RMS (`v32_tx_rms_q12` 17072, so v32tx's gain holds).
+  The shortest length meeting the firmware's points with margin is 30 symbols
+  (window beta 1.75): +-1100 Hz -0.13..0.03 dB, +-1200 Hz -3.19 dB, <= -45.7 dB
+  1400 Hz off and beyond. At 24 symbols the window pulls the -3 dB points to
+  -3.5 dB (beta 2) or loses the -40 dB (beta <= 1.5).
+- `hst_guard`: 407 taps, Kaiser high-pass, cut-off 530 Hz: >= 560 Hz within
+  0.02 dB, <= -51.4 dB over 0-500 Hz. About 3.3 M MAC/s at 8000 Hz (half with
+  the symmetry): a candidate for the "cheaper guard filter" lever.
+
+`test_hst_fwd` (new; its golden file is new): `pulse_points` measures the
+pulse from 10 s of random data with each Welch frame's power divided by that
+of the symbols sent in it (a plain Welch estimate wandered +-0.6 dB from data
+randomness alone); `guard`; `v32_default` (FNV-1a of 10 000 samples and
+references through every transmit mode, recorded from a44426a's v32/).
+
+    make -s build/test_hst_fwd (before the code) -> error: 'v32tx_t' has no member named 'pulse' ...
+    build/test_hst_fwd -> test_hst_fwd: 16 checks, 0 failures
+      pulse_points: 30 symbols; 700-2900 Hz -0.13 to 0.02 dB, 600 Hz -3.19, 3000 Hz -3.19,
+                    >= 3200 Hz -45.6, <= 400 Hz -45.9; level 3036 (V.32's 3036)
+      guard: 407 taps, >= 560 Hz -0.02 to 0.02 dB, 250-500 Hz at most -51.4 dB
+      v32_default: line 0x62AA7B75, reference 0x3C258E9C
+    api_test_api (x86-64, ARMv5 under qemu) -> 0 failures, pins unchanged
+    make verify -> VERIFY PASS (1104 s; golden 149 identical, test_hst_fwd's new;
+                   bench hashes 17 identical; replay 636 identical; armv7hf and
+                   big-endian short-cmp identical; ubsan pass; fixed 0 float helpers)
