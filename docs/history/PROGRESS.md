@@ -4546,3 +4546,137 @@ Review fixes (task-8-review.md):
   bump `epoch` once it has followed one, or our back-channel LTs stay held
   up to 12 s (`MNP_HST_HOLD_MAX_MS`).
     make verify (fix round 1)          -> VERIFY PASS (461 s; golden 149 identical, replay 636, bench, ubsan, a7, big-endian, fixed); re-recorded: v42/test_ec_hst.txt (its own)
+
+## hst 9: the public API for HST; milestone 2 (2026-11-25)
+
+The public face of the HST link and the numbers HST will report:
+
+- `V90M_MOD_HST` 0x0400: answering only (`V90M_ENOTSUP` calling), needs
+  no other bit, in `V90M_MOD_ALL` only (not the defaults, not the calling
+  side's); `modes_of` gives `ANS_MODE_HST` 0x400000. `ANS_MODE_HST_LINKED`
+  0x800000 is the link, in the same `modes` word (`answer_t` does not
+  grow). test_api's unknown-bit check moves to 0x0800.
+- `V90M_CONN_HST` 12 = `ANS_MOD_HST` (the `SAME` check), its name "HST"
+  (`DG_LAST_CONN`); `V90M_END_HST_FAILED` appended to `v90m_end`, and
+  `ANS_END_HST_FAILED` to the answerer's enum and `ans_end[]` in the same
+  place; `v90m_stats.reversals` appended (0 until the HST engine).
+- `v90m_ec_link_hst(e, m)`: `V90M_OK`; `V90M_EINVAL` for either NULL, `e`
+  with MNP off (or an originator, whose MNP is always off), `m` calling;
+  `V90M_ESTATE` once `m` has left `ANS_V8`/`ANS_V8BIS`
+  (`answer_hst_decided`). The endpoint's get is `api_hst_get`, over
+  `answer_hst_link`: UNDECIDED until the modem is in `ANS_HST` (ON, from
+  the HST answering branch) or connected or ended on another path (NONE,
+  from the sample that raises `connected`); no side effects.
+- Lifetime: `v90m_ec_init`/`_create` start clean; `v90m_ec_reset` uses
+  `v42ec_reset` and no longer clears the wrapper, so a reset at
+  `CONNECTED` keeps the link and an LR taken in training. A reset with
+  MNP off, and `v90m_ec_destroy`, unlink and clear the modem's link bit
+  while it is undecided; `v90m_reset` rebuilds the modes (link again).
+  Linking to another modem first lets go of the previous one. A linked
+  modem the host resets to the calling role is no HST call (get says
+  NONE; its memory is not read as an answerer's).
+- `v42ec_tx_bit` marks a bit sent after the link poll, which may now
+  start a new call.
+- The endpoint (`v42/v42.c` `link_poll`): a mailbox whose ring read count
+  has gone back is a new call's, and the endpoint starts again (as
+  `v42ec_reset` would for a new call). A host that drives the endpoint
+  before `CONNECTED` and never resets it between calls no longer carries
+  call 1's window, LR or protocol into call 2 (Task 7 review N1).
+- Docs: the host pattern for an HST-capable call in
+  `docs/error-control.md` ("When to start it") and
+  `docs/getting-started.md`; the note that an LR begun in the last
+  ~165 ms before T400 at 300 bit/s falls to start-stop; a frame
+  half-received at a reset is lost and the caller repeats it.
+
+Tests:
+
+    make build/api_test_api build/api_test_ec_hstlink (before)
+                                       -> V90M_MOD_HST, V90M_CONN_HST, V90M_END_HST_FAILED,
+                                          v90m_stats.reversals, v90m_ec_link_hst,
+                                          ANS_MODE_HST_LINKED, answer_hst_link undeclared
+    v42/build/test_ec_link (before the link_poll change)
+                                       -> test_ec_link: 105 checks, 8 failures (new_mailbox)
+    build/api_test_api                 -> api: 1067 checks, 0 failures
+    build/api_test_ec_hstlink          -> test_ec_hstlink: 68 checks, 0 failures (0.2 s)
+    v42/build/test_ec_link             -> test_ec_link: 105 checks, 0 failures
+    mutations: get always NONE -> 9 failures; reset by v42ec_init and no
+               unlink at destroy -> 2 failures; get without the calling-role
+               guard -> 2 failures (role_change)
+    re-recorded: api/test_api.txt (the count line only), api/test_diag.txt
+               (the count line only: "HST" named, 13 the first unknown),
+               v42/test_ec_link.txt
+               (the new_mailbox line and the count)
+    new golden: api/test_ec_hstlink.txt
+    ARMv5 (make test-api-arm, $A5): api 0 failures (pins 106016 / 50200),
+               test_ec_hstlink 68 checks, 0 failures
+    make verify                        -> VERIFY PASS (714 s; replay 636 identical, bench 17,
+                                          ubsan, armv7hf, big-endian, fixed)
+    make verify-phase                  -> deferred to the merge of tracks A, B and C
+
+    test_ec_hstlink: linked_v32_odp   CONNECTED at 5425 ms, UNDECIDED before, NONE then;
+                                      LAPM, 42 octets each way
+                     linked_v32_noec  start-stop 750 ms after CONNECTED
+                     relink_after_reset  linked 1; ec reset 1; v90m_reset 0; linked
+                                      again 1; ec reset MNP off 0; ec destroyed 0
+                     role_change      reset to calling while linked: start-stop
+                                      750 ms later (unlinked); then as a fresh caller
+                     hst_offered_now  V.22bis + MNP: CONNECTED 3978 / 3978 ms, MNP both,
+                                      our samples the same
+
+Memory: `v90m_mem_size()` 106320 (x86-64), 106016 (ARMv5), unchanged;
+`answer_t.u` unchanged (45096); `v90m_ec_mem_size()` 50448 / 50200,
+unchanged (the link lives in `v42ec_t` since Task 7; the modem is the
+link's context).
+
+### For the local nsdiald test build (D22)
+
+What the library side provides for the BinModem-over-SIP, Courier and R3
+calls. Run on this machine only (`127.0.0.1:5070`), never deployed.
+
+- **Library:** branch `hst` of libv90modem (worktree `~/hst-wt`), the
+  commit "api: V90M_MOD_HST, V90M_CONN_HST, V90M_END_HST_FAILED,
+  reversals, v90m_ec_link_hst (milestone 2)" or later. `VERSION` still
+  says 0.6.1; 0.7.0 will change the SONAME (structs changed: link
+  statically, or rebuild nsdiald against this tree).
+- **What works now:** MNP (V.42 Annex A, framing modes 2 and 3) on the
+  answering endpoint, over every modulation, and the HST profile inside
+  the endpoint (0xC0, streamlined layouts, attention codes). The HST
+  answering branch of the modem (the pump) is not in yet: with
+  `V90M_MOD_HST` offered, every caller is answered as without it (a
+  Courier calling gets whatever it falls back to, V.32bis or V.22bis,
+  with MNP if it sends an LR). R3 (MNP-only callers over V.32bis and
+  V.22bis) can run now; HST itself needs the answering branch
+  (milestone 4).
+- **Enable:** `cfg.modulations |= V90M_MOD_HST` (answering) and, in the
+  endpoint's configuration, `ec_cfg.mnp.enable = 1` (the other `mnp`
+  fields at their defaults: k 8, N401 64, opt 2, framing 3, T401 floor
+  1500 ms, N400 12).
+- **The host pattern, in order:**
+  1. `v90m_ec_cfg_default(&ecc, 0); ecc.mnp.enable = 1;` and
+     `v90m_ec_create(&ecc, &err)`; `v90m_create(&cfg, &err)` with
+     `V90M_MOD_HST` in `cfg.modulations`.
+  2. `v90m_ec_link_hst(ec, m)` before the first `v90m_process_*`
+     (`V90M_OK`; `V90M_ESTATE` once the modem has decided, the end of
+     ANSam; `V90M_EINVAL` with MNP off).
+  3. At `V90M_EV_CONNECTED`: `v90m_ec_reset(ec, &ecc)` (harmless: the
+     link and an LR sent during our training are kept), then
+     `v90m_ec_set_rates(ec, st.tx_bps, st.rx_bps)`; again
+     `v90m_ec_set_rates` at each `V90M_EV_RATES`. Pass
+     `DATA_STOPPED`/`DATA_MOVING` on as `v90m_ec_line_stopped`/`_restored`.
+  4. getbit/putbit to `v90m_ec_tx_bit`/`v90m_ec_rx_bit`, `v90m_ec_tick`
+     every block. Our cleardown: `v90m_ec_release`, keep the bits moving
+     until `v90m_ec_tx_busy` is 0 (MNP's LD 255), then `v90m_cleardown`.
+  5. Next call: `v90m_reset(m, &cfg)`, then link again before its first
+     sample. Keep the modem alive while linked: at the end
+     `v90m_ec_destroy(ec)` (which unlinks) before `v90m_destroy(m)`; the
+     other order reads freed memory.
+- **Log per call** (`v90m_ec_get_status`): `protocol`
+  (`V90M_EC_PROTO_*`), `state`, `reason`, `mnp_framing`, `mnp_opt`,
+  `mnp_streamlined`, `hst`, `hst_rates`, `hst_back300`, `attn_tx`,
+  `attn_rx`, `rx_unknown`, `rx_unknown_id`, `peer_ld_reason`; and
+  `v90m_stats.reversals`, `v90m_state.modulation` (`V90M_CONN_HST` 12
+  on an HST call), `v90m_state.end`. Status fields only, past link-up: no
+  recordings of user data (ISP recording rule).
+- **End code:** `V90M_END_HST_FAILED`, an HST call that had no MNP link
+  within its limit (a host that did not clear down when the endpoint gave
+  up with `V90M_EC_R_NO_EC`).

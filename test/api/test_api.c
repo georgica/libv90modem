@@ -150,7 +150,32 @@ static void test_cfg(void)
         CHECK_EQ_I(st.connected, 0); CHECK_EQ_I(st.end, V90M_END_NONE);
     }
     v90m_destroy(m);
-    c.role = V90M_ROLE_ANSWER; c.modulations = 0x0400;
+    /* HST: answering only, needs no other bit, not in the defaults; its
+     * numbers appended */
+    CHECK_EQ_I(V90M_MOD_HST, 0x0400);
+    CHECK_EQ_I(V90M_CONN_HST, 12);
+    CHECK_EQ_I(V90M_CONN_HST, V90M_CONN_K56FLEX + 1);
+    CHECK_EQ_I(V90M_END_HST_FAILED, V90M_END_K56_FAILED + 1);
+    CHECK(strcmp(v90m_conn_name(V90M_CONN_HST), "HST") == 0);
+    v90m_cfg_default(&c);
+    CHECK(!(c.modulations & V90M_MOD_HST));
+    c.role = V90M_ROLE_ANSWER; c.modulations = V90M_MOD_HST;            /* alone */
+    err = 99; m = v90m_create(&c, &err);
+    CHECK(m != NULL); CHECK_EQ_I(err, V90M_OK);
+    v90m_destroy(m);
+    c.role = V90M_ROLE_ORIGINATE;                                       /* the calling role has none */
+    err = 99; m = v90m_create(&c, &err);
+    CHECK(m == NULL); CHECK_EQ_I(err, V90M_ENOTSUP);
+    c.modulations = V90M_MOD_HST | V90M_MOD_V22 | V90M_MOD_V21;
+    err = 99; m = v90m_create(&c, &err);
+    CHECK(m == NULL); CHECK_EQ_I(err, V90M_ENOTSUP);
+    v90m_cfg_default(&c); c.role = V90M_ROLE_ORIGINATE;
+    CHECK(!(c.modulations & V90M_MOD_HST));
+    v90m_cfg_default(&c); c.modulations |= V90M_MOD_HST;
+    err = 99; m = v90m_create(&c, &err);
+    CHECK(m != NULL); CHECK_EQ_I(err, V90M_OK);
+    v90m_destroy(m);
+    c.role = V90M_ROLE_ANSWER; c.modulations = 0x0800;
     m = v90m_create(&c, &err);
     CHECK(m == NULL); CHECK_EQ_I(err, V90M_EINVAL);
     c.role = V90M_ROLE_ANSWER; c.modulations = 0x8000;
@@ -234,7 +259,7 @@ static void test_errors(void)
         bad = c; bad.max_down_bps = -1;    CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
         bad = c; bad.max_up_bps = -1;      CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
         bad = c; bad.echo_delay = -2;      CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
-        bad = c; bad.modulations |= 0x400; CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);   /* 0x100 is x2, 0x200 K56flex now */
+        bad = c; bad.modulations |= 0x800; CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);   /* 0x100 is x2, 0x200 K56flex, 0x400 HST now */
 
         m = v90m_init(mem.b, sizeof mem.b, &c, &err);
         CHECK(m != NULL); CHECK_EQ_I(err, V90M_OK);
@@ -258,7 +283,7 @@ static void test_errors(void)
         CHECK_EQ_I(st.connected, 0); CHECK_EQ_I(st.odp_bypass, 0); CHECK_EQ_I(st.end, V90M_END_NONE);
         v90m_get_stats(m, &sx);
         CHECK_EQ_I(sx.snr_db10, -1); CHECK_EQ_I(sx.rtd, -1); CHECK_EQ_I(sx.echo_delay, -1);
-        CHECK_EQ_I(sx.retrains, 0); CHECK_EQ_I(sx.renegotiations, 0);
+        CHECK_EQ_I(sx.retrains, 0); CHECK_EQ_I(sx.renegotiations, 0); CHECK_EQ_I(sx.reversals, 0);
         v90m_destroy(m);
     }
     v90m_destroy(NULL);
@@ -2175,6 +2200,58 @@ static void test_ec_mnp_cfg(void)
     }
 }
 
+/* ---- v90m_ec_link_hst: the endpoint tied to an answering modem for HST ---- */
+static void test_ec_link_hst(void)
+{
+    static union { v90m_align a; uint8_t b[V90M_EC_MEM_SIZE]; } ecmem;
+    v90m_cfg c; v90m_ec_cfg ec; v90m_t *m, *o; v90m_ec_t *e, *eo; int err, i;
+    int16_t rx[800], tx[800];
+
+    v90m_cfg_default(&c); c.modulations |= V90M_MOD_HST;
+    m = v90m_create(&c, &err);
+    CHECK(m != NULL);
+    v90m_cfg_default(&c); c.role = V90M_ROLE_ORIGINATE;
+    o = v90m_create(&c, &err);
+    CHECK(o != NULL);
+    v90m_ec_cfg_default(&ec, 0);
+    e = v90m_ec_init(ecmem.b, sizeof ecmem.b, &ec, &err);       /* MNP off (the default) */
+    CHECK(e != NULL);
+    if (!m || !o || !e) return;
+    CHECK_EQ_I(v90m_ec_link_hst(NULL, m), V90M_EINVAL);
+    CHECK_EQ_I(v90m_ec_link_hst(e, NULL), V90M_EINVAL);
+    CHECK_EQ_I(v90m_ec_link_hst(e, m), V90M_EINVAL);           /* mnp.enable 0 */
+    ec.mnp.enable = 1;
+    CHECK_EQ_I(v90m_ec_reset(e, &ec), V90M_OK);
+    CHECK_EQ_I(v90m_ec_link_hst(e, o), V90M_EINVAL);           /* a calling modem */
+    CHECK_EQ_I(v90m_ec_link_hst(e, m), V90M_OK);
+    CHECK_EQ_I(v90m_ec_link_hst(e, m), V90M_OK);               /* again: still undecided */
+    v90m_ec_cfg_default(&ec, 1); ec.mnp.enable = 1;             /* an originator has no MNP */
+    eo = v90m_ec_create(&ec, &err);
+    CHECK(eo != NULL);
+    CHECK_EQ_I(v90m_ec_link_hst(eo, m), V90M_EINVAL);
+    v90m_ec_destroy(eo);
+    /* a reset with MNP off unlinks; with it on, link again */
+    v90m_ec_cfg_default(&ec, 0);
+    CHECK_EQ_I(v90m_ec_reset(e, &ec), V90M_OK);
+    CHECK_EQ_I(v90m_ec_link_hst(e, m), V90M_EINVAL);
+    ec.mnp.enable = 1;
+    CHECK_EQ_I(v90m_ec_reset(e, &ec), V90M_OK);
+    CHECK_EQ_I(v90m_ec_link_hst(e, m), V90M_OK);
+    /* silence past ANSam: the modem has decided (the legacy answer
+     * sequence): too late to link */
+    memset(rx, 0, sizeof rx);
+    for (i = 0, err = V90M_OK; i < 80 && err == V90M_OK; i++) err = v90m_process_linear(m, rx, tx, 800);
+    CHECK_EQ_I(err, V90M_OK);
+    CHECK_EQ_I(v90m_ec_link_hst(e, m), V90M_ESTATE);
+    /* v90m_reset starts a new call: undecided again, linked again */
+    v90m_cfg_default(&c); c.modulations |= V90M_MOD_HST;
+    CHECK_EQ_I(v90m_reset(m, &c), V90M_OK);
+    CHECK_EQ_I(v90m_ec_link_hst(e, m), V90M_OK);
+    v90m_ec_destroy(e);
+    v90m_destroy(m);
+    v90m_destroy(o);
+}
+
 int main(void)
 {
     test_cfg();
@@ -2199,5 +2276,6 @@ int main(void)
     test_null();
     test_cfg_ranges();
     test_ec_mnp_cfg();
+    test_ec_link_hst();
     T_REPORT("api");
 }

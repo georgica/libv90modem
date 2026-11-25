@@ -22,7 +22,7 @@ typedef char v90m_check_conn[(SAME(V90M_CONN_V21, ANS_MOD_V21) && SAME(V90M_CONN
                               && SAME(V90M_CONN_V90, ANS_MOD_V90) && SAME(V90M_CONN_V34, ANS_MOD_V34) && SAME(V90M_CONN_V32BIS, ANS_MOD_V32BIS)
                               && SAME(V90M_CONN_V92, ANS_MOD_V92) && SAME(V90M_CONN_BELL103, ANS_MOD_BELL103)
                               && SAME(V90M_CONN_BELL212A, ANS_MOD_BELL212A) && SAME(V90M_CONN_X2, ANS_MOD_X2)
-                              && SAME(V90M_CONN_K56FLEX, ANS_MOD_K56)) ? 1 : -1];
+                              && SAME(V90M_CONN_K56FLEX, ANS_MOD_K56) && SAME(V90M_CONN_HST, ANS_MOD_HST)) ? 1 : -1];
 typedef char v90m_check_ec[(SAME(V90M_EC_DETECT, V42EC_DETECT) && SAME(V90M_EC_ESTABLISH, V42EC_ESTABLISH) && SAME(V90M_EC_CONNECTED, V42EC_CONNECTED)
                             && SAME(V90M_EC_ASYNC, V42EC_ASYNC) && SAME(V90M_EC_RELEASING, V42EC_RELEASING) && SAME(V90M_EC_DISCONNECTED, V42EC_DISCONNECTED)
                             && SAME(V90M_EC_R_LOCAL, V42LAPM_R_LOCAL) && SAME(V90M_EC_R_NEGOTIATION, V42LAPM_R_NEGOTIATION)
@@ -73,13 +73,14 @@ struct v90m {
 
 #define ORIGINATING(m) ((m)->cfg.role == V90M_ROLE_ORIGINATE)
 #define V90M_MOD_ALL  (V90M_MOD_V21 | V90M_MOD_V22 | V90M_MOD_V32BIS | V90M_MOD_V34 | V90M_MOD_V90 | V90M_MOD_V92 \
-                       | V90M_MOD_BELL103 | V90M_MOD_BELL212A | V90M_MOD_X2 | V90M_MOD_K56)
+                       | V90M_MOD_BELL103 | V90M_MOD_BELL212A | V90M_MOD_X2 | V90M_MOD_K56 | V90M_MOD_HST)
 /* the defaults: all but V.92, Bell (which would change what a caller
- * without V.8 hears from us after 4 s), x2 and K56flex */
-#define V90M_MOD_DEFAULT (V90M_MOD_ALL & ~(V90M_MOD_V92 | V90M_MOD_BELL103 | V90M_MOD_BELL212A | V90M_MOD_X2 | V90M_MOD_K56))
-/* what the calling side can do: all but x2 and K56flex (V.90 and V.92 as
- * their analogue modem) */
-#define V90M_MOD_ORIG (V90M_MOD_ALL & ~(V90M_MOD_X2 | V90M_MOD_K56))
+ * without V.8 hears from us after 4 s), x2, K56flex and HST */
+#define V90M_MOD_DEFAULT (V90M_MOD_ALL & ~(V90M_MOD_V92 | V90M_MOD_BELL103 | V90M_MOD_BELL212A | V90M_MOD_X2 | V90M_MOD_K56 \
+                                          | V90M_MOD_HST))
+/* what the calling side can do: all but x2, K56flex and HST (V.90 and V.92
+ * as their analogue modem) */
+#define V90M_MOD_ORIG (V90M_MOD_ALL & ~(V90M_MOD_X2 | V90M_MOD_K56 | V90M_MOD_HST))
 
 typedef char v90m_check_orig[(SAME(ORIG_MOD_V21, ANS_MOD_V21) && SAME(ORIG_MOD_V22, ANS_MOD_V22) && SAME(ORIG_MOD_V22BIS, ANS_MOD_V22BIS)
                               && SAME(ORIG_MOD_V32BIS, ANS_MOD_V32BIS) && SAME(ORIG_MOD_V34, ANS_MOD_V34)
@@ -140,6 +141,7 @@ static unsigned modes_of(unsigned mods)
     if (mods & V90M_MOD_BELL212A) m |= ANS_MODE_BELL212A;
     if (mods & V90M_MOD_X2) m |= ANS_MODE_X2;
     if (mods & V90M_MOD_K56) m |= ANS_MODE_K56;
+    if (mods & V90M_MOD_HST) m |= ANS_MODE_HST;
     return m;
 }
 
@@ -275,7 +277,8 @@ static v90m_end end_of(const v90m_t *m)
         /* ANS_END_* in order */
         static const v90m_end ans_end[] = {
             V90M_END_NONE, V90M_END_FAILED, V90M_END_LOST, V90M_END_CLEARDOWN_FAR, V90M_END_CLEARDOWN_OURS,
-            V90M_END_NO_COMMON, V90M_END_RETRAIN_FAILED, V90M_END_X2_FAILED, V90M_END_K56_FAILED
+            V90M_END_NO_COMMON, V90M_END_RETRAIN_FAILED, V90M_END_X2_FAILED, V90M_END_K56_FAILED,
+            V90M_END_HST_FAILED
         };
         int e = answer_end(&m->u.a);
         return e >= 0 && e < (int)(sizeof ans_end / sizeof ans_end[0]) ? ans_end[e] : V90M_END_FAILED;
@@ -464,6 +467,7 @@ void v90m_get_stats(const v90m_t *m, v90m_stats *st)
     st->tx_bps = tx_of(m, orig);
     st->rx_bps = rx_of(m, orig);
     st->renegotiations = m->renegotiations;
+    st->reversals = 0;          /* no HST engine answers yet */
     /* the last measured while connected stays after the call, until the next one */
     if (orig) {
         const orig_t *o = &m->u.o;
@@ -550,17 +554,53 @@ void v90m_ec_cfg_default(v90m_ec_cfg *c, int originator)
     cfg_out(c, &i);
 }
 
+/* ---- the HST link (v90m_ec_link_hst): the endpoint's get, over the
+ * modem's side of the mailbox (modem/answer.h); ctx is the v90m_t. A
+ * modem the host has since reset to the calling role is no HST call */
+static hst_link_t *api_hst_get(void *ctx, int *state)
+{
+    v90m_t *m = ctx;
+    if (ORIGINATING(m)) { *state = HST_LINK_NONE; return NULL; }
+    return answer_hst_link(&m->u.a, state);
+}
+
+/* the modem e is linked to, NULL for none */
+static v90m_t *linked_modem(const v90m_ec_t *e)
+{
+    return v42ec_linked(&e->e) && e->e.link_get == api_hst_get ? (v90m_t *)e->e.link_ctx : NULL;
+}
+
+/* the endpoint lets go of m: the link bit goes while m has not decided (it
+ * would offer HST with nobody to answer the caller's LR); after that the
+ * decision is made and the call keeps it */
+static void unlink_modem(v90m_t *m)
+{
+    if (m && !ORIGINATING(m) && !answer_hst_decided(&m->u.a)) m->u.a.cfg.modes &= ~ANS_MODE_HST_LINKED;
+}
+
+/* a checked configuration: v42ec_reset keeps the HST link (decision 18),
+ * so a host's reset at V90M_EV_CONNECTED keeps an LR taken during our
+ * training; with MNP off it unlinks */
 int v90m_ec_reset(v90m_ec_t *e, const v90m_ec_cfg *cfg)
 {
     v42ec_cfg_t c;
-    int o;
+    v90m_t *m;
     if (!e || !cfg || check_ec_cfg(cfg) != V90M_OK) return V90M_EINVAL;
-    o = e->owned;
+    m = linked_modem(e);
+    cfg_in(&c, cfg);
+    v42ec_reset(&e->e, &c);
+    if (m && !v42ec_linked(&e->e)) unlink_modem(m);
+    return V90M_OK;
+}
+
+/* a clean start, on memory of any content: no link */
+static void ec_start(v90m_ec_t *e, int owned, const v90m_ec_cfg *cfg)
+{
+    v42ec_cfg_t c;
     cfg_in(&c, cfg);
     memset(e, 0, sizeof *e);
-    e->owned = o;
+    e->owned = owned;
     v42ec_init(&e->e, &c);
-    return V90M_OK;
 }
 
 size_t v90m_ec_mem_size(void) { return sizeof(struct v90m_ec); }
@@ -570,7 +610,7 @@ v90m_ec_t *v90m_ec_init(void *mem, size_t len, const v90m_ec_cfg *cfg, int *err)
     v90m_ec_t *e = mem;
     if (!mem || !cfg || !aligned(mem) || check_ec_cfg(cfg) != V90M_OK) { seterr(err, V90M_EINVAL); return NULL; }
     if (len < sizeof *e) { seterr(err, V90M_ENOMEM); return NULL; }
-    e->owned = 0; v90m_ec_reset(e, cfg); seterr(err, V90M_OK);
+    ec_start(e, 0, cfg); seterr(err, V90M_OK);
     return e;
 }
 
@@ -579,11 +619,30 @@ v90m_ec_t *v90m_ec_create(const v90m_ec_cfg *cfg, int *err)
     v90m_ec_t *e;
     if (!cfg || check_ec_cfg(cfg) != V90M_OK) { seterr(err, V90M_EINVAL); return NULL; }
     if (!(e = malloc(sizeof *e))) { seterr(err, V90M_ENOMEM); return NULL; }
-    e->owned = 1; v90m_ec_reset(e, cfg); seterr(err, V90M_OK);
+    ec_start(e, 1, cfg); seterr(err, V90M_OK);
     return e;
 }
 
-void   v90m_ec_destroy(v90m_ec_t *e) { if (e && e->owned) free(e); }
+void v90m_ec_destroy(v90m_ec_t *e)
+{
+    if (!e) return;
+    unlink_modem(linked_modem(e));
+    v42ec_set_link(&e->e, NULL, NULL);
+    if (e->owned) free(e);
+}
+
+int v90m_ec_link_hst(v90m_ec_t *e, v90m_t *m)
+{
+    v90m_t *was;
+    /* an originator's endpoint has MNP off (v42ec_init) */
+    if (!e || !m || !e->e.cfg.mnp.enable || ORIGINATING(m)) return V90M_EINVAL;
+    if (answer_hst_decided(&m->u.a)) return V90M_ESTATE;
+    was = linked_modem(e);
+    if (was != m) unlink_modem(was);
+    m->u.a.cfg.modes |= ANS_MODE_HST_LINKED;
+    v42ec_set_link(&e->e, api_hst_get, m);
+    return V90M_OK;
+}
 int    v90m_ec_tx_bit(v90m_ec_t *e) { return v42ec_tx_bit(&e->e); }
 void   v90m_ec_rx_bit(v90m_ec_t *e, int bit) { v42ec_rx_bit(&e->e, bit); }
 /* NULL (the header): every function checks its object but the two per-bit ones */

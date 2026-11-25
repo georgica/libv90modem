@@ -67,6 +67,31 @@ examples do. When answering and `v90m_state.odp_bypass` is 1 (two V.92
 modems that both named LAPM in V.8, V.92 9.3.1), set `detect = 0`: the
 caller skips the detection phase.
 
+*For an HST-capable call* (`V90M_MOD_HST` offered, `mnp.enable` 1), link
+before the first sample; resetting at `CONNECTED` is harmless:
+
+1. Create and configure the endpoint (`mnp.enable` 1) and the modem.
+2. `v90m_ec_link_hst(ec, m)` before the first `v90m_process_*` call. The
+   modem offers HST only to a linked endpoint, and decides at the end of
+   ANSam; after that the call gives `V90M_ESTATE`.
+3. At `V90M_EV_CONNECTED`, `v90m_ec_reset` as above. It keeps the link and
+   an LR the caller sent during our training, which is answered at our
+   first bit. Give the rates with `v90m_ec_set_rates` after that reset and
+   at each `V90M_EV_RATES`, as for any MNP call.
+4. For the next call, `v90m_reset(m, ...)` drops the link: link again
+   before its first sample. `v90m_ec_destroy`, or a `v90m_ec_reset` with
+   `mnp.enable` 0, unlinks. Keep the modem alive while it is linked:
+   destroy the endpoint before the modem (both read the modem's link).
+
+A host may instead feed and tick the linked endpoint from the first sample
+on and never reset it. Until the modem connects on another path, the
+endpoint holds T400; from then on it is the unlinked endpoint, with T400
+counted from `CONNECTED`. An endpoint that is not reset between two calls
+starts again by itself at an HST call's first bit (it sees the new call's
+mailbox). A frame half-received when the endpoint is reset is lost, and
+the caller repeats it (an LR, within the HST window of our training's end
+plus 5 s).
+
 **The detection phase** (V.42 7.2.1). The originator sends the ODP until
 two ADPs are seen, or the answerer's flags (an answerer without the
 detection phase), or T400 passes; the answerer sends mark until the ODP,
@@ -202,7 +227,9 @@ moving until `v90m_ec_tx_busy` is 0.
   (`V42EC_T400_LR_HOLD_MS`): an LR then gives MNP, anything else
   start-stop at the frame's end. Other frames, typed text with SYN DLE STX
   included, and HDLC frames are not waited for, so a caller that sends no
-  LR gets start-stop at 750 ms as with MNP off.
+  LR gets start-stop at 750 ms as with MNP off. The hold needs the LR's
+  first octets: an LR begun in the last ~165 ms before T400 at 300 bit/s
+  falls to start-stop.
 
 **Memory.** At most `V90M_EC_MEM_SIZE` (50 KiB; `v90m_ec_mem_size()` gives
 the exact size, 50448 octets on x86-64, 50200 on 32-bit ARM).

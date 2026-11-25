@@ -102,7 +102,7 @@ const char *v90m_err_name(int code)
 
 static const char *const phase_names[] = { "none", "tone", "v8", "phase2", "phase3", "phase4", "train", "data" };
 static const char *const conn_names[] = { "none", "V.21", "V.22", "V.22bis", "V.90", "V.34", "V.32bis", "V.92",
-                                          "Bell 103", "Bell 212A", "x2", "K56flex" };
+                                          "Bell 103", "Bell 212A", "x2", "K56flex", "HST" };
 /* one name per value of each enum: a table's size is its enum's last value + 1 */
 typedef char dg_phase_rows[sizeof phase_names / sizeof phase_names[0] == (unsigned)DG_LAST_PHASE + 1 ? 1 : -1];
 typedef char dg_conn_rows[sizeof conn_names / sizeof conn_names[0] == (unsigned)DG_LAST_CONN + 1 ? 1 : -1];

@@ -56,6 +56,7 @@
 #include "v8bis.h"
 #include "../v32/v32.h"
 #include "../v92/v92_p34d.h"
+#include "../v42/hst_link.h"
 
 typedef enum {
     ANS_V8, ANS_V22, ANS_V21, ANS_FAILED,
@@ -98,6 +99,13 @@ typedef enum {
 /* with V8_MOD_V34: offer K56flex as its server in V.8bis before V.8
  * (modem/v8bis); only on a mu-law line */
 #define ANS_MODE_K56 0x200000u
+/* offer HST (U.S. Robotics' asymmetric modem) to a caller without V.8;
+ * only with ANS_MODE_HST_LINKED too when the modem decides (the end of
+ * ANSam) */
+#define ANS_MODE_HST 0x400000u
+/* an MNP endpoint is linked for HST (v90m_ec_link_hst): set and cleared by
+ * the API layer, in this word so that answer_t does not grow */
+#define ANS_MODE_HST_LINKED 0x800000u
 
 #define ANS_MOD_NONE   0
 #define ANS_MOD_V21    1
@@ -111,6 +119,7 @@ typedef enum {
 #define ANS_MOD_BELL212A 9   /* 1200 bit/s, in ANS_V22: V.22 begun after our 2225 Hz */
 #define ANS_MOD_X2     10    /* x2: PCM downstream, V.34 upstream */
 #define ANS_MOD_K56    11    /* K56flex: PCM downstream, V.34 upstream */
+#define ANS_MOD_HST    12    /* HST: a fast forward channel, a 450 / 300 bit/s back channel */
 
 /* why a call ended (answer_t.end, answer_end): set where it fails */
 enum {
@@ -123,8 +132,9 @@ enum {
     ANS_END_RETRAIN_FAILED, /* V.90, V.92, V.34: a retrain due past the limit in a row;
                                x2: the client asked for a retrain (its Tone A) */
     ANS_END_X2_FAILED,      /* the x2 start-up, or a rate change of the client's, did not complete */
-    ANS_END_K56_FAILED      /* past the point of no return, the K56flex start-up, a rate change
+    ANS_END_K56_FAILED,     /* past the point of no return, the K56flex start-up, a rate change
                                or retrain did not complete, or the third retrain in a row */
+    ANS_END_HST_FAILED      /* an HST call had no MNP link within its limit */
 };
 
 typedef struct {
@@ -257,6 +267,15 @@ int     answer_moving(const answer_t *a);
 int     answer_odp_bypass(const answer_t *a);
 /* Why the call ended: ANS_END_*, ANS_END_NONE until the phase is ANS_FAILED. */
 int     answer_end(const answer_t *a);
+/* The modem's side of the HST mailbox (v42/hst_link.h), for the MNP
+ * endpoint linked to it: *state HST_LINK_UNDECIDED until the modem is
+ * either on an HST call (HST_LINK_ON, the mailbox returned) or connected or
+ * ended on another path (HST_LINK_NONE, from the sample that raises
+ * connected on); NULL but with ON. No side effects: it only reports. */
+hst_link_t *answer_hst_link(answer_t *a, int *state);
+/* 1 once the modem has decided whether to offer HST (it has left ANS_V8
+ * and ANS_V8BIS): an endpoint can no longer be linked for this call. */
+int     answer_hst_decided(const answer_t *a);
 /* The echo delay in samples the running engine measured or was given (V.90,
  * V.92, x2, K56flex): the engine of the phase; between engines (a retrain,
  * the end) the modulation's. -1 where there is none. */

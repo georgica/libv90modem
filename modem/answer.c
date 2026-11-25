@@ -287,3 +287,14 @@ int answer_odp_bypass(const answer_t *a)
     return a->v92_both && a->v8.cm.has_prot && a->v8.cm.prot == V8_PROT_LAPM
            && a->v8.jm.has_prot && a->v8.jm.prot == V8_PROT_LAPM;
 }
+
+/* No phase holds an HST engine yet, so ON never comes; connected, or
+ * ended, on any other path is NONE; before that, UNDECIDED (hst_link.h: a
+ * linked endpoint holds T400 through any training) */
+hst_link_t *answer_hst_link(answer_t *a, int *state)
+{
+    *state = a->connected || a->phase == ANS_FAILED ? HST_LINK_NONE : HST_LINK_UNDECIDED;
+    return NULL;
+}
+
+int answer_hst_decided(const answer_t *a) { return a->phase != ANS_V8 && a->phase != ANS_V8BIS; }

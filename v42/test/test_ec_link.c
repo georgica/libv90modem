@@ -595,6 +595,70 @@ static void window_overshoot(void)
     printf("window_overshoot: run out on a 3000 ms tick, reset: state %d at the next tick\n", st);
 }
 
+/* A host that ticks the endpoint before CONNECTED and never resets it
+ * between calls. Call 1: HST, our training out, the window started, and
+ * either its caller's LR taken (lr1 1: MNP establishing) or none (lr1 0:
+ * the window runs out while the modem says UNDECIDED through call 2's
+ * start); the call ends before CONNECTED. Call 2: HST on a new, zeroed
+ * mailbox (its ring's read count has gone back): a new call, nothing of
+ * call 1 kept. With its caller's LR during our training (lr2 1): answered
+ * at our first bit; without (lr2 0): NO_EC at its own training's end plus
+ * 5 s. */
+static int new_mailbox_run(int lr1, int lr2, int *st_before)
+{
+    int t, at = -1, end = -1, down = 0;
+    ep_init(1, HST_LINK_ON);
+    if (lr1) caller_lr(4);
+    else cb_n = cb_i = 0;
+    for (t = 0; t < 1400; t++) { if (t % 20 < 9) pump_bits(1); v42ec_tick(&E, 1); }
+    S.L.trained = 1;
+    for (t = 0; t < 3100; t++) { if (t % 20 < 9) pump_bits(1); v42ec_tick(&E, 1); }
+    CHECK_EQ_I(ep_proto(), lr1 ? V42EC_PROTO_MNP : V42EC_PROTO_NONE);
+    S.state = HST_LINK_UNDECIDED;
+    for (t = 0; t < 3000; t++) v42ec_tick(&E, 1);
+    *st_before = v42ec_state(&E);
+    memset(&S.L, 0, sizeof S.L);
+    S.state = HST_LINK_ON;
+    if (lr2) caller_lr(4);
+    else cb_n = cb_i = 0;
+    for (t = 1; t <= 1400; t++) {
+        if (t % 20 < 9) pump_bits(1);
+        v42ec_tick(&E, 1);
+        if (v42ec_state(&E) == V42EC_DISCONNECTED) down = 1;
+    }
+    CHECK_EQ_I(down, 0);
+    S.L.trained = 1;
+    if (lr2) {
+        int ok;
+        CHECK_EQ_I(ep_proto(), V42EC_PROTO_MNP);
+        CHECK_EQ_I(v42ec_state(&E), V42EC_ESTABLISH);
+        ok = our_lr_first(&at);
+        CHECK(ok);
+        CHECK_EQ_I(at, 16);
+        return ok ? at : -1;
+    }
+    CHECK_EQ_I(ep_proto(), V42EC_PROTO_NONE);
+    for (t = 1; t <= 8000 && end < 0; t++) {
+        if (t % 20 < 9) pump_bits(1);
+        v42ec_tick(&E, 1);
+        if (v42ec_state(&E) == V42EC_DISCONNECTED) end = t;
+    }
+    CHECK_NEAR(end, 5000, 1);
+    CHECK_EQ_I(ep_reason(), V42EC_R_NO_EC);
+    return end;
+}
+
+static void new_mailbox(void)
+{
+    int s1 = -1, s2 = -1, at, end;
+    at = new_mailbox_run(0, 1, &s1);
+    end = new_mailbox_run(1, 0, &s2);
+    CHECK_EQ_I(s1, V42EC_DISCONNECTED);
+    CHECK_EQ_I(s2, V42EC_ESTABLISH);
+    printf("new_mailbox: no reset between calls; call 1 no LR (state %d at call 2), call 2 with an LR: our LR out at bit %d; "
+           "call 1 MNP (state %d), call 2 without an LR: NO_EC %d ms after its training\n", s1, at, s2, end);
+}
+
 /* the ring: counters that wrap, and a full ring dropping its oldest bits */
 static int pat(unsigned i) { return (int)((i * 7u ^ (i >> 3)) & 1u); }
 
@@ -629,6 +693,7 @@ int main(void)
     two_calls();
     on_then_none();
     window_overshoot();
+    new_mailbox();
     ring_overflow();
     T_REPORT("test_ec_link");
 }

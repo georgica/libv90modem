@@ -25,8 +25,11 @@
  *                       NONE (the modem left ANS_HST) gives neither T400
  *                       nor start-stop (an unstarted window starts then).
  *
- * The pump starts each call with a zeroed mailbox (the endpoint's reset
- * at CONNECTED tells calls apart by it).
+ * The pump starts each call with a zeroed mailbox: the endpoint tells
+ * calls apart by it (its ring read count going back), at its reset at
+ * CONNECTED and at every poll, so that an endpoint the host drives before
+ * CONNECTED and never resets between calls starts again at a new call's
+ * first ON.
  *
  * After the LRs (the HST profile, v42/mnp.h): the endpoint writes agreed,
  * agreed_rates and back300 once, la_rx when the link is up, rev_lna_sent

@@ -176,6 +176,16 @@ typedef enum {
  * (32000 to 56000 in steps of 2000, the figure a Rockwell modem prints)
  * and rx_bps the client's V.34 upstream. */
 #define V90M_MOD_K56      0x0200u
+/* Answering only (calling: V90M_ENOTSUP), needs no other bit, not in the
+ * defaults: HST, U.S. Robotics' asymmetric modem (a fast forward channel
+ * and a 450 or 300 bit/s back channel, MNP error control), as its answering
+ * side. Offered only when an MNP endpoint is linked to the modem with
+ * v90m_ec_link_hst before it decides (the end of ANSam); a modem without
+ * the link answers as without HST. A call that took HST up and has no MNP
+ * link within its limit ends with V90M_END_HST_FAILED. In this build no
+ * HST caller is answered yet: with it offered, every caller is answered
+ * as without it. */
+#define V90M_MOD_HST      0x0400u
 
 /* the modulation of a connection (v90m_state.modulation) */
 typedef enum {
@@ -184,7 +194,9 @@ typedef enum {
     V90M_CONN_BELL103,          /* appended: the values above stay as they were */
     V90M_CONN_BELL212A,         /* V.22 at 1200 bit/s begun on the 2225 Hz Bell answer tone */
     V90M_CONN_X2,               /* (appended) x2: PCM downstream, V.34 upstream */
-    V90M_CONN_K56FLEX           /* (appended) K56flex: PCM downstream, V.34 upstream */
+    V90M_CONN_K56FLEX,          /* (appended) K56flex: PCM downstream, V.34 upstream */
+    V90M_CONN_HST               /* (appended) HST: tx_bps the channel we send on, rx_bps the
+                                   one we receive (they swap at a channel reversal) */
 } v90m_conn;
 
 typedef int  (*v90m_getbit_fn)(void *user);             /* next bit to send, 0 or 1 */
@@ -328,11 +340,14 @@ typedef enum {
     V90M_END_X2_FAILED,         /* (appended) answering: the client took up x2 (its marker
                                    came) and the x2 start-up, or a rate change of
                                    the client's, did not complete */
-    V90M_END_K56_FAILED         /* (appended) answering: K56flex was agreed and its start-up
+    V90M_END_K56_FAILED,        /* (appended) answering: K56flex was agreed and its start-up
                                    went past the point of no return (our INFO1a), and
                                    the start-up, or a rate change or retrain of the
                                    client's, did not complete, or the client retrained
                                    a third time in a row */
+    V90M_END_HST_FAILED         /* (appended) answering: an HST call had no MNP link
+                                   within its limit (a host that did not clear down
+                                   when the endpoint gave up) */
 } v90m_end;
 
 /* Cheap; fine to read after every sample. Also after the end: end says why. */
@@ -370,6 +385,7 @@ typedef struct {
                                    or when the call ends in it (not a cleardown's stop, ours
                                    or the far end's) (answering: V.34, V.90, V.92, x2, K56flex; calling:
                                    V.32bis, V.34, V.90, V.92) */
+    unsigned   reversals;       /* (appended) HST: channel reversals, this call; 0 otherwise */
 } v90m_stats;
 void     v90m_get_stats(const v90m_t *m, v90m_stats *st);
 
@@ -443,7 +459,7 @@ const char *v90m_err_name(int code);
  * not change within 0.6.x. Phases: "none", "tone", "v8", "phase2",
  * "phase3", "phase4", "train", "data". Modulations: "none", "V.21",
  * "V.22", "V.22bis", "V.90", "V.34", "V.32bis", "V.92", "Bell 103",
- * "Bell 212A", "x2", "K56flex". */
+ * "Bell 212A", "x2", "K56flex", "HST". */
 const char *v90m_phase_name(v90m_phase p);
 const char *v90m_conn_name(v90m_conn c);
 
@@ -579,6 +595,19 @@ void        v90m_ec_line_restored(v90m_ec_t *e);        /* on V90M_EV_DATA_MOVIN
  * MNP computes T401 and T404 from them (2400 until given); LAPM's timers are
  * the configured ones. V90M_OK, or V90M_EINVAL (e NULL, a rate <= 0) */
 int         v90m_ec_set_rates(v90m_ec_t *e, int tx_bps, int rx_bps);
+/* HST (V90M_MOD_HST): tie the endpoint to the answering modem m, before m
+ * decides whether to offer HST (the end of ANSam): link before the first
+ * sample. Linked, the endpoint follows m's decision: it holds T400 until m
+ * has connected (or ended) on another path, and is then the unlinked
+ * endpoint; on an HST call it takes the caller's bits from the start of
+ * the line, so an LR sent during our training is kept. v90m_ec_reset keeps
+ * the link (resetting at V90M_EV_CONNECTED is harmless); a reset with
+ * mnp.enable 0, or v90m_ec_destroy, unlinks. v90m_reset(m) starts a new
+ * call without the link: link again. Keep m while linked: destroy the
+ * endpoint (or reset it with mnp.enable 0) before m. V90M_OK;
+ * V90M_EINVAL for e or m NULL, e with mnp.enable 0 or an originator, or m
+ * calling; V90M_ESTATE once m has decided. */
+int         v90m_ec_link_hst(v90m_ec_t *e, v90m_t *m);
 
 size_t      v90m_ec_write(v90m_ec_t *e, const uint8_t *data, size_t len);
 size_t      v90m_ec_write_space(const v90m_ec_t *e);

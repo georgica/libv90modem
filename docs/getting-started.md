@@ -137,6 +137,17 @@ It uses the `on_event` callback; the events are reported from inside
   at `V90M_EV_CONNECTED` (a reset forgets them) and again at
   `V90M_EV_RATES`: MNP's timers come from them, when `mnp.enable` is set
   ([error-control.md](error-control.md)); LAPM does not use them.
+- HST (`V90M_MOD_HST`, which needs MNP): link before the first sample;
+  resetting at `CONNECTED` is harmless. Set `ecc.mnp.enable = 1` and
+  `cfg.modulations |= V90M_MOD_HST`, and after both objects are created
+  call `v90m_ec_link_hst(ec, modem)` before the first `v90m_process_g711`.
+  The reset at `V90M_EV_CONNECTED` and `v90m_ec_set_rates` there and at
+  `V90M_EV_RATES` stay as they are; the reset keeps the link and an LR
+  the caller sent during our training. After a `v90m_reset` of the modem
+  (the next call), link again. At the end destroy the endpoint before the
+  modem (the example above does it the other way round, which is fine
+  only without the link) ([error-control.md](error-control.md),
+  "When to start it").
 
 ```c
 /* answer_min.c: answer one call, V.42 on the bit pump, echo every octet back.

@@ -640,7 +640,8 @@ static void hst_tx_after(v42ec_t *e, hst_link_t *L)
  * told, the HST profile's exchange (mnp_hst_poll; ms the tick's, 0 at a
  * bit). Called at the top of v42ec_tx_bit, v42ec_rx_bit and v42ec_tick
  * (hst_link.h). NONE before any ON is final for the call: get is not asked
- * again until the next init or reset. */
+ * again until the next init or reset. A mailbox whose ring read count is
+ * behind the last one polled is a new call's: the endpoint starts again. */
 static hst_link_t *link_poll(v42ec_t *e, int *state, unsigned ms)
 {
     hst_link_t *L;
@@ -658,6 +659,17 @@ static hst_link_t *link_poll(v42ec_t *e, int *state, unsigned ms)
             e->link_none = 1;
         }
         return NULL;
+    }
+    if (L->pre_r - e->link_r >= 0x80000000u) {
+        /* the ring's read count has gone back: a new, zeroed mailbox, so a
+         * new call, and a host that did not reset us between the two.
+         * Start again as v42ec_reset would for a new call: nothing of the
+         * last call is kept (its window, a captured LR, its protocol) */
+        v42ec_cfg_t c = e->cfg;
+        hst_link_get_fn get = e->link_get;
+        void *ctx = e->link_ctx;
+        v42ec_init(e, &c);
+        v42ec_set_link(e, get, ctx);
     }
     if (!e->hst_call) {
         e->hst_call = 1;                    /* HST to the call's end (D19) */
@@ -822,11 +834,11 @@ static int hdlc_bit(v42ec_t *e)
 int v42ec_tx_bit(v42ec_t *e)
 {
     hst_link_t *L = NULL;
-    e->tx_seen = 1;
     if (e->link_get) {
         int ls;
         L = link_poll(e, &ls, 0);           /* an LR in the ring is answered now */
     }
+    e->tx_seen = 1;                         /* after the poll, which may start a new call */
     if (e->protocol == V42EC_PROTO_MNP) {   /* also after release: the LD */
         int bit = mnp_tx_bit(e);
         if (L) hst_tx_after(e, L);
