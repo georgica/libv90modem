@@ -4495,3 +4495,71 @@ instructions a tap). The spec's "about 1 M a second per receiver" is
 missed: the lever is a shorter `hst_bbpf` (Task 11's generator), for
 `make cost-hst` to weigh against the 15 M of holding forward. (The 450
 transmitter is 1.8 M.)
+
+Review fixes (round 1).
+- C1, a lock 45 degrees off. When the carrier estimate was made on noise
+  (the line's noise before the caller, or a dropout under the carrier
+  detect), the frequency loop pulled to a multiple of 45 degrees, and the
+  receiver locked there for good: 4-25 % of the reviewer's runs.
+  - The receiver now keeps the last 10 symbol and midpoint strobes while
+    acquiring and locked.
+  - Lock is declared only when the alias check on them prefers the turn in
+    use to r +- 45 by 3:2. When it prefers r +- 45 by 2:1, the carrier is
+    estimated again from them.
+  - While locked, the check runs every 32 symbols. Three checks in a row for
+    the same wrong turn are needed to act: one alone fired falsely about once
+    in a thousand checks on a right lock.
+  - A symbol 9 dB under the mean symbol power gives no bits, and two in a row
+    lose the lock. Without that, a 0.1 s dropout at 300 kept the lock and
+    gave some 22 wrong bits.
+- I1, lock on tones and noise. Lock now needs, over the last 16 decisions:
+  - 15 within +-12 degrees of the grid;
+  - at least 4 different steps, none in more than 8;
+  - an RMS error under 7 degrees;
+  - the alias check. `grid_ok` needs the same window conditions.
+  - With the 12-decision window and an 8-degree ceiling, white noise still
+    locked 1-4 times a minute at 450. At 6 degrees it was 4 in 50 minutes,
+    and lock failed at 8 dB. 16 decisions at 7 degrees gave 0 in 50 minutes.
+- I2. `grid_ok` is 0 until the carrier estimate has been made, and while
+  acquiring again. `hst_brx_tick` gives bits only while locked.
+- M3. The acquisition range is in hst.h: about +-28 Hz at 450 and +-18 Hz
+  at 300.
+- M4. Carrier detect works on the band's power, not on symbol power as the
+  spec has it [OURS]. The reason is that it is off within 100 ms: symbol
+  power comes through the matched filter's 4-symbol delay, 40 ms at 300.
+  The thresholds are -44 dBm0 on and -47 dBm0 off.
+
+New cases in `test_hst_back` (97 checks):
+- `noise_first`: 1 s of noise first, at 20, 15 and 10 dB; 8 seeds x +7, -7,
+  +3 Hz per speed.
+- `dropout`: the signal off for 0.1, 0.3 and 1 s.
+- `tones`: US dial tone, mains hum and a 375 Hz tone, at -30, -20 and
+  -10 dBm0, 30 s each.
+- `noise`: white noise at -31 to -10 dBm0, 60 s each.
+- `band`: a 300 receiver on a 450 receiver's band-pass gives the same bits
+  and lock as one on its own.
+- `cd_level`: on at -41 dBm0, held at -45.5, off at -50, and never on at
+  -45.5 or -50 from the start.
+
+Figures:
+
+    noise_first, dropout: 0 of 72 lines bad at each speed (locked at the end,
+      carrier within 1 Hz, 1500 bits right after the last lock or the dropout);
+      the reviewer's probe set (8 seeds x 3 offsets x 16 conditions): 0 of 384,
+      no wrong bit even across the dropouts
+    tones: no lock, no bits, no 24-of-30 grid_ok window (dial tone at -20 dBm0
+      gives a few lone grid_ok decisions)
+    noise: 0 false locks a minute (10 minutes a speed; 50 minutes in the probe)
+    lock time: worst 235 ms at 450, 405 ms at 300 (lock_time); 800-line stress
+      252 / 369 ms flat, 245 / 348 ms mu-law, carrier within 0.13 Hz
+    lock floor: reliable down to 8 dB over 0-4 kHz (about 21 dB in band);
+      at 6-7 dB some lines do not lock within 2 s
+    CPU, two receivers on one band-pass, ARMv5: 3.68 M a second (3.50 M before)
+
+For Task 13 (set by the review):
+- `make cost-hst-back`: the two receivers on one band-pass at most 2.0 M
+  ARMv5 instructions a second. The lever is a decimation filter in place of
+  the 243-tap `hst_bbpf`: about 45 taps, 60 dB down at 1124-1326,
+  1874-2076, 2724-2926 and 3474-3676 Hz. `hst_hbpf` wants the same.
+- An echo test of our own forward signal ("holding forward"), since the
+  500-1100 Hz band then rests on the matched filter's selectivity.

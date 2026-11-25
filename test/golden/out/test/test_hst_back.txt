@@ -75,4 +75,32 @@ line_300 +7 Hz +100 ppm: 50000 bits compared after the lock
   locked: pass
   no bit in error: pass
   no loss of lock or carrier after the lock: pass
-test_hst_back: 80 checks, 0 failures
+noise_first 450: 72 lines, 1 s of noise first at 20, 15 and 10 dB
+  each locked on the right carrier, no bit in error after the lock: pass
+noise_first 300: 72 lines, 1 s of noise first at 20, 15 and 10 dB
+  each locked on the right carrier, no bit in error after the lock: pass
+dropout 450: 72 lines, the signal off 0.1, 0.3 and 1 s
+  each locked again on the right carrier, no bit in error after the dropout: pass
+dropout 300: 72 lines, the signal off 0.1, 0.3 and 1 s
+  each locked again on the right carrier, no bit in error after the dropout: pass
+tones 450: US dial tone, mains hum, 375 Hz; at -30, -20 and -10 dBm0, 30 s each
+  never locked, no bits, grid_ok never on 24 of 30 decisions: pass
+tones 300: US dial tone, mains hum, 375 Hz; at -30, -20 and -10 dBm0, 30 s each
+  never locked, no bits, grid_ok never on 24 of 30 decisions: pass
+noise 450: white noise at -31 to -10 dBm0, 60 s each: 0 false locks a minute
+  no lock, no bits, grid_ok never on 24 of 30 decisions: pass
+noise 300: white noise at -31 to -10 dBm0, 60 s each: 0 false locks a minute
+  no lock, no bits, grid_ok never on 24 of 30 decisions: pass
+band: 3 s of 300 through one band-pass, bits out
+  the same bits and lock as a receiver on its own: pass
+cd_level 450: the signal at -41, -45.5 and -50 dBm0
+  on at -41 within 100 ms: pass
+  held at -45.5: pass
+  off at -50 within 100 ms: pass
+  never on at -45.5 or -50 from the start: pass
+cd_level 300: the signal at -41, -45.5 and -50 dBm0
+  on at -41 within 100 ms: pass
+  held at -45.5: pass
+  off at -50 within 100 ms: pass
+  never on at -45.5 or -50 from the start: pass
+test_hst_back: 97 checks, 0 failures

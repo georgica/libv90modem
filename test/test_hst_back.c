@@ -505,6 +505,9 @@ typedef struct {
     double hz, ppm;                    /* carrier shift, the caller's clock */
     int    mulaw;                      /* v32line's line model: mu-law, loss, loop, delay */
     uint32_t seed;
+    double snr;                        /* dB below the signal over 0-4 kHz (0: 20) */
+    double pre;                        /* seconds of the line's noise before the transmitter starts */
+    double drop_at, drop_len;          /* seconds after it starts: the signal off, the noise on */
 } line_t;
 
 typedef struct {
@@ -513,6 +516,8 @@ typedef struct {
     int    unlocks;                    /* losses of lock after it */
     int    cd_lost;
     long   snr_num, snr_den;
+    int    locked_end;                 /* locked at the end */
+    double hz_err;                     /* the receiver's carrier at the end against the line's, Hz */
 } run_t;
 
 /* the receiver's view of one line sample */
@@ -520,6 +525,7 @@ typedef struct {
     hst_brx_t rx;
     run_t    *o;
     long      n, nrx, arrive;
+    long      restart;                 /* the sample from which the bits count again (0: none) */
     int       was;
 } watch_t;
 static void watch(watch_t *w, int16_t x)
@@ -528,6 +534,7 @@ static void watch(watch_t *w, int16_t x)
     if (lk && w->o->lock_at < 0) w->o->lock_at = w->n - w->arrive;
     if (w->was && !lk) w->o->unlocks++;
     if (w->o->lock_at >= 0 && !hst_brx_cd(&w->rx)) w->o->cd_lost = 1;
+    if ((lk && !w->was) || w->n == w->restart) w->nrx = 0;     /* the bits from the last lock, or the dropout's end */
     w->was = lk;
     if (w->o->lock_at >= 0)
         for (k = 0; k < nb && w->nrx < LOGN; k++) rxlog[w->nrx++] = w->rx.bits[k];
@@ -564,8 +571,9 @@ static void run_line(const line_t *ln, long want, double secs, run_t *o)
         v32line_init(&L, &lc);
         W.arrive = L.oneway;
     } else {
-        chan_init(&ch, ln->hz, ln->ppm, LEVEL / 10.0, ln->seed);     /* 20 dB below the signal */
-        W.arrive = HILN / 2 + 1;
+        chan_init(&ch, ln->hz, ln->ppm, LEVEL * pow(10, -(ln->snr > 0 ? ln->snr : 20) / 20), ln->seed);
+        W.arrive = HILN / 2 + 1 + (long)(ln->pre * FS);
+        if (ln->drop_len > 0) W.restart = W.arrive + (long)((ln->drop_at + ln->drop_len) * FS);
     }
 
     prbs_seed(ln->seed * 2654435761u + 77);
@@ -577,11 +585,18 @@ static void run_line(const line_t *ln, long want, double secs, run_t *o)
     hst_brx_init(&W.rx, ln->bps);
 
     nmax = want ? (long)((want + 3000) * FS / (double)ln->bps) + 4 * FS : (long)(secs * FS);
+    nmax += (long)((ln->pre + ln->drop_at + ln->drop_len) * FS);
     while (W.n < nmax) {
         if (ln->mulaw) watch(&W, v32line_tick(&L, 0, peer_tx, &tx));
         else {
             int16_t y[4];
-            int k, m = chan_push(&ch, hst_btx_tick(&tx), y);
+            double t = W.n / (double)FS - ln->pre, v = 0;
+            int k, m;
+            if (t >= 0) {
+                v = hst_btx_tick(&tx);
+                if (t >= ln->drop_at && t < ln->drop_at + ln->drop_len) v = 0;
+            }
+            m = chan_push(&ch, v, y);
             for (k = 0; k < m; k++) watch(&W, y[k]);
         }
         if (want && W.nrx >= want + 400 && src.nlog > want + 400) break;
@@ -590,6 +605,9 @@ static void run_line(const line_t *ln, long want, double secs, run_t *o)
         int64_t num = 0, den = 0;
         if (o->lock_at >= 0 && hst_brx_snr(&W.rx, &num, &den)) { o->snr_num = (long)num; o->snr_den = (long)den; }
     }
+    o->locked_end = hst_brx_locked(&W.rx);
+    o->hz_err = (double)(int32_t)(W.rx.dph - W.rx.dph0) * 1600 / 4294967296.0
+              + (double)W.rx.wturn * (ln->bps == 450 ? 150 : 100) / 4294967296.0 - ln->hz;
     if (!want || o->lock_at < 0 || W.nrx < want + 400) return;
     /* the data's place in the received bits: 64 bits from the 400th, found in the log */
     {
@@ -617,6 +635,7 @@ static void loop_case(int bps, int c, int mulaw)
     line_t ln;
     run_t o;
     long want = mulaw ? NBITS_LINE : NBITS;
+    memset(&ln, 0, sizeof ln);
     ln.bps = bps; ln.hz = offs[c].hz; ln.ppm = offs[c].ppm; ln.mulaw = mulaw;
     ln.seed = (uint32_t)(bps * 10 + c + 1 + 100 * mulaw);
     run_line(&ln, want, 0, &o);
@@ -641,6 +660,7 @@ static void lock_time(void)
         for (c = 0; c < 4; c++) {
             line_t ln;
             run_t o;
+            memset(&ln, 0, sizeof ln);
             ln.bps = bps; ln.hz = offs[c].hz; ln.ppm = offs[c].ppm; ln.mulaw = 0;
             ln.seed = (uint32_t)(500 + bps + c);
             run_line(&ln, 0, 1.5, &o);
@@ -702,12 +722,231 @@ static void cd(void)
     }
 }
 
+/* ---- what comes before the signal, and what is not one (review round 1) ---- */
+#ifdef TEST_SHORT
+#define NSEEDS 2
+#define NOISE_SECS 6
+#else
+#define NSEEDS 8
+#define NOISE_SECS 60
+#endif
+#define RELOCK_BITS 1500L
+static const double offs3[3] = { 7, -7, 3 };
+
+/* NSEEDS x 3 lines (+7, -7, +3 Hz; +100 ppm): the ones not locked at the
+ * end on the right carrier (within 1 Hz) with every one of RELOCK_BITS
+ * bits right after the last lock (or after the dropout's end) */
+static int relock_bad(int bps, double pre, double drop_len, double snr)
+{
+    int seed, c, bad = 0;
+    for (seed = 1; seed <= NSEEDS; seed++)
+        for (c = 0; c < 3; c++) {
+            line_t ln;
+            run_t o;
+            memset(&ln, 0, sizeof ln);
+            ln.bps = bps; ln.hz = offs3[c]; ln.ppm = 100; ln.snr = snr;
+            ln.pre = pre; ln.drop_at = drop_len > 0 ? 2.0 : 0; ln.drop_len = drop_len;
+            ln.seed = (uint32_t)(7000 + 100 * seed + 10 * c + (int)(snr + 10 * drop_len) + bps);
+            run_line(&ln, RELOCK_BITS, 0, &o);
+            if (!(o.locked_end && fabs(o.hz_err) < 1 && o.nbits == RELOCK_BITS && o.errors == 0)) bad++;
+            if (verbose && (o.errors || fabs(o.hz_err) >= 1))
+                printf("  (seed %d %+.0f Hz: %ld errors, carrier %+.2f Hz off)\n", seed, offs3[c], o.errors, o.hz_err);
+        }
+    return bad;
+}
+
+/* the line's noise for a second before the caller starts (the carrier
+ * detect on, an acquisition on noise): 20, 15 and 10 dB */
+static void noise_first(void)
+{
+    int s, bad;
+    for (s = 0; s < 2; s++) {
+        int bps = s ? 300 : 450;
+        bad = relock_bad(bps, 1.0, 0, 20) + relock_bad(bps, 1.0, 0, 15) + relock_bad(bps, 1.0, 0, 10);
+        printf("noise_first %d: %d lines, 1 s of noise first at 20, 15 and 10 dB\n", bps, 9 * NSEEDS);
+        bound("each locked on the right carrier, no bit in error after the lock", bad == 0);
+    }
+}
+
+/* the signal off for 0.1, 0.3 and 1 s, the noise on (20 dB) */
+static void dropout(void)
+{
+    int s, bad;
+    for (s = 0; s < 2; s++) {
+        int bps = s ? 300 : 450;
+        bad = relock_bad(bps, 0, 0.1, 20) + relock_bad(bps, 0, 0.3, 20) + relock_bad(bps, 0, 1.0, 20);
+        printf("dropout %d: %d lines, the signal off 0.1, 0.3 and 1 s\n", bps, 9 * NSEEDS);
+        bound("each locked again on the right carrier, no bit in error after the dropout", bad == 0);
+    }
+}
+
+static int ones30(uint32_t v)
+{
+    int n = 0, i;
+    for (i = 0; i < 30; i++) n += (int)((v >> i) & 1);
+    return n;
+}
+
+/* one input to a fresh receiver for `secs`: its locks, its bits and the
+ * detector's windows (24 of the last 30 decisions grid_ok) */
+typedef struct { long locks, bits, gok; } quiet_t;     /* gok: detector windows, 24 of 30 decisions grid_ok */
+static void quiet_add(quiet_t *q, int bps, int kind, double dbm0, double secs, uint32_t seed)
+{
+    static hst_brx_t rx;
+    rng_t g;
+    double rms = 15770 * pow(10, dbm0 / 20);
+    long n;
+    int was = 0, nsym = 0;
+    uint32_t hist = 0;
+    rng_seed(&g, seed);
+    hst_brx_init(&rx, bps);
+    for (n = 0; n < (long)(secs * FS); n++) {
+        double t = n / (double)FS, v;
+        int nb, lk;
+        switch (kind) {
+        case 0: v = rng_gauss(&g) * rms; break;                                  /* white, 0-4 kHz */
+        case 1: v = rms * (sin(2 * PI * 350 * t) + sin(2 * PI * 440 * t)); break; /* US dial tone */
+        case 2: v = rms * (sin(2 * PI * 60 * t) + 0.5 * sin(2 * PI * 180 * t)      /* mains hum */
+                         + 0.3 * sin(2 * PI * 300 * t) + 0.3 * sin(2 * PI * 420 * t)); break;
+        default: v = rms * sqrt(2) * sin(2 * PI * 375 * t); break;              /* the 450 carrier */
+        }
+        if (kind) v += rng_gauss(&g) * rms * 0.01;
+        nb = hst_brx_tick(&rx, (int16_t)lrint(v > 32767 ? 32767 : v < -32768 ? -32768 : v));
+        lk = hst_brx_locked(&rx);
+        q->locks += lk && !was;
+        q->bits += nb;
+        if (rx.nsym != nsym) {                              /* a decision */
+            nsym = rx.nsym;
+            hist = (hist << 1) | (uint32_t)hst_brx_grid_ok(&rx);
+            q->gok += ones30(hist) >= 24;
+        }
+        was = lk;
+    }
+}
+
+/* dial tone, hum and a 375 Hz tone: never a lock, a bit, or the
+ * detector's 24 grid_ok decisions of 30 */
+static void tones(void)
+{
+    int s, k, l;
+    for (s = 0; s < 2; s++) {
+        int bps = s ? 300 : 450;
+        quiet_t q = { 0, 0, 0 };
+        for (k = 1; k <= 3; k++)
+            for (l = 0; l < 3; l++) {
+                quiet_t q1 = { 0, 0, 0 };
+                quiet_add(&q1, bps, k, -30 + 10 * l, NOISE_SECS / 2.0, (uint32_t)(k * 10 + l));
+                if (verbose && (q1.locks || q1.bits || q1.gok))
+                    printf("  (input %d at %d dBm0: %ld locks, %ld bits, %ld windows)\n", k, -30 + 10 * l, q1.locks, q1.bits, q1.gok);
+                q.locks += q1.locks; q.bits += q1.bits; q.gok += q1.gok;
+            }
+        printf("tones %d: US dial tone, mains hum, 375 Hz; at -30, -20 and -10 dBm0, %d s each\n", bps, NOISE_SECS / 2);
+        bound("never locked, no bits, grid_ok never on 24 of 30 decisions", q.locks == 0 && q.bits == 0 && q.gok == 0);
+    }
+}
+
+/* white noise at -31 to -10 dBm0 over 0-4 kHz (-42 to -21 in band):
+ * false locks a minute */
+static void noise_locks(void)
+{
+    static const double lv[5] = { -31, -25, -20, -15, -10 };
+    int s, l;
+    for (s = 0; s < 2; s++) {
+        int bps = s ? 300 : 450;
+        quiet_t q = { 0, 0, 0 };
+        for (l = 0; l < 5; l++) quiet_add(&q, bps, 0, lv[l], NOISE_SECS, (uint32_t)(900 + bps + l));
+        printf("noise %d: white noise at -31 to -10 dBm0, %d s each: %ld false locks a minute\n",
+               bps, NOISE_SECS, q.locks * 60 / (5 * NOISE_SECS));
+        bound("no lock, no bits, grid_ok never on 24 of 30 decisions", q.locks == 0 && q.bits == 0 && q.gok == 0);
+    }
+}
+
+/* hst_brx_band: a 300 receiver on a 450 receiver's band-pass does what
+ * one on its own does */
+static void band(void)
+{
+    static chan_t ch;
+    static hst_brx_t a, b, c;
+    hst_btx_t tx;
+    src_t src;
+    long n = 0, diff = 0, bits = 0;
+    prbs_seed(0xBA4Du);
+    memset(&src, 0, sizeof src);
+    src.random = 1;
+    hst_btx_init(&tx, 300, LEVEL, getbit, &src);
+    hst_btx_preamble(&tx);
+    chan_init(&ch, 7, 100, LEVEL / 10.0, 41);
+    hst_brx_init(&a, 450); hst_brx_init(&b, 300); hst_brx_init(&c, 300);
+    while (n < 3 * FS) {
+        int16_t y[4];
+        int k, m = chan_push(&ch, hst_btx_tick(&tx), y);
+        for (k = 0; k < m; k++, n++) {
+            int nb = 0, nc, j;
+            hst_brx_tick(&a, y[k]);
+            if (a.dec == 0) nb = hst_brx_band(&b, a.y);
+            nc = hst_brx_tick(&c, y[k]);
+            diff += nb != nc || hst_brx_locked(&b) != hst_brx_locked(&c);
+            for (j = 0; j < nb && j < nc; j++) diff += b.bits[j] != c.bits[j];
+            bits += nc;
+        }
+    }
+    printf("band: 3 s of 300 through one band-pass, %s\n", bits > 0 ? "bits out" : "no bits");
+    bound("the same bits and lock as a receiver on its own", diff == 0 && bits > 0);
+}
+
+/* carrier detect about its thresholds (on at -44 dBm0, off under -47),
+ * the signal alone */
+static void cd_level(void)
+{
+    int s;
+    for (s = 0; s < 2; s++) {
+        int bps = s ? 300 : 450, step, on_late = 0, held = 1, off_late = 0, never = 1;
+        static const double lv[3] = { -41, -45.5, -50 };
+        hst_btx_t tx;
+        hst_brx_t rx;
+        src_t src;
+        long n, on_at = -1, off_at = -1;
+        prbs_seed(0xCDu + (uint32_t)bps);
+        memset(&src, 0, sizeof src);
+        src.random = 1;
+        hst_btx_init(&tx, bps, LEVEL, getbit, &src);
+        hst_btx_preamble(&tx);
+        hst_brx_init(&rx, bps);
+        /* -41 for 1 s, -45.5 for 1 s, -50 for 1 s */
+        for (n = 0; n < 3 * FS; n++) {
+            double g;
+            step = (int)(n / FS);
+            g = 15770 * pow(10, lv[step] / 20) / LEVEL;
+            hst_brx_tick(&rx, (int16_t)lrint(hst_btx_tick(&tx) * g));
+            if (on_at < 0 && hst_brx_cd(&rx)) on_at = n;
+            if (step == 1 && !hst_brx_cd(&rx)) held = 0;
+            if (step == 2 && off_at < 0 && !hst_brx_cd(&rx)) off_at = n;
+        }
+        on_late = on_at < 0 || on_at > FS / 10;
+        off_late = off_at < 0 || off_at - 2 * FS > FS / 10;
+        /* from the start: -45.5 and -50 never turn it on */
+        for (step = 1; step < 3; step++) {
+            hst_brx_init(&rx, bps);
+            for (n = 0; n < 2 * FS; n++) {
+                double g = 15770 * pow(10, lv[step] / 20) / LEVEL;
+                hst_brx_tick(&rx, (int16_t)lrint(hst_btx_tick(&tx) * g));
+                if (hst_brx_cd(&rx)) never = 0;
+            }
+        }
+        printf("cd_level %d: the signal at -41, -45.5 and -50 dBm0\n", bps);
+        bound("on at -41 within 100 ms", !on_late);
+        bound("held at -45.5", held);
+        bound("off at -50 within 100 ms", !off_late);
+        bound("never on at -45.5 or -50 from the start", never);
+    }
+}
+
 static void loop_450(int c) { loop_case(450, c, 0); }
 static void loop_300(int c) { loop_case(300, c, 0); }
 
 int main(int argc, char **argv)
 {
-    int only = t_case_arg(argc, argv, 18), c;
+    int only = t_case_arg(argc, argv, 24), c;
     verbose = getenv("HST_VERBOSE") != NULL;
     if (T_CASE(only, 1)) steps();
     if (T_CASE(only, 2)) scr17();
@@ -721,5 +960,11 @@ int main(int argc, char **argv)
     if (T_CASE(only, 16)) cd();
     if (T_CASE(only, 17)) loop_case(450, 0, 1);
     if (T_CASE(only, 18)) loop_case(300, 0, 1);
+    if (T_CASE(only, 19)) noise_first();
+    if (T_CASE(only, 20)) dropout();
+    if (T_CASE(only, 21)) tones();
+    if (T_CASE(only, 22)) noise_locks();
+    if (T_CASE(only, 23)) band();
+    if (T_CASE(only, 24)) cd_level();
     T_REPORT("test_hst_back");
 }

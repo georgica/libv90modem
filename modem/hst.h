@@ -48,6 +48,21 @@
  * wturn drains slowly into the NCO.
  *
  * The whole acquisition again if no lock follows, or when lock is lost.
+ * The estimate holds over about +-28 Hz at 450 and +-18 Hz at 300 (beyond,
+ * a wrong turn can be chosen); telephone lines stay within +-7 Hz.
+ *
+ * Lock needs, over the last HST_BRX_WIN decisions: 15 within +-12 degrees
+ * of the grid; at least 4 different steps, none in more than 8 (a tone, or
+ * dial tone, or hum, steps the same way every symbol: a scrambled signal
+ * uses all eight); an RMS error under HST_BRX_RMS degrees (noise that falls
+ * on the grid by chance does not); and the alias check, on the last
+ * HST_BRX_EST strobes, preferring the turn in use to r +- 45 by a clear
+ * margin. When it prefers r +- 45 the carrier is estimated again from those
+ * strobes: a lock 45 degrees off (an estimate made on noise, before the
+ * signal or in a dropout, then pulled by the frequency loop) is never
+ * declared. The check runs again every 32 symbols while locked, and three
+ * in a row for the same turn 45 degrees off estimate the carrier again. A symbol
+ * 9 dB under the mean gives no bits, and two in a row lose the lock.
  * Carrier detect: the band's power in 10 ms blocks (before the AGC), on
  * at -44 dBm0 for 3 blocks, off under -47 dBm0 for 3 blocks [OURS]. */
 #define HST_BRX_XL  (HST_BBPF_N + 40)  /* the 8000 Hz input, linear, moved down when full */
@@ -55,6 +70,8 @@
 #define HST_BRX_ZL  (HST_BRX_ZN + 32)  /* the 1600 Hz baseband, linear, moved down when full */
 #define HST_BRX_EST 10                 /* symbols for the carrier's estimate */
 #define HST_BRX_OM  8                  /* symbols for the timing's */
+#define HST_BRX_WIN 16                 /* decisions the lock and grid_ok look over */
+#define HST_BRX_RMS 7                  /* degrees: the most RMS error for lock and grid_ok */
 
 typedef struct {
     int16_t  xh[HST_BRX_XL];          /* the input at 8000 Hz */
@@ -82,10 +99,17 @@ typedef struct {
     int32_t  esr[HST_BRX_EST], esi[HST_BRX_EST];   /* symbol strobes */
     int32_t  emr[HST_BRX_EST], emi[HST_BRX_EST];   /* the midpoint strobe before each */
     int32_t  nest, wait;              /* strobes kept; symbols left for a lock before acquiring again */
+    int32_t  nchk;                    /* symbols to the next alias check while locked */
+    int32_t  nalias;                  /* checks in a row for +45 (> 0) or -45 (< 0) while locked */
+    /* the last HST_BRX_WIN decisions: their steps and squared errors */
+    uint8_t  wstep[HST_BRX_WIN];
+    int32_t  wsq[HST_BRX_WIN];        /* (error in turns Q16)^2 / 16 */
+    int32_t  wpos, nwin, qbad;        /* ring place; decisions in it; symbols of bad quality in a row */
+    int32_t  nfade;                   /* locked symbols 9 dB under the mean in a row */
     /* decisions */
     uint32_t aprev;                   /* the last symbol's angle */
     int32_t  wturn;                   /* the carrier's turn a symbol left after the NCO, 2^32 a turn */
-    uint32_t okhist;                  /* grid_ok, the newest in bit 0 */
+    uint32_t okhist;                  /* each decision within +-12 degrees of the grid, the newest in bit 0 */
     int32_t  nsym, locked, grid_ok;
     int64_t  e2;                      /* mean square of the decision error, turns Q16 squared */
     scr_t    scr;
@@ -94,9 +118,8 @@ typedef struct {
 
 /* bps 450 or 300 */
 void hst_brx_init(hst_brx_t *r, int bps);
-/* one sample at 8000 Hz; returns the bits decided (0 or 3), in r->bits[]
- * (none while there is no carrier; until hst_brx_locked, not to be
- * trusted) */
+/* one sample at 8000 Hz; returns the bits decided (0 or 3), in r->bits[];
+ * bits only while locked */
 int  hst_brx_tick(hst_brx_t *r, int16_t x);
 /* one band-passed sample at 1600 Hz, as hst_brx_tick computes it at every
  * 5th sample (it returns the same). Both receivers run on one band-pass:
@@ -111,8 +134,10 @@ int  hst_brx_locked(const hst_brx_t *r);
 /* the SNR (Es/N0, from the decisions' phase error) as num/den; 0 when not
  * locked */
 int  hst_brx_snr(const hst_brx_t *r, int64_t *num, int64_t *den);
-/* the last decision within +-12 degrees of the 45-degree grid (the
- * detector's input) */
+/* the last decision within +-12 degrees of the 45-degree grid, with the
+ * lock's other conditions on the last HST_BRX_WIN decisions (steps of
+ * variety, the RMS error); 0 until the carrier has been estimated, and
+ * while acquiring again (the detector's input) */
 int  hst_brx_grid_ok(const hst_brx_t *r);
 
 /* ---------------- the back channel's transmitter ---------------- */

@@ -146,14 +146,16 @@ int16_t hst_btx_tick(hst_btx_t *t)
 #define AGC_RMS   4096                /* the band's RMS after the AGC */
 #define GAIN0     ((int32_t)((AGC_RMS * 65536LL) / 1577))   /* until a carrier: -20 dBm0 */
 #define DEG12     143165577u          /* 12 degrees, 2^32 a turn */
-#define LOCK_WIN  0xFFFu              /* lock: 11 of the last 12 decisions on the grid */
-#define LOCK_MIN  11
+#define LOCK_WIN  0xFFFFu             /* lock: 15 of the last 16 decisions on the grid */
+#define LOCK_MIN  15
 #define KT_ACQ    16                  /* Gardner's gain, until locked (x P / 64 of the Q14 error) */
 #define KT_TRK    4                   /* and once locked */
 #define KDA       8                   /* the frequency loop: 1/8 of the decision error a symbol, until locked */
 #define KDT       32                  /* and 1/32 once locked */
 #define WTURN_MAX (1 << 30)           /* a quarter turn a symbol */
 #define EST_AGAIN 24                  /* symbols after the carrier's estimate before acquiring again */
+#define CHK_EVERY 32                  /* symbols between alias checks while locked */
+#define RMS_SQ    ((HST_BRX_RMS * 65536 / 360) * (HST_BRX_RMS * 65536 / 360) / 16 * HST_BRX_WIN)
 enum { ACQ_TIMING, ACQ_CARRIER, ACQ_LOCK };
 
 /* pulse phases a 1600 Hz sample: 15 at 450 (160 a symbol), 5 at 300 (80) */
@@ -222,7 +224,8 @@ static void rx_acquire(hst_brx_t *r)
     r->pref = 0; r->nsym = 0;
     r->okhist = 0; r->locked = 0; r->grid_ok = 0;
     r->e2 = 0;
-    r->nest = 0; r->wait = 0;
+    r->nest = 0; r->wait = 0; r->nchk = 0; r->nalias = 0;
+    r->wpos = r->nwin = r->qbad = r->nfade = 0;
     scr_init(&r->scr);
 }
 
@@ -276,15 +279,34 @@ static void rot14(int32_t x, int32_t y, int32_t c, int32_t s, int64_t *re, int64
 /* a differential angle d (the carrier's turn taken off): the step, its
  * error (returned), grid_ok and its history, the bits through the
  * descrambler */
+static int rx_quality(const hst_brx_t *r);
+
 static int32_t rx_decide(hst_brx_t *r, uint32_t d)
 {
     int32_t step = (int32_t)(((d + (1u << 28)) >> 29) & 7);    /* the nearest multiple of 45 degrees */
-    int32_t de = sangle(d - ((uint32_t)step << 29)), tri, b;
-    r->grid_ok = de <= (int32_t)DEG12 && de >= -(int32_t)DEG12;
-    r->okhist = (r->okhist << 1) | (uint32_t)r->grid_ok;
+    int32_t de = sangle(d - ((uint32_t)step << 29)), dq = de / 65536, tri, b, ok;
+    ok = de <= (int32_t)DEG12 && de >= -(int32_t)DEG12;
+    r->okhist = (r->okhist << 1) | (uint32_t)ok;
+    r->wstep[r->wpos] = (uint8_t)step;
+    r->wsq[r->wpos] = dq * dq / 16;
+    if (++r->wpos == HST_BRX_WIN) r->wpos = 0;
+    if (r->nwin < HST_BRX_WIN) r->nwin++;
+    r->grid_ok = r->acq == ACQ_LOCK && ok && rx_quality(r);
     for (tri = 0; tri < 8 && hst_bstep[tri] != step; tri++) ;
     for (b = 0; b < 3; b++) r->bits[b] = (uint8_t)scr17_descramble(&r->scr, (tri >> b) & 1);
     return de;
+}
+
+/* the last HST_BRX_WIN decisions: steps of variety (4 different at least,
+ * none in more than 8) and an RMS error under HST_BRX_RMS degrees */
+static int rx_quality(const hst_brx_t *r)
+{
+    int n[8] = { 0 }, i, distinct = 0, most = 0;
+    int64_t sq = 0;
+    if (r->nwin < HST_BRX_WIN) return 0;
+    for (i = 0; i < HST_BRX_WIN; i++) { n[r->wstep[i]]++; sq += r->wsq[i]; }
+    for (i = 0; i < 8; i++) { distinct += n[i] > 0; if (n[i] > most) most = n[i]; }
+    return distinct >= 4 && most <= 8 && sq <= RMS_SQ;
 }
 
 /* the kept midpoints against those their symbols predict at a turn of h a
@@ -311,10 +333,24 @@ static int64_t est_mismatch(const hst_brx_t *r, int32_t h)
     return sum;
 }
 
+/* the alias check on the kept strobes around the turn h in use: -1 or +1
+ * when h - 45 or h + 45 predicts the midpoints clearly better, 0 when h
+ * does clearly better than both, 2 when neither is clear */
+static int rx_alias(const hst_brx_t *r, int32_t h)
+{
+    int64_t e[3];
+    int j;
+    for (j = 0; j < 3; j++) e[j] = est_mismatch(r, h + (j - 1) * (int32_t)(1u << 29));
+    if (e[0] * 2 < e[1] && e[0] <= e[2]) return -1;
+    if (e[2] * 2 < e[1] && e[2] < e[0]) return 1;
+    if (e[1] * 3 < e[0] * 2 && e[1] * 3 < e[2] * 2) return 0;
+    return 2;
+}
+
 /* the carrier's turn a symbol, from the kept strobes: modulo 45 degrees
  * from the eighth power of the differential strobes, then which of r,
  * r + 45 and r - 45 from the midpoints */
-static void rx_estimate(hst_brx_t *r)
+static void rx_estimate(hst_brx_t *r, int redecide)
 {
     int32_t c = 0, s = 0, h, best = 0, j;
     int64_t e, emin = 0;
@@ -337,10 +373,11 @@ static void rx_estimate(hst_brx_t *r)
      * matched filter's 8 symbols); and the kept symbols decided again with
      * it, for the lock */
     r->wturn = h;
-    r->okhist = 0;
+    r->acq = ACQ_LOCK; r->wait = EST_AGAIN;
+    r->okhist = 0; r->wpos = r->nwin = r->qbad = 0;
     scr_init(&r->scr);
     prev = v34_angle(r->esr[0], r->esi[0]);
-    for (i = 1; i + 1 < HST_BRX_EST; i++) {
+    for (i = 1; i <= redecide; i++) {
         uint32_t a = v34_angle(r->esr[i], r->esi[i]);
         rx_decide(r, a - prev - (uint32_t)h);
         prev = a;
@@ -385,7 +422,12 @@ static int rx_symbol(hst_brx_t *r, int32_t yr, int32_t yi)
     int64_t pw = (int64_t)yr * yr + (int64_t)yi * yi, e, adj, lim;
     uint32_t a = v34_angle(yr, yi), d;
     int32_t de, dq;
+    int fade;
 
+    /* a fade: the symbol 9 dB under the mean; no bits from it, and two in a
+     * row lose the lock (a dropout under the carrier detect) */
+    fade = r->locked && pw * 8 < r->pref;
+    r->nfade = fade ? r->nfade + 1 : 0;
     r->pref = r->pref ? r->pref + (pw - r->pref) / 16 : pw;
     if (r->pref < 1) r->pref = 1;
     if (r->nsym > 0) {
@@ -397,14 +439,22 @@ static int rx_symbol(hst_brx_t *r, int32_t yr, int32_t yi)
         r->tacc += (int32_t)(adj > lim ? lim : adj < -lim ? -lim : adj);
     }
     r->ypr = yr; r->ypi = yi;
-    if (r->acq == ACQ_CARRIER && r->nsym > 0) {
+    if (r->nsym > 0) {
+        /* the last HST_BRX_EST symbol and midpoint strobes, the newest last */
+        if (r->nest == HST_BRX_EST) {
+            int j;
+            for (j = 1; j < HST_BRX_EST; j++) {
+                r->esr[j - 1] = r->esr[j]; r->esi[j - 1] = r->esi[j];
+                r->emr[j - 1] = r->emr[j]; r->emi[j - 1] = r->emi[j];
+            }
+            r->nest--;
+        }
         r->esr[r->nest] = yr; r->esi[r->nest] = yi;
         r->emr[r->nest] = r->ymr; r->emi[r->nest] = r->ymi;
-        if (++r->nest == HST_BRX_EST) {
-            rx_estimate(r);
-            r->acq = ACQ_LOCK; r->wait = EST_AGAIN;
-        }
-    } else if (r->acq == ACQ_LOCK && !r->locked && --r->wait <= 0) {
+        r->nest++;
+    }
+    if (r->acq == ACQ_CARRIER && r->nest == HST_BRX_EST) rx_estimate(r, HST_BRX_EST - 2);
+    else if (r->acq == ACQ_LOCK && !r->locked && --r->wait <= 0) {
         rx_acquire(r);                                      /* no lock: from the start */
         r->sidx = 1;                                        /* this was a symbol's strobe */
         return 0;
@@ -425,12 +475,28 @@ static int rx_symbol(hst_brx_t *r, int32_t yr, int32_t yi)
             r->wturn -= t;
             r->dph = (uint32_t)((int64_t)r->dph + (int64_t)t * baud / 1600);
         }
-        if (!r->locked) r->locked = ones(r->okhist & LOCK_WIN) >= LOCK_MIN;
-        else if (ones(~r->okhist & 0xFFFFu) >= 8) { r->locked = 0; r->wait = 0; }   /* lost: acquire again */
+        r->qbad = rx_quality(r) ? 0 : r->qbad + 1;
+        if (!r->locked) {
+            if (ones(r->okhist & LOCK_WIN) >= LOCK_MIN && r->qbad == 0) {
+                int al = rx_alias(r, r->wturn);
+                if (al == 0) { r->locked = 1; r->nchk = CHK_EVERY; r->nalias = 0; }
+                else if (al != 2) rx_estimate(r, HST_BRX_EST - 1);     /* 45 degrees off: again */
+            }
+        } else if (ones(~r->okhist & 0xFFFFu) >= 8 || r->qbad >= HST_BRX_WIN || r->nfade >= 2) {
+            r->locked = 0; r->wait = 0;                     /* lost: acquire again */
+        } else if (--r->nchk <= 0) {
+            /* three checks in a row (on windows apart) for the same turn 45
+             * degrees off: one alone can be the data's chance */
+            int al = rx_alias(r, r->wturn);
+            r->nchk = CHK_EVERY;
+            r->nalias = (al == -1 || al == 1) && (r->nalias == 0 || (r->nalias > 0) == (al > 0))
+                      ? r->nalias + al : 0;
+            if (r->nalias >= 3 || r->nalias <= -3) { r->locked = 0; r->nalias = 0; rx_estimate(r, HST_BRX_EST - 1); }
+        }
     }
     dq = de / 65536;                                        /* turns Q16 */
     r->e2 += ((int64_t)dq * dq - r->e2) / 32;
-    return 3;
+    return r->locked && !fade ? 3 : 0;
 }
 
 int hst_brx_band(hst_brx_t *r, int32_t y)
