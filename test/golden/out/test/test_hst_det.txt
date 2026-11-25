@@ -1,0 +1,19 @@
+pos_450: 12 lines, -9, -26 and -43 dBm0, 20 dB SNR, +-7 Hz, +-100 ppm
+  never the other speed: pass
+  the right speed within 450 ms on every line: pass
+pos_300: 12 lines, -9, -26 and -43 dBm0, 20 dB SNR, +-7 Hz, +-100 ppm
+  never the other speed: pass
+  the right speed within 650 ms on every line: pass
+quiet: 11 inputs, 3 s each
+  never fires: pass
+mixtures: 12 inputs (dial tone, hum, 375 Hz, busy tone; noise 0, 3 and 6 dB below), 3 s each
+  never fires: pass
+v22bis: 9 s of a V.22bis call, as the answerer hears it, connected
+  never fires: pass
+impaired_450: 8 lines with a dropout early in the preamble (20 and 40 ms), 8 with a 3 dB fade (5 and 10 Hz)
+  a dropout: the right speed within 450 ms on every line: pass
+  a fade: the right speed within 450 ms on every line: pass
+impaired_300: 8 lines with a dropout early in the preamble (20 and 40 ms), 8 with a 3 dB fade (5 and 10 Hz)
+  a dropout: the right speed within 650 ms on every line: pass
+  a fade: the right speed within 650 ms on every line: pass
+test_hst_det: 11 checks, 0 failures

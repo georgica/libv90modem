@@ -32,6 +32,9 @@
 #   make examples        examples/answer_file (answering a recording), examples/call_loop
 #                        (calling the library's own answerer; make check runs it)
 #   make crd-scan        K56flex's CRd detector over recorded calls (RECS=<dir>): no detection
+#   make hst-scan        HST's back-channel detector over recorded calls (RECS=<dir>): none
+#   make cost-hst-back   ARM instructions a second of HST's two back receivers on one
+#                        band-pass, and of the detector (rig/bench_hst.c)
 #   make bench-v90       record a simulated V.90 call, replay it on the host and
 #                        under qemu, through the internals and the public API
 #   make bench-x2        the same for x2 (a call of the simulated client); cost-x2 counts
@@ -122,6 +125,7 @@ MODEM_SRC := modem/sintab.c modem/v34_tabs.c modem/v21.c modem/ansam.c modem/v8m
              modem/info.c modem/dpsk.c modem/probe.c modem/p2d.c modem/p2common.c modem/qamrx.c modem/ec.c modem/ecdly.c modem/tonedet.c modem/v34train.c modem/p34d.c modem/v34up.c modem/pcmenc.c \
              modem/v34mp.c modem/p2ans.c modem/v34mod.c modem/v34dx.c modem/v34ans.c modem/anstone.c modem/v8orig.c modem/orig.c modem/p2call.c modem/v34orig.c modem/v90arx.c modem/v90adec.c modem/v90dil.c modem/v90a.c modem/v90a_up90.c modem/v90a_up92.c modem/v90a_down.c modem/v90a_watch.c modem/pcmtx.c modem/v92aseq.c modem/belltone.c \
              modem/x2rec.c modem/x2map.c modem/x2tab.c modem/x2bank.c modem/x2tx.c modem/x2d.c modem/k56tab.c modem/k56enc.c modem/k56tx.c modem/k56d.c modem/v8bismsg.c modem/v8bis.c \
+             modem/hst_tabs.c modem/hst_back.c \
              $(wildcard v90/*.c) $(wildcard v34/*.c) $(wildcard v32/*.c) $(wildcard v92/*.c)
 T_SRC    := $(SIM_SRC) $(MODEM_SRC)
 HDRS     := $(wildcard modem/*.h sim/*.h test/*.h v90/*.h v34/*.h v92/*.h v90/test/v90_dec.h)
@@ -132,7 +136,7 @@ TESTS    := test_g711 test_noise test_filt test_resamp test_channel test_v21 tes
             test_v22tx test_v22rx test_v22bis test_v14 test_answer test_info test_dpsk test_probe test_p2 test_qamrx test_ec test_ecdly test_v34train test_sres test_answer_v90 test_p34 test_pcmenc \
             test_v34mp test_p2ans test_v34mod test_v34dx test_v34call test_answer_v34 test_answer_v32 test_answer_v90_v34 \
             test_p2_v92 test_v92call test_answer_v92 test_v92real test_answer_lin \
-            test_anstone test_v8orig test_orig test_orig_v32 test_p2call test_orig_v34 test_v90arx test_v90arx_robust test_v90adec test_v90dil test_p2v90 test_v90a test_orig_v90 test_orig_v90_te test_orig_seeds test_orig_retrain test_pcmtx test_v92aseq test_p2v92a test_v92a test_orig_v92 test_belltone test_orig_bell test_realcheck test_x2_pad test_answer_x2 test_x2rec test_x2map test_x2tx test_k56tab test_k56enc test_k56tx test_v8bismsg test_v8bis test_answer_k56 test_clock test_shared test_fixmath test_v34up test_ans_table test_exact test_interp_bound test_v90arx_paths test_small_exact test_v92_hostile
+            test_anstone test_v8orig test_orig test_orig_v32 test_p2call test_orig_v34 test_v90arx test_v90arx_robust test_v90adec test_v90dil test_p2v90 test_v90a test_orig_v90 test_orig_v90_te test_orig_seeds test_orig_retrain test_pcmtx test_v92aseq test_p2v92a test_v92a test_orig_v92 test_belltone test_orig_bell test_realcheck test_x2_pad test_answer_x2 test_x2rec test_x2map test_x2tx test_k56tab test_k56enc test_k56tx test_v8bismsg test_v8bis test_answer_k56 test_clock test_shared test_fixmath test_v34up test_ans_table test_exact test_interp_bound test_v90arx_paths test_small_exact test_v92_hostile test_hst_back test_hst_det
 # the slowest programs, split by case: `prog --cases` prints the count, `prog N`
 # runs case N alone, no argument all of them (tools/split-check.sh); the ARM
 # runner (check-arm) runs each case as its own job
@@ -401,7 +405,7 @@ check: test-all test-api test-examples test-fixtures check-symbols check-soname 
 NPROC := $(shell nproc 2>/dev/null || echo 4)
 .PHONY: golden golden-record print-golden bench-hashes replay-proof
 golden golden-record:
-	@unset V92_VERBOSE V32_DEBUG; $(MAKE) -s check PAR=$(or $(PAR),$(NPROC)) BUILD=$(BUILD)
+	@unset V92_VERBOSE V32_DEBUG HST_VERBOSE; $(MAKE) -s check PAR=$(or $(PAR),$(NPROC)) BUILD=$(BUILD)
 	@tools/golden.sh $(if $(filter golden,$@),check,record) $(BUILD)
 print-golden:
 	@for t in $(TESTS); do echo $$t $(abspath $(BUILD))/$$t; done
@@ -484,6 +488,23 @@ $(BUILD)/k56-crd-scan: tools/k56_crd_scan.c modem/v8bis.c modem/v8bismsg.c modem
 crd-scan: $(BUILD)/k56-crd-scan
 	@if [ -z "$(RECS)" ]; then echo "RECS not set (a directory of recordings)"; exit 1; fi; \
 	$(abspath $(BUILD))/k56-crd-scan $(RECS)/*.raw | tail -1
+# HST's back-channel detector (modem/hst_back.c, hst_det) over what the
+# answerer heard in recorded calls (tools/hst_scan.c -b): RECS=<dir> of
+# v90m-replay recordings (*.raw); a detection is a false one (none of these
+# callers spoke HST). Without -b, hst-scan lists each side's tones and
+# silences. Host only, not part of check.
+HST_SCAN_SRC := tools/hst_scan.c v42/v42_hdlc.c v42/mnp_frame.c $(MODEM_SRC)
+$(BUILD)/hst-scan: $(HST_SCAN_SRC) $(HDRS) $(wildcard v42/*.h)
+	@mkdir -p $(BUILD)
+	$(CC) $(T_CFLAGS) -o $@ $(HST_SCAN_SRC) $(LDLIBS)
+.PHONY: hst-scan
+hst-scan: $(BUILD)/hst-scan
+	@if [ -z "$(RECS)" ]; then echo "RECS not set (a directory of recordings)"; exit 1; fi; \
+	n=0; d=0; for f in $(RECS)/*.raw; do $(abspath $(BUILD))/hst-scan -b "$$f" > $(BUILD)/hst-scan.out 2>&1; \
+	   r=$$?; [ $$r -le 1 ] || { cat $(BUILD)/hst-scan.out; exit 1; }; \
+	   grep 'back channel detected' $(BUILD)/hst-scan.out; \
+	   d=$$((d + $$(grep -c 'back channel detected' $(BUILD)/hst-scan.out))); n=$$((n + 1)); done; \
+	echo "hst-scan: $$n recordings, $$d back-channel detections"; [ $$d -eq 0 ]
 # our K56flex encoder's octets and data bits at every rate, pad and robbed
 # mask (tools/k56enc_dump.c), for SM56's decoder harness outside the
 # repository (docs/history/k56-facts.md "Oracle"). Host only, not part of check.
@@ -833,6 +854,36 @@ $(BUILD)/bench_v90c: rig/bench_v90c.c $(MODEM_SRC) $(HDRS)
 $(BUILD)/bench_v90c.arm: rig/bench_v90c.c $(MODEM_SRC) $(HDRS)
 	@mkdir -p $(BUILD)
 	$(ARM_CC) $(T_CFLAGS) -static -o $@ rig/bench_v90c.c $(MODEM_SRC) $(LDLIBS)
+# ---- HST's back channel on the target: rig/bench_hst -g writes 4 s of the
+# caller's back channel at 450 or 300 bit/s (integer only); cost-hst-back counts the
+# ARM instructions of its third second through the two back receivers on one
+# band-pass (-b, the pump holding the forward channel) and through the
+# detector of ANS_HST_WAIT (-d), split where the trace enters
+# bench_hst_mark, less the bench's own loop (-n). The host's output and the
+# target's must agree ----
+.PHONY: cost-hst-back
+cost-hst-back: $(BUILD)/bench_hst $(BUILD)/bench_hst.arm
+	@pc=$$(nm $(BUILD)/bench_hst.arm | sed -n 's/^\([0-9a-f]*\) T bench_hst_mark$$/\1/p'); \
+	 for s in 450 300; do \
+	   r=$(BUILD)/hst_back_$$s.rec; $(abspath $(BUILD))/bench_hst -g $$r $$s > /dev/null || exit 1; \
+	   for m in n b d; do \
+	     h=$$($(abspath $(BUILD))/bench_hst -$$m $$r); a=$$($(QEMU) $(abspath $(BUILD))/bench_hst.arm -$$m $$r); \
+	     [ "$$h" = "$$a" ] || { echo "bench_hst -$$m: host '$$h', target '$$a'"; exit 1; }; \
+	     c=$$($(CNT) $(abspath $(BUILD))/bench_hst.arm -$$m $$r 2>&1 >/dev/null \
+	        | awk -v pc="/00000000$$pc/" 'BEGIN { k = 0 } /^Trace/ { if (index($$0, pc)) k++; n[k]++ } END { print n[1] + 0 }'); \
+	     case $$m in \
+	     n) loop=$$c ;; \
+	     b) echo "HST two back receivers, one band-pass, the caller at $$s: $$((c - loop)) ARM instructions a second ($$c with the bench's loop, $$loop)"; echo "  ($$h)" ;; \
+	     d) echo "HST back-channel detector, the caller at $$s: $$((c - loop)) ARM instructions a second ($$c with the bench's loop)"; echo "  ($$h)" ;; \
+	     esac; \
+	   done; \
+	 done
+$(BUILD)/bench_hst: rig/bench_hst.c $(MODEM_SRC) $(HDRS)
+	@mkdir -p $(BUILD)
+	$(CC) $(T_CFLAGS) -o $@ rig/bench_hst.c $(MODEM_SRC) $(LDLIBS)
+$(BUILD)/bench_hst.arm: rig/bench_hst.c $(MODEM_SRC) $(HDRS)
+	@mkdir -p $(BUILD)
+	$(ARM_CC) $(T_CFLAGS) -static -o $@ rig/bench_hst.c $(MODEM_SRC) $(LDLIBS)
 # ---- V.42 on the target: rig/bench_v42 runs two endpoints back to back,
 # both directions full of text; cost-v42 counts the ARM instructions of
 # 56000 more line bits each way (one second at 56 kbit/s), the difference of

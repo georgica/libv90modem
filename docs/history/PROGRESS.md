@@ -4680,3 +4680,422 @@ calls. Run on this machine only (`127.0.0.1:5070`), never deployed.
 - **End code:** `V90M_END_HST_FAILED`, an HST call that had no MNP link
   within its limit (a host that did not clear down when the endpoint gave
   up with `V90M_EC_R_NO_EC`).
+
+## hst 11: the back channel's tables and its 8-DPSK transmitter (2026-11-24)
+
+`tools/gen_hst_tabs.py` writes `modem/hst_tabs.[ch]` (the design is in its
+header; a new table is one more function in its `TABLES`):
+
+- `hst_bstep` = 1 6 2 5 0 7 3 4, the firmware's 0x43705261 a nibble at a
+  time from the low end (BF §3) [FW].
+- `hst_bpulse450` (160 phases a symbol, 3 a sample: 53 1/3 samples) and
+  `hst_bpulse300` (80 phases, 1 a sample): RRC beta 0.35 over 10 symbols,
+  Kaiser window beta 3, Q14 [OURS]. Ten symbols, not 8: with beta 4 over
+  8 the pulse was 77 dB down at 600 Hz but its ISI through a matched
+  filter reached 2.4 degrees (4.8 on a phase step); 10 symbols and beta 3
+  give 67 dB and 1.4 degrees. The generator checks >= 60 dB at 600 Hz and
+  above and prints the -20 dB band: 274.3-475.7 Hz (450), 282.9-417.1 Hz
+  (300).
+- `hst_bbpf`: 243 taps, Kaiser band-pass with cut-offs 200 and 550 Hz;
+  250-500 Hz within 0.03 dB, at most -51.5 dB at <= 150 and >= 600 Hz.
+  `hst_hbpf`: 189 taps, cut-offs 550 and 3700 Hz; 600-3400 Hz within
+  0.08 dB, at most -41.5 dB at <= 500 Hz (our bound: 40 dB, enough for
+  the detector's 10 dB ratio). The fewest odd taps that meet each with
+  Q15 coefficients.
+
+`modem/scramble.[ch]`: `scr17_scramble` and `scr17_descramble`, the
+polynomial without V.22bis's 64-ones rule; `v22_*` untouched.
+
+`modem/hst.h`, `modem/hst_back.c`: `hst_btx_t` (256 octets on x86-64, all fields fixed-width).
+Each speed has its own pulse train and carrier, so that after
+`hst_btx_set_speed` (taken at the old speed's next symbol boundary) the
+old speed's last symbols ring out on their own pulse; both carriers run
+from `hst_btx_init`. Preamble 300 ms of scrambled ones (45 symbols at
+450, 30 at 300), phase and scrambler from 0; then getbit's bits, the
+tribit's LSB first. `hst_btx_stop`: the pulses drain, then exact zeros.
+
+`test_hst_back` (new; its golden file is new): `steps`, `scr17`, `filters`,
+`tx_phase` (a test-side RRC matched correlator: every symbol's phase,
+preamble included, on 22.5 + 45 k within 1.6 degrees, each step within 2.6),
+`tx_speed`, `tx_spectrum` (Welch, 4096 points, 10 s of random data).
+
+    make -s build/test_hst_back (before the code) -> fatal error: ../modem/hst_tabs.h: No such file or directory
+    build/test_hst_back -> test_hst_back: 44 checks, 0 failures
+      tx_spectrum 450: level 4001 (asked 4000), -20 dB band 275.4-474.6 Hz, >= 600 Hz -68.9 dB
+      tx_spectrum 300: level 3999 (asked 4000), -20 dB band 285.2-416.0 Hz, >= 600 Hz -75.4 dB
+    make check-fixed   -> fixed: 109 objects, 0 float helpers
+    make check-headers -> headers: 110 compile alone
+    make bench-hashes  -> bench hashes: 17 identical
+    make verify        -> VERIFY PASS (692 s; golden 148 identical, test_hst_back's new;
+                          armv7hf and big-endian short-cmp identical; ubsan pass)
+
+Review fixes (round 1). `test_hst_back` now prints only exact integers
+(taps, symbols, the level as the integer square root of the integer mean
+square) and one pass/fail line per bound. The measured values, which come
+from the test's own libm arithmetic, print only with `HST_VERBOSE` set
+(make golden, verify.sh and verify-phase.sh unset it). Each case seeds its
+own random data, so the cases run one at a time print exactly what the
+whole run prints (checked plain and verbose). In `hst_back.c`, a negative
+level is taken as 0, and `newsym` is set only when a symbol is sent. The
+structs use fixed-width fields. `hst.h` notes that `hst_bbpf` is meant to
+run at the receiver's 1600 Hz instants. The FFT twiddles are precomputed
+and the filter grid is 2 Hz: ARMv5 under qemu takes 9.8 s, down from 15 s.
+`tools/test-times.txt` has entries for both builds.
+
+    build/test_hst_back -> test_hst_back: 42 checks, 0 failures; ARMv5 (qemu) output identical
+    make verify         -> VERIFY PASS (1198 s; golden 148 identical, test_hst_back's own rewritten)
+
+## hst 12: the back channel's receiver, 450 and 300 (2026-11-25)
+
+`modem/hst.h`, `modem/hst_back.c`: `hst_brx_t` (1568 octets on x86-64 and
+ARMv5, all fields fixed-width), `hst_brx_init/tick/band/cd/locked/snr/grid_ok`.
+The spec's chain: `hst_bbpf` (folded, 122 multiplies) at every 5th sample
+only, so at 1600 Hz; carrier detect on the band's power in 10 ms blocks
+(on at -44 dBm0 for 3 blocks, off under -47 dBm0 for 3 blocks); AGC; a
+32-bit NCO to baseband; the matched filter (Task 11's transmit pulse, +-4
+symbols) evaluated only at the strobes, at each strobe's own pulse phase
+(1/160 of a symbol at 450, 1/80 at 300: no interpolator); Gardner at two
+strobes a symbol; differential decisions; `scr17_descramble`.
+`hst_brx_band` takes a band-passed sample, so that the engine runs one
+`hst_bbpf` for both receivers (hst.h said it would).
+
+Acquisition is in three steps [OURS], each one-shot, because the loops
+alone were too slow or wrong:
+- Timing: four strobes a symbol over 8 symbols, the phase of the
+  symbol-rate line in their power (Oerder and Meyr), then Gardner at two
+  strobes a symbol. Gardner alone at a gain high enough to lock in time
+  left 10-degree jitter.
+- Carrier: over 10 symbols, the eighth power of the differential strobes
+  gives the turn a symbol modulo 45 degrees. 45 degrees a symbol is baud/8
+  Hz, 12.5 Hz at 300, where 7 Hz turns a symbol 25 degrees: a
+  decision-directed loop settles there 45 degrees off (seen: 300 at -7 Hz
+  locked at +5.7 Hz). The midpoint strobes settle it. A midpoint is its
+  four neighbouring symbols weighted by the pulse's autocorrelation
+  (computed at init from the table), each turned against it by w T/4 at
+  T/2 and 3 w T/4 at 3T/2. The matched filter's output for a carrier off
+  by w turns at w/2 across a pulse, so the turn is a quarter, not a half:
+  with the half, the check could not tell. The right turn of r, r + 45 and
+  r - 45 predicts the midpoints; the others miss them by 3 to 7 times the
+  power. A cross-product estimator on strobes half a symbol apart was
+  tried first: 5 Hz rms over 30 symbols, and biased.
+- The estimate is taken off each differential angle (`wturn`), not put on
+  the NCO. A step there reaches the strobes only through the matched
+  filter's 8 symbols, and a decision-directed loop through the NCO was
+  unstable for the same reason. The stored window is decided again with it,
+  which fills the lock history and puts the descrambler in step: before
+  that, the first bits after the lock were wrong. Once locked, a
+  first-order loop on the decision error (1/32) tracks, and `wturn` drains
+  into the NCO at 1/64 a symbol.
+- Lock: 11 of the last 12 decisions within +-12 degrees of the grid, after
+  the estimate; lost at 8 of 16 off. With no lock 24 symbols after the
+  estimate, or when lock is lost, acquisition starts again.
+
+No equaliser: `line_450` and `line_300` run v32line's line model (mu-law,
+6 dB loss, the loop { 0.3, 1.0, -0.5, 0.3 }, 200 samples of delay, 20 dB
+SNR, +7 Hz, +100 ppm) with no bit in error in 5 x 10^4.
+
+`test_hst_back` (its golden file re-recorded: 42 -> 80 checks, the new lines
+after the old ones, which are unchanged): `loop_450`, `loop_300` (four
+lines each: +-7 Hz, +-100 ppm, white noise 20 dB below the signal over
+0-4 kHz; a lighter line than v32line's, whose two windowed-sinc resamplers
+cost some 200 libm calls a sample: sim/resamp's linear resampler, a
+63-tap Hilbert shift, sim/noise), `lock_time`, `cd`, `line_450`, `line_300`.
+TEST_SHORT: 10^4 bits on loop_*, 2 x 10^3 on line_*.
+
+    make -s build/test_hst_back (before the code) -> error: unknown type name 'hst_brx_t';
+        implicit declaration of function 'hst_brx_init' (and the other hst_brx_*)
+    build/test_hst_back -> test_hst_back: 80 checks, 0 failures (12 s on the host)
+    HST_VERBOSE=1: loop_*: 0 errors in 2 x 10^5 bits on all eight, locked 185-365 ms
+      after the preamble's start, SNR estimate 27.5-32.5 dB; line_*: 0 errors
+      in 5 x 10^4; carrier off 20-30 ms after the line falls silent
+    lock time over 800 lines (scratch driver, seeds 1-50, four offsets each,
+      flat and v32line's mu-law line): worst 225 ms at 450, 328 ms at 300; the
+      carrier within 0.12 Hz on every one (no alias). At 10 dB SNR: 252 and 389 ms.
+    ARMv5 (uclibc) and armv7hf (musl) short sets identical to the host's
+      -DTEST_FORCE_SHORT; clang -fsanitize=undefined short set identical, clean;
+      each case alone prints what the whole run prints
+    make check-fixed   -> fixed: 109 objects, 0 float helpers
+    make check-headers -> headers: 110 compile alone
+
+CPU, ARMv5 instructions a second (qemu -d exec, a scratch bench: 450
+transmitter alone, then with both receivers on its signal): two receivers
+each with its own band-pass 5.1 M; with one shared band-pass
+(`hst_brx_band`) 3.5 M. `hst_bbpf` alone is about 1.36 M of that (7
+instructions a tap). The spec's "about 1 M a second per receiver" is
+missed: the lever is a shorter `hst_bbpf` (Task 11's generator), for
+`make cost-hst` to weigh against the 15 M of holding forward. (The 450
+transmitter is 1.8 M.)
+
+Review fixes (round 1).
+- C1, a lock 45 degrees off. When the carrier estimate was made on noise
+  (the line's noise before the caller, or a dropout under the carrier
+  detect), the frequency loop pulled to a multiple of 45 degrees, and the
+  receiver locked there for good: 4-25 % of the reviewer's runs.
+  - The receiver now keeps the last 10 symbol and midpoint strobes while
+    acquiring and locked.
+  - Lock is declared only when the alias check on them prefers the turn in
+    use to r +- 45 by 3:2. When it prefers r +- 45 by 2:1, the carrier is
+    estimated again from them.
+  - While locked, the check runs every 32 symbols. Three checks in a row for
+    the same wrong turn are needed to act: one alone fired falsely about once
+    in a thousand checks on a right lock.
+  - A symbol 9 dB under the mean symbol power gives no bits, and two in a row
+    lose the lock. Without that, a 0.1 s dropout at 300 kept the lock and
+    gave some 22 wrong bits.
+- I1, lock on tones and noise. Lock now needs, over the last 16 decisions:
+  - 15 within +-12 degrees of the grid;
+  - at least 4 different steps, none in more than 8;
+  - an RMS error under 7 degrees;
+  - the alias check. `grid_ok` needs the same window conditions.
+  - With the 12-decision window and an 8-degree ceiling, white noise still
+    locked 1-4 times a minute at 450. At 6 degrees it was 4 in 50 minutes,
+    and lock failed at 8 dB. 16 decisions at 7 degrees gave 0 in 50 minutes.
+- I2. `grid_ok` is 0 until the carrier estimate has been made, and while
+  acquiring again. `hst_brx_tick` gives bits only while locked.
+- M3. The acquisition range is in hst.h: about +-28 Hz at 450 and +-18 Hz
+  at 300.
+- M4. Carrier detect works on the band's power, not on symbol power as the
+  spec has it [OURS]. The reason is that it is off within 100 ms: symbol
+  power comes through the matched filter's 4-symbol delay, 40 ms at 300.
+  The thresholds are -44 dBm0 on and -47 dBm0 off.
+
+New cases in `test_hst_back` (97 checks):
+- `noise_first`: 1 s of noise first, at 20, 15 and 10 dB; 8 seeds x +7, -7,
+  +3 Hz per speed.
+- `dropout`: the signal off for 0.1, 0.3 and 1 s.
+- `tones`: US dial tone, mains hum and a 375 Hz tone, at -30, -20 and
+  -10 dBm0, 30 s each.
+- `noise`: white noise at -31 to -10 dBm0, 60 s each.
+- `band`: a 300 receiver on a 450 receiver's band-pass gives the same bits
+  and lock as one on its own.
+- `cd_level`: on at -41 dBm0, held at -45.5, off at -50, and never on at
+  -45.5 or -50 from the start.
+
+Figures:
+
+    noise_first, dropout: 0 of 72 lines bad at each speed (locked at the end,
+      carrier within 1 Hz, 1500 bits right after the last lock or the dropout);
+      the reviewer's probe set (8 seeds x 3 offsets x 16 conditions): 0 of 384,
+      no wrong bit even across the dropouts
+    tones: no lock, no bits, no 24-of-30 grid_ok window (dial tone at -20 dBm0
+      gives a few lone grid_ok decisions)
+    noise: 0 false locks a minute (10 minutes a speed; 50 minutes in the probe)
+    lock time: worst 235 ms at 450, 405 ms at 300 (lock_time); 800-line stress
+      252 / 369 ms flat, 245 / 348 ms mu-law, carrier within 0.13 Hz
+    lock floor: reliable down to 8 dB over 0-4 kHz (about 21 dB in band);
+      at 6-7 dB some lines do not lock within 2 s
+    CPU, two receivers on one band-pass, ARMv5: 3.68 M a second (3.50 M before)
+
+For Task 13 (set by the review):
+- `make cost-hst-back`: the two receivers on one band-pass at most 2.0 M
+  ARMv5 instructions a second. The lever is a decimation filter in place of
+  the 243-tap `hst_bbpf`: about 45 taps, 60 dB down at 1124-1326,
+  1874-2076, 2724-2926 and 3474-3676 Hz. `hst_hbpf` wants the same.
+- An echo test of our own forward signal ("holding forward"), since the
+  500-1100 Hz band then rests on the matched filter's selectivity.
+
+Review fixes (round 2).
+- N1, a lock 45 degrees off giving bits. The 3:2 alias check at lock let
+  about 0.1 % of hard starts through, mostly after a 1 s dropout at 12 dB,
+  and some 288 wrong bits went out before the in-lock checks caught it.
+  - The check at lock is now 2:1.
+  - A second check on a fresh window 10 symbols later, at 3:2, confirms the
+    lock or ends it. A preference for r +- 45 means estimating again.
+  - While locked, the bits are held back 19 symbols at 450 and 18 at 300,
+    so no bit leaves before the second check. A confirmation at 1:1 let one
+    alias through in the review's set (300, +12 Hz, seed 28).
+  - An unclear second check costs a lock won again, never a bit.
+  - hst.h no longer says such a lock "is never declared". It says no bit
+    is given from one.
+- N2, the hold floor. Holding a lock uses an RMS ceiling of 11 degrees
+  (HST_BRX_RMS_HOLD); winning one still uses 7.
+  - Locked at 25 dB, then the noise raised: 0 losses of lock at 8, 7, 6
+    and 5 dB (10 seeds x 18 s a speed).
+  - Over 4 x 58 s: at 450, BER 1.4e-4 at 6 dB and 5e-4 at 5 dB; at 4 dB,
+    4 losses and BER 1.9e-3. At 300, no errors to 6 dB and 2.5e-4 at 4 dB.
+  - In round 1 it was about 3 losses a minute at 8 dB.
+- N3, the fade gate. A fade loses the lock only after about 75 ms in a row
+  (11 symbols at 450, 8 at 300; it was 2 symbols).
+  - The bits held back (above) let a shorter fade keep the lock and give
+    its bits: no gap in the stream. That also settles the review's M-b.
+  - A fade that loses the lock takes its own bits with it, and those of the
+    8 symbols before it, over which the matched filter ramps down.
+  - Faded symbols move neither the loops nor the grid history.
+  - Carrier detect goes off after 6 blocks under -47 dBm0, not 3, so a lost
+    50 ms packet keeps the carrier. It is still off within 100 ms.
+  - 20/30/50 ms dropouts: the lock held, at most 13-25 wrong bits a line.
+  - 0.1 s: the lock lost and won again, not one wrong bit given.
+  - Level steps of -10, -12 and -15 dB: 0 losses (-15 dB at 300: 1 of 10).
+- Minors:
+  - The range at 300 is written as reliable over +-12 Hz, with what
+    happens at +-15 Hz.
+  - A direct test of I2.
+  - The round-1 figure "0 false locks in 50 minutes" held only for my seeds.
+    The review's set found 1 false lock in 40 minutes at 450 and 3 at 300 on
+    noise alone, and 15 in 240 minutes with hum or dial tone in noise.
+    Now 6 runs in 1910 raise `locked` for 0.07-0.1 s, and none gives a bit.
+
+The review's sets, rebuilt on this code (build/tmp/rv12b; p5.c is p4.c,
+which places an epoch shorter than 12 bits by time from an aligned one
+instead of counting it all wrong):
+
+    7800 hard starts (13 offsets x 30 seeds x 10 conditions x 2 speeds):
+      no epoch from an alias anywhere; no run with more than 9 wrong bits;
+      450: no wrong bit at all within +-12 Hz;
+      300: within +-12 Hz, one run at 12 dB with 3 wrong first bits after
+      the lock, an ordinary error with one decision of 16 off the grid; at
+      +-15 Hz (beyond the reliable range) 34 such runs and 33 not locked
+      at 10 s
+    1910 tone and noise runs of 60 s: 0 bits given; 0 windows of 24 grid_ok
+      in 30; `locked` raised for 0.07-0.1 s in 6 (noise, or tone and noise)
+    lock time: worst 252 ms (450) and 369 ms (300) over 800 lines
+
+New cases in `test_hst_back` (113 checks; 20 s on the host, 2.5 s short):
+- `alias`: 112 hard starts a speed at 12 dB, -10 to +10 Hz, noise first
+  or a 1 s dropout. Each must end locked on the right carrier, with not one
+  wrong bit in all the bits given.
+- `fades`: 20, 30 and 50 ms dropouts; and 0.1 s.
+- `hold`: 8 dB and 6 dB for 60 s a speed.
+- `grid_ok`: 0 before the estimate, and until the 16-decision window is
+  full; 1 after that.
+- `loop_*`'s third bound counts losses of lock once bits have come. Before
+  that, the lock's second check may end a lock, which is not a loss.
+
+CPU (ARMv5, two receivers on one band-pass): 3.70 M a second.
+
+## hst 13: the detector, tools/hst_scan, the receivers' CPU; milestone 3 (2026-11-25)
+
+First commit, the Task 12 leftovers (rulings carried from its review):
+- I-A. The second alias check now sums the mismatches of two fresh
+  windows of 10 symbols after the lock and confirms when the turn in use
+  predicts better than r +- 45 (1:1 on the pool); one window alone was
+  unclear about a right lock now and then, and dropping it made about 5 %
+  of the clean starts at 300 late. The lock's own window is not pooled
+  (pooling it let the review's 300 +12 Hz seed 28 alias through). The
+  hold is HST_BRX_DLY = 21 symbols at both speeds (140 ms at 450, 210 at
+  300), past both windows.
+- `first_bit` (test_hst_back case 29): 256 clean starts at 300, +-7 Hz,
+  +-100 ppm, 20 and 30 dB: the lock giving the first bit (first bit less
+  the hold) within 450 ms on every one. The `loop_*` bound is strict
+  again (no loss of lock after the lock).
+- hst.h: a carrier stop discards the whole held ring (some 10-15 real
+  symbols: 42 line bits at 450, 31 at 300 measured); Task 21 owns the fix.
+  The carrier-off margin is 10 ms (80-90 ms against 100).
+
+Second commit, Task 13:
+- `hst_bbpf` is a decimation filter: 39 taps (cut-off 740 Hz, Kaiser beta
+  5.8), at least 60 dB down only where it folds into 274-476 Hz at
+  1600 Hz (1124-1326, 1874-2076, 2724-2926, 3474-3676 Hz; 63.9 dB),
+  flat to 0.47 dB over 250-500 Hz. The rest of the selectivity is the
+  matched filter's. `hst_mf450`/`hst_mf300`: the matched filter as one row
+  of taps a strobe phase (a dot product; the same numbers as before).
+- CPU work, outputs unchanged by each step (test_hst_back byte-identical):
+  the matched filter's rows, a 32-bit mixer, one sincos, the window's
+  sums kept running, the decisions' tribits from a table, the divisions
+  by the symbol power in 32 bits (shifted to 12 bits), a 32-bit square
+  root for the AGC, the NCO drain as t x 3/32 and t/16.
+- Lock and grid_ok also need the symbols' power steady over the window
+  (variance at most 1/6 of the squared mean). The detector, as first
+  written, fired on two tones that beat (330 + 401 Hz, 350 + 421 Hz: 2 of
+  12000 random tone mixtures); real 8-DPSK spreads at most 0.13 (6-30 dB,
+  +-12 Hz), those two tones 0.24 and more.
+- `hst_det` (hst.h): both stages over 100 ms (ten 10 ms blocks): the band
+  (`hst_dbpf`, 43 taps at 1600 Hz on the receivers' band-pass) over
+  -45 dBm0 [OURS: the spec's -43 is the weakest to be found, 2 dB margin]
+  and 10 dB over the high band (`hst_hbpf` at every 3rd and 5th sample in
+  turn), and 24 of the last 30 grid_ok on the 450 (or else the 300)
+  receiver. The receivers carry on after it fires.
+- `tools/hst_scan.c` (`make hst-scan RECS=`), `rig/bench_hst.c`
+  (`make cost-hst-back`).
+- test_hst_back: `filters` for the new tables; `echo` (case 30): the back
+  channel at -33 dBm0 under our forward signal's echo, the library's V.32
+  transmitter standing in (2400 baud at 1800 Hz; the HST forward
+  transmitter is not on this branch): in HST's forward band (a test-side
+  high-pass at 550 Hz with a -40 dB floor, for the beta 1/12 pulse) from
+  -10 dBm0 at 6 dB ERL, locked and error-free over 2 x 10^4 bits; V.32's
+  own 25 % pulse reaches into the back band, and its limit is an echo of
+  -30 dBm0, 3 dB over the back channel (-28: errors on 3 lines of 24; at
+  the corner the 450 receiver does not lock). `noise_first`/`dropout`:
+  at most one decision (3 bits) wrong after the lock, not none: with the
+  39-tap band-pass, 1 line in 360 at 40 seeds had one wrong decision in
+  the first ones after the lock at 10 dB (the 243-tap: 0 in 360); the
+  7800 hard starts give one such run either way; an alias gives half.
+- test_hst_det (new): pos_450, pos_300 (-9, -26, -43 dBm0, 20 dB, +-7 Hz,
+  +-100 ppm), quiet, mixtures, v22bis.
+
+    make -s build/test_hst_det (before the code) -> error: unknown type name 'hst_det_t'
+    build/test_hst_det -> test_hst_det: 7 checks, 0 failures
+      detection: 356-416 ms at 450 (budget 450), 526-576 ms at 300 (650)
+    build/test_hst_back -> test_hst_back: 120 checks, 0 failures
+    make hst-scan RECS=$RECS -> 106 recordings, 0 back-channel detections;
+      the closest any came: 0 grid_ok in any window (before the steady
+      power rule: 17 of 30 at 300 on a 462 Hz tone, 10 at 450)
+    12000 random mixtures of 1-3 tones (150-650 Hz, -45 to -5 dBm0, AM,
+      mu-law, noise): no grid_ok; 1910 tone and noise runs: 0 locks
+    7800 hard starts: no epoch from an alias; within +-12 Hz one run with
+      3 wrong bits after the lock; 3500 clean starts, first bit less the
+      hold: 300 +-7 Hz 0 late at 10-30 dB, 300 +-12 Hz 10-21 % late at
+      10-20 dB (was 39-59 %)
+    make cost-hst-back ARM_CC=$A5 (third second, the bench's loop of
+      0.11 M taken off): two receivers on one band-pass 1.87 M (caller at
+      450), 1.86 M (300); 1.98 M with the loop. Task 12: 3.70 M.
+      Detector 3.68 M, of which hst_hbpf 1.26 M (a profile).
+    sizeof(hst_brx_t) 1824, sizeof(hst_det_t) 4504 (x86-64 and ARMv5)
+    make verify -> VERIFY PASS (see the commit)
+    milestone 3: verify-phase deferred to the merge of the tracks (a port
+      matrix was running in ~/hst-wt; owner's controller ruling)
+
+Review fixes (round 1).
+- I1: the steady-power rule voided grid_ok for a whole window after any
+  dip before the lock (a lost VoIP packet), and a 3 dB fade at 5-10 Hz
+  blocked detection outright. Now:
+  - the rule measures the symbol-to-symbol change of the power (the mean
+    squared change at most a quarter of the squared mean), not its spread
+    over the window: a slow fade changes little from one symbol to the
+    next, two tones that beat change a lot;
+  - symbols 9 dB under the mean are left out of the power's sums before
+    the lock as after it (12 of 16 needed);
+  - through a dropout the symbol power's mean holds (8 symbols at most)
+    and so does the AGC's gain (6 blocks at most): the symbols after the
+    dropout were measured against a level it had pulled down (the first
+    came out 6 times the mean).
+  - On 216 positive lines (both speeds, +-7 Hz, dropouts of 20 and 40 ms
+    at 100-400 ms, fades of 2 and 3 dB at 0.5-10 Hz, -43 dBm0) the rule
+    now costs nothing: the same 15 lines late with it as without it, all
+    dropouts in the acquisition (below). The reviewer's 3978 tone pairs: 0
+    of 30 grid_ok at most (a quarter; at a half, 3; at 1, 17), 0 fired;
+    the 72 modem signals: 3 of 30 at most, 0 fired; 12000 random mixtures:
+    1 of 30, 0 fired; the recordings: 2 of 30, 0 fired (make hst-scan:
+    106 recordings, 0 detections); 1910 tone and noise runs: 0 locks;
+    7800 hard starts: no alias epoch, and now no wrong bit within +-12 Hz;
+    3500 clean starts: unchanged.
+  - Not fixed, and not the rule's (the same with it off): a dropout
+    during the acquisition (140-180 ms after the preamble's start at
+    either speed, about 40 ms at 450, where it lands on the timing's
+    estimate) costs a second acquisition, and one while the detector's
+    window fills after the lock (400 ms at 300) a refill of the window:
+    detection then past the budget on some lines (up to 816 and 876 ms).
+    Re-acquiring at once at a dropout's end was tried and is worse (every
+    such line late).
+  - test_hst_det (11 checks): impaired_450 and impaired_300, a 20 and a
+    40 ms dropout early in the preamble (60 ms at 450, 100 ms at 300) and
+    a +-3 dB fade at 5 and 10 Hz, within 450 / 650 ms. The fade case fails
+    at 91a765f; the early dropouts pass there too.
+- Threshold (controller's ruling): -45 dBm0 stays. It never binds: the
+  lock stage needs the receivers' carrier detect, on at -44 dBm0, so the
+  floor is -44, 1 dB under the spec's -43 (hst.h says so; the review's
+  "2 dB margin" wording is gone, and test_hst_det's header says -45).
+- M3: docs/limits.md carries the worst case: echo or noise holding the
+  carrier on with no back channel, 1.90-1.91 M net (2.02 M with the
+  bench's loop); locked 1.89 / 1.88 M (2.00 M).
+- M4: the two unused 8000 Hz inputs of hst_det_t's receivers (316
+  octets) stay: removing them means splitting hst_brx_t's front end out of
+  it, an interface change for the merge (sizeof(hst_det_t) 4504 against
+  v92d_t's).
+- M5: test_hst_back's echo comment says the high-passed V.32 stand-in is
+  slightly optimistic (0 errors at 0 dB ERL where hst-c's forward
+  transmitter gives 17 in 160000): Task 19 asserts with the real one.
+- M1, for Tasks 18/19: a 300 Hz line-edge high-pass (2nd order Q 1.2 at
+  350 Hz, or 4th order at 300 Hz) then +7 Hz makes 300 detect at 836-856
+  ms, past W, with the rule or without it (-7 Hz: 566-576 ms); 450 at
+  436-446 ms, 4 ms inside its budget. A real-line profile should carry it.
