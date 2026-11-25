@@ -194,10 +194,11 @@ static void test_failures(void)
 
     /* V.92 (the ISP's calls): PCM upstream agreed in Phase 2, then the
      * answerer hears nothing from its Phase 3 on. V.92's failed start-up
-     * is a retrain (9.5.1.2), whose Phase 2 then fails: V.92 was chosen */
+     * is a retrain (9.5.1.2), whose Phase 2 then fails: the phase reached
+     * stays Phase 3, the error is the retrain's Phase 2's, V.92 chosen */
     pair(V92_MODS, V92_MODS, V90M_PHASE_PHASE3, DATA_NONE, V90M_CONN_NONE, 90, &c, &a);
-    show("V.92, the answerer hears nothing from its Phase 3 on", &c, &a);
-    check_failed(&a, V90M_END_FAILED, V90M_PHASE_PHASE2, V90M_CONN_V92, "P2D_ERR_");
+    show("V.92, the answerer hears nothing from its Phase 3 on (a retrain, which fails)", &c, &a);
+    check_failed(&a, V90M_END_FAILED, V90M_PHASE_PHASE3, V90M_CONN_V92, "P2D_ERR_");
     CHECK(startup_failed(&c.s, &c.d));
     CHECK(c.d.error != 0 && strcmp(v90m_err_name(c.d.error), "?") != 0);
     CHECK(c.d.selected == V90M_CONN_V92 || c.d.selected == V90M_CONN_V90);
@@ -205,8 +206,8 @@ static void test_failures(void)
     /* V.34 chosen in V.8, silence from the answerer's Phase 3 on: the
      * failed training is a retrain (V.34 11.5), whose Phase 2 fails */
     pair(V90M_MOD_V34, V90M_MOD_V34, V90M_PHASE_PHASE3, DATA_NONE, V90M_CONN_NONE, 60, &c, &a);
-    show("V.34, the answerer hears nothing from its Phase 3 on", &c, &a);
-    check_failed(&a, V90M_END_FAILED, V90M_PHASE_PHASE2, V90M_CONN_V34, "P2N_ERR_");
+    show("V.34, the answerer hears nothing from its Phase 3 on (a retrain, which fails)", &c, &a);
+    check_failed(&a, V90M_END_FAILED, V90M_PHASE_PHASE3, V90M_CONN_V34, "P2N_ERR_");
     CHECK(startup_failed(&c.s, &c.d));
     CHECK(c.d.error != 0 && strcmp(v90m_err_name(c.d.error), "?") != 0);
     CHECK_EQ_I(c.d.selected, V90M_CONN_V34);
@@ -350,7 +351,7 @@ static void test_connected(void)
     CHECK_EQ_I(a.s.end, V90M_END_RETRAIN_FAILED);
     CHECK_EQ_I(a.d.data_reached, 1);
     CHECK(!startup_failed(&a.s, &a.d));
-    CHECK(a.d.phase != V90M_PHASE_DATA && a.d.phase >= V90M_PHASE_PHASE2 && a.d.phase <= V90M_PHASE_PHASE4);
+    CHECK_EQ_I(a.d.phase, V90M_PHASE_DATA);              /* the furthest reached */
     CHECK(a.d.error != 0 && strcmp(v90m_err_name(a.d.error), "?") != 0);
     CHECK_EQ_I(a.d.selected, V90M_CONN_V90);
 

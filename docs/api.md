@@ -224,8 +224,9 @@ runs on 0.6.1's shared library), and so does `v90m_diag` from 0.6.1 on.
 
 **The start-up failed if, and only if, the call ended and data mode was
 never reached**: `v90m_state.end != V90M_END_NONE && !d.data_reached`. A
-retrain that fails after data mode (`V90M_END_RETRAIN_FAILED`, `phase`
-2, 3 or 4) is not a start-up failure: `data_reached` is 1. So in C:
+retrain that fails after data mode (`V90M_END_RETRAIN_FAILED` in the
+retrain's Phase 2, 3 or 4) is not a start-up failure: `data_reached` is 1
+(and `phase`, the furthest reached, `data`). So in C:
 
 ```c
 v90m_state st; v90m_diag d;
@@ -238,7 +239,7 @@ if (st.end != V90M_END_NONE && !d.data_reached)
 | `v90m_diag` | |
 |---|---|
 | `error` | why the call ended, as the modem's engines say it: `v90m_err_name(error)`. 0 while the call goes on, and after an orderly cleardown (ours or the far end's, `V90M_END_CLEARDOWN_OURS` / `_FAR`) once data mode was reached. A start-up that failed: the deepest cause with a name (an engine's own, such as `P2D_ERR_INFO1A`, or the modem's own limit, such as `ANS_ERR_TIMEOUT`). After data mode: how the call was lost (`P34_ERR_CARRIER`, `ANS_ERR_RETRAINS`, ...) |
-| `phase` | `v90m_phase` now; after the end, the phase the call ended in (a retrain goes back to Phase 2; V.92's and V.34's failed trainings are retrains, so such a start-up ends in Phase 2) |
+| `phase` | `v90m_phase`: the furthest phase the call reached, in the order of the enum; it never goes back (a retrain's Phase 2 leaves it as it was) and is kept after the end. V.92's and V.34's failed trainings are retrains: a V.92 call whose training failed in Phase 3 and which died in the retrain's Phase 2 reads `phase3`, its `error` the final cause (`P2D_ERR_REV`, say) |
 | `selected` | `v90m_conn`: the modulation chosen, from V.8's JM or, for a modem without V.8, once its signal is heard, whether or not its training finishes; `V90M_CONN_NONE` before. It then follows the call to the modulation in force: V.92 once Phase 2 agrees PCM upstream, V.34 once a V.90 caller's INFO1a selects it, x2 or K56flex at their point of no return, the connection's once connected. V.8's V.22 item (V.22 or V.22bis): `V90M_CONN_V22BIS` until the connection says which |
 | `data_reached` | 1 once data mode was reached this call (user data moved both ways: `v90m_state.moving`), kept after the end |
 

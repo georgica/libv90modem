@@ -320,8 +320,9 @@ static inline void after(v90m_t *m, int orig)
     }
     moving = moving_of(m, orig);
     /* the diagnostics keep the last sample before the end; while data
-     * moves in the same phase of the modem they cannot change (a retrain,
-     * which may stay in it, stops the data first) */
+     * moves in the same phase of the modem they cannot change (the phase
+     * reached is data mode, and a retrain, which may stay in that phase of
+     * the modem, stops the data first) */
     if (moving) m->data_reached = 1;
     if (!failed && !(moving && m->diag.phase == V90M_PHASE_DATA && m->diag.iphase == iphase_of(m, orig)))
         diag_track(m, orig);

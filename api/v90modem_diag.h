@@ -94,9 +94,10 @@ static inline int dg_count(int fam)
     return fam >= 0 && fam < DG_NFAM ? n[fam] : 0;
 }
 
-/* what the API keeps of a call as it goes: the modem's own phase, the
- * public phase (v90m_phase) and the modulation chosen (v90m_conn), all of
- * the last sample before the end */
+/* what the API keeps of a call as it goes: the modem's own phase and the
+ * modulation chosen (v90m_conn) of the last sample before the end, and
+ * the furthest public phase (v90m_phase) reached; the phases are in the
+ * order a call goes through them */
 typedef struct { uint8_t iphase, phase, sel; } diag_track_t;
 
 /* after a sample that did not end the call */

@@ -5,12 +5,12 @@
   V.90, the answerer hears nothing from its Phase 3 on:
     answerer end 1: P34_ERR_NO_S, phase3, V.90, data reached 0
     caller end 1: V90A_ERR_SD, phase3, V.90, data reached 0
-  V.92, the answerer hears nothing from its Phase 3 on:
-    answerer end 1: P2D_ERR_REV, phase2, V.92, data reached 0
+  V.92, the answerer hears nothing from its Phase 3 on (a retrain, which fails):
+    answerer end 1: P2D_ERR_REV, phase3, V.92, data reached 0
     caller end 1: V90A_ERR_SD, phase3, V.92, data reached 0
-  V.34, the answerer hears nothing from its Phase 3 on:
-    answerer end 1: P2N_ERR_REV, phase2, V.34, data reached 0
-    caller end 1: P2L_ERR_REV, phase2, V.34, data reached 0
+  V.34, the answerer hears nothing from its Phase 3 on (a retrain, which fails):
+    answerer end 1: P2N_ERR_REV, phase3, V.34, data reached 0
+    caller end 1: P2L_ERR_REV, phase3, V.34, data reached 0
   V.32bis, the caller silent after V.8:
     answerer end 1: V32_ERR_NO_TONE, train, V.32bis, data reached 0
     caller end 1: V32_ERR_NO_TONE, train, V.32bis, data reached 0
@@ -30,8 +30,8 @@
     caller end 3: none, data, V.90, data reached 1
     in data mode: answerer data V.90, error none, data reached 1; caller data V.90, error none, data reached 1
   V.90 to data mode, then our retrain into silence:
-    answerer end 8: P2D_ERR_REV, phase2, V.90, data reached 1
-    caller end 8: V90A_ERR_RETRAINS, phase2, V.90, data reached 1
+    answerer end 8: P2D_ERR_REV, data, V.90, data reached 1
+    caller end 8: V90A_ERR_RETRAINS, data, V.90, data reached 1
     in data mode: answerer data V.22bis, error none, data reached 1; caller data V.22bis, error none, data reached 1
   V.22bis to data mode (no cleardown signal: the call goes on):
     answerer end 0: none, data, V.22bis, data reached 1

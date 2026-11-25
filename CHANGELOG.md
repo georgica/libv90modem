@@ -14,9 +14,10 @@ Added:
 - Start-up diagnostics, either role: `v90m_get_diag` fills a `v90m_diag`
   with the cause of the end in the engines' own words (`error`, named by
   `v90m_err_name`, e.g. `P2D_ERR_INFO1A`; 0 while the call goes on and
-  after an orderly cleardown once data mode was reached), the phase
-  reached (`phase`, `v90m_phase`: tone, V.8, Phases 2 to 4, the start-up
-  of the modulations without phases, data), the modulation chosen
+  after an orderly cleardown once data mode was reached), the furthest
+  phase reached (`phase`, `v90m_phase`: tone, V.8, Phases 2 to 4, the
+  start-up of the modulations without phases, data; a retrain does not
+  take it back), the modulation chosen
   (`selected`, a `v90m_conn`: set from V.8's JM or the legacy detection as
   soon as it is chosen, whether or not training finishes, and then
   following the call to the modulation in force) and whether data mode

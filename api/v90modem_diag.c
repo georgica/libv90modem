@@ -203,7 +203,8 @@ void diag_track_answer(diag_track_t *t, const answer_t *a)
     default:
         break;
     }
-    t->iphase = (uint8_t)a->phase; t->phase = ph; t->sel = sel;
+    t->iphase = (uint8_t)a->phase; t->sel = sel;
+    if (ph > t->phase) t->phase = ph;           /* the furthest reached */
 }
 
 void diag_track_orig(diag_track_t *t, const orig_t *o)
@@ -245,7 +246,8 @@ void diag_track_orig(diag_track_t *t, const orig_t *o)
     default:
         break;
     }
-    t->iphase = (uint8_t)o->phase; t->phase = ph; t->sel = sel;
+    t->iphase = (uint8_t)o->phase; t->sel = sel;
+    if (ph > t->phase) t->phase = ph;           /* the furthest reached */
 }
 
 /* ------------------------------------------------------ why it ended */

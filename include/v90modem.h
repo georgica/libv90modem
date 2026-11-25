@@ -382,8 +382,8 @@ void     v90m_get_stats(const v90m_t *m, v90m_stats *st);
  *
  * The start-up failed if, and only if, the call ended (v90m_state.end is
  * not V90M_END_NONE) and data_reached is 0. A retrain that fails after
- * data mode (V90M_END_RETRAIN_FAILED in Phase 2, 3 or 4) is not a
- * start-up failure: data_reached is 1. */
+ * data mode (V90M_END_RETRAIN_FAILED in the retrain's Phase 2, 3 or 4) is
+ * not a start-up failure: data_reached is 1. */
 typedef enum {
     V90M_PHASE_NONE = 0,    /* before the first sample */
     V90M_PHASE_TONE,        /* answering: the silence and our answer tone (with
@@ -411,8 +411,13 @@ typedef struct {
                                modem's own limit such as ANS_ERR_TIMEOUT). After
                                data mode: how the call was lost
                                (P34_ERR_CARRIER, ANS_ERR_RETRAINS, ...) */
-    v90m_phase phase;       /* the phase now; after the end, the one the call
-                               ended in (a retrain goes back to Phase 2) */
+    v90m_phase phase;       /* the furthest phase the call reached, in the
+                               order of the enum: it never goes back (a
+                               retrain's Phase 2 leaves it as it was) and is
+                               kept after the end. A V.92 call whose training
+                               failed in Phase 3, retrained and died in that
+                               retrain's Phase 2 reads V90M_PHASE_PHASE3; its
+                               error is the final cause (P2D_ERR_...) */
     v90m_conn  selected;    /* the modulation chosen: from V.8's JM, or for a
                                modem without V.8 once its signal is heard,
                                whether or not its training finishes;
