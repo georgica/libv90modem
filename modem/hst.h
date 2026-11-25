@@ -467,7 +467,16 @@ int16_t hst_gf_tick(hst_gf_t *g, int16_t in);
  *          trained on BinModem's training, the error after AB some -4 dB)
  *   TRAIN  decision-directed on the 4 points A..D, fast steps (until the
  *          error has stayed under -20 dB for HST_FRX_HOLD symbols, in
- *          training or data), then tracking
+ *          training or data), then tracking. From the matched filter (the
+ *          default receiver): over the first HST_FRX_MF_SYMS symbols that
+ *          are not an alternation, the points of both starts in hst_fmf
+ *          (ours, and ours through a 550 Hz high-pass) are measured, as
+ *          they were loaded, by how far their power spreads (A..D have one
+ *          power: |z|^4 against |z|^2 squared); if the second's spread is
+ *          under 1.25 times the first's, the training starts again from it
+ *          (the band's lower edge: a steep high-pass at 550 to 600 Hz on
+ *          the line left ours some 4 dB under its error, and it never
+ *          trained; test_hstcall fwd_edge and its sweep)
  *   DATA   at code 3..6, once more than 3 of the last 8 points are off the
  *          4 points: the rate's set through v32_vit_t; at code 2, the 4
  *          points, once S and S-bar are over. Either only when the error
@@ -514,6 +523,7 @@ enum {
 #define HST_FRX_LOCK_SYMS  1200  /* data mode: symbols of poor error before UNLOCKED (0.5 s;
                                   * a 1 dB step at 14400 takes some 1000 to settle) */
 #define HST_FRX_TRAIN_SYMS 3600  /* symbols of training at most */
+#define HST_FRX_MF_SYMS     128  /* the first training: symbols measured before the start is chosen */
 /* a switch by marks (hst_frx_arm_switch; spec "Rate changes", [OURS]) */
 #define HST_SW_ONES          24  /* symbols of ones at the code in force (10 ms) ... */
 #define HST_SW_WIN           48  /* ... then both codes decoded for at most this many symbols */
@@ -574,6 +584,11 @@ typedef struct {
     int32_t    hzr[8], hzi[8];        /* the last 8 points, for the decoder at the switch */
     uint32_t   sh;                    /* the last 8 decisions (A..D), 2 bits each, the newest lowest */
     int32_t    alt;                   /* symbols since the last 8 were an alternation (S, S-bar) */
+    /* the first training's start (TRAIN, from hst_fmf) */
+    int32_t    mfs;                   /* 1 while both starts are measured, else 0 */
+    int32_t    mfn;                   /* ... symbols measured */
+    int64_t    mfp[2], mfq[2];        /* ... each start's |z|^2 and |z|^4, summed (scaled) */
+    int32_t    mft;                   /* ... n40 as AB's would be now (the symbol timing) */
     /* TRN, Table 4 read directly under each quarter turn (code 2) */
     v32_scr_t  dir[4];
     int32_t    ones[4];               /* ones in a row out of each */

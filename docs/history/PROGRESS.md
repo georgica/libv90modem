@@ -6167,3 +6167,55 @@ Sizes: `hstcall_t` 165712 octets (x86-64), test side only. Host run 33 s
   attn_stale's added, count 148 -> 157). `make check PAR=16`: ALL HOST
   CHECKS PASS (6 min 35 s); 157 of 158 goldens identical before the
   re-record.
+
+## hst 23b: the forward receiver's first training copes with unknown transmit shapes and band-edge delay (2026-11-25)
+
+- **Model.** `sim/v32line` gets an optional band edge on the way to the
+  answerer (`edge_both`: both ways), from filter theory: a Butterworth
+  high-pass (`edge_hp_hz`, `edge_hp_order`, bilinear, prewarped), and/or
+  a second-order all-pass with poles at 550 Hz (`edge_gd_ms`: its group
+  delay at 600 Hz over 1800's; 3 ms gives 0.85 ms at 700 Hz, 0.12 at
+  1000). Checked on its impulse response (scratch): 560 Hz order 10 gives
+  3.0 ms at 600 Hz, -0.9 dB. All zero: the line as before (every golden
+  identical). `sim/hstcall` gets `hc_ftx_rolloff` (V.17's 25 % alone);
+  `hc_ftx_bm` uses it, same arithmetic.
+- **Measure** (`test_hstcall sweep 5` and `sweep 5 v17`; codes 2..6, our
+  pulse and V.17's roll-off, no edge, high-pass 300-650 Hz of order 4 and
+  10, all-pass 0.5-3 ms). Before: everything passes but the order-10
+  high-pass at 550 Hz (ours 23 and 16 of 25, V.17 roll-off 25 and 20) and
+  600 Hz (3, 2; 7, 1), error stuck at -3.5..-4.5 dB, and 650 Hz order 10
+  (AB never heard). Phase alone never fails. Thin by the brief's rule.
+- **Failing test** `test_hstcall` case 19 `fwd_edge` (600 Hz order 10 at
+  codes 6 and 3, both shapes; 575 Hz with V.17's train at code 4): 8 of 8
+  checks failed before the fix.
+- **Fix, rung (a), two starts.** Tried first in scratch: (b) a
+  radius-directed blind start (no convergence in 1024 symbols at 600/10),
+  an ungated first 512 symbols (mixed). Starting from the matched filter
+  of our pulse through a 550 Hz 6th-order high-pass trains every 550-600
+  Hz order-10 case, but fails on flat lines in about half the runs; so a
+  choice. The error after 128 adapted symbols did not separate a slow
+  start from a stuck one; the spread of each start's unadapted points'
+  power over the first 128 non-alternating training symbols (A..D have
+  one power) did. `hst_fmf` (tools/gen_hst_tabs.py): [0] mf_taps' old
+  interpolation of hst_fpulse, the same integers; [1] the edge start.
+  `mf_choose` (hst_fwd.c): both starts' points from qamrx's line, at
+  symbol 128 the second chosen if its spread is under 1.25 times the
+  first's; then qamrx_sync_eq again with the second, the timing from AB's
+  phase carried on (`mft`; loading the taps alone, the carrier and timing
+  left from the first start, failed 3 to 8 of 25). Not under
+  HST_FMF_BM (the profile keeps its own start). Fields +44 octets in
+  hst_frx_t.
+- **After.** The sweeps: every cell passes up to 600 Hz (650 Hz order 10:
+  AB, unchanged). Dense scratch sweep (500-650 Hz in 25 Hz steps, orders
+  4/6/8/10, 3 seeds, both shapes and trainings): 1433 of 1680, 240 of the
+  failures where AB is never heard, 7 single misses.
+- **CPU.** `make cost-hst-fwd ARM_CC=$A5` (the one ARMv5 run): 14400 data
+  mode 25 545 663 a second (25.43 M before; the per-sample mft test), the
+  marks switch's 20 ms 32.1 M a second. Training, x86-64 per 20 ms block
+  over bench_hst's recording: measuring 22.3 us at most, training
+  otherwise 20.4, data 31.2: the training's peak some 0.73 of data mode,
+  about 18.7 M a second on ARMv5 by that ratio.
+- **Checks.** `make golden` (make check, check-hst-bm in it): ALL HOST
+  CHECKS PASS; 157 of 158 identical, `test/test_hstcall.txt` re-recorded
+  (case 19's 12 lines, count 106 -> 114); bm goldens identical. TEST_SHORT
+  build of case 19: pass. x86-64 only (owner rule).

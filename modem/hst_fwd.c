@@ -315,27 +315,24 @@ static int slice4(int32_t zr, int32_t zi)
     return b >= 0 ? 3 : 0;
 }
 
-/* hst_fmf_bm is laid out as qamrx's taps */
+/* hst_fmf_bm and hst_fmf are laid out as qamrx's taps */
 typedef char hst_fmf_bm_fits[(HST_FMF_N == QRX_NTAP && QRX_CENTER == 36) ? 1 : -1];
 
-/* The transmit pulse's matched filter, demodulating: tap k, (36 - k) T/3
- * before the on-time sample, is g(u) e^(-j w u) at u = (36 - k) T/3, which
- * hst_fpulse holds (up to a fixed turn) at (150 - 10 (36 - k) / 3) thirds
- * of a sample from its start (g is even); between the table's thirds,
- * linear */
-static void mf_taps(int32_t *cr, int32_t *ci)
+/* The first equaliser: a transmit pulse's matched filter, demodulating:
+ * tap k, (36 - k) T/3 before the on-time sample, is g(u) e^(-j w u) at u =
+ * (36 - k) T/3. hst_fmf[0] holds ours, hst_fpulse read (up to a fixed turn)
+ * at (150 - 10 (36 - k) / 3) thirds of a sample from its start (g is even),
+ * linear between the table's thirds; hst_fmf[1] the same pulse through a
+ * 550 Hz high-pass (tools/gen_hst_tabs.py) */
+static void mf_taps(int32_t *cr, int32_t *ci, int which)
 {
     int k;
 #if HST_FMF_BM
     /* the BinModem profile: its pulse's matched filter (hst.h, hst_fmf_bm) */
+    (void)which;
     for (k = 0; k < QRX_NTAP; k++) { cr[k] = hst_fmf_bm[k][0] * MF_GAIN; ci[k] = hst_fmf_bm[k][1] * MF_GAIN; }
 #else
-    for (k = 0; k < QRX_NTAP; k++) {
-        int n9 = 450 - (QRX_CENTER - k) * 10, n = n9 / 3, f = n9 % 3;
-        const int16_t *a = hst_fpulse[n % 10][n / 10], *b = hst_fpulse[(n + 1) % 10][(n + 1) / 10];
-        cr[k] = (a[0] * (3 - f) + b[0] * f) * MF_GAIN;
-        ci[k] = (a[1] * (3 - f) + b[1] * f) * MF_GAIN;
-    }
+    for (k = 0; k < QRX_NTAP; k++) { cr[k] = hst_fmf[which][k][0] * MF_GAIN; ci[k] = hst_fmf[which][k][1] * MF_GAIN; }
 #endif
 }
 
@@ -386,6 +383,8 @@ void hst_frx_init(hst_frx_t *r)
     r->l0r = r->l0i = r->u0r = r->u0i = 0;
     listen(r, HST_FRX_IDLE);
     train_reset(r);
+    r->mfs = r->mfn = 0;
+    r->mfp[0] = r->mfp[1] = r->mfq[0] = r->mfq[1] = 0;
     r->dscr.reg = 0; r->yprev = 0;
     r->nbits = 0;
     for (i = 0; i < 8; i++) r->bits[i] = 0;
@@ -454,26 +453,81 @@ static int32_t ab_freq(const hst_frx_t *r)
     return (int32_t)((int64_t)i * ((int64_t)1 << 32) / 12288);
 }
 
-/* the receiver starts: symbol timing from AB's tones, the equaliser */
-static void start(hst_frx_t *r)
+/* the next symbol's centre from AB's tones, in 1/256 sample (AB's phases
+ * repeat every 40 samples, 12 symbols: good for as long as the tones' sums
+ * are kept, the training's too) */
+static int32_t ab_delay(const hst_frx_t *r, int n40)
 {
-    int32_t cr[QRX_NTAP], ci[QRX_NTAP], delay;
+    int32_t delay;
     /* the turn of 600 x conj(3000) is 2400 Hz times the time of a symbol's
      * centre */
     int arg = turn1024(r->tr, r->ti);
     /* in 1/1536 sample: a symbol 5120, a centre at arg x 5 from a sample
      * whose n40 is 0; from the next sample, n40 (already moved on) */
-    delay = (arg * 5 - r->n40 * 1536) % 5120;
+    delay = (arg * 5 - n40 * 1536) % 5120;
     if (delay < 0) delay += 5120;
-    if (r->eq.valid) qamrx_sync_eq(&r->q, delay / 6, r->eq.cr, r->eq.ci, r->eq.freq);
+    return delay / 6;
+}
+
+/* the receiver starts: symbol timing from AB's tones, the equaliser */
+static void start(hst_frx_t *r)
+{
+    int32_t cr[QRX_NTAP], ci[QRX_NTAP];
+    if (r->eq.valid) qamrx_sync_eq(&r->q, ab_delay(r, r->n40), r->eq.cr, r->eq.ci, r->eq.freq);
     else {
-        mf_taps(cr, ci);
-        qamrx_sync_eq(&r->q, delay / 6, cr, ci, ab_freq(r));
+        mf_taps(cr, ci, 0);
+        qamrx_sync_eq(&r->q, ab_delay(r, r->n40), cr, ci, ab_freq(r));
     }
     r->state = HST_FRX_TRAIN;
     train_reset(r);
     r->pref = r->pw;
+    r->mfs = !r->eq.valid && !HST_FMF_BM;
+    r->mfn = 0;
+    r->mft = r->n40;
+    r->mfp[0] = r->mfp[1] = r->mfq[0] = r->mfq[1] = 0;
 }
+
+/* The first training's start (hst.h, TRAIN): each start's point on this
+ * symbol, from the equaliser's line as the taps would see it, its power
+ * summed, and its square; at HST_FRX_MF_SYMS the spread of each, N sum
+ * |z|^4 / (sum |z|^2)^2 - 1, Q16, and the training from the second start
+ * if its spread is under 1.25 times the first's. 1 when it starts again.
+ * Scaled: a tap under 2^16 times a sample: each product under 2^31, the
+ * sums under 2^38; >> 14 a point near 2^14 (the slicer's A..D near 2^13),
+ * its power >> 8 near 2^20 and held under 2^23: the sums under 2^30 and
+ * 2^53, N times under 2^60 */
+#if !HST_FMF_BM
+static int mf_choose(hst_frx_t *r)
+{
+    const int16_t *x = &r->q.x[r->q.xpos];
+    int32_t cr[QRX_NTAP], ci[QRX_NTAP];
+    int64_t d[2];
+    int j, k;
+    for (j = 0; j < HST_FMF_STARTS; j++) {
+        int64_t ar = 0, ai = 0, p;
+        for (k = 0; k < QRX_NTAP; k++) {
+            ar += (int64_t)hst_fmf[j][k][0] * x[k];
+            ai += (int64_t)hst_fmf[j][k][1] * x[k];
+        }
+        ar /= 1 << 14; ai /= 1 << 14;
+        p = (ar * ar + ai * ai) / 256;
+        if (p > ((int64_t)1 << 23)) p = (int64_t)1 << 23;
+        r->mfp[j] += p;
+        r->mfq[j] += p * p;
+    }
+    if (++r->mfn < HST_FRX_MF_SYMS) return 0;
+    r->mfs = 0;
+    for (j = 0; j < HST_FMF_STARTS; j++) {
+        int64_t s2 = r->mfp[j] * r->mfp[j];
+        d[j] = s2 >> 16 > 0 ? (HST_FRX_MF_SYMS * r->mfq[j] - s2) / (s2 >> 16) : INT32_MAX;
+    }
+    if (4 * d[1] >= 5 * d[0]) return 0;
+    mf_taps(cr, ci, 1);
+    qamrx_sync_eq(&r->q, ab_delay(r, r->mft), cr, ci, ab_freq(r));
+    train_reset(r);
+    return 1;
+}
+#endif
 
 /* AB: both band-edge tones, a sample (the power is the tick's); 1 when it
  * has been there AB_RUN samples */
@@ -741,6 +795,9 @@ static void symbol(hst_frx_t *r)
                           r->fast ? MU_FAST : MU_SLOW);
         power(r, dr, di);
         hold(r, dr, di);
+#if !HST_FMF_BM
+        if (r->mfs && r->alt > 0 && r->nsym > 8 && mf_choose(r)) return;
+#endif
         for (n = 0, w = r->offw; w; w &= w - 1) n++;
         if (r->nsym >= 32 && (!r->fast || r->mse0 < MSE_GATE) && (r->code == 2 ? r->alt >= ALT_CLEAR : n > 3))
             enter_data(r);
@@ -817,6 +874,7 @@ int hst_frx_tick(hst_frx_t *r, int16_t x)
         /* the level follows the signal while the receiver is well, within 3 dB */
         if (!r->gstep && r->pw * 2 > r->pref && r->pw < 2 * r->pref) r->pref += (r->pw - r->pref) / 4096;
     }
+    if (r->mfs && ++r->mft == 40) r->mft = 0;        /* AB's phase, for mf_choose */
     /* rounded (an arithmetic shift, DESIGN.md): y itself at G_ONE */
     v = (int32_t)(((int64_t)y * r->g + (1 << 13)) >> 14);
     v = v > 32767 ? 32767 : v < -32768 ? -32768 : v;

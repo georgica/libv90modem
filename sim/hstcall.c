@@ -370,13 +370,20 @@ void hc_ftx_init(hc_ftx *t, double level, hc_getbit_fn getbit, void *user)
  * at the level hc_ftx_init set, then a 10th-order Butterworth high-pass at
  * 560 Hz: five sections, damping sin((2k + 1) pi / 20), each s^2 / (s^2 +
  * 2 zeta s + 1) by the bilinear transform at 8000 Hz, its corner prewarped */
-void hc_ftx_bm(hc_ftx *t)
+void hc_ftx_rolloff(hc_ftx *t, double b)
 {
-    double level, e = 0, K = tan(PI * 560.0 / 8000.0);
-    int i, k;
+    double level, e = 0;
+    int i;
     for (i = 0; i <= HC_FL * 10; i++) e += t->p[i] * t->p[i];
     level = t->gain * sqrt(40.0 * (e / 3.0) / (2 * 10.0 / 3.0));   /* hc_ftx_init's */
-    ftx_pulse(t, level, 0.25);
+    ftx_pulse(t, level, b);
+}
+
+void hc_ftx_bm(hc_ftx *t)
+{
+    double K = tan(PI * 560.0 / 8000.0);
+    int k;
+    hc_ftx_rolloff(t, 0.25);
     for (k = 0; k < 5; k++) {
         double z = sin((2 * k + 1) * PI / 20), a0 = 1 + 2 * z * K + K * K;
         t->gb[k][0] = 1 / a0; t->gb[k][1] = -2 / a0; t->gb[k][2] = 1 / a0;

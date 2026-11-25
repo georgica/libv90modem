@@ -490,6 +490,30 @@ Measured against `sim/hstcall` only; no real HST modem has called it yet.
   the receiver's error 3 dB above them within 0.04 dB (-17.80, -20.56,
   -23.79, -24.13 dB), so `hst_good_mse` stands. The thresholds' runs of
   20 s were chosen to keep the drift out; they are kept.
+- **The forward receiver's first training and the band's lower edge**
+  (Task 23b; `test_hstcall fwd_edge`, `test_hstcall sweep [SEEDS [v17]]`,
+  `sim/v32line`'s `edge_*`). The first training starts from a matched
+  filter; a line's high-pass near 600 Hz (channel banks, ATAs) bends the
+  phase where the forward band starts (500-700 Hz). Swept: codes 2..6, our
+  pulse and V.17's 25 % roll-off, hstcall's long training and V.17's, 5
+  seeds, on a mu-law line at 30 dB. Phase alone (an all-pass, 0.5 to 3 ms
+  at 600 Hz over 1800's) never failed. A Butterworth high-pass of order 4
+  never failed from 300 to 650 Hz; of order 10 it failed at 550 Hz (39
+  and 45 of 50 passing, our pulse and V.17's) and nearly always at 600 Hz
+  (5 and 8 of 50), the error stuck near -4 dB. The receiver now measures, over the first 128
+  training symbols, its own pulse's matched filter and that pulse's
+  through a 550 Hz 6th-order high-pass, and starts again from the second
+  when it fits better (`mf_choose`): every cell of that sweep passes up to
+  600 Hz, and a denser scratch sweep (500-650 Hz in 25 Hz steps, orders 4,
+  6, 8 and 10, 3 seeds) passes 1433 of 1680. 240 of the failures are
+  where AB is never heard (650 Hz of order 6 and 8, 625 and 650 Hz of
+  order 10): the 600 Hz tone is too far down for the detector, so the
+  margin's edge there is AB, not the training. 7 single misses remain
+  (625 Hz order 6: 4 of 60; 500 and 525 Hz order 8: 1 and 2). Lines with no edge, and every existing
+  case, train exactly as before (the second start is never chosen: 157 of
+  158 golden outputs identical). Not measured: a real Courier's pulse (we
+  assume the sharp one) and real ATAs' filters; noise below 30 dB with an
+  edge.
 - **"Good", read at the rate in force** (Task 22b; `test_hst_fwd
   upshift`, which `make hst-thresh` runs after the sweep). The policy asks
   for code c while running at c - 1, so it reads `hst_good_mse[c]`, a

@@ -14,6 +14,57 @@ double v32line_rms(double dbm0) { return FULL_SCALE / sqrt(2.0) * pow(10.0, (dbm
 
 static double lin(double db) { return db >= 200 ? 0.0 : pow(10.0, -db / 20.0); }
 
+/* ---- the band's lower edge (v32line.h) ---- */
+
+/* a pole pair r e^(+-j th)'s all-pass group delay at w, samples */
+static double ap_delay(double r, double th, double w)
+{
+    double p = (1 - r * r) / (1 - 2 * r * cos(w - th) + r * r);
+    return p + (1 - r * r) / (1 - 2 * r * cos(w + th) + r * r);
+}
+
+static void edge_init(v32line_edge *e, const v32line_cfg *c)
+{
+    int k;
+    memset(e, 0, sizeof *e);
+    if (c->edge_hp_hz > 0) {
+        int n = c->edge_hp_order <= 0 ? 4 : c->edge_hp_order > 10 ? 10 : c->edge_hp_order & ~1;
+        double K = tan(PI * c->edge_hp_hz / 8000.0);
+        if (n < 2) n = 2;
+        for (k = 0; k < n / 2; k++, e->n++) {
+            double z = sin((2 * k + 1) * PI / (2 * n)), a0 = 1 + 2 * z * K + K * K;
+            e->b[e->n][0] = 1 / a0; e->b[e->n][1] = -2 / a0; e->b[e->n][2] = 1 / a0;
+            e->a[e->n][0] = 2 * (K * K - 1) / a0; e->a[e->n][1] = (1 - 2 * z * K + K * K) / a0;
+        }
+    }
+    if (c->edge_gd_ms > 0) {
+        /* the radius by bisection: the excess delay grows with it */
+        double th = 2 * PI * 550 / 8000.0, w6 = 2 * PI * 600 / 8000.0, w18 = 2 * PI * 1800 / 8000.0;
+        double lo = 0, hi = 0.999, want = c->edge_gd_ms * 8, r;
+        for (k = 0; k < 60; k++) {
+            double m = (lo + hi) / 2;
+            if (ap_delay(m, th, w6) - ap_delay(m, th, w18) < want) lo = m; else hi = m;
+        }
+        r = lo;
+        e->b[e->n][0] = r * r; e->b[e->n][1] = -2 * r * cos(th); e->b[e->n][2] = 1;
+        e->a[e->n][0] = -2 * r * cos(th); e->a[e->n][1] = r * r;
+        e->n++;
+    }
+}
+
+/* a sample through the edge (direct form II transposed); none: as it is */
+static double edge_push(v32line_edge *e, double x)
+{
+    int k;
+    for (k = 0; k < e->n; k++) {
+        double v = e->b[k][0] * x + e->z[k][0];
+        e->z[k][0] = e->b[k][1] * x - e->a[k][0] * v + e->z[k][1];
+        e->z[k][1] = e->b[k][2] * x - e->a[k][1] * v;
+        x = v;
+    }
+    return x;
+}
+
 void v32line_init(v32line_t *l, const v32line_cfg *cfg)
 {
     int i, peak = 0;
@@ -51,6 +102,8 @@ void v32line_init(v32line_t *l, const v32line_cfg *cfg)
     l->oneway = cfg->delay + peak + (cfg->freq_offset != 0 ? V32LINE_HILB / 2 : 0) + SRESAMP_DELAY;
     l->oneway_back = l->oneway + 4;         /* the hand-over buffer, and the answerer reads it a tick later */
     l->peer_lag = SRESAMP_DELAY;
+    edge_init(&l->e_ca, cfg);
+    if (cfg->edge_both) edge_init(&l->e_ac, cfg);
 }
 
 /* shift the spectrum of the stream in h[] (ring at hpos) by the line's offset */
@@ -65,18 +118,19 @@ static double shift(const v32line_t *l, const double *h)
 int16_t v32line_tick(v32line_t *l, int16_t a_tx, v32line_peer_fn peer, void *user)
 {
     const v32line_cfg *c = &l->cfg;
-    double fwd, back, at_c, at_a, out[4], rx, near = 0;
+    double fwd, back, at_c, at_a, out[4], rx, near = 0, arrive;
     int i, n, m = V32LINE_MAXDELAY - 1;
     uint8_t code = 0xFF;
     long q;
 
     /* what came back from the caller's end one line delay ago */
     back = l->d_ca[(l->dpos - c->delay) & m];
+    arrive = edge_push(&l->e_ca, back * l->gain);     /* through the band's edge */
 
     /* ---- network side ---- */
     if (c->mulaw) {
         double crx;
-        channel_tick(&l->ch, linear_to_ulaw(a_tx), back * l->gain, &crx, &code);
+        channel_tick(&l->ch, linear_to_ulaw(a_tx), arrive, &crx, &code);
         fwd = crx;
         (void)near;
     } else {
@@ -95,6 +149,7 @@ int16_t v32line_tick(v32line_t *l, int16_t a_tx, v32line_peer_fn peer, void *use
     l->ph += 2 * PI * c->freq_offset / 8000.0;
     if (l->ph > PI) l->ph -= 2 * PI;
     if (c->freq_offset != 0) { l->h_ac[l->hpos] = at_c; at_c = shift(l, l->h_ac); }
+    at_c = edge_push(&l->e_ac, at_c);
     l->last_c_arrive = at_c;
     n = sresamp_push(&l->r_ac, at_c, out, 4);
     for (i = 0; i < n; i++) {
@@ -124,10 +179,10 @@ int16_t v32line_tick(v32line_t *l, int16_t a_tx, v32line_peer_fn peer, void *use
 
     /* ---- network side, receive ---- */
     if (c->mulaw) {
-        l->last_a_arrive = back * l->gain;
+        l->last_a_arrive = arrive;
         return (int16_t)ulaw_to_linear(code);
     }
-    at_a = fir_push(&l->fc, back * l->gain);
+    at_a = fir_push(&l->fc, arrive);
     l->last_a_arrive = at_a;
     at_a += l->g_near * near;
     if (c->noise_a_dbm0 > -200) awgn_add(&l->rng, &at_a, 1, c->noise_a_dbm0 - 3.17, FULL_SCALE);

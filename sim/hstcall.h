@@ -197,6 +197,9 @@ typedef struct {
 void   hc_ftx_init(hc_ftx *t, double level, hc_getbit_fn getbit, void *user);
 /* after hc_ftx_init: BinModem's pulse and high-pass, at the same level */
 void   hc_ftx_bm(hc_ftx *t);
+/* after hc_ftx_init: the root-raised-cosine at roll-off b (V.17's: 0.25),
+ * the same span and taper, at the same level */
+void   hc_ftx_rolloff(hc_ftx *t, double b);
 /* from the next symbol: a training (v17: V.17's long train), then data at code 2..6 */
 void   hc_ftx_train(hc_ftx *t, int code, int long_form, int v17);
 /* 0x3R: 36 symbols of ones at the code in force, then 36 at new_code, then data */
