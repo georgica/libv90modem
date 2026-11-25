@@ -106,8 +106,12 @@
  *                 points of every rate's set
  *   bm_short      a short training asked for, at every code 2..6, from data:
  *                 the same V.17 long train
- *   acq_v17       the receiver on it at codes 2..6: data mode, no error
- *   zero_isi      as above
+ *   acq_v17       the receiver on it at codes 2..6: data mode, no error;
+ *                 not with HST_FMF_BM (the profile's receiver starts from
+ *                 BinModem's pulse's matched filter, which our pulse does not
+ *                 match): BinModem's shape into it is test_hstcall's
+ *                 fwd_to_ours_bm
+ *   zero_isi      as above; with HST_FMF_BM the pulse against itself alone
  *
  * The output (the golden file) holds exact integers and one pass or fail
  * line per bound; the measured values, from the test's own floating-point
@@ -1668,7 +1672,12 @@ static void thresholds(void)
 static void acq_v17(void)
 {
     int code;
+#if HST_FMF_BM
+    printf("acq_v17: the receiver starts from BinModem's pulse's matched filter (HST_FMF_BM): test_hstcall fwd_to_ours_bm\n");
+    (void)code; (void)acq_one;
+#else
     for (code = 2; code <= 6; code++) acq_one("acq_v17", code, 1, 0, 0, 600u + (uint32_t)code);
+#endif
 }
 #endif
 
@@ -1681,15 +1690,14 @@ static void acq_v17(void)
  * (S3, or V.17's conditioning), turned and scaled by the best complex gain,
  * at least 25 dB above their scatter about A..D. */
 #define ZN 400
+#if !HST_FMF_BM
+static void zero_isi_start(void);
+#endif
 static void zero_isi(void)
 {
-    static hst_frx_t r2;
-    static double g[10 * HST_FL], zr[ZN], zi[ZN];
-    static int dx[ZN], dy[ZN];
-    static hst_ftx_t t;
-    double r0 = 0, worst = 0, ar = 0, ai = 0, ph, pz = 0, sc, cr = 0, ci = 0, num = 0, den = 0, snr;
-    src_t s = { 0x15151u, 0 };
-    int n, m, k, st, px, py, started = 0, nz = 0;
+    static double g[10 * HST_FL];
+    double r0 = 0, worst = 0;
+    int n, m;
     for (n = 0; n < 10 * HST_FL; n++) {
         double w = 2 * PI * 1800.0 * n / 3.0 / FS;
         g[n] = hst_fpulse[n % 10][n / 10][0] * cos(w) + hst_fpulse[n % 10][n / 10][1] * sin(w);
@@ -1703,7 +1711,25 @@ static void zero_isi(void)
     printf("zero_isi: the pulse against itself at 1 .. %d symbols\n", HST_FL - 1);
     if (verbose) printf("  (at most %.1f dB from the centre)\n", 20 * log10(worst + 1e-30));
     bound("the pulse's own ISI at most -40 dB", 20 * log10(worst + 1e-30) <= -40);
+#if HST_FMF_BM
+    /* the receiver's start is BinModem's pulse's matched filter, not ours */
+    printf("zero_isi: through the receiver's start: BinModem's pulse's matched filter (HST_FMF_BM): test_hstcall fwd_to_ours_bm\n");
+#else
+    zero_isi_start();
+#endif
+}
 
+#if !HST_FMF_BM
+/* through our transmitter and the receiver's start */
+static void zero_isi_start(void)
+{
+    static hst_frx_t r2;
+    static double zr[ZN], zi[ZN];
+    static int dx[ZN], dy[ZN];
+    static hst_ftx_t t;
+    double ar = 0, ai = 0, ph, pz = 0, sc, cr = 0, ci = 0, num = 0, den = 0, snr;
+    src_t s = { 0x15151u, 0 };
+    int n, k, st, px, py, started = 0, nz = 0;
     hst_ftx_init(&t, FLEVEL, src_bit, &s);
     hst_frx_init(&R);
     hst_ftx_train(&t, 6, 1);
@@ -1748,6 +1774,7 @@ static void zero_isi(void)
     if (verbose) printf("  (%.1f dB above their scatter; their RMS %.2f of the 4 points)\n", snr, sqrt(pz / nz / 40) / HST_FRX_U);
     bound("through the receiver's start, nothing adapted: at least 25 dB", nz == ZN && snr >= 25);
 }
+#endif
 
 int main(int argc, char **argv)
 {

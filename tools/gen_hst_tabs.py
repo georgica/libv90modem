@@ -62,6 +62,20 @@ The forward channel (hst-facts.md "Forward channel"):
                  so about 24 symbols is not enough: at 24 the -3 dB points
                  come out near -3.5 dB. Scaled so that its line RMS per unit
                  symbol gain is V.32's (v32_tx_rms_q12): v32tx's gain holds.
+  hst_fmf_bm     the forward receiver's first equaliser under the BinModem
+                 profile (-DHST_PROFILE_BM) [OURS, from BM]: the matched
+                 filter of BinModem's forward pulse (docs/hst/binmodem-facts.md
+                 "Pulse shape", [BM]): V.17's root-raised-cosine, beta 0.25,
+                 on 1800 Hz, through a 10th-order Butterworth high-pass at 560
+                 Hz (the analog prototype), at qamrx's 72 taps a third of a
+                 symbol apart, the symbol's instant at tap 36: conj p(u),
+                 u the time before the on-time sample. In the units of
+                 hst_fwd.c's mf_taps before MF_GAIN, with its fixed turn and
+                 its energy (both fitted to hst_fpulse read as mf_taps reads
+                 it). The guard's phase, far from linear near 600 Hz, is in
+                 it: starting from hst_fpulse's own matched filter the
+                 receiver saw that pulse's symbols some 4 dB under the error
+                 and never trained (the live reversal of 2026-11-25).
   hst_guard      the forward receiver's guard high-pass [OURS]: within
                  +-0.5 dB from 560 Hz up, at least 50 dB down at 480 Hz and
                  below (the spec's edges; the back channel's -20 dB band ends
@@ -385,23 +399,31 @@ def fpulse_ok(g, step):
     return min(flat), max(flat), e, high, low
 
 
-def tab_fpulse():
+def fpulse_design():
+    """the shortest length, and the first window, that hold the points"""
     for L in F_LENS:
         for wb in F_WINS:
             if fpulse_ok(fpulse_g(L, wb), 10):
-                break
-        else:
-            continue
-        break
-    else:
-        die("fpulse: no length up to %d symbols" % F_LENS[-1])
+                return L, wb
+    die("fpulse: no length up to %d symbols" % F_LENS[-1])
+
+
+def fpulse_q(L, wb):
+    """hst_fpulse as quantised, its line RMS per unit symbol gain V.32's:
+    [phase][symbol age][re, im]"""
     g = fpulse_g(L, wb)
+    rms_q12 = v32_rms_q12()
+    k = (rms_q12 / 4096.0) / math.sqrt(sum(v * v for v in g) / 10 / 2 * 40)
+    return [[(q(g[p + 10 * j] * k * math.cos(F_WC * (p + 10 * j) / 3.0), 16384),
+              q(g[p + 10 * j] * k * math.sin(F_WC * (p + 10 * j) / 3.0), 16384)) for j in range(L)] for p in range(10)]
+
+
+def tab_fpulse():
+    L, wb = fpulse_design()
     # scaled so that its line RMS per unit symbol gain is V.32's: v32tx's
     # gain then holds for it (line power = sum |h|^2 / phases / 2 x mean |s|^2)
     rms_q12 = v32_rms_q12()
-    k = (rms_q12 / 4096.0) / math.sqrt(sum(v * v for v in g) / 10 / 2 * 40)
-    qt = [[(q(g[p + 10 * j] * k * math.cos(F_WC * (p + 10 * j) / 3.0), 16384),
-            q(g[p + 10 * j] * k * math.sin(F_WC * (p + 10 * j) / 3.0), 16384)) for j in range(L)] for p in range(10)]
+    qt = fpulse_q(L, wb)
     got = round(math.sqrt(sum(a * a + b * b for r in qt for a, b in r) / 16384.0 ** 2 / 10 / 2 * 40) * 4096)
     if got != rms_q12:
         die("fpulse: line RMS %d, V.32's %d" % (got, rms_q12))
@@ -539,6 +561,77 @@ def guard_check(fa, ia, freqs):
     return [20 * math.log10(abs(1 - fa[f] * ia[f] / 2.0 ** 30) + 1e-30) for f in freqs]
 
 
+# ---------------- the BinModem profile's first equaliser ----------------
+FMF_N, FMF_C = 72, 36         # qamrx's QRX_NTAP and QRX_CENTER (modem/qamrx.h)
+BM_BETA = 0.25                # V.17's roll-off (binmodem-facts.md "Pulse shape", [BM])
+BM_GUARD_HZ, BM_GUARD_N = 560.0, 10   # its high-pass on the forward transmitter [BM]
+
+
+def bm_pulse(t):
+    """BinModem's forward pulse, analytic, t seconds from the symbol's
+    instant: V.17's root-raised-cosine spectrum on 1800 Hz times the
+    Butterworth high-pass, integrated over 300-3300 Hz in 1 Hz steps"""
+    T = 1 / 2400.0
+    acc = 0j
+    for i in range(3000):
+        f = 300.5 + i
+        v = abs(f - 1800.0) * T
+        if v <= (1 - BM_BETA) / 2:
+            gs = 1.0
+        elif v <= (1 + BM_BETA) / 2:
+            gs = math.sqrt(0.5 * (1 + math.cos(math.pi / BM_BETA * (v - (1 - BM_BETA) / 2))))
+        else:
+            continue
+        sn = 1j * f / BM_GUARD_HZ
+        h = 1 + 0j
+        for k in range(BM_GUARD_N // 2):
+            z = math.sin((2 * k + 1) * math.pi / (2 * BM_GUARD_N))
+            h *= sn * sn / (sn * sn + 2 * z * sn + 1)
+        acc += gs * h * complex(math.cos(2 * math.pi * f * t), math.sin(2 * math.pi * f * t))
+    return acc
+
+
+def tab_fmf_bm():
+    L, wb = fpulse_design()
+    qt = fpulse_q(L, wb)
+    u = [(FMF_C - k) / 3.0 for k in range(FMF_N)]   # symbols before the on-time sample
+    # hst_fpulse as mf_taps reads it (before MF_GAIN), and the shape it holds
+    mf = []
+    for k in range(FMF_N):
+        n9 = L * 15 - (FMF_C - k) * 10
+        n, f = n9 // 3, n9 % 3
+        a, b = qt[n % 10][n // 10], qt[(n + 1) % 10][(n + 1) // 10]
+        mf.append(complex(a[0] * (3 - f) + b[0] * f, a[1] * (3 - f) + b[1] * f))
+    shape = [rrc(x, F_BETA) * kaiser(x / (L / 2.0), wb) * complex(math.cos(F_WC * x * F_SPS), -math.sin(F_WC * x * F_SPS))
+             for x in u]
+    alpha = sum(m * s.conjugate() for m, s in zip(mf, shape)) / sum(abs(s) ** 2 for s in shape)
+    resid = math.sqrt(sum(abs(m - alpha * s) ** 2 for m, s in zip(mf, shape)) / sum(abs(m) ** 2 for m in mf))
+    if resid > 0.05:
+        die("fmf_bm: mf_taps is not hst_fpulse's matched filter (residual %.3f)" % resid)
+    p = [bm_pulse(x / 2400.0).conjugate() for x in u]
+    scale = math.sqrt(sum(abs(s) ** 2 for s in shape) / sum(abs(v) ** 2 for v in p))
+    taps = [alpha * scale * v for v in p]
+    vals = []
+    for t in taps:
+        vals += [int(round(t.real)), int(round(t.imag))]
+    if max(abs(v) for v in vals) >= 1 << 24:
+        die("fmf_bm: a tap past 2^24 (x MF_GAIN would leave int32)")
+    sys.stderr.write("gen_hst_tabs: fmf_bm: mf_taps' turn %.1f deg, residual %.3f; peak tap %d\n"
+                     % (math.degrees(math.atan2(alpha.imag, alpha.real)), resid, max(abs(v) for v in vals)))
+    h = [define("HST_FMF_N", FMF_N, "qamrx's taps (QRX_NTAP), a third of a symbol apart"),
+         "/* the BinModem profile's first equaliser: the matched filter of BinModem's",
+         " * forward pulse (V.17's RRC 0.25 through a 10th-order Butterworth",
+         " * high-pass at 560 Hz, [BM]), tap 36 the on-time sample, [re, im], in",
+         " * mf_taps' units before MF_GAIN (modem/hst_fwd.c) */",
+         "extern const int32_t hst_fmf_bm[HST_FMF_N][2];"]
+    c = ["const int32_t hst_fmf_bm[HST_FMF_N][2] = {"]
+    c += ["    " + " ".join("{%8d,%8d}," % (vals[2 * i], vals[2 * i + 1]) for i in range(k, min(k + 4, FMF_N)))
+          for k in range(0, FMF_N, 4)]
+    c.append("};")
+    c.append("")
+    return h, c
+
+
 def tab_guard():
     stop = list(range(0, 481, 2))
     loose = list(range(560, 601, 2))
@@ -598,7 +691,7 @@ def tab_guard():
     return h, c
 
 
-TABLES = (tab_bstep, tab_bpulse, tab_bpf, tab_fpulse, tab_guard)
+TABLES = (tab_bstep, tab_bpulse, tab_bpf, tab_fpulse, tab_fmf_bm, tab_guard)
 
 
 def main():

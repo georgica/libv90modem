@@ -47,6 +47,13 @@ extern const int16_t hst_hbpf[HST_HBPF_N];
  * of a sample][symbol age][re, im], Q14; its line RMS is V.32's (v32_tx_rms_q12) */
 extern const int16_t hst_fpulse[10][HST_FL][2];
 
+#define HST_FMF_N 72             /* qamrx's taps (QRX_NTAP), a third of a symbol apart */
+/* the BinModem profile's first equaliser: the matched filter of BinModem's
+ * forward pulse (V.17's RRC 0.25 through a 10th-order Butterworth
+ * high-pass at 560 Hz, [BM]), tap 36 the on-time sample, [re, im], in
+ * mf_taps' units before MF_GAIN (modem/hst_fwd.c) */
+extern const int32_t hst_fmf_bm[HST_FMF_N][2];
+
 #define HST_GUARD_L 4
 #define HST_GUARD_FN 75
 #define HST_GUARD_IN 29

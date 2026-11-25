@@ -165,7 +165,10 @@ double hc_brx_snr(const hc_brx *r);
  * 4800 at code 2 (v32spec.h). Trainings (`Training`): ours, provisional,
  * S1 180 AB, S2 72 CD, S3 TRN 3096 (long) or 200 (short) [OURS]; or
  * V.17's long train, 256 AB, 2976 conditioning, 64 bridge, 48 ones at the
- * rate (`V.17 long train`, [PUB]). */
+ * rate (`V.17 long train`, [PUB]). hc_ftx_bm: BinModem's shape instead
+ * (docs/hst/binmodem-facts.md "Pulse shape", [BM]): V.17's root-raised-
+ * cosine, beta 0.25, and a 10th-order Butterworth high-pass at 560 Hz on
+ * the output (bilinear, its corner prewarped, at 8000 Hz). */
 #define HC_FSPAN 15
 #define HC_FL    (2 * HC_FSPAN)           /* symbols in the pulse */
 
@@ -186,10 +189,14 @@ typedef struct {
     int      last;                        /* the last state A..D sent (0..3) */
     int      bridge;                      /* bridge bits sent */
     int      on, ring;                    /* making symbols; symbols left ringing out */
+    int      bm;                          /* BinModem's shape (hc_ftx_bm) */
+    double   gb[5][3], ga[5][2], gz[5][2];   /* its high-pass: 5 sections, b, a, state */
     hc_getbit_fn getbit; void *user;
 } hc_ftx;
 
 void   hc_ftx_init(hc_ftx *t, double level, hc_getbit_fn getbit, void *user);
+/* after hc_ftx_init: BinModem's pulse and high-pass, at the same level */
+void   hc_ftx_bm(hc_ftx *t);
 /* from the next symbol: a training (v17: V.17's long train), then data at code 2..6 */
 void   hc_ftx_train(hc_ftx *t, int code, int long_form, int v17);
 /* 0x3R: 36 symbols of ones at the code in force, then 36 at new_code, then data */
@@ -315,7 +322,8 @@ typedef struct {
     int     hst96;         /* the 1986 HST as BinModem models it: rates 0x10, flags 0x09 [BM] */
     uint8_t rates, flags;  /* 0xC0 offered; both 0: no 0xC0 (plain MNP over HST) */
     int     send_opt;      /* the LR carries parameter 8, bit 2 */
-    int     bm_training;   /* forward trainings V.17's long train; opening code 3; 0x3R retrains */
+    int     bm_training;   /* forward trainings V.17's long train; opening code 3; 0x3R retrains;
+                              the forward channel in BinModem's shape (hc_ftx_bm) */
     int     no_lr;         /* never sends an LR */
     int     ld_at_ms;      /* > 0: LD 255 then */
     int     drop_at_ms;    /* > 0: every carrier off then */

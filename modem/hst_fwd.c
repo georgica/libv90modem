@@ -315,6 +315,9 @@ static int slice4(int32_t zr, int32_t zi)
     return b >= 0 ? 3 : 0;
 }
 
+/* hst_fmf_bm is laid out as qamrx's taps */
+typedef char hst_fmf_bm_fits[(HST_FMF_N == QRX_NTAP && QRX_CENTER == 36) ? 1 : -1];
+
 /* The transmit pulse's matched filter, demodulating: tap k, (36 - k) T/3
  * before the on-time sample, is g(u) e^(-j w u) at u = (36 - k) T/3, which
  * hst_fpulse holds (up to a fixed turn) at (150 - 10 (36 - k) / 3) thirds
@@ -323,12 +326,17 @@ static int slice4(int32_t zr, int32_t zi)
 static void mf_taps(int32_t *cr, int32_t *ci)
 {
     int k;
+#if HST_FMF_BM
+    /* the BinModem profile: its pulse's matched filter (hst.h, hst_fmf_bm) */
+    for (k = 0; k < QRX_NTAP; k++) { cr[k] = hst_fmf_bm[k][0] * MF_GAIN; ci[k] = hst_fmf_bm[k][1] * MF_GAIN; }
+#else
     for (k = 0; k < QRX_NTAP; k++) {
         int n9 = 450 - (QRX_CENTER - k) * 10, n = n9 / 3, f = n9 % 3;
         const int16_t *a = hst_fpulse[n % 10][n / 10], *b = hst_fpulse[(n + 1) % 10][(n + 1) / 10];
         cr[k] = (a[0] * (3 - f) + b[0] * f) * MF_GAIN;
         ci[k] = (a[1] * (3 - f) + b[1] * f) * MF_GAIN;
     }
+#endif
 }
 
 /* back to listening for AB, in state `why` */

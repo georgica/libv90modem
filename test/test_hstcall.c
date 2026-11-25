@@ -22,6 +22,11 @@
  *   fwd_to_ours   hstcall's forward transmitter: its long training at codes
  *                 2..6, its short one at 6 and V.17's long train at 3 and 6:
  *                 our hst_frx reaches data, no bit in error
+ *   fwd_to_ours_bm (make check-hst-bm only) V.17's long train at 2..6 in
+ *                 BinModem's shape (hc_ftx_bm: V.17's pulse and its 560 Hz
+ *                 high-pass, [BM]): our hst_frx reaches data from its first
+ *                 training, no bit in error (the live reversal of
+ *                 2026-11-25: our receiver never trained on BinModem's)
  *   marks_self    hstcall's forward transmitter and receiver, 6 -> 5 and
  *                 4 -> 6 by marks (0x3R), the receiver armed 36 ms after the
  *                 marks began (the line, and an LNA's decoding): it
@@ -65,7 +70,8 @@
  *   knobs         lr_delay_ms (no frame before it); ld_hold_ms, 1000 by
  *                 default and 3000 (the carrier held that long after the LD)
  *
- * Under make check-hst-bm (HST_PROFILE_BM) only fwd_from_ours runs.
+ * Under make check-hst-bm (HST_PROFILE_BM) only fwd_from_ours and
+ * fwd_to_ours_bm run.
  *
  * The output (the golden file) holds exact integers and one pass or fail
  * line per bound; the measured values, from floating-point arithmetic, only
@@ -374,7 +380,7 @@ static void fwd_from_ours(void)
 typedef struct { hc_ftx t; src_t s; } hcf_peer_t;
 static double hcf_tx(void *u, double rx) { (void)rx; return hc_ftx_tick(&((hcf_peer_t *)u)->t); }
 
-static void fwd_to_ours_one(const char *what, int code, int long_form, int v17, uint32_t seed)
+static void fwd_to_ours_one(const char *what, int code, int long_form, int v17, int bm, uint32_t seed)
 {
     static hcf_peer_t P;
     static hst_frx_t R;
@@ -384,6 +390,7 @@ static void fwd_to_ours_one(const char *what, int code, int long_form, int v17, 
     memset(&P, 0, sizeof P);
     P.s.r = seed;
     hc_ftx_init(&P.t, FLEVEL, src_bit, &P.s);
+    if (bm) hc_ftx_bm(&P.t);
     hst_frx_init(&R);
     hst_frx_set_code(&R, code);
     line(6, 300, 300, dbm0_of(arrive) - 30, -300, 0, 0, seed);
@@ -412,10 +419,17 @@ static void fwd_to_ours_one(const char *what, int code, int long_form, int v17, 
 static void fwd_to_ours(void)
 {
     int code;
-    for (code = 2; code <= 6; code++) fwd_to_ours_one("long", code, 1, 0, 40u + (uint32_t)code);
-    fwd_to_ours_one("short", 6, 0, 0, 47u);
-    fwd_to_ours_one("V.17", 3, 1, 1, 48u);
-    fwd_to_ours_one("V.17", 6, 1, 1, 49u);
+    for (code = 2; code <= 6; code++) fwd_to_ours_one("long", code, 1, 0, 0, 40u + (uint32_t)code);
+    fwd_to_ours_one("short", 6, 0, 0, 0, 47u);
+    fwd_to_ours_one("V.17", 3, 1, 1, 0, 48u);
+    fwd_to_ours_one("V.17", 6, 1, 1, 0, 49u);
+}
+
+/* the BinModem profile's: BinModem's forward shape (its pulse and guard) */
+static void fwd_to_ours_bm(void)
+{
+    int code;
+    for (code = 2; code <= 6; code++) fwd_to_ours_one("V.17, BinModem's shape", code, 1, 1, 1, 60u + (uint32_t)code);
 }
 
 /* 0x3R by marks, hstcall's transmitter to its own receiver: the old
@@ -1036,9 +1050,10 @@ static void stored_eq(void)
 int main(int argc, char **argv)
 {
 #ifdef HST_PROFILE_BM
-    int only = t_case_arg(argc, argv, 1);
+    int only = t_case_arg(argc, argv, 2);
     verbose = getenv("HST_VERBOSE") != NULL;
     if (T_CASE(only, 1)) fwd_from_ours();
+    if (T_CASE(only, 2)) fwd_to_ours_bm();
     /* the rest do not depend on the profile: run in the default build only */
     (void)tone; (void)back_to_ours; (void)back_from_ours; (void)fwd_to_ours;
     (void)marks_self; (void)coexist; (void)link_case; (void)reversal; (void)stored_eq;
@@ -1046,6 +1061,7 @@ int main(int argc, char **argv)
 #else
     int only = t_case_arg(argc, argv, 18);
     verbose = getenv("HST_VERBOSE") != NULL;
+    (void)fwd_to_ours_bm;            /* the BinModem profile's (make check-hst-bm) */
     if (T_CASE(only, 1)) tone();
     if (T_CASE(only, 2)) back_to_ours(450);
     if (T_CASE(only, 3)) back_to_ours(300);

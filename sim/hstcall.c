@@ -341,23 +341,49 @@ double hc_brx_snr(const hc_brx *r)
 
 /* ======================= the forward transmitter ======================= */
 
-void hc_ftx_init(hc_ftx *t, double level, hc_getbit_fn getbit, void *user)
+/* the pulse at roll-off b, and the gain that puts it at level */
+static void ftx_pulse(hc_ftx *t, double level, double b)
 {
     int i;
     double e = 0;
-    memset(t, 0, sizeof *t);
     for (i = 0; i <= HC_FL * 10; i++) {
         double u = (i - HC_FSPAN * 10) / 10.0;
-        t->p[i] = rrc(u, 1.0 / 12) * kaiser(u / HC_FSPAN, 3.0);
+        t->p[i] = rrc(u, b) * kaiser(u / HC_FSPAN, 3.0);
         e += t->p[i] * t->p[i];
     }
     /* mean |a|^2 = 40 (the 4 points; the sets are near it): power = 40 g^2 (e / 3) / (2 x 10 / 3) */
     t->gain = level / sqrt(40.0 * (e / 3.0) / (2 * 10.0 / 3.0));
+}
+
+void hc_ftx_init(hc_ftx *t, double level, hc_getbit_fn getbit, void *user)
+{
+    memset(t, 0, sizeof *t);
+    ftx_pulse(t, level, 1.0 / 12);
     load_sets(t->pts);
     t->getbit = getbit; t->user = user;
     t->code = t->next_code = 4;
     t->seg = HC_FS_OFF;
     t->acc = 10;
+}
+
+/* BinModem's shape (binmodem-facts.md "Pulse shape", [BM]): V.17's roll-off
+ * at the level hc_ftx_init set, then a 10th-order Butterworth high-pass at
+ * 560 Hz: five sections, damping sin((2k + 1) pi / 20), each s^2 / (s^2 +
+ * 2 zeta s + 1) by the bilinear transform at 8000 Hz, its corner prewarped */
+void hc_ftx_bm(hc_ftx *t)
+{
+    double level, e = 0, K = tan(PI * 560.0 / 8000.0);
+    int i, k;
+    for (i = 0; i <= HC_FL * 10; i++) e += t->p[i] * t->p[i];
+    level = t->gain * sqrt(40.0 * (e / 3.0) / (2 * 10.0 / 3.0));   /* hc_ftx_init's */
+    ftx_pulse(t, level, 0.25);
+    for (k = 0; k < 5; k++) {
+        double z = sin((2 * k + 1) * PI / 20), a0 = 1 + 2 * z * K + K * K;
+        t->gb[k][0] = 1 / a0; t->gb[k][1] = -2 / a0; t->gb[k][2] = 1 / a0;
+        t->ga[k][0] = 2 * (K * K - 1) / a0; t->ga[k][1] = (1 - 2 * z * K + K * K) / a0;
+        t->gz[k][0] = t->gz[k][1] = 0;
+    }
+    t->bm = 1;
 }
 
 static void ftx_seg(hc_ftx *t, int seg)
@@ -475,6 +501,13 @@ double hc_ftx_tick(hc_ftx *t)
     }
     c = cos(2 * PI * 9 * (double)(t->n % 40) / 40); s = sin(2 * PI * 9 * (double)(t->n % 40) / 40);
     out = t->gain * (br * c - bi * s);
+    if (t->bm)
+        for (j = 0; j < 5; j++) {
+            double v = t->gb[j][0] * out + t->gz[j][0];
+            t->gz[j][0] = t->gb[j][1] * out - t->ga[j][0] * v + t->gz[j][1];
+            t->gz[j][1] = t->gb[j][2] * out - t->ga[j][1] * v;
+            out = v;
+        }
     t->acc += 3;
     t->n++;
     return out;
@@ -956,6 +989,7 @@ void hstcall_init(hstcall_t *c, const hstcall_cfg *cfg)
     c->tq1 = c->tq2 = 0;
     hc_btx_init(&c->btx, c->back_bps, c->level, hc_bit, c);
     hc_ftx_init(&c->ftx, c->level, hc_bit, c);
+    if (c->cfg.bm_training) hc_ftx_bm(&c->ftx);
     hc_frx_init(&c->frx, c->fwd_code);
     hc_brx_init(&c->brx, c->cfg.back_bps);
     memset(&m, 0, sizeof m);
