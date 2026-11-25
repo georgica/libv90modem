@@ -20,6 +20,27 @@
  *                 hashes recorded at a44426a); setting V.32's own pulse back
  *                 gives them again; 30 -> 12 -> 30 symbols mid-stream clears
  *                 what the short pulse left unshifted
+ *   train_long    hst_ftx_train's long form at HST_OPEN_CODE: S1 180, S2 72,
+ *                 S3 3096 symbols, getbit not called before the first data
+ *                 symbol (3348, 1.395 s), then code bits a symbol on the
+ *                 rate's V.32bis points (not under HST_PROFILE_BM)
+ *   train_short   the short form: 180, 72, 200, data from symbol 452 (188
+ *                 ms), at every code 2..6; silent, with getbit idle, before
+ *                 the first training and after hst_ftx_stop
+ *   s1_s2         S1 alternates A and B, S2 C and D (V.32's S and S-bar), on
+ *                 v32_c4800's points
+ *   trn           S3's points are Table 4's dibits (A 00, B 01, C 11, D 10)
+ *                 of ones through 1 + x^-18 + x^-23 (GPC, not GPA) from zero,
+ *                 on all 4 points; a training from data starts it from zero
+ *                 again
+ *   bm            (HST_PROFILE_BM only) opening code 3; the long form is
+ *                 V.17's: 256 AB, 2976 conditioning (V.17 Table 4's first
+ *                 16 dibits; all of it GPC from 0x2ECDD5, mapped 00 C, 01 D,
+ *                 11 A, 10 B), 64 bridge (0000 0001 0001 0001 scrambled and
+ *                 differentially encoded), 48 ones at the rate, then data
+ *
+ * The program also runs under make check-hst-bm (HST_PROFILE_BM): there bm
+ * takes train_long's place, and trn's trainings are both short.
  *
  * The output (the golden file) holds exact integers and one pass or fail
  * line per bound; the measured values, from the test's own floating-point
@@ -329,13 +350,318 @@ static void guard(void)
     bound("hst_gf_tick is the direct form", bad == 0);
 }
 
+/* ---- the forward transmitter (hst_ftx) and its training ---- */
+
+/* the data source: random bits, its calls counted; each case seeds it */
+typedef struct { uint32_t r; long calls; } src_t;
+static int src_bit(void *user)
+{
+    src_t *s = (src_t *)user;
+    s->calls++;
+    s->r = s->r * 1664525u + 1013904223u;
+    return (int)(s->r >> 27) & 1;
+}
+
+/* What the transmitter sent, a symbol at a time: its segment (hst_ftx_seg),
+ * its point with the carrier's rotation undone, and getbit's calls for it */
+#define MAXSYM 3600
+typedef struct {
+    int8_t seg[MAXSYM];
+    int8_t px[MAXSYM], py[MAXSYM];
+    int8_t calls[MAXSYM];
+    int    n;
+} rec_t;
+
+/* ticks until n more symbols have begun; how many samples were not zero */
+static long run(hst_ftx_t *t, src_t *s, rec_t *r, int n)
+{
+    long nz = 0;
+    int i, k, x, y, tmp;
+    r->n = 0;
+    while (r->n < n) {
+        long c = s->calls;
+        nz += hst_ftx_tick(t) != 0;
+        if (!t->tx.newsym) continue;
+        /* the symbol was rotated by (-j)^k, k = the count before this one mod 4 */
+        k = (t->tx.rot - 1) & 3;
+        x = t->tx.br[0]; y = t->tx.bi[0];
+        for (i = 0; i < k; i++) { tmp = x; x = -y; y = tmp; }
+        if (r->n < MAXSYM) {
+            r->seg[r->n] = (int8_t)hst_ftx_seg(t);
+            r->px[r->n] = (int8_t)x; r->py[r->n] = (int8_t)y;
+            r->calls[r->n] = (int8_t)(s->calls - c);
+        }
+        r->n++;
+    }
+    return nz;
+}
+
+/* the synchronising state (0 A, 1 B, 2 C, 3 D) of symbol i, -1 if none */
+static int state_of(const rec_t *r, int i)
+{
+    static const int label[4] = { 0, 1, 3, 2 };     /* A B C D in v32_c4800 */
+    int s;
+    for (s = 0; s < 4; s++)
+        if (r->px[i] == v32_c4800[label[s]][0] && r->py[i] == v32_c4800[label[s]][1]) return s;
+    return -1;
+}
+
+/* symbol i one of the points of rate index `rate` */
+static int on_rate(const rec_t *r, int i, int rate)
+{
+    static const int npt[V32_NRATES] = { 4, 16, 32, 64, 128 };
+    const int8_t (*c)[2] = v32_constel(rate);
+    int k;
+    for (k = 0; k < npt[rate]; k++)
+        if (r->px[i] == c[k][0] && r->py[i] == c[k][1]) return 1;
+    return 0;
+}
+
+/* the lengths of the runs of segments from symbol 0, up to 5; the number of runs */
+static int seg_runs(const rec_t *r, int *seg, int *len)
+{
+    int i, k = 0;
+    for (i = 0; i < r->n && i < MAXSYM; i++) {
+        if (i == 0 || r->seg[i] != r->seg[i - 1]) {
+            if (k == 5) break;
+            seg[k] = r->seg[i]; len[k++] = 0;
+        }
+        len[k - 1]++;
+    }
+    return k;
+}
+
+/* Symbols from `first` on, up to `n` of them: all data, `code` bits each
+ * from getbit, on the points of rate index code - 2. How many fail. */
+static int data_bad(const rec_t *r, int first, int n, int code)
+{
+    int i, bad = 0;
+    for (i = first; i < first + n && i < r->n; i++)
+        bad += r->seg[i] != HST_SEG_DATA || r->calls[i] != code || !on_rate(r, i, code - 2);
+    return bad;
+}
+
+/* the test's own scrambler, reg bit 0 the most recent output, x^-n bit n-1:
+ * GPC 1 + x^-18 + x^-23, GPA 1 + x^-5 + x^-23 */
+static int scr_bit(uint32_t *reg, int gpc, int in)
+{
+    int out = in ^ (int)((*reg >> (gpc ? 17 : 4)) & 1) ^ (int)((*reg >> 22) & 1);
+    *reg = ((*reg << 1) | (uint32_t)out) & 0x7FFFFFu;
+    return out;
+}
+#ifdef HST_PROFILE_BM
+static int dscr_bit(uint32_t *reg, int gpc, int in)
+{
+    int out = in ^ (int)((*reg >> (gpc ? 17 : 4)) & 1) ^ (int)((*reg >> 22) & 1);
+    *reg = ((*reg << 1) | (uint32_t)in) & 0x7FFFFFu;
+    return out;
+}
+#endif
+
+/* one training at `code` from t's state, up to `extra` data symbols past it;
+ * prints and checks its segments (180, 72, s3), getbit idle until data */
+static void check_training(const rec_t *r, const char *what, int code, int s3, int extra)
+{
+    int seg[5], len[5], k, i, idle = 0, total = HST_S1_SYMS + HST_S2_SYMS + s3;
+    k = seg_runs(r, seg, len);
+    printf("%s, code %d:", what, code);
+    for (i = 0; i < k; i++) printf(" %s %d", seg[i] == HST_SEG_DATA ? "data" : seg[i] == HST_SEG_S1 ? "S1" :
+                                   seg[i] == HST_SEG_S2 ? "S2" : seg[i] == HST_SEG_S3 ? "S3" : "?", len[i]);
+    printf("; data from symbol %d (%d ms)\n", total, total * 10 / 24);
+    CHECK_EQ_I(k, 4);
+    CHECK(k >= 4 && seg[0] == HST_SEG_S1 && seg[1] == HST_SEG_S2 && seg[2] == HST_SEG_S3 && seg[3] == HST_SEG_DATA);
+    CHECK_EQ_I(len[0], HST_S1_SYMS);
+    CHECK_EQ_I(len[1], HST_S2_SYMS);
+    CHECK_EQ_I(len[2], s3);
+    for (i = 0; i < total; i++) idle += r->calls[i] == 0;
+    bound("getbit idle through the training", idle == total);
+    bound("then data: code bits a symbol on the rate's points", data_bad(r, total, extra, code) == 0);
+}
+
+#ifndef HST_PROFILE_BM
+static void train_long(void)
+{
+    static hst_ftx_t t;
+    static rec_t r;
+    src_t s = { 0x1234567u, 0 };
+    int total = HST_S1_SYMS + HST_S2_SYMS + HST_S3_LONG;
+    hst_ftx_init(&t, 3000, src_bit, &s);
+    CHECK_EQ_I(HST_OPEN_CODE, 4);
+    hst_ftx_train(&t, HST_OPEN_CODE, 1);
+    run(&t, &s, &r, total + 200);
+    check_training(&r, "train_long", HST_OPEN_CODE, HST_S3_LONG, 200);
+    CHECK_EQ_I(total, 3348);
+    CHECK(hst_ftx_in_data(&t));
+}
+#endif
+
+static void train_short(void)
+{
+    static hst_ftx_t t;
+    static rec_t r;
+    src_t s = { 0x7654321u, 0 };
+    int total = HST_S1_SYMS + HST_S2_SYMS + HST_S3_SHORT, code;
+    long nz;
+    CHECK_EQ_I(total, 452);
+    hst_ftx_init(&t, 3000, src_bit, &s);
+    CHECK_EQ_I(hst_ftx_seg(&t), HST_SEG_OFF);
+    nz = run(&t, &s, &r, 100);
+    printf("train_short: before training %ld samples not zero, %ld getbit calls\n", nz, s.calls);
+    bound("silent and getbit idle before the first training", nz == 0 && s.calls == 0 && !hst_ftx_in_data(&t));
+    for (code = 2; code <= 6; code++) {
+        hst_ftx_train(&t, code, 0);
+        CHECK(!hst_ftx_in_data(&t));
+        run(&t, &s, &r, total + 100);
+        check_training(&r, "train_short", code, HST_S3_SHORT, 100);
+        CHECK(hst_ftx_in_data(&t));
+    }
+    /* the pulses in flight ring out (HST_FL + V32_TXD symbols), then silence */
+    hst_ftx_stop(&t);
+    s.calls = 0;
+    CHECK_EQ_I(hst_ftx_seg(&t), HST_SEG_OFF);
+    run(&t, &s, &r, HST_FL + V32_TXD + 1);
+    nz = run(&t, &s, &r, 200);
+    printf("train_short: after hst_ftx_stop and %d symbols, %ld samples not zero, %ld getbit calls\n",
+           HST_FL + V32_TXD + 1, nz, s.calls);
+    bound("silent and getbit idle after hst_ftx_stop", nz == 0 && s.calls == 0 && !hst_ftx_in_data(&t));
+}
+
+static void s1_s2(void)
+{
+    static hst_ftx_t t;
+    static rec_t r;
+    src_t s = { 0x2468ace0u, 0 };
+    int i, bad1 = 0, bad2 = 0;
+    hst_ftx_init(&t, 3000, src_bit, &s);
+    hst_ftx_train(&t, HST_OPEN_CODE, 0);
+    run(&t, &s, &r, HST_S1_SYMS + HST_S2_SYMS);
+    for (i = 0; i < HST_S1_SYMS; i++) bad1 += state_of(&r, i) != (i & 1);            /* A B A B */
+    for (i = 0; i < HST_S2_SYMS; i++) bad2 += state_of(&r, HST_S1_SYMS + i) != 2 + (i & 1);   /* C D */
+    printf("s1_s2: S1 %d symbols not A B alternating, S2 %d not C D\n", bad1, bad2);
+    bound("S1 is V.32's S: A B A B ...", bad1 == 0);
+    bound("S2 is V.32's S-bar: C D C D ...", bad2 == 0);
+}
+
+/* S3 from symbol `first`, n symbols, against GPC and GPA from zero; counts
+ * of each point to cnt */
+static void trn_check(const rec_t *r, int first, int n, int *bad_gpc, int *bad_gpa, int cnt[4])
+{
+    static const int dibit[4] = { 0, 1, 3, 2 };   /* Table 4: A 00, B 01, C 11, D 10 */
+    uint32_t gc = 0, ga = 0;
+    int i, st, q;
+    *bad_gpc = *bad_gpa = 0;
+    for (i = 0; i < 4; i++) cnt[i] = 0;
+    for (i = first; i < first + n; i++) {
+        st = state_of(r, i);
+        q = st < 0 ? -1 : dibit[st];
+        if (st >= 0) cnt[st]++;
+        *bad_gpc += q != ((scr_bit(&gc, 1, 1) << 1) | scr_bit(&gc, 1, 1));
+        *bad_gpa += q != ((scr_bit(&ga, 0, 1) << 1) | scr_bit(&ga, 0, 1));
+    }
+}
+
+static void trn(void)
+{
+    static hst_ftx_t t;
+    static rec_t r;
+    src_t s = { 0x0badcafeu, 0 };
+    int round, bc, ba, cnt[4], s3;
+    hst_ftx_init(&t, 3000, src_bit, &s);
+    for (round = 0; round < 2; round++) {
+#ifdef HST_PROFILE_BM
+        int long_form = 0;
+#else
+        int long_form = round == 0;
+#endif
+        s3 = long_form ? HST_S3_LONG : HST_S3_SHORT;
+        hst_ftx_train(&t, HST_OPEN_CODE, long_form);
+        run(&t, &s, &r, HST_S1_SYMS + HST_S2_SYMS + s3 + 50);     /* and 50 of data */
+        trn_check(&r, HST_S1_SYMS + HST_S2_SYMS, s3, &bc, &ba, cnt);
+        printf("trn: %s S3%s, %d symbols: %d unlike GPC's, %d unlike GPA's; A %d, B %d, C %d, D %d\n",
+               long_form ? "long" : "short", round ? " after data" : "", s3, bc, ba, cnt[0], cnt[1], cnt[2], cnt[3]);
+        bound("S3: ones through GPC from zero, Table 4's dibits", bc == 0);
+        bound("S3: not GPA's", ba > 0);
+        bound("S3: all 4 points", cnt[0] > 0 && cnt[1] > 0 && cnt[2] > 0 && cnt[3] > 0);
+    }
+}
+
+#ifdef HST_PROFILE_BM
+static void bm(void)
+{
+    /* V.17 Table 4: the conditioning's first 16 states */
+    static const int first16[16] = { 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 1, 3, 1, 3 };
+    static const int v17map[4] = { 2, 3, 1, 0 };   /* dibit 00 C, 01 D, 10 B, 11 A */
+    static const int dq[4] = { 1, 0, 2, 3 };       /* quarter turns -> dibit: 0 01, +90 00, 180 10, -90 11 */
+    static hst_ftx_t t;
+    static rec_t r;
+    src_t s = { 0x5eed5u, 0 };
+    int seg[5], len[5], k, i, b0 = 0, bad_ab = 0, bad16 = 0, bad_cond = 0, bad_bridge = 0, bad_ones = 0, idle = 0;
+    int total = HST_BM_AB + HST_BM_COND + HST_BM_BRIDGE + HST_BM_ONES, prev, st;
+    uint32_t reg = 0x2ECDD5u;
+    printf("bm: opening code %d\n", HST_OPEN_CODE);
+    CHECK_EQ_I(HST_OPEN_CODE, 3);
+    CHECK_EQ_I(total, 3344);
+    hst_ftx_init(&t, 3000, src_bit, &s);
+    hst_ftx_train(&t, HST_OPEN_CODE, 1);
+    run(&t, &s, &r, total + 100);
+    k = seg_runs(&r, seg, len);
+    printf("bm: long training");
+    for (i = 0; i < k; i++) printf(" %d", len[i]);
+    printf("; data from symbol %d (%d ms)\n", total, total * 10 / 24);
+    CHECK_EQ_I(k, 5);
+    CHECK(k == 5 && seg[0] == HST_SEG_S1 && seg[1] == HST_SEG_S2 && seg[2] == HST_SEG_S3 && seg[3] == HST_SEG_S4 && seg[4] == HST_SEG_DATA);
+    CHECK_EQ_I(len[0], HST_BM_AB);
+    CHECK_EQ_I(len[1], HST_BM_COND);
+    CHECK_EQ_I(len[2], HST_BM_BRIDGE);
+    CHECK_EQ_I(len[3], HST_BM_ONES);
+    for (i = 0; i < HST_BM_AB; i++) bad_ab += state_of(&r, i) != (i & 1);
+    for (i = 0; i < 16; i++) bad16 += state_of(&r, HST_BM_AB + i) != first16[i];
+    for (i = 0; i < HST_BM_COND; i++) {
+        int q = scr_bit(&reg, 1, 1) << 1;
+        q |= scr_bit(&reg, 1, 1);
+        bad_cond += state_of(&r, HST_BM_AB + i) != v17map[q];
+    }
+    /* the bridge: quarter turns from the symbol before, descrambled, against
+     * B0..B15 = 0000 0001 0001 0001 eight times */
+    prev = state_of(&r, HST_BM_AB + HST_BM_COND - 1);
+    for (i = 0; i < HST_BM_BRIDGE; i++) {
+        int q, want;
+        st = state_of(&r, HST_BM_AB + HST_BM_COND + i);
+        if (st < 0 || prev < 0) { bad_bridge++; prev = st; continue; }
+        q = dq[(st - prev) & 3];
+        prev = st;
+        want = (b0 % 4 == 3) && b0 % 16 >= 4; bad_bridge += dscr_bit(&reg, 1, q >> 1) != want; b0++;
+        want = (b0 % 4 == 3) && b0 % 16 >= 4; bad_bridge += dscr_bit(&reg, 1, q & 1) != want; b0++;
+    }
+    for (i = 0; i < HST_BM_ONES; i++) bad_ones += !on_rate(&r, total - HST_BM_ONES + i, HST_OPEN_CODE - 2);
+    for (i = 0; i < total; i++) idle += r.calls[i] == 0;
+    printf("bm: unlike: AB %d, first 16 %d, conditioning %d, bridge bits %d, ones off the rate's points %d\n",
+           bad_ab, bad16, bad_cond, bad_bridge, bad_ones);
+    bound("segment 1: A B A B ...", bad_ab == 0);
+    bound("segment 2: V.17 Table 4's first 16 dibits", bad16 == 0);
+    bound("segment 2: GPC from 0x2ECDD5, ones in, 00 C 01 D 11 A 10 B", bad_cond == 0);
+    bound("segment 3: the bridge's 16 bits, 8 times", bad_bridge == 0);
+    bound("segment 4: on the 7200 points", bad_ones == 0);
+    bound("getbit idle through the training", idle == total);
+    bound("then data at 7200", data_bad(&r, total, 100, HST_OPEN_CODE) == 0);
+}
+#endif
+
 int main(int argc, char **argv)
 {
-    int only = t_case_arg(argc, argv, 3);
+    int only = t_case_arg(argc, argv, 7);
     verbose = getenv("HST_VERBOSE") != NULL;
     if (T_CASE(only, 1)) pulse_points();
     if (T_CASE(only, 2)) guard();
     if (T_CASE(only, 3)) v32_default();
+#ifdef HST_PROFILE_BM
+    if (T_CASE(only, 4)) bm();
+#else
+    if (T_CASE(only, 4)) train_long();
+#endif
+    if (T_CASE(only, 5)) train_short();
+    if (T_CASE(only, 6)) s1_s2();
+    if (T_CASE(only, 7)) trn();
     T_REPORT("test_hst_fwd");
 }
 #endif

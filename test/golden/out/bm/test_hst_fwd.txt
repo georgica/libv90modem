@@ -1,0 +1,64 @@
+pulse_points: 30 symbols; level 3036 (V.32's 3036)
+  700-2900 Hz within 0.5 dB: pass
+  600 and 3000 Hz -3 +- 0.5 dB: pass
+  >= 3200 Hz at most -36 dB: pass
+  <= 400 Hz at most -40 dB: pass
+  the level V.32's within 0.1 dB: pass
+guard: 307 taps, 154 multiplies a sample
+  linear phase: pass
+  >= 560 Hz within 0.5 dB: pass
+  <= 480 Hz at least 50 dB down: pass
+guard: 32000 samples through hst_gf_tick, 0 unlike the direct form
+  hst_gf_tick is the direct form: pass
+v32_default answering: line 0x62AA7B75, reference 0x3C258E9C
+  V.32's pulse: the line as 0.6.0's: pass
+  V.32's pulse: the echo reference as 0.6.0's: pass
+  HST's pulse and back: the line and reference as 0.6.0's: pass
+v32_default calling: line 0x93EA3185, reference 0xC5E4CCCC
+  V.32's pulse: the line as 0.6.0's: pass
+  V.32's pulse: the echo reference as 0.6.0's: pass
+  HST's pulse and back: the line and reference as 0.6.0's: pass
+v32_default 30 -> 12 -> 30: line 0xF60DD2A1
+  30 -> 12 -> 30: the history past 18 symbols cleared: pass
+  30 -> 12 -> 30: the line as V.32's pulse's history then 30: pass
+bm: opening code 3
+bm: long training 256 2976 64 48 100; data from symbol 3344 (1393 ms)
+bm: unlike: AB 0, first 16 0, conditioning 0, bridge bits 0, ones off the rate's points 0
+  segment 1: A B A B ...: pass
+  segment 2: V.17 Table 4's first 16 dibits: pass
+  segment 2: GPC from 0x2ECDD5, ones in, 00 C 01 D 11 A 10 B: pass
+  segment 3: the bridge's 16 bits, 8 times: pass
+  segment 4: on the 7200 points: pass
+  getbit idle through the training: pass
+  then data at 7200: pass
+train_short: before training 0 samples not zero, 0 getbit calls
+  silent and getbit idle before the first training: pass
+train_short, code 2: S1 180 S2 72 S3 200 data 100; data from symbol 452 (188 ms)
+  getbit idle through the training: pass
+  then data: code bits a symbol on the rate's points: pass
+train_short, code 3: S1 180 S2 72 S3 200 data 100; data from symbol 452 (188 ms)
+  getbit idle through the training: pass
+  then data: code bits a symbol on the rate's points: pass
+train_short, code 4: S1 180 S2 72 S3 200 data 100; data from symbol 452 (188 ms)
+  getbit idle through the training: pass
+  then data: code bits a symbol on the rate's points: pass
+train_short, code 5: S1 180 S2 72 S3 200 data 100; data from symbol 452 (188 ms)
+  getbit idle through the training: pass
+  then data: code bits a symbol on the rate's points: pass
+train_short, code 6: S1 180 S2 72 S3 200 data 100; data from symbol 452 (188 ms)
+  getbit idle through the training: pass
+  then data: code bits a symbol on the rate's points: pass
+train_short: after hst_ftx_stop and 37 symbols, 0 samples not zero, 0 getbit calls
+  silent and getbit idle after hst_ftx_stop: pass
+s1_s2: S1 0 symbols not A B alternating, S2 0 not C D
+  S1 is V.32's S: A B A B ...: pass
+  S2 is V.32's S-bar: C D C D ...: pass
+trn: short S3, 200 symbols: 0 unlike GPC's, 150 unlike GPA's; A 82, B 17, C 86, D 15
+  S3: ones through GPC from zero, Table 4's dibits: pass
+  S3: not GPA's: pass
+  S3: all 4 points: pass
+trn: short S3 after data, 200 symbols: 0 unlike GPC's, 150 unlike GPA's; A 82, B 17, C 86, D 15
+  S3: ones through GPC from zero, Table 4's dibits: pass
+  S3: not GPA's: pass
+  S3: all 4 points: pass
+test_hst_fwd: 96 checks, 0 failures

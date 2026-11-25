@@ -4487,3 +4487,49 @@ CPU levers for later (the CPU task; neither changes V.32):
                    re-recorded (its own); bench 17, replay 636 identical;
                    armv7hf and big-endian short-cmp identical; ubsan pass;
                    fixed 110 objects, 0 float helpers)
+
+## hst 15: the forward transmitter and its provisional training (2026-11-25)
+
+`hst_ftx_t` (`modem/hst.h`, `modem/hst_fwd.c`): v32tx on `hst_fpulse`
+(`v32tx_set_pulse` after `v32tx_init`), `answer` 0 so that v32tx's own
+scrambler is GPC (ruling F7: the polynomial is why, recorded in
+hst_fwd.c); data through `v32_encode` at rate index code - 2.
+`hst_ftx_train(t, code, long_form)` sends S1 180 (V.32's S), S2 72 (S-bar),
+S3 3096 or 200, then data: 3348 symbols (1.395 s) or 452 (188 ms). S3 is
+ones through GPC from zero, Table 4's dibits on all 4 points from its first
+symbol (V.32's TRN starts with 256 on A and C). The constants are commented
+"provisional: Task 20 / R1"; `HST_OPEN_CODE` 4. `HST_FTX_DELAY` is 70 samples
+(a compile-time check; V32_TX_DELAY's 40 is V.32's pulse's).
+
+v32tx gains one mode, `V32_TX_STATE` (send the state in `abcd`), which V.32
+never sets: S3's and V.17's conditioning points need a chosen state a
+symbol. V.32's output is unchanged (test_hst_fwd's v32_default hashes, the
+bench hashes).
+
+`-DHST_PROFILE_BM`: `HST_OPEN_CODE` 3, the long form V.17's (256 AB, 2976
+conditioning from GPC state 0x2ECDD5 mapped 00 C, 01 D, 11 A, 10 B, 64
+bridge as v32tx's rate sequence 0x0111, 48 ones at the rate, the
+differential encoder from the bridge's first symbol: 3344 symbols, then
+data), `HST_3R_TRAINS` 1. `make check-hst-bm` (in `make check`) builds
+`HST_BM_TESTS` (test_hst_fwd) in `$(BUILD)/bm` with it and runs them; their
+golden files are `test/golden/out/bm/<program>.txt` (`print-golden` lists
+`bm/<program>`).
+
+`sizeof(hst_ftx_t)`: 200 octets on x86-64, 184 on ARMv5 (v32tx_t 160 / 148).
+Not yet in `answer_t.u`; `v90m_mem_size()` unchanged.
+
+    make -s build/test_hst_fwd (before the code) -> 36 errors: unknown type
+                   name 'hst_ftx_t', 'HST_SEG_DATA', 'HST_S1_SYMS' undeclared ...
+    build/test_hst_fwd -> test_hst_fwd: 91 checks, 0 failures
+      train_long, code 4: S1 180 S2 72 S3 3096 ...; data from symbol 3348 (1395 ms)
+      train_short, code 2..6: S1 180 S2 72 S3 200 ...; data from symbol 452 (188 ms)
+      trn: long S3, 3096 symbols: 0 unlike GPC's, 2340 unlike GPA's
+    make check-hst-bm -> test_hst_fwd: 96 checks, 0 failures
+      bm: long training 256 2976 64 48 ...; data from symbol 3344 (1393 ms)
+      bm: unlike: AB 0, first 16 0, conditioning 0, bridge bits 0, ones ... 0
+    mutations: answer 1 (GPA) -> trn 4 failures; bridge word 0x0110 -> bm 1 failure
+    api_test_api (x86-64; ARMv5 under qemu) -> 1030 / 1020 checks, 0 failures
+    make verify -> VERIFY PASS (654 s; golden 150 identical: test_hst_fwd's
+                   re-recorded (its own), bm/test_hst_fwd's new; bench 17,
+                   replay 636 identical; armv7hf and big-endian short-cmp
+                   135 identical; ubsan pass; fixed 110 objects, 0 float helpers)

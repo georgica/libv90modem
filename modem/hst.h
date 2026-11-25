@@ -67,6 +67,74 @@ int16_t hst_btx_tick(hst_btx_t *t);
 /* no more symbols: the pulses in flight ring out, then silence */
 void    hst_btx_stop(hst_btx_t *t);
 
+/* ---------------- the forward channel's transmitter ----------------
+ * 2400 baud on 1800 Hz, v32tx on hst_fpulse; GPC scrambler; data through
+ * v32_encode at rate index code - 2 (code 2..6: 4800..14400). The training
+ * is provisional (hst-facts.md "Training", [OURS]): V.32's S, S-bar and TRN
+ * generators with the firmware's lengths 180 + 72 + (3096 or 200). */
+#define HST_S1_SYMS   180    /* AB (V.32's S); provisional: Task 20 / R1 */
+#define HST_S2_SYMS    72    /* CD (V.32's S-bar); provisional: Task 20 / R1 */
+#define HST_S3_LONG  3096    /* TRN, the long form; provisional: Task 20 / R1 */
+#define HST_S3_SHORT  200    /* TRN, the short form; provisional: Task 20 / R1 */
+
+/* V.17's long train (hst-facts.md "V.17 long train", [PUB]): the BinModem
+ * profile's long form */
+#define HST_BM_AB      256   /* ABAB */
+#define HST_BM_COND   2976   /* equaliser conditioning */
+#define HST_BM_BRIDGE   64   /* the bridge, 16 bits 8 times */
+#define HST_BM_ONES     48   /* scrambled ones at the rate */
+#define HST_BM_SCR0 0x2ECDD5u /* the conditioning's scrambler state */
+
+#ifdef HST_PROFILE_BM
+/* -DHST_PROFILE_BM: a test build for runs against BinModem only (SPEC D16);
+ * release builds and golden files never use it */
+#define HST_OPEN_CODE   3    /* 7200 (BinModem's); provisional: Task 20 / R1 */
+#define HST_LONG_V17    1    /* the long training is V.17's */
+#define HST_3R_TRAINS   1    /* a 0x3R rate request is carried out with a training */
+#else
+#define HST_OPEN_CODE   4    /* 9600 before MNP agreement; provisional: Task 20 / R1 */
+#define HST_LONG_V17    0
+#define HST_3R_TRAINS   0
+#endif
+
+/* samples from the tick that begins a symbol to the centre of its pulse on
+ * the line: (V32_TXD + HST_FL / 2) symbols, 70 samples (V32_TX_DELAY, 40,
+ * is V.32's pulse's) */
+#define HST_FTX_DELAY ((V32_TXD + HST_FL / 2) * 10 / 3)
+typedef char hst_ftx_delay_is_70[(HST_FTX_DELAY == 70) ? 1 : -1];
+
+/* the segment of the symbol begun last */
+enum {
+    HST_SEG_OFF,                      /* silent: before the first training, after hst_ftx_stop */
+    HST_SEG_S1, HST_SEG_S2, HST_SEG_S3,
+    HST_SEG_S4,                       /* the V.17 long train's scrambled ones (HST_LONG_V17) */
+    HST_SEG_DATA
+};
+
+typedef struct {
+    v32tx_t  tx;                      /* answer = 0: GPC (hst_fwd.c) */
+    int8_t   kind[4];                 /* this training's segments S1..S4 (hst_fwd.c) */
+    int32_t  len[4];                  /* and their lengths, 0 = none */
+    int32_t  seg;                     /* HST_SEG_* of the symbol begun last */
+    int32_t  left;                    /* symbols of it still to begin */
+    int32_t  code;                    /* rate code of the data, 2..6 */
+    int32_t  d0;                      /* V.17: the state of the bridge's first symbol */
+} hst_ftx_t;
+
+/* level = RMS of the line signal (16-bit sample units); getbit gives the
+ * data. Silent until hst_ftx_train. */
+void    hst_ftx_init(hst_ftx_t *t, int level, v32_getbit_fn getbit, void *user);
+/* from the next symbol: the training, long or short, then data at `code`
+ * (2..6; outside, the nearest). The scrambler starts from zero; the pulses
+ * already sent ring out under it. */
+void    hst_ftx_train(hst_ftx_t *t, int code, int long_form);
+/* the symbol begun last was data */
+int     hst_ftx_in_data(const hst_ftx_t *t);
+int16_t hst_ftx_tick(hst_ftx_t *t);
+/* no more symbols: the pulses in flight ring out, then silence */
+void    hst_ftx_stop(hst_ftx_t *t);
+int     hst_ftx_seg(const hst_ftx_t *t);
+
 /* ---------------- the forward receiver's guard high-pass ----------------
  * hst_guard (HST_GUARD_N taps, linear phase) on 16-bit samples, a doubled
  * delay line: (HST_GUARD_N + 1) / 2 multiplies a sample, pairs of samples

@@ -63,6 +63,7 @@ static void next_symbol(v32tx_t *t)
     case V32_TX_CC:   s = 2; break;
     case V32_TX_S:    s = (t->nsym & 1) ? 1 : 0; break;
     case V32_TX_SBAR: s = (t->nsym & 1) ? 3 : 2; break;
+    case V32_TX_STATE: s = t->abcd & 3; break;
     case V32_TX_TRN:
         /* 5.2.3: scrambler from zero, ones in; 256 symbols of A / C from the
          * first bit of each dibit, then Table 4 */

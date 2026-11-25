@@ -246,6 +246,11 @@ firmware's DSP (BF §3).
 - Constants, each commented provisional (Task 20 / R1): `HST_S1_SYMS` 180,
   `HST_S2_SYMS` 72, `HST_S3_LONG` 3096, `HST_S3_SHORT` 200, `HST_OPEN_CODE` 4
   (plan Task 15). [OURS]
+- S3 maps its dibits by V.32's Table 4 from its first symbol; V.32's own TRN
+  begins with 256 symbols on A and C alone, which would leave the 200-symbol
+  short form on 2 points. The scrambler (v32tx's, `answer` 0: GPC) starts
+  from zero at each training and runs on into the data (hst 15 in
+  PROGRESS.md). [OURS]
 - BinModem sends V.17's long train (section `V.17 long train`) and V.17's
   turn-off (32 symbols of ones, 48 quiet): stand-ins, not HST (BF §2). [BM]
 - The `-DHST_PROFILE_BM` test build: opening code 3 (7200), the long training

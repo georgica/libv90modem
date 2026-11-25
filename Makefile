@@ -383,8 +383,19 @@ endif
 test-times:
 	@tools/par-run.sh --merge $(BUILD)/test-times.txt tools/test-times.txt && echo "tools/test-times.txt: from $(BUILD)/test-times.txt"
 
-check: test-all test-api test-examples test-fixtures check-symbols check-soname check-version check-headers check-diag-names
+check: test-all test-api test-examples test-fixtures check-symbols check-soname check-version check-headers check-diag-names check-hst-bm
 	@echo "ALL HOST CHECKS PASS"
+# HST's BinModem profile (-DHST_PROFILE_BM; docs/history/hst-facts.md
+# "Training"), a test build only: HST_BM_TESTS, library code and all, built
+# with it in $(BUILD)/bm and run there; their logs in $(BUILD)/log/bm, their
+# golden files test/golden/out/bm/<program>.txt
+HST_BM_TESTS := test_hst_fwd
+.PHONY: check-hst-bm
+check-hst-bm:
+	@$(MAKE) -s BUILD=$(BUILD)/bm EXTRA_CPPFLAGS="$(strip $(EXTRA_CPPFLAGS) -DHST_PROFILE_BM)" $(addprefix $(BUILD)/bm/,$(HST_BM_TESTS))
+	@echo "== the BinModem profile (HST_PROFILE_BM) =="; mkdir -p $(BUILD)/log/bm; fail=0; for t in $(HST_BM_TESTS); do \
+	   $(abspath $(BUILD))/bm/$$t > $(BUILD)/log/bm/$$t.log 2>&1 || fail=1; cat $(BUILD)/log/bm/$$t.log; \
+	 done; [ $$fail -eq 0 ]
 # Golden outputs (tools/golden.sh): every program of make check, its output
 # (less host timing) against test/golden/out/<dir>/<prog>.txt. golden runs
 # make check (PAR defaults to every CPU here) and compares; golden-record
@@ -399,6 +410,7 @@ print-golden:
 	@for t in $(TESTS); do echo $$t $(abspath $(BUILD))/$$t; done
 	@for d in $(SUBS); do $(MAKE) -s --no-print-directory -C $$d BUILD=$(SUB_BUILD) print-tests | sed "s|^.*/\([^/]*\)$$|$$d/\1 &|" || exit 1; done
 	@for t in $(API_TESTS); do echo api/$$t $(abspath $(BUILD))/api_$$t; done
+	@for t in $(HST_BM_TESTS); do echo bm/$$t $(abspath $(BUILD))/bm/$$t; done
 	@echo examples/call_loop $(abspath $(BUILD))/call_loop
 # the benches' tx and rx hashes against test/golden/bench.txt (host only)
 bench-hashes:

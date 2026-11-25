@@ -76,7 +76,10 @@ int  v32_decode_bits(int rate, int label, int *yprev);
 #define V32_TX_DELAY ((V32_TXD + V32_TXL / 2) * 10 / 3)
 typedef enum {
     V32_TX_SILENCE, V32_TX_AC, V32_TX_CA, V32_TX_AA, V32_TX_CC,
-    V32_TX_S, V32_TX_SBAR, V32_TX_TRN, V32_TX_RATE, V32_TX_ONES, V32_TX_DATA
+    V32_TX_S, V32_TX_SBAR, V32_TX_TRN, V32_TX_RATE, V32_TX_ONES, V32_TX_DATA,
+    /* the synchronising state in `abcd`, which the caller sets before each
+     * symbol (HST's training, modem/hst_fwd.c); V.32 never sends it */
+    V32_TX_STATE
 } v32_txmode;
 
 typedef struct {
