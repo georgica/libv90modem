@@ -86,7 +86,8 @@ void mnp2_rx_init(mnp2_rx_t *r, int max_len);
  * one is dropped and the new one collected; a body DLE followed by SYN
  * drops the frame and looks for DLE STX next. */
 int  mnp2_rx_octet(mnp2_rx_t *r, uint8_t c);
-/* true from a start flag's STX until the frame ends (good, bad or too long) */
+/* true from a start flag's STX until the frame ends (good, bad or too long);
+ * the body so far is in r->buf, r->len */
 int  mnp2_rx_in_frame(const mnp2_rx_t *r);
 
 /* ------------------------------------------------------- frame headers */

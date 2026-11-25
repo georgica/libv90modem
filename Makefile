@@ -350,8 +350,11 @@ test-api: $(addprefix $(BUILD)/api_,$(API_TESTS))
 	@mkdir -p $(BUILD)/log/api; fail=0; for t in $(API_TESTS); do \
 	   $(abspath $(BUILD))/api_$$t > $(BUILD)/log/api/$$t.log 2>&1 || fail=1; cat $(BUILD)/log/api/$$t.log; \
 	 done; [ $$fail -eq 0 ]
+# ARM_SKIP's lines arm/api_<test> leave that program out (tools/ports-slow.txt)
 test-api-arm: $(addprefix $(BUILD)/arm/api_,$(API_TESTS))
-	@fail=0; for t in $(API_TESTS); do $(QEMU) $(abspath $(BUILD))/arm/api_$$t || fail=1; done; [ $$fail -eq 0 ]
+	@fail=0; for t in $(API_TESTS); do \
+	   if [ -n "$(ARM_SKIP)" ] && grep -qxF "arm/api_$$t" "$(ARM_SKIP)"; then echo "test-api-arm: api_$$t skipped (ARM_SKIP)"; continue; fi; \
+	   $(QEMU) $(abspath $(BUILD))/arm/api_$$t || fail=1; done; [ $$fail -eq 0 ]
 
 # the subdirectories build in their own build/ unless BUILD names another place
 SUB_BUILD = $(if $(filter build,$(BUILD)),build,$(abspath $(BUILD))/$$d)

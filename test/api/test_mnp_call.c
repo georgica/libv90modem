@@ -54,16 +54,20 @@ typedef struct {
     long ec_ms;                  /* ms ticked since */
     int rates_calls, rates_ev;
     int tx_bps, rx_bps;
+    int stops, restores;         /* DATA_STOPPED, DATA_MOVING passed on */
 } ans_t;
 
 static int ans_get(void *u) { ans_t *a = u; return a->ec_on ? v90m_ec_tx_bit(a->ec) : 1; }
 static void ans_put(void *u, int b) { ans_t *a = u; if (a->ec_on) v90m_ec_rx_bit(a->ec, b); }
 
-/* the host pattern: reset at CONNECTED, the rates then and at RATES */
+/* the host pattern: reset at CONNECTED, the rates then and at RATES; a
+ * retrain's stop and restart passed on */
 static void ans_event(void *u, v90m_event ev)
 {
     ans_t *a = u;
     v90m_state st;
+    if (ev == V90M_EV_DATA_STOPPED && a->ec_on) { v90m_ec_line_stopped(a->ec); a->stops++; }
+    if (ev == V90M_EV_DATA_MOVING && a->ec_on) { v90m_ec_line_restored(a->ec); a->restores++; }
     if (ev != V90M_EV_CONNECTED && ev != V90M_EV_RATES) return;
     v90m_get_state(a->m, &st);
     if (ev == V90M_EV_CONNECTED) {
@@ -207,16 +211,18 @@ static const char *cname(int kind)
 }
 
 /* MNP on: connected in MNP with the caller's framing, total octets each
- * way intact, released by us with LD 255 */
-static void mnp_call(const char *name, int kind, int framing, size_t total)
+ * way intact, released by us with LD 255. retrain (V.32bis): halfway, the
+ * caller retrains offering 9600 bit/s at most, a real rate change: the
+ * host gives the new rates at V90M_EV_RATES */
+static void mnp_call(const char *name, int kind, int framing, size_t total, int retrain)
 {
     call_t *k = &K;
     v90m_ec_status s;
     v90m_state st;
     prbs_t up_w = { 1u, 0 }, up_r = { 1u, 0 }, dn_w = { 0x5A5A5u, 0 }, dn_r = { 0x5A5A5u, 0 };
     size_t up_got = 0, dn_got = 0;
-    long up_bad = 0, dn_bad = 0, t_mnp = -1, t_data = -1, bits = 0;
-    int st750 = -1;
+    long up_bad = 0, dn_bad = 0, t_mnp = -1, t_data = -1, drain_ms = 0;
+    int st750 = -1, retrained = 0;
     uint8_t buf[256];
 
     call_start(k, kind, framing, 1);
@@ -256,6 +262,11 @@ static void mnp_call(const char *name, int kind, int framing, size_t total)
             for (i = 0; i < n; i++, up_got++) up_bad += buf[i] != prbs_next(&up_r);
         while ((n = v90m_ec_read(k->a.ec, buf, sizeof buf)) > 0)
             for (i = 0; i < n; i++, dn_got++) dn_bad += buf[i] != prbs_next(&dn_r);
+        if (retrain && !retrained && up_got >= total / 2) {
+            k->c.vc.cfg.rates = 0x07u;          /* 4800, 7200, 9600 */
+            CHECK_EQ_I(v32call_retrain(&k->c.vc), 0);
+            retrained = 1;
+        }
         if (v90m_ec_state(k->a.ec) != V90M_EC_CONNECTED) break;
     }
     t_data = k->ms - t_mnp;
@@ -263,7 +274,8 @@ static void mnp_call(const char *name, int kind, int framing, size_t total)
     CHECK_EQ_I(up_bad, 0); CHECK_EQ_I(dn_bad, 0);
     v90m_ec_get_status(k->a.ec, &s);
     CHECK_EQ_I(s.state, V90M_EC_CONNECTED);
-    CHECK_EQ_I(s.rx_frames_bad, 0);
+    if (!retrain) CHECK_EQ_I(s.rx_frames_bad, 0);    /* a retrain may cut a frame */
+    CHECK_EQ_I(retrained, retrain);
     CHECK_EQ_I(s.t401_expiries, 0);
 
     /* our release once everything we wrote is acknowledged: LD 255, then
@@ -272,7 +284,7 @@ static void mnp_call(const char *name, int kind, int framing, size_t total)
     CHECK(v90m_ec_tx_idle(k->a.ec) == 1);
     v90m_ec_release(k->a.ec);
     CHECK_EQ_I(v90m_ec_state(k->a.ec), V90M_EC_DISCONNECTED);
-    while (v90m_ec_tx_busy(k->a.ec) == 1 && bits++ < 100000) call_ms(k);
+    while (v90m_ec_tx_busy(k->a.ec) == 1 && drain_ms++ < 100000) call_ms(k);
     {
         long i;
         for (i = 0; i < 500; i++) call_ms(k);    /* the line's delay */
@@ -281,7 +293,18 @@ static void mnp_call(const char *name, int kind, int framing, size_t total)
     CHECK_EQ_I(s.reason, V90M_EC_R_LOCAL);
     CHECK_EQ_I(k->c.p.rx_ld_reason, 255);
     CHECK_EQ_I(mnppeer_state(&k->c.p), MNPP_DISCONNECTED);
-    CHECK_EQ_I(k->a.rates_ev, 0);
+    /* every RATES event gave the endpoint the modem's rates */
+    CHECK_EQ_I(k->a.rates_calls, 1 + k->a.rates_ev);
+    v90m_get_state(k->a.m, &st);
+    CHECK_EQ_I(k->a.tx_bps, st.tx_bps); CHECK_EQ_I(k->a.rx_bps, st.rx_bps);
+    if (retrain) {
+        CHECK(k->a.rates_ev >= 1);
+        CHECK_EQ_I(st.tx_bps, 9600); CHECK_EQ_I(st.rx_bps, 9600);
+        CHECK(k->a.stops >= 1 && k->a.restores >= 1);
+        printf("%s: a retrain halfway to 9600 bit/s: %d RATES event%s, the endpoint given %d/%d; "
+               "data stopped and moving again %d / %d time%s\n", name, k->a.rates_ev, k->a.rates_ev == 1 ? "" : "s",
+               k->a.tx_bps, k->a.rx_bps, k->a.stops, k->a.restores, k->a.restores == 1 ? "" : "s");
+    }
     printf("%s: %s %d/%d bit/s, MNP framing %d after %.3f s%s; %d octets each way %s in %.1f s; "
            "T401 expiries %lu, retransmitted %lu; LD %d to the caller\n",
            name, cname(kind), st.tx_bps, st.rx_bps, s.mnp_framing, t_mnp / 1000.0,
@@ -339,11 +362,12 @@ static void mnp_off(int kind, int framing)
 
 int main(void)
 {
-    mnp_call("v32bis_mode3", CALLER_V32, 3, DATA_FAST);
-    mnp_call("v32bis_mode2", CALLER_V32, 2, DATA_FAST);
-    mnp_call("v22bis_mode3", CALLER_V22, 3, DATA_FAST);
-    mnp_call("v22bis_mode2", CALLER_V22, 2, DATA_FAST);
-    mnp_call("v21_mode2", CALLER_V21, 2, DATA_V21);
+    mnp_call("v32bis_mode3", CALLER_V32, 3, DATA_FAST, 0);
+    mnp_call("v32bis_mode2", CALLER_V32, 2, DATA_FAST, 0);
+    mnp_call("v22bis_mode3", CALLER_V22, 3, DATA_FAST, 0);
+    mnp_call("v22bis_mode2", CALLER_V22, 2, DATA_FAST, 0);
+    mnp_call("v21_mode2", CALLER_V21, 2, DATA_V21, 0);
+    mnp_call("v32bis_rates", CALLER_V32, 3, DATA_FAST, 1);
     mnp_off(CALLER_V32, 3);
     mnp_off(CALLER_V32, 2);
     mnp_off(CALLER_V22, 3);

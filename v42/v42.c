@@ -424,11 +424,15 @@ static int lr_still_taken(const v42ec_t *e)
         && e->l.lapm.established == 0;
 }
 
-/* MNP on, detection: the start-stop hunter is inside a frame that may be
- * an LR (T400 is held for it) */
+/* MNP on, detection: the start-stop hunter is inside a frame that begins
+ * as an LR does, its LI (2..254) and type 1 (A.6.2; is_lr's first test),
+ * so T400 is held for it. A caller that sends no LR (typed text, SYN DLE
+ * STX included) gets T400 as with MNP off. */
 static int lr_partly_in(const v42ec_t *e)
 {
-    return e->cfg.mnp.enable && e->sub == 0 && e->state == V42EC_DETECT && mnp2_rx_in_frame(&e->hunt2);
+    const mnp2_rx_t *h = &e->hunt2;
+    return e->cfg.mnp.enable && e->sub == 0 && e->state == V42EC_DETECT && mnp2_rx_in_frame(h)
+        && h->len >= 2 && h->buf[0] >= 2 && h->buf[0] <= 254 && h->buf[1] == 1;
 }
 
 /* Detection picks MNP: the link starts in LAPM's place with the caller's

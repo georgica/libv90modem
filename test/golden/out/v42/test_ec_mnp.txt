@@ -16,7 +16,7 @@ n400_end: the caller silent, N400 3: 4 T401 expiries, LD 4 to the peer, reason 4
 ln_brk: the peer's LN 3: a break after 300 of the 400 octets (300 written before it)
 ln_brk: ours: LN 3 after 500 of 600 octets (500 written before it), then LN 2; no reset
 lr_300: an MNP caller at 300 bit/s, framing 2: state 0 at 750 ms (T400 held), then MNP; 256 octets each way intact
-t400_hold: at 300 bit/s a frame that never ends: start-stop at 2750 ms; a bad LR: at its end, 1214 ms; MNP off: at 750 ms
+t400_hold: at 300 bit/s an LR's start that never ends: start-stop at 2750 ms; a bad LR: at its end, 1214 ms; SYN DLE STX typed at 600 ms: start-stop at 750 ms (MNP off: 750 ms), 11 of 11 characters
 rates_300: rates given before MNP: 4 KiB each way intact at 300 bit/s in 139.7 s, T401 expiries 0, LTs again 0
 rates_300: rates given once connected: 4 KiB each way intact at 300 bit/s in 139.7 s, T401 expiries 0, LTs again 0
-test_ec_mnp: 158 checks, 0 failures
+test_ec_mnp: 163 checks, 0 failures

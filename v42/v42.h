@@ -47,7 +47,8 @@
  *     so does one in HDLC after flags, before LAPM has taken anything. An ODP
  *     first means LAPM. Replies go in the framing the LR came in. T400 is
  *     held, once and at most V42EC_T400_LR_HOLD_MS, while a start-stop
- *     frame is under way when it runs out (an LR at 300 bit/s). Breaks are
+ *     frame that begins as an LR is under way when it runs out (an LR at
+ *     300 bit/s). Breaks are
  *     LNs of types 1 to 3; v42ec_release sends LD 255 and is
  *     V42EC_DISCONNECTED at once (wait for v42ec_tx_busy() to be 0 before
  *     dropping the line).
@@ -99,8 +100,9 @@ enum {
 #define V42EC_R_NO_SABME     18   /* answerer: nothing after the detection phase */
 
 /* MNP on, answerer: when T400 runs out while an LR in start-stop is partly
- * received (after its SYN DLE STX), T400 is held until that frame ends, and
- * at most this long; then start-stop. A mode 2 LR at 300 bit/s takes about
+ * received (SYN DLE STX, then an LI of 2..254 and type 1: an LR's start),
+ * T400 is held until that frame ends, and at most this long; then
+ * start-stop. Any other frame, typed text included, is not waited for. A mode 2 LR at 300 bit/s takes about
  * 1 s (the Courier's, 31 characters), longer than T400. [OURS] */
 #define V42EC_T400_LR_HOLD_MS 2000
 

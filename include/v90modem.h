@@ -571,7 +571,8 @@ void        v90m_ec_tick(v90m_ec_t *e, unsigned ms);    /* timers */
 void        v90m_ec_line_stopped(v90m_ec_t *e);         /* on V90M_EV_DATA_STOPPED (moving 1 -> 0) */
 void        v90m_ec_line_restored(v90m_ec_t *e);        /* on V90M_EV_DATA_MOVING (moving 0 -> 1) */
 /* the line's rates, ours and the far end's (v90m_state.tx_bps, rx_bps), each
- * > 0: after v90m_ec_reset at V90M_EV_CONNECTED, and at each V90M_EV_RATES.
+ * > 0: after v90m_ec_reset at V90M_EV_CONNECTED (a reset forgets them), and
+ * at each V90M_EV_RATES.
  * MNP computes T401 and T404 from them (2400 until given); LAPM's timers are
  * the configured ones. V90M_OK, or V90M_EINVAL (e NULL, a rate <= 0) */
 int         v90m_ec_set_rates(v90m_ec_t *e, int tx_bps, int rx_bps);

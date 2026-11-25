@@ -4360,3 +4360,36 @@ Milestone 1 gate, on fd2b148 (log: build/verify-phase-m1.log):
       armv7hf  short-cmp: 141 programs identical
       benches  host = qemu hashes: 10 benches; crd: 106 recordings, 0 CRd detections
       costs    17 lines in build/costs.txt (V.34 107 %, k56 102 %, x2 181 % of V.90 data mode)
+
+Review fixes (round 1), with the controller's rulings:
+
+- m1: T400 is held only for a frame that begins as an LR: after SYN DLE
+  STX, an LI of 2 to 254 and type 1 (`lr_partly_in`). This keeps the global
+  constraint: a caller that sends no LR gets exactly 0.6.0's T400. Typed
+  text with SYN DLE STX at 600 ms, at 300 bit/s, now gives start-stop at
+  750 ms exactly, with all 11 characters (it gave nothing by 1750 ms with
+  the wider hold: 3 failures). An LR's start that never ends still gives
+  2750 ms; a bad LR, its end (1214 ms); `lr_300` and `v21_mode2` still
+  connect. An LR of which fewer than two body octets have come by T400 is
+  not waited for.
+- m2: "a reset forgets the rates" in the header, `docs/api.md` and
+  `docs/error-control.md`; `docs/getting-started.md`'s answering program
+  calls `v90m_ec_set_rates` after the reset at CONNECTED and on RATES.
+- m3: `v32bis_rates` in `test_mnp_call`: halfway through 32 KiB the V.32bis
+  caller retrains offering 9600 at most; one `V90M_EV_RATES`, the endpoint
+  given 9600/9600, the data stop and restart passed on, data intact (9 LTs
+  again, one frame cut). The `rates_ev == 0` assertion is gone; every case
+  checks `rates_calls == 1 + rates_ev` and the endpoint's rates against
+  `v90m_state`.
+- m4: the release drain counts `drain_ms`.
+- m6: `arm/api_test_mnp_call` in `tools/ports-slow.txt`; `test-api-arm`
+  now honours `ARM_SKIP` (`arm/api_<test>` lines), as the portrun runner
+  already did by path.
+- The plan's Task 6 Step 1 `mnp_off` text now says framing 3 starts LAPM,
+  as 0.6.0 does.
+
+    v42/build/test_ec_mnp with the wide hold -> 3 failures (typed: no start-stop at 750 ms, 0 of 11 characters)
+    v42/build/test_ec_mnp                    -> test_ec_mnp: 163 checks, 0 failures
+    build/api_test_mnp_call                  -> test_mnp_call: 208 checks, 0 failures (host short: 202)
+    re-recorded: v42/test_ec_mnp.txt (t400_hold's line, the count), api/test_mnp_call.txt (two v32bis_rates lines, the count)
+    make verify                              -> VERIFY PASS (793 s; golden 147 identical; a7 and big-endian skip api_test_mnp_call)

@@ -182,8 +182,10 @@ moving until `v90m_ec_tx_busy` is 0.
 - *Line rates.* MNP's T401 depends on the line's speed (A.7.5.1: the
   time a window of LTs and an LA take, plus a round trip; T404 too, Table
   A.10). Give the rates with `v90m_ec_set_rates(ec, st.tx_bps,
-  st.rx_bps)` after the `v90m_ec_reset` at `V90M_EV_CONNECTED`, and again
-  at each `V90M_EV_RATES`. Until then MNP counts 2400 bit/s: T401 is then
+  st.rx_bps)` after the `v90m_ec_reset` at `V90M_EV_CONNECTED` (a reset
+  forgets them: call it after each one), and again at each
+  `V90M_EV_RATES`. The answering program of
+  [getting-started.md](getting-started.md) does both. Until then MNP counts 2400 bit/s: T401 is then
   3.0 s (framing 3, k 8, N401 64) where 14400 bit/s needs only the 1.5 s
   floor, and far too short below 2400 (at 300 bit/s about half the LTs
   went twice). The rates are kept
@@ -194,11 +196,13 @@ moving until `v90m_ec_tx_busy` is 0.
   a test rig), and the host already handles both moments, so one call
   keeps the two objects apart.
 - *T400 at 300 bit/s.* A mode 2 LR at 300 bit/s takes about 1 s, longer
-  than T400 (750 ms). When T400 runs out while a start-stop frame is under
-  way (after its SYN DLE STX), it is held once, until that frame ends, and
-  at most 2000 ms (`V42EC_T400_LR_HOLD_MS`): an LR then gives MNP,
-  anything else start-stop at the frame's end. HDLC frames are not waited
-  for. With MNP off nothing changes.
+  than T400 (750 ms). When T400 runs out while a start-stop frame that begins
+  as an LR is under way (SYN DLE STX, an LI of 2 to 254, type 1), it is
+  held once, until that frame ends, and at most 2000 ms
+  (`V42EC_T400_LR_HOLD_MS`): an LR then gives MNP, anything else
+  start-stop at the frame's end. Other frames, typed text with SYN DLE STX
+  included, and HDLC frames are not waited for, so a caller that sends no
+  LR gets start-stop at 750 ms as with MNP off.
 
 **Memory.** At most `V90M_EC_MEM_SIZE` (50 KiB; `v90m_ec_mem_size()` gives
 the exact size, 50144 octets on x86-64, 49904 on 32-bit ARM).

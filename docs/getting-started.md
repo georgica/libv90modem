@@ -133,6 +133,10 @@ It uses the `on_event` callback; the events are reported from inside
   `v90m_ec_line_restored`, from the callback, so within the sample they
   happen ([error-control.md](error-control.md)).
 - `v90m_ec_tick` gets the milliseconds that went by (10 per block here).
+- `v90m_ec_set_rates` gives the endpoint the line's rates after the reset
+  at `V90M_EV_CONNECTED` (a reset forgets them) and again at
+  `V90M_EV_RATES`: MNP's timers come from them, when `mnp.enable` is set
+  ([error-control.md](error-control.md)); LAPM does not use them.
 
 ```c
 /* answer_min.c: answer one call, V.42 on the bit pump, echo every octet back.
@@ -164,10 +168,14 @@ static void on_event(void *u, v90m_event ev)
         v90m_ec_cfg_default(&c, 0);     /* 0: the answering end */
         c.detect = !st.odp_bypass;      /* V.92 9.3.1: no ODP / ADP */
         v90m_ec_reset(ec, &c);
+        v90m_ec_set_rates(ec, st.tx_bps, st.rx_bps);   /* after the reset */
         ec_on = 1;
         fprintf(stderr, "CONNECT %d/%d\n", st.tx_bps, st.rx_bps);
         break;
     }
+    case V90M_EV_RATES:
+        if (ec_on) v90m_ec_set_rates(ec, st.tx_bps, st.rx_bps);
+        break;
     case V90M_EV_DATA_STOPPED:
         if (ec_on) v90m_ec_line_stopped(ec);
         break;

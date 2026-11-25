@@ -698,15 +698,21 @@ static void lr_300(void)
            "256 octets each way %s\n", st750, ok && up.h_out == up.h_in && down.h_out == down.h_in ? "intact" : "DAMAGED");
 }
 
-/* the hold's ends at 300 bit/s: a frame that never ends gives start-stop
- * at 750 + 2000 ms; one that ends without being an LR (bad FCS) gives
- * start-stop at its end; MNP off, at 750 ms */
+/* the hold's ends at 300 bit/s: a frame that begins as an LR (LI, type
+ * 1) and never ends gives start-stop at 750 + 2000 ms; an LR that ends
+ * with a bad FCS gives start-stop at its end. A caller that sends no LR
+ * gets T400 as 0.6.0 did: typed text with SYN DLE STX just before T400,
+ * start-stop at 750 ms exactly with every character delivered; with MNP
+ * off, the same */
 static void t400_hold(void)
 {
-    int i, t_async = -1, t_bad = -1;
+    static const uint8_t typed[] = "\x16\x10\x02" "abcdefgh";
+    uint8_t got[64];
+    int i, on, t_async = -1, t_bad = -1, t_typed[2] = { -1, -1 }, n_typed[2] = { 0, 0 };
     rig_init(&R, SRC_BITS, 1, 1, NULL);
     R.bps = 300;
     char_in(&R, 0x16); char_in(&R, 0x10); char_in(&R, 0x02);
+    char_in(&R, 0x14); char_in(&R, 0x01);
     for (i = 0; i < 200; i++) char_in(&R, (uint8_t)'a');
     while (R.ms < 5000 && t_async < 0) {
         rig_ms(&R);
@@ -729,16 +735,28 @@ static void t400_hold(void)
     CHECK_EQ_I(t_bad, ((30 + 28 * 12 - 2) * 1000 + 299) / 300);
     CHECK_EQ_I(R.max_proto & (1 << V42EC_PROTO_MNP), 0);
 
-    rig_init(&R, SRC_BITS, 0, 1, NULL);
-    R.bps = 300;
-    char_in(&R, 0x16); char_in(&R, 0x10); char_in(&R, 0x02);
-    for (i = 0; i < 200; i++) char_in(&R, (uint8_t)'a');
-    rig_run(&R, 749);
-    CHECK_EQ_I(v42ec_state(&R.e), V42EC_DETECT);
-    rig_run(&R, 1);
-    CHECK_EQ_I(v42ec_state(&R.e), V42EC_ASYNC);
-    printf("t400_hold: at 300 bit/s a frame that never ends: start-stop at %d ms; a bad LR: at its end, %d ms; "
-           "MNP off: at 750 ms\n", t_async, t_bad);
+    /* typed: 180 marks (600 ms), then SYN DLE STX and text, a character
+     * every 40 ms: inside that "frame" when T400 runs out */
+    for (on = 1; on >= 0; on--) {
+        int st749;
+        rig_init(&R, SRC_BITS, on, 1, NULL);
+        R.bps = 300;
+        mark_in(&R, 180);
+        for (i = 0; i < (int)sizeof typed - 1; i++) char_in(&R, typed[i]);
+        rig_run(&R, 749);
+        st749 = v42ec_state(&R.e);
+        rig_run(&R, 1);
+        if (st749 == V42EC_DETECT && v42ec_state(&R.e) == V42EC_ASYNC) t_typed[on] = 750;
+        if (on) CHECK(mnp2_rx_in_frame(&R.e.hunt2));    /* the hunter was inside the "frame" */
+        rig_run(&R, 1000);
+        n_typed[on] = (int)v42ec_read(&R.e, got, sizeof got);
+        CHECK_EQ_I(t_typed[on], 750);
+        CHECK_EQ_I(n_typed[on], (int)sizeof typed - 1);
+        CHECK(memcmp(got, typed, sizeof typed - 1) == 0);
+    }
+    printf("t400_hold: at 300 bit/s an LR's start that never ends: start-stop at %d ms; a bad LR: at its end, %d ms; "
+           "SYN DLE STX typed at 600 ms: start-stop at %d ms (MNP off: %d ms), %d of %d characters\n",
+           t_async, t_bad, t_typed[1], t_typed[0], n_typed[1], (int)sizeof typed - 1);
 }
 
 /* the line rates given (v42ec_set_rates, before MNP starts or once it is
