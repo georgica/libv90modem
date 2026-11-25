@@ -230,6 +230,28 @@ static void send_la(mnppeer_t *p, int framing)
     p->t404 = T404_MS;
 }
 
+/* octets of the write queue a new LT may take now. A non-expedited LN
+ * goes after the LTs pending at its request are acknowledged, "but before
+ * any subsequent user data" (A.7.4.1), and the data after it is held until
+ * its acknowledgement (Table 4): so new LTs stop at the data written before
+ * the first LN 3 queued, and none goes while an LN 3 is outstanding */
+static size_t new_data(const mnppeer_t *p)
+{
+    int i;
+    if (p->ln_code == 3) return 0;
+    for (i = 0; i < p->lnq_n; i++)
+        if (p->lnq[i] == 3) return p->lnq_ahead[i] < p->txq_n ? p->lnq_ahead[i] : p->txq_n;
+    return p->txq_n;
+}
+
+/* the write queue was emptied (a destructive break): nothing is ahead of
+ * a queued LN any more */
+static void lnq_flushed(mnppeer_t *p)
+{
+    int i;
+    for (i = 0; i < p->lnq_n; i++) p->lnq_ahead[i] = 0;
+}
+
 /* can an LT go now (a new one or one again)? */
 static int lt_ready(const mnppeer_t *p)
 {
@@ -237,7 +259,7 @@ static int lt_ready(const mnppeer_t *p)
     if (p->state != MNPP_CONNECTED || p->brk_wait) return 0;
     if (pos > p->credit) return 0;          /* S(k) (A.7.3.1, A.7.3.4) */
     if (p->nxt != p->vs) return 1;          /* again (A.7.3.5) */
-    return p->txq_n > 0 && pos <= p->k;
+    return new_data(p) > 0 && pos <= p->k;
 }
 
 static void send_lt(mnppeer_t *p)
@@ -246,7 +268,10 @@ static void send_lt(mnppeer_t *p)
     uint8_t ns = p->nxt;
     int slot = ns % MNPP_MAX_K, h, len, i;
     if (ns == p->vs) {
-        len = (int)(p->txq_n < (size_t)p->n401 ? p->txq_n : (size_t)p->n401);
+        size_t avail = new_data(p);
+        len = (int)(avail < (size_t)p->n401 ? avail : (size_t)p->n401);
+        for (i = 0; i < p->lnq_n; i++)
+            p->lnq_ahead[i] -= p->lnq_ahead[i] < (size_t)len ? p->lnq_ahead[i] : (size_t)len;
         for (i = 0; i < len; i++) {
             p->sto[slot][i] = p->txq[p->txq_h];
             p->txq_h = (p->txq_h + 1) % MNPP_RING;
@@ -303,9 +328,13 @@ static void next_frame(mnppeer_t *p)
     }
     /* an LN goes "immediately following the transmission in progress"
      * (A.7.4.1, expedited), before an LNA owed */
-    if (p->ln_code < 0 && p->lnq_n > 0) {
+    /* a non-expedited one (type 3) once the data written before it has
+     * gone and every LT stored is acknowledged (A.7.4.1) */
+    if (p->ln_code < 0 && p->lnq_n > 0
+        && (p->lnq[0] != 3 || (p->lnq_ahead[0] == 0 && p->vs == (uint8_t)(p->ack + 1)))) {
         p->ln_code = p->lnq[0];
         memmove(p->lnq, p->lnq + 1, (size_t)(p->lnq_n - 1) * sizeof p->lnq[0]);
+        memmove(p->lnq_ahead, p->lnq_ahead + 1, (size_t)(p->lnq_n - 1) * sizeof p->lnq_ahead[0]);
         p->lnq_n--;
         p->ln_send = 1;
         p->ln_tries = 0;
@@ -417,6 +446,7 @@ static void seq_start(mnppeer_t *p, int credit)
 static void brk_reset(mnppeer_t *p)
 {
     p->txq_n = 0;
+    lnq_flushed(p);
     p->rxq_n = 0;
     seq_start(p, p->k);
     p->resets++;
@@ -429,6 +459,7 @@ static void brk_begin(mnppeer_t *p)
 {
     p->brk_wait = 1;
     p->txq_n = 0;
+    lnq_flushed(p);
     p->rxq_n = 0;
     p->t401 = 0;
     p->unacked = 0;
@@ -906,6 +937,8 @@ size_t mnppeer_read(mnppeer_t *p, uint8_t *d, size_t max)
 int mnppeer_send_ln(mnppeer_t *p, int code)
 {
     if (p->lnq_n == MNPP_LNQ) return 0;
+    /* type 3 goes after the data written before it (A.7.4.1) */
+    p->lnq_ahead[p->lnq_n] = (code & 0xFF) == 3 ? p->txq_n : 0;
     p->lnq[p->lnq_n++] = code & 0xFF;
     /* the destructive break begins on its arrival; before the link is up,
      * when the link comes up */

@@ -13,7 +13,7 @@ data: parameter 8 = 3, N401 256 both ways, 16 KiB each way intact, LT in 64
 zero_credit: 2989 ms at credit 0 with LTs waiting, none sent; then 8 KiB each way intact
 goback: LA N(R) 1 twice: LT 2 and 3 again; credit 1: one LT
 dup: N(S) = V(R) - 1 once: no LA; twice: LA; out of sequence: LA; busy: N(k) 0, then 8
-wrap: 19200 octets each way intact, LT out 300 in 314, LN 300/300 each delivered once in order, our frames lost 14, retx 15/19
+wrap: 19200 octets each way intact, LT out 300 in 311, LN 300/300 each delivered once in order, our frames lost 14, retx 10/14
 n400: silent peer: 12 retransmissions, then LD 4, reason N400
 timers_held: T401 at 2027 ms held 20 s, then expired 2027 ms after the restore
 break: LN 1 to the peer, LN 3 from it, each once; release: LD 255

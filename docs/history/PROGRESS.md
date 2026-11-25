@@ -4217,3 +4217,39 @@ Then MNP as a mode of `v42ec_t`:
     build/api_test_api                    -> api: 1025 checks, 0 failures (was 953)
     build/api_test_ec_fields              -> 14 checks; 34 fields, 49 status fields, 0 differ
     re-recorded: api/test_api.txt (count line), api/test_ec_fields.txt (the field counts)
+
+## hst 6: MNP over V.32bis and V.22bis through the public API; milestone 1 (2026-11-24)
+
+First, the three items carried from Task 5's review, each with its own
+commit and a failing check first.
+
+**`sim/mnppeer`'s LN 3** (review: the peer sent any LN at once). Annex A
+A.7.4.1: "Non-expedited LN frames are sent after the acknowledgement of any
+LT frames pending transmission or retransmission at the time of the LN
+request, but before any subsequent user data"; Table 4 holds the data after
+it until the acknowledgement. The peer now records, with each LN queued, the
+octets written before it (`lnq_ahead`); new LTs stop there, the LN 3 goes
+once they are out and every stored LT is acknowledged, and no new LT goes
+while it is outstanding. A destructive break, which empties the write queue,
+clears the counts. Type 2 is unchanged (expedited, no effect on data).
+`test_mnppeer`'s output is unchanged.
+
+Endpoint tests the review found missing (M3), in `test_ec_mnp`:
+
+- `ld_const1`: an LR whose constant parameter 1 is 3: MNP, LD 2, the
+  endpoint's reason `NEGOTIATION`.
+- `n400_end`: the caller goes silent with 1000 octets unacknowledged,
+  `n400` 3: four T401 expiries, LD 4 reaches the peer, reason `N400`.
+- `ln_brk`: the peer's LN 3 arrives as an in-sequence break after exactly
+  the 300 octets it wrote before asking (and the 100 after follow), its
+  LN 2 as an expedited one; ours: LN 3 after exactly our 500 octets
+  (`feed_mnp`'s `brk_tx_after` path), then LN 2. No reset either side.
+
+    v42/build/test_ec_mnp, the peer unfixed -> 1 failure: the peer's LN 3 "a break after 0 of the 400 octets"
+    v42/build/test_ec_mnp                   -> test_ec_mnp: 135 checks, 0 failures (16 cases)
+    v42/build/test_mnppeer                  -> 210 checks, 0 failures, output identical
+    re-recorded: v42/test_ec_mnp.txt (the count line and the four new lines)
+    make verify                             -> VERIFY PASS (414 s; golden 146 identical)
+    re-recorded: v42/test_mnp.txt, the `wrap` line only: the peer alternates LN 2 and LN 3 while
+      it writes data, and its LN 3s now wait for the data written before them, so the
+      frame counts move (LT in 314 -> 311, retx 15/19 -> 10/14); 300/300 LNs in order, data intact

@@ -48,7 +48,11 @@ typedef struct {
     uint32_t h_out;                    /* FNV-1a of all our bits */
     long ms; int acc;
     int max_proto;                     /* every protocol seen, as a bit map */
+    int cut;                           /* 1: the caller's bits no longer reach us (mark) */
 } rig_t;
+
+/* our link's N400 for the next rig_init (0: the default) */
+static int cfg_n400;
 
 static void rig_init(rig_t *r, int src, int mnp_on, int fallback, const mnp_peer_cfg *pc)
 {
@@ -56,6 +60,7 @@ static void rig_init(rig_t *r, int src, int mnp_on, int fallback, const mnp_peer
     v42ec_cfg_default(&c, 0);
     c.mnp.enable = mnp_on;
     c.fallback = fallback;
+    if (cfg_n400 > 0) c.mnp.link.n400 = cfg_n400;
     v42ec_init(&r->e, &c);
     r->src = src;
     if (src == SRC_PEER) mnppeer_init(&r->p, pc);
@@ -68,6 +73,7 @@ static void rig_init(rig_t *r, int src, int mnp_on, int fallback, const mnp_peer
     r->h_out = 2166136261u;
     r->ms = 0; r->acc = 0;
     r->max_proto = 0;
+    r->cut = 0;
 }
 
 static int proto(const v42ec_t *e)
@@ -89,7 +95,7 @@ static void rig_ms(rig_t *r)
         if (r->src == SRC_PEER) x = mnppeer_tx_bit(&r->p);
         else if (r->src == SRC_LAPM) x = v42ec_tx_bit(&r->o);
         else x = r->in_i < r->in_n ? r->in[r->in_i++] : 1;
-        v42ec_rx_bit(&r->e, x);
+        v42ec_rx_bit(&r->e, r->cut ? 1 : x);
         if (r->src == SRC_PEER) mnppeer_rx_bit(&r->p, y);
         if (r->src == SRC_LAPM) v42ec_rx_bit(&r->o, y);
         if (r->out_n < (int)sizeof r->out) r->out[r->out_n++] = (uint8_t)y;
@@ -550,6 +556,118 @@ static void abort_mnp(void)
     printf("abort_mnp: after the abort the peer heard %d frames more\n", R.p.rx_frames - frames);
 }
 
+/* an LR whose constant parameter 1 is not 2: MNP, then LD 2 and the
+ * endpoint's reason NEGOTIATION (M3) */
+static void ld_const1(void)
+{
+    uint8_t lr[sizeof lr_courier];
+    v42ec_status_t s;
+    memcpy(lr, lr_courier, sizeof lr);
+    lr[2] = 0x03;
+    rig_init(&R, SRC_BITS, 1, 1, NULL);
+    mark_in(&R, 100);
+    frame3_in(&R, lr, (int)sizeof lr, 0);
+    rig_run(&R, 300);
+    v42ec_get_status(&R.e, &s);
+    CHECK_EQ_I(s.protocol, V42EC_PROTO_MNP);
+    CHECK_EQ_I(s.state, V42EC_DISCONNECTED);
+    CHECK_EQ_I(s.reason, V42LAPM_R_NEGOTIATION);
+    CHECK_EQ_I(R.e.l.mnp.ld_reason, 2);
+    CHECK_EQ_I(v42ec_tx_busy(&R.e), 0);
+    printf("ld_const1: constant parameter 1 = 3: LD %d, reason %d (NEGOTIATION)\n", R.e.l.mnp.ld_reason, s.reason);
+}
+
+/* the caller goes silent with LTs unacknowledged: N400 tries, LD 4, the
+ * endpoint's reason N400 (M3) */
+static void n400_end(void)
+{
+    mnp_peer_cfg pc = peer_cfg(3);
+    static uint8_t d[1000];
+    v42ec_status_t s;
+    cfg_n400 = 3;
+    rig_init(&R, SRC_PEER, 1, 1, &pc);
+    cfg_n400 = 0;
+    rig_run(&R, 1500);
+    CHECK_EQ_I(v42ec_state(&R.e), V42EC_CONNECTED);
+    CHECK_EQ_I((int)v42ec_write(&R.e, d, sizeof d), (int)sizeof d);
+    R.cut = 1;
+    while (R.ms < 60000 && v42ec_state(&R.e) != V42EC_DISCONNECTED) rig_ms(&R);
+    rig_run(&R, 200);
+    v42ec_get_status(&R.e, &s);
+    CHECK_EQ_I(s.state, V42EC_DISCONNECTED);
+    CHECK_EQ_I(s.reason, V42LAPM_R_N400);
+    CHECK_EQ_I((long)s.t401_expiries, 4);
+    CHECK_EQ_I(R.p.rx_ld_reason, 4);
+    printf("n400_end: the caller silent, N400 3: %lu T401 expiries, LD %d to the peer, reason %d (N400)\n",
+           s.t401_expiries, R.p.rx_ld_reason, s.reason);
+}
+
+/* the non-destructive breaks through the endpoint (M3): the peer's LN 3
+ * after the 300 octets it wrote before asking for it, its LN 2; ours, LN 3
+ * after our 500 octets, and LN 2. No reset, the data intact */
+static void ln_brk(void)
+{
+    mnp_peer_cfg pc = peer_cfg(3);
+    uint8_t buf[700], got[700];
+    size_t n, ng = 0, at = 0;
+    int opt = -1, len = -1, code = -1, i;
+    for (i = 0; i < (int)sizeof buf; i++) buf[i] = (uint8_t)(i * 13 + 5);
+    rig_init(&R, SRC_PEER, 1, 1, &pc);
+    rig_run(&R, 1500);
+    CHECK_EQ_I(v42ec_state(&R.e), V42EC_CONNECTED);
+
+    /* the peer's LN 3 */
+    CHECK_EQ_I((int)mnppeer_write(&R.p, buf, 300), 300);
+    CHECK_EQ_I(mnppeer_send_ln(&R.p, 3), 1);
+    CHECK_EQ_I((int)mnppeer_write(&R.p, buf + 300, 100), 100);
+    for (i = 0; i < 30000 && ng < 400; i++) {
+        rig_ms(&R);
+        ng += v42ec_read(&R.e, got + ng, sizeof got - ng);
+        if (opt < 0 && v42ec_get_break(&R.e, &opt, &len)) at = ng;
+    }
+    CHECK_EQ_I(opt, V42_BRK_NONDESTRUCTIVE_INSEQ);
+    CHECK_EQ_I((int)at, 300);
+    CHECK_EQ_I((int)ng, 400);
+    CHECK(memcmp(got, buf, 400) == 0);
+    printf("ln_brk: the peer's LN 3: a break after %d of the 400 octets (300 written before it)\n", (int)at);
+
+    /* the peer's LN 2 */
+    opt = -1;
+    CHECK_EQ_I(mnppeer_send_ln(&R.p, 2), 1);
+    for (i = 0; i < 10000 && opt < 0; i++) {
+        rig_ms(&R);
+        if (v42ec_get_break(&R.e, &opt, &len)) break;
+    }
+    CHECK_EQ_I(opt, V42_BRK_NONDESTRUCTIVE_EXPEDITED);
+
+    /* ours: LN 3 after 500 octets, 100 after it */
+    CHECK_EQ_I((int)v42ec_write(&R.e, buf, 500), 500);
+    CHECK_EQ_I(v42ec_send_break(&R.e, V42_BRK_NONDESTRUCTIVE_INSEQ, 0), 0);
+    CHECK_EQ_I((int)v42ec_write(&R.e, buf + 500, 100), 100);
+    ng = 0; at = 0;
+    for (i = 0; i < 30000 && ng < 600; i++) {
+        rig_ms(&R);
+        while ((n = mnppeer_read(&R.p, got + ng, sizeof got - ng)) > 0) ng += n;
+        if (code < 0 && (code = mnppeer_get_ln(&R.p)) >= 0) at = ng;
+    }
+    CHECK_EQ_I(code, 3);
+    CHECK_EQ_I((int)at, 500);
+    CHECK_EQ_I((int)ng, 600);
+    CHECK(memcmp(got, buf, 600) == 0);
+
+    /* ours: LN 2 */
+    for (i = 0; i < 10000 && v42ec_send_break(&R.e, V42_BRK_NONDESTRUCTIVE_EXPEDITED, 0) != 0; i++) rig_ms(&R);
+    for (code = -1, i = 0; i < 10000 && code < 0; i++) {
+        rig_ms(&R);
+        code = mnppeer_get_ln(&R.p);
+    }
+    CHECK_EQ_I(code, 2);
+    CHECK_EQ_I(R.e.l.mnp.resets, 0);
+    CHECK_EQ_I(R.p.resets, 0);
+    CHECK_EQ_I(v42ec_state(&R.e), V42EC_CONNECTED);
+    printf("ln_brk: ours: LN 3 after %d of 600 octets (500 written before it), then LN %d; no reset\n", (int)at, code);
+}
+
 int main(void)
 {
     odp_lapm();
@@ -565,5 +683,8 @@ int main(void)
     busy();
     release_mode2();
     abort_mnp();
+    ld_const1();
+    n400_end();
+    ln_brk();
     T_REPORT("test_ec_mnp");
 }

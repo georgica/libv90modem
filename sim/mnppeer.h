@@ -57,7 +57,10 @@
  *    are emptied and the state reset when the LN is taken, then the LNA,
  *    except during our own destructive break, whose LNA resets once.
  *    `resets` counts them.
- *    Types 2 and 3 do nothing to data.
+ *    Type 3, the non-expedited break, goes once the data written before
+ *    it has gone in LTs and every LT is acknowledged, before any data
+ *    written after it, which it holds until its LNA (A.7.4.1, Table 4).
+ *    Type 2 does nothing to data.
  *
  * Layouts: standard, or Annex A's optimised LT and LA when both LRs carry
  * parameter 8 and its AND has bit 2 (A.6.4.1.8); `layout_rx_any` takes
@@ -167,6 +170,7 @@ typedef struct {
 
     /* attention (A.7.4) */
     int lnq[MNPP_LNQ], lnq_n;     /* codes to send */
+    size_t lnq_ahead[MNPP_LNQ];   /* octets written before each (type 3: they go first) */
     int ln_code;                  /* the outstanding LN's code, -1 none */
     int ln_send;                  /* it is due on the line */
     int ln_t, ln_tries;
