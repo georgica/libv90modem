@@ -393,6 +393,8 @@ typedef struct {
     int32_t  left;                    /* symbols of it still to begin */
     int32_t  code;                    /* rate code of the data, 2..6 */
     int32_t  d0;                      /* V.17: the state of the bridge's first symbol */
+    int32_t  marks;                   /* a switch by marks: its symbols still to begin, 0 none */
+    int32_t  mcode;                   /* ... and the code it switches to */
 } hst_ftx_t;
 
 /* level = RMS of the line signal (16-bit sample units); getbit gives the
@@ -409,6 +411,19 @@ int16_t hst_ftx_tick(hst_ftx_t *t);
 /* no more symbols: the pulses in flight ring out, then silence */
 void    hst_ftx_stop(hst_ftx_t *t);
 int     hst_ftx_seg(const hst_ftx_t *t);
+/* 0x3R carried out as holder (spec "Rate changes", [PUB, US 4,890,316]):
+ * from the next symbol HST_MARKS_SYMS / 2 symbols of ones at the code in
+ * force, then as many at new_code, then data at new_code; getbit is not
+ * called meanwhile (the caller has finished its frame first). The
+ * scrambler, the differential encoder and the trellis encoder run on
+ * through the change [OURS]; hst_ftx_in_data stays 1 throughout (no
+ * retrain). Codes 3..6 both: outside data, or with code 2 on either side
+ * (no trellis to carry on), the short training at new_code instead
+ * (outside data: the code the data will be sent at, as hst_ftx_train's) */
+#define HST_MARKS_SYMS 72
+void    hst_ftx_marks_switch(hst_ftx_t *t, int new_code);
+/* symbols of a switch by marks still to begin, 0 none */
+int     hst_ftx_marking(const hst_ftx_t *t);
 
 /* ---------------- the forward receiver's guard high-pass ----------------
  * The input, delayed, less a low-pass: hst_guard_f on samples
@@ -493,6 +508,16 @@ enum {
 #define HST_FRX_LOCK_SYMS  1200  /* data mode: symbols of poor error before UNLOCKED (0.5 s;
                                   * a 1 dB step at 14400 takes some 1000 to settle) */
 #define HST_FRX_TRAIN_SYMS 3600  /* symbols of training at most */
+/* a switch by marks (hst_frx_arm_switch; spec "Rate changes", [OURS]) */
+#define HST_SW_ONES          24  /* symbols of ones at the code in force (10 ms) ... */
+#define HST_SW_WIN           48  /* ... then both codes decoded for at most this many symbols */
+#define HST_SW_RUN           24  /* ... and the switch on this many symbols of ones at the new */
+#define HST_SW_HOLD           8  /* symbols of ones decoded: nothing adapted from here ... */
+#define HST_SW_IDLE          48  /* ... to here, where ones going on are an idle line */
+#define HST_SW_SYMS        4800  /* armed this long (2 s) without a switch: acquisition */
+#define HST_SW_ALT           16  /* symbols of S or S-bar, armed: a training instead */
+#define HST_SW_RING          32  /* points kept, armed: at least V32_VDEPTH */
+typedef char hst_sw_ring_fits[(HST_SW_RING >= V32_VDEPTH && (HST_SW_RING & (HST_SW_RING - 1)) == 0) ? 1 : -1];
 
 /* the equaliser kept for the next training of the direction (spec,
  * "stored equaliser") */
@@ -551,12 +576,27 @@ typedef struct {
     int64_t    sig, err;              /* the decided points' power and the error's, leaky */
     int32_t    nbits;
     uint8_t    bits[8];               /* the bits of the last tick, the first sent first */
+    /* a switch by marks (hst_frx_arm_switch) */
+    int32_t    sw_code;               /* armed: the code switched to; 0 not armed */
+    int32_t    sw_left;               /* symbols left of the 2 s */
+    int32_t    sw_ones;               /* the decoder's symbols of ones in a row, at the code in
+                                       * force, up to HST_SW_IDLE */
+    int32_t    sw_win;                /* the parallel decode: its symbols left, 0 not running */
+    int32_t    sw_run;                /* ... the new code's symbols of ones in a row */
+    v32_scr_t  sw_dscr;               /* the new code's descrambler ... */
+    int32_t    sw_y;                  /* ... and differential decoder's memory */
+    int32_t    sw_alt;                /* symbols of S or S-bar (an alternation on A..D) in a row */
+    uint32_t   sw_sh;                 /* ... the last two of A..D, 2 bits each */
+    int32_t    sw_pos;                /* the ring's next place */
+    int32_t    sw_zr[HST_SW_RING], sw_zi[HST_SW_RING];   /* the last points, armed */
+    v32_vit_t  vit2;                  /* the new code's decoder */
 } hst_frx_t;
 
 void hst_frx_init(hst_frx_t *r);
 /* the rate code in force, 2..6 (outside, the nearest). In data mode a new
  * one takes the next symbol, and the decoder starts again: the
- * V32_VDEPTH symbols in it are lost (the switch's ones cover them) */
+ * V32_VDEPTH symbols in it are lost. A switch armed (hst_frx_arm_switch)
+ * is off */
 void hst_frx_set_code(hst_frx_t *r, int code);
 /* one line sample; returns the number of bits decided, in r->bits[] */
 int  hst_frx_tick(hst_frx_t *r, int16_t x);
@@ -569,6 +609,36 @@ void hst_frx_restore(hst_frx_t *r, const hst_eqstore_t *s);
 /* the signal and error power over the last 64 symbols or so (training or
  * data); 0 before the first training and after hst_frx_restore */
 int  hst_frx_snr(const hst_frx_t *r, int64_t *num, int64_t *den);
+/* data mode: the error over 256 symbols against the set's mean power
+ * (65536 = 0 dB; what UNLOCKED and hst_good_mse are reckoned in); 4 x 65536
+ * outside data mode */
+int32_t hst_frx_mse(const hst_frx_t *r);
+/* "Good" at a code (spec "Rate changes", [OURS]): hst_frx_mse under
+ * hst_good_mse[code], our receiver's error on v32line 3 dB above the SNR at
+ * which it gives a BER of 1e-5 at that code (make hst-thresh; the table in
+ * docs/limits.md); codes 3..6, 0 at 0..2 */
+extern const int32_t hst_good_mse[7];
+/* 0x3R received (we asked and got the LNA; spec "Rate changes", [OURS]).
+ * In data mode at code 3..6, new_code 3..6 and not the code in force:
+ * armed. The decoder's ones at the code in force are watched for; after
+ * HST_SW_ONES symbols of them in a row, where they end the last
+ * V32_VDEPTH points are decoded again at new_code as well, and both codes
+ * are decoded for at most HST_SW_WIN symbols, no bits given; HST_SW_RUN
+ * symbols of ones in a row at new_code then switch the receiver to it, the
+ * decoders (trellis, differential, descrambler) as new_code's left them:
+ * nothing but marks is lost. Else the code in force goes on and the ones
+ * are watched for again. Armed, S or S-bar for HST_SW_ALT symbols (a
+ * training instead) or HST_SW_SYMS symbols without a switch, the equaliser
+ * is stored and the receiver listens for AB (IDLE, or UNLOCKED at the
+ * time-out): the generic acquisition takes over, at new_code. So does any
+ * end the receiver comes to by itself while armed. With code 2 on either
+ * side (no switch by marks: hst_ftx_marks_switch trains) armed for the
+ * training alone. Outside data mode: hst_frx_set_code(new_code), the next
+ * training's data at it */
+void hst_frx_arm_switch(hst_frx_t *r, int new_code);
+/* armed: the code a switch goes to; 0 none (switched, or acquisition took
+ * over: then hst_frx_t.code is new_code) */
+int  hst_frx_armed(const hst_frx_t *r);
 
 /* ---------------- the answerer's HST engine (modem/ans_hst.c) ----------------
  * answer_t.u.hst, from ANS_HST_WAIT on (spec "The answering sequence",

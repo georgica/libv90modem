@@ -198,4 +198,25 @@ carrier_stop_noisy, -40 dBm0 noise, code 6: carrier or lock lost in time; 0 bits
   no bits from 200 ms, not back in data mode: pass
 harsh_dropout: 100 ms at 9600, harsh line, +-7 Hz x +-100 ppm: 0 of 12 runs not recovered
   every run: data mode kept, no error from 4000 bits after the cut: pass
-test_hst_fwd: 188 checks, 0 failures
+marks_switch 6 -> 5: data mode kept, code 5, armed 0; 0 errors before the marks, 0 in 100000 after; 276 bits between, 0 zeros
+  data mode kept, at the new code, disarmed: pass
+  no error before the marks, nor in NB bits after them: pass
+  only ones between, at most the marks' bits: pass
+marks_switch 4 -> 6: data mode kept, code 6, armed 0; 0 errors before the marks, 0 in 100000 after; 216 bits between, 0 zeros
+  data mode kept, at the new code, disarmed: pass
+  no error before the marks, nor in NB bits after them: pass
+  only ones between, at most the marks' bits: pass
+marks_missed 6 -> 5, the marks missed, a training 1 s on: data mode again within 2 s, code 5, armed 0; from the 41st data symbol 0 errors in 100000 bits
+  in data mode at the new code within 2 s: pass
+  then no error from the 41st data symbol: pass
+marks_missed 4 -> 6, the marks missed, a training 1 s on: data mode again within 2 s, code 6, armed 0; from the 41st data symbol 0 errors in 100000 bits
+  in data mode at the new code within 2 s: pass
+  then no error from the 41st data symbol: pass
+marks_missed 6 -> 5, a training instead: data mode again within 2 s, code 5, armed 0; from the 41st data symbol 0 errors in 100000 bits
+  in data mode at the new code within 2 s: pass
+  then no error from the 41st data symbol: pass
+marks_missed 6 -> 5, no marks: the acquisition at 2 s, state 5, code 5, armed 0
+  the acquisition at 2 s, at the new code: pass
+marks_missed 6 -> 5, then a short training: data mode reached; from the 41st data symbol 0 errors in 100000 bits
+  then no error from the 41st data symbol: pass
+test_hst_fwd: 202 checks, 0 failures
