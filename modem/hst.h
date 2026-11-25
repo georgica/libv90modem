@@ -57,4 +57,18 @@ int16_t hst_btx_tick(hst_btx_t *t);
 /* no more symbols: the pulses in flight ring out, then silence */
 void    hst_btx_stop(hst_btx_t *t);
 
+/* ---------------- the forward receiver's guard high-pass ----------------
+ * hst_guard (HST_GUARD_N taps, linear phase) on 16-bit samples, a doubled
+ * delay line: (HST_GUARD_N + 1) / 2 multiplies a sample, pairs of samples
+ * the same distance from the centre added first. Integer only, rounded to
+ * nearest (ties up), saturated: the same output on every target. Delay
+ * (HST_GUARD_N - 1) / 2 samples. */
+typedef char hst_guard_is_odd[(HST_GUARD_N % 2 == 1) ? 1 : -1];
+typedef struct {
+    int16_t x[2 * HST_GUARD_N];      /* newest first from x[pos], twice */
+    int     pos;
+} hst_gf_t;
+void    hst_gf_init(hst_gf_t *g);
+int16_t hst_gf_tick(hst_gf_t *g, int16_t in);
+
 #endif

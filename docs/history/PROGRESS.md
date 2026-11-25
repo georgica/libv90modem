@@ -4438,3 +4438,36 @@ references through every transmit mode, recorded from a44426a's v32/).
     make verify -> VERIFY PASS (1104 s; golden 149 identical, test_hst_fwd's new;
                    bench hashes 17 identical; replay 636 identical; armv7hf and
                    big-endian short-cmp identical; ubsan pass; fixed 0 float helpers)
+
+### hst 14, review fixes (2026-11-25)
+
+- `test_hst_fwd` prints only integers (counts, levels, hashes) and one
+  pass/fail line per bound; the measured dB values only with `HST_VERBOSE`.
+  Its golden file is re-recorded (still this program's own).
+- The guard takes the spec's edges: >= 50 dB at 480 Hz and below (not 500),
+  cut-off 520 Hz: 307 taps (was 407), >= 560 Hz within 0.02 dB, <= 480 Hz
+  at most -52.7 dB. `hst_gf_tick` (new `modem/hst_fwd.c`) runs it on a
+  doubled delay line with the symmetry, mirrored samples added first: 154
+  multiplies a sample, 1.23 M MAC/s at 8000 Hz (was 3.3 M direct at 407
+  taps). 64-bit sum (sum |h| is 92938, over 2^16), rounded to nearest,
+  saturated; the test checks it against the direct form on 32 000 samples.
+- `v32_default` hashes both roles (calling: line 0x93EA3185, reference
+  0xC5E4CCCC, recorded from a44426a's v32/ with gcc and clang) and runs
+  30 -> 12 -> 30 symbols mid-stream (the history past 18 cleared; without
+  the clearing both checks fail).
+- `tools/gen_hst_tabs.py` writes only when run as a program.
+- The spec's "about 24 symbols" now says 30 and why.
+- The pulse's cost against 24 symbols: 12 MACs a sample (96 k MAC/s), not
+  60 (the first report counted all 10 phases).
+
+CPU levers for later (the CPU task; neither changes V.32):
+- v32tx computes V.32's 12-tap echo canceller reference for HST too, which
+  has no canceller: 192 k MAC/s.
+- V32_TXD's 6-symbol lag between the reference and the line (2.5 ms of
+  transmit delay) serves no purpose in HST.
+
+    build/test_hst_fwd -> test_hst_fwd: 23 checks, 0 failures
+    make verify -> VERIFY PASS (640 s; golden 149 identical, test_hst_fwd's
+                   re-recorded (its own); bench 17, replay 636 identical;
+                   armv7hf and big-endian short-cmp identical; ubsan pass;
+                   fixed 110 objects, 0 float helpers)

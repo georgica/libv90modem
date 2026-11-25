@@ -48,9 +48,11 @@ The forward channel (hst-facts.md "Forward channel"):
                  come out near -3.5 dB. Scaled so that its line RMS per unit
                  symbol gain is V.32's (v32_tx_rms_q12): v32tx's gain holds.
   hst_guard      the forward receiver's guard high-pass [OURS]: within
-                 +-0.5 dB from 560 Hz up, at least 50 dB down at 500 Hz and
-                 below (the back channel). Kaiser FIR, cut-off 530 Hz, the
-                 fewest odd taps, Q15.
+                 +-0.5 dB from 560 Hz up, at least 50 dB down at 480 Hz and
+                 below (the spec's edges; the back channel's -20 dB band ends
+                 at 476 Hz). Kaiser FIR, cut-off 520 Hz, the fewest odd taps,
+                 Q15; run by hst_gf_tick (modem/hst_fwd.c), which uses its
+                 symmetry: (HST_GUARD_N + 1) / 2 multiplies a sample.
 
 To add a table: write a function that returns (header lines, source
 lines) and append it to TABLES.
@@ -339,10 +341,10 @@ def tab_fpulse():
 
 # ---------------- the forward receiver's guard high-pass ----------------
 def tab_guard():
-    taps = design("hst_guard", 530.0, FS / 2, (560, 4000), ((0, 500),), 50, trans=60.0)
+    taps = design("hst_guard", 520.0, FS / 2, (560, 4000), ((0, 480),), 50, trans=80.0)
     h = ["#define HST_GUARD_N %d" % len(taps),
          "/* high-pass before the forward receiver: within 0.5 dB from 560 Hz up, >= 50 dB",
-         " * down at 500 Hz and below (the back channel); Q15, linear phase, gain 1 */",
+         " * down at 480 Hz and below (the back channel); Q15, linear phase, gain 1 */",
          "extern const int16_t hst_guard[HST_GUARD_N];"]
     c = ["const int16_t hst_guard[HST_GUARD_N] = {"] + rows(taps, 12) + ["};", ""]
     return h, c
@@ -369,4 +371,5 @@ def main():
         f.write("\n".join(src) + "\n")
 
 
-main()
+if __name__ == "__main__":
+    main()

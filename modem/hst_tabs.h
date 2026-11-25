@@ -32,9 +32,9 @@ extern const int16_t hst_hbpf[HST_HBPF_N];
  * of a sample][symbol age][re, im], Q14; its line RMS is V.32's (v32_tx_rms_q12) */
 extern const int16_t hst_fpulse[10][HST_FL][2];
 
-#define HST_GUARD_N 407
+#define HST_GUARD_N 307
 /* high-pass before the forward receiver: within 0.5 dB from 560 Hz up, >= 50 dB
- * down at 500 Hz and below (the back channel); Q15, linear phase, gain 1 */
+ * down at 480 Hz and below (the back channel); Q15, linear phase, gain 1 */
 extern const int16_t hst_guard[HST_GUARD_N];
 
 #endif

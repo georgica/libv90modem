@@ -586,9 +586,10 @@ silence, and must stay silent on all.
   firmware gives flat to 1100 Hz from the carrier, −3 dB at 1200, −36 dB
   at 1400. An RRC is flat to (1 − β)·1200 = 1100 Hz when β = 1/12, −3 dB
   at 1200, and nominally zero beyond 1300: the channel spans 500 to
-  3100 Hz. `gen_hst_tabs.py` makes the table long enough (about 24
-  symbols) for −40 dB at 400 Hz and below; a unit test checks the three
-  firmware points.
+  3100 Hz. `gen_hst_tabs.py` makes the table long enough (30 symbols,
+  Kaiser window β 1.75) for −40 dB at 400 Hz and below; a unit test checks
+  the three firmware points. (24 symbols would meet the limits at the band
+  edges with only 0.02–0.6 dB to spare; Task 14.)
 - **`v32tx` change:** it has V.32's 25 % pulse (`v32_txh`) built in,
   reaching down to 300 Hz, on top of the back channel. `v32tx_t` gains a
   pulse-table pointer and length, defaulting to V.32's, so V.32's output

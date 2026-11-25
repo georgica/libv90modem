@@ -1,4 +1,24 @@
-pulse_points: 30 symbols; 700-2900 Hz -0.13 to 0.02 dB, 600 Hz -3.19, 3000 Hz -3.19, >= 3200 Hz -45.6, <= 400 Hz -45.9; level 3036 (V.32's 3036)
-guard: 407 taps, >= 560 Hz -0.02 to 0.02 dB, 250-500 Hz at most -51.4 dB
-v32_default: line 0x62AA7B75, reference 0x3C258E9C
-test_hst_fwd: 16 checks, 0 failures
+pulse_points: 30 symbols; level 3036 (V.32's 3036)
+  700-2900 Hz within 0.5 dB: pass
+  600 and 3000 Hz -3 +- 0.5 dB: pass
+  >= 3200 Hz at most -36 dB: pass
+  <= 400 Hz at most -40 dB: pass
+  the level V.32's within 0.1 dB: pass
+guard: 307 taps, 154 multiplies a sample
+  linear phase: pass
+  >= 560 Hz within 0.5 dB: pass
+  <= 480 Hz at least 50 dB down: pass
+guard: 32000 samples through hst_gf_tick, 0 unlike the direct form
+  hst_gf_tick is the direct form: pass
+v32_default answering: line 0x62AA7B75, reference 0x3C258E9C
+  V.32's pulse: the line as 0.6.0's: pass
+  V.32's pulse: the echo reference as 0.6.0's: pass
+  HST's pulse and back: the line and reference as 0.6.0's: pass
+v32_default calling: line 0x93EA3185, reference 0xC5E4CCCC
+  V.32's pulse: the line as 0.6.0's: pass
+  V.32's pulse: the echo reference as 0.6.0's: pass
+  HST's pulse and back: the line and reference as 0.6.0's: pass
+v32_default 30 -> 12 -> 30: line 0xF60DD2A1
+  30 -> 12 -> 30: the history past 18 symbols cleared: pass
+  30 -> 12 -> 30: the line as V.32's pulse's history then 30: pass
+test_hst_fwd: 23 checks, 0 failures

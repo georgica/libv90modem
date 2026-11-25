@@ -10,19 +10,29 @@
  *                 beyond, at most -40 dB at 400 Hz and below (BF §2's three
  *                 points, and room for the back channel); the line level is
  *                 V.32's for the same `level`
- *   guard         hst_guard: at least 50 dB down over 250-500 Hz (the back
- *                 channel), within 0.5 dB of 0 dB from 560 Hz up; linear phase
- *   v32_default   a v32tx without v32tx_set_pulse, through every transmit
- *                 mode, gives the same 10 000 samples and echo canceller
- *                 references as 0.6.0 (FNV-1a hashes recorded at a44426a);
- *                 setting V.32's own pulse back gives them again */
+ *   guard         hst_guard: at least 50 dB down at 480 Hz and below (the
+ *                 back channel), within 0.5 dB of 0 dB from 560 Hz up;
+ *                 linear phase; hst_gf_tick (its symmetric loop) gives the
+ *                 table's direct form exactly
+ *   v32_default   a v32tx without v32tx_set_pulse, answering and calling,
+ *                 through each role's transmit modes, gives the same 10 000
+ *                 samples and echo canceller references as 0.6.0 (FNV-1a
+ *                 hashes recorded at a44426a); setting V.32's own pulse back
+ *                 gives them again; 30 -> 12 -> 30 symbols mid-stream clears
+ *                 what the short pulse left unshifted
+ *
+ * The output (the golden file) holds exact integers and one pass or fail
+ * line per bound; the measured values, from the test's own floating-point
+ * arithmetic, only with HST_VERBOSE set. */
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include "test.h"
 #include "../v32/v32.h"
 #ifndef HST_FWD_RECORD
 #include "../v32/v32_priv.h"
 #include "../modem/hst_tabs.h"
+#include "../modem/hst.h"
 #endif
 
 #define FS 8000
@@ -36,11 +46,14 @@ static int prbs_bit(void *user)
     return (int)(prbs >> 27) & 1;
 }
 
-/* ---- v32_default: every mode in turn, then data at 14400 ---- */
+/* ---- v32_default: every mode of a role in turn, then data at 14400 ---- */
 #define NDEF 10000
-/* 0.6.0 (a44426a): the samples and the references of def_run */
-#define DEF_HASH_LINE 0x62AA7B75u
-#define DEF_HASH_REF  0x3C258E9Cu
+/* 0.6.0 (a44426a): the samples and the references of def_run, answering
+ * and calling */
+static const uint32_t def_hash[2][2] = {
+    { 0x62AA7B75u, 0x3C258E9Cu },
+    { 0x93EA3185u, 0xC5E4CCCCu },
+};
 
 static uint32_t fnv(uint32_t h, int16_t v)
 {
@@ -49,13 +62,22 @@ static uint32_t fnv(uint32_t h, int16_t v)
     return (h ^ (u >> 8)) * 16777619u;
 }
 
-static void def_run(v32tx_t *t, uint32_t *hline, uint32_t *href)
+typedef struct { v32_txmode mode; int nsym; } seg_t;
+static const seg_t seq_ans[] = {
+    { V32_TX_AC, 40 }, { V32_TX_CA, 20 }, { V32_TX_SILENCE, 16 }, { V32_TX_S, 256 },
+    { V32_TX_SBAR, 16 }, { V32_TX_TRN, 1300 }, { V32_TX_RATE, 64 }, { V32_TX_ONES, 128 },
+    { V32_TX_DATA, 1 << 30 }
+};
+static const seg_t seq_call[] = {
+    { V32_TX_AA, 40 }, { V32_TX_CC, 20 }, { V32_TX_SILENCE, 16 }, { V32_TX_S, 256 },
+    { V32_TX_SBAR, 16 }, { V32_TX_TRN, 1300 }, { V32_TX_RATE, 64 }, { V32_TX_ONES, 128 },
+    { V32_TX_DATA, 1 << 30 }
+};
+
+/* t initialised for role `answer`: NDEF samples through its modes */
+static void def_run(v32tx_t *t, int answer, uint32_t *hline, uint32_t *href)
 {
-    static const struct { v32_txmode mode; int nsym; } seq[] = {
-        { V32_TX_AC, 40 }, { V32_TX_CA, 20 }, { V32_TX_SILENCE, 16 }, { V32_TX_S, 256 },
-        { V32_TX_SBAR, 16 }, { V32_TX_TRN, 1300 }, { V32_TX_RATE, 64 }, { V32_TX_ONES, 128 },
-        { V32_TX_DATA, 1 << 30 }
-    };
+    const seg_t *seq = answer ? seq_ans : seq_call;
     int n, k = 0, left = seq[0].nsym;
     *hline = *href = 2166136261u;
     prbs = 0x2468aceu;
@@ -78,33 +100,78 @@ int main(void)
 {
     v32tx_t t;
     uint32_t hl, hr;
-    v32tx_init(&t, 1, 3000, prbs_bit, NULL);
-    def_run(&t, &hl, &hr);
-    printf("0x%08Xu 0x%08Xu\n", (unsigned)hl, (unsigned)hr);
+    int answer;
+    for (answer = 1; answer >= 0; answer--) {
+        v32tx_init(&t, answer, 3000, prbs_bit, NULL);
+        def_run(&t, answer, &hl, &hr);
+        printf("{ 0x%08Xu, 0x%08Xu },\n", (unsigned)hl, (unsigned)hr);
+    }
     return 0;
 }
 #else
 
+static int verbose;
+static void bound(const char *what, int ok)
+{
+    printf("  %s: %s\n", what, ok ? "pass" : "FAIL");
+    CHECK(ok);
+}
+
+/* n samples of random data at 14400 from t (prbs seeded by the caller), hashed */
+static uint32_t data_hash(v32tx_t *t, int n)
+{
+    uint32_t h = 2166136261u;
+    t->rate = 4;
+    v32tx_set_mode(t, V32_TX_DATA);
+    while (n-- > 0) h = fnv(h, v32tx_tick(t));
+    return h;
+}
+
 static void v32_default(void)
 {
-    v32tx_t t;
-    uint32_t hl, hr;
-    v32tx_init(&t, 1, 3000, prbs_bit, NULL);
-    CHECK(t.pulse == &v32_txh[0][0][0]);
-    CHECK_EQ_I(t.pulse_len, V32_TXL);
-    def_run(&t, &hl, &hr);
-    printf("v32_default: line 0x%08X, reference 0x%08X\n", (unsigned)hl, (unsigned)hr);
-    CHECK_EQ_I(hl, DEF_HASH_LINE);
-    CHECK_EQ_I(hr, DEF_HASH_REF);
+    static const char *role[2] = { "calling", "answering" };
+    v32tx_t t, u;
+    uint32_t hl, hr, ha, hb;
+    int answer, i, stale = 0;
+    for (answer = 1; answer >= 0; answer--) {
+        v32tx_init(&t, answer, 3000, prbs_bit, NULL);
+        CHECK(t.pulse == &v32_txh[0][0][0]);
+        CHECK_EQ_I(t.pulse_len, V32_TXL);
+        def_run(&t, answer, &hl, &hr);
+        printf("v32_default %s: line 0x%08X, reference 0x%08X\n", role[answer], (unsigned)hl, (unsigned)hr);
+        bound("V.32's pulse: the line as 0.6.0's", hl == def_hash[!answer][0]);
+        bound("V.32's pulse: the echo reference as 0.6.0's", hr == def_hash[!answer][1]);
 
-    /* away to HST's pulse and back, before the first symbol */
+        /* away to HST's pulse and back, before the first symbol */
+        v32tx_init(&t, answer, 3000, prbs_bit, NULL);
+        v32tx_set_pulse(&t, &hst_fpulse[0][0][0], HST_FL);
+        CHECK_EQ_I(t.pulse_len, HST_FL);
+        v32tx_set_pulse(&t, &v32_txh[0][0][0], V32_TXL);
+        def_run(&t, answer, &hl, &hr);
+        bound("HST's pulse and back: the line and reference as 0.6.0's",
+              hl == def_hash[!answer][0] && hr == def_hash[!answer][1]);
+    }
+
+    /* 30 -> 12 -> 30 symbols mid-stream: what the 12-symbol pulse left
+     * unshifted is cleared, so the last switch leaves the history of a
+     * transmitter that had V.32's pulse all along (u) */
+    prbs = 0x5a5a5u;
     v32tx_init(&t, 1, 3000, prbs_bit, NULL);
     v32tx_set_pulse(&t, &hst_fpulse[0][0][0], HST_FL);
-    CHECK_EQ_I(t.pulse_len, HST_FL);
+    (void)data_hash(&t, 400);                       /* 120 symbols: all 36 filled */
     v32tx_set_pulse(&t, &v32_txh[0][0][0], V32_TXL);
-    def_run(&t, &hl, &hr);
-    CHECK_EQ_I(hl, DEF_HASH_LINE);
-    CHECK_EQ_I(hr, DEF_HASH_REF);
+    (void)data_hash(&t, 200);                       /* 60 more on 18 */
+    v32tx_set_pulse(&t, &hst_fpulse[0][0][0], HST_FL);
+    for (i = 18; i < V32_TXL_MAX + V32_TXD; i++) stale |= t.br[i] | t.bi[i];
+    ha = data_hash(&t, 2000);
+    prbs = 0x5a5a5u;
+    v32tx_init(&u, 1, 3000, prbs_bit, NULL);
+    (void)data_hash(&u, 600);
+    v32tx_set_pulse(&u, &hst_fpulse[0][0][0], HST_FL);
+    hb = data_hash(&u, 2000);
+    printf("v32_default 30 -> 12 -> 30: line 0x%08X\n", (unsigned)ha);
+    bound("30 -> 12 -> 30: the history past 18 symbols cleared", stale == 0);
+    bound("30 -> 12 -> 30: the line as V.32's pulse's history then 30", ha == hb);
 }
 
 /* The spectrum of 10 s of random data at 14400 on a pulse, every 10 Hz:
@@ -204,15 +271,15 @@ static void pulse_points(void)
         if (f >= 3200 && d > highmax) highmax = d;
         if (f <= 400 && d > lowmax) lowmax = d;
     }
-    printf("pulse_points: %d symbols; 700-2900 Hz %.2f to %.2f dB, 600 Hz %.2f, 3000 Hz %.2f, "
-           ">= 3200 Hz %.1f, <= 400 Hz %.1f; level %.0f (V.32's %.0f)\n",
-           HST_FL, lo, hi, resp_at(600), resp_at(3000), highmax, lowmax, rms, rms_v32);
-    CHECK(lo >= -0.5 && hi <= 0.5);
-    CHECK_NEAR(resp_at(600), -3, 0.5);
-    CHECK_NEAR(resp_at(3000), -3, 0.5);
-    CHECK(highmax <= -36);
-    CHECK(lowmax <= -40);
-    CHECK_NEAR(20 * log10(rms / rms_v32), 0, 0.1);
+    printf("pulse_points: %d symbols; level %.0f (V.32's %.0f)\n", HST_FL, rms, rms_v32);
+    if (verbose)
+        printf("  (700-2900 Hz %.3f to %.3f dB, 600 Hz %.3f, 3000 Hz %.3f, >= 3200 Hz %.2f, <= 400 Hz %.2f, level %.3f dB)\n",
+               lo, hi, resp_at(600), resp_at(3000), highmax, lowmax, 20 * log10(rms / rms_v32));
+    bound("700-2900 Hz within 0.5 dB", lo >= -0.5 && hi <= 0.5);
+    bound("600 and 3000 Hz -3 +- 0.5 dB", fabs(resp_at(600) + 3) <= 0.5 && fabs(resp_at(3000) + 3) <= 0.5);
+    bound(">= 3200 Hz at most -36 dB", highmax <= -36);
+    bound("<= 400 Hz at most -40 dB", lowmax <= -40);
+    bound("the level V.32's within 0.1 dB", fabs(20 * log10(rms / rms_v32)) <= 0.1);
 }
 
 static double fir_db(const int16_t *h, int n, double f)
@@ -228,20 +295,44 @@ static double fir_db(const int16_t *h, int n, double f)
 
 static void guard(void)
 {
+    static hst_gf_t g;
     double f, lo = 1e9, hi = -1e9, stop = -1e9, d;
-    int i, sym = 1;
+    int i, n, sym = 1, bad = 0;
+    int16_t x[HST_GUARD_N];
     for (i = 0; i < HST_GUARD_N; i++) sym &= hst_guard[i] == hst_guard[HST_GUARD_N - 1 - i];
-    CHECK(sym);
     for (f = 560; f <= 4000; f += 1) { d = fir_db(hst_guard, HST_GUARD_N, f); if (d < lo) lo = d; if (d > hi) hi = d; }
-    for (f = 250; f <= 500; f += 1) { d = fir_db(hst_guard, HST_GUARD_N, f); if (d > stop) stop = d; }
-    printf("guard: %d taps, >= 560 Hz %.2f to %.2f dB, 250-500 Hz at most %.1f dB\n", HST_GUARD_N, lo, hi, stop);
-    CHECK(lo >= -0.5 && hi <= 0.5);
-    CHECK(stop <= -50);
+    for (f = 0; f <= 480; f += 1) { d = fir_db(hst_guard, HST_GUARD_N, f); if (d > stop) stop = d; }
+    printf("guard: %d taps, %d multiplies a sample\n", HST_GUARD_N, (HST_GUARD_N + 1) / 2);
+    if (verbose) printf("  (>= 560 Hz %.3f to %.3f dB, <= 480 Hz at most %.2f dB)\n", lo, hi, stop);
+    bound("linear phase", sym);
+    bound(">= 560 Hz within 0.5 dB", lo >= -0.5 && hi <= 0.5);
+    bound("<= 480 Hz at least 50 dB down", stop <= -50);
+
+    /* hst_gf_tick against the table's direct form, on random samples, then
+     * random full-scale ones: the same integers */
+    memset(x, 0, sizeof x);
+    hst_gf_init(&g);
+    prbs = 0x31415u;
+    for (n = 0; n < 4 * FS; n++) {
+        int64_t acc = 0;
+        int16_t in;
+        prbs = prbs * 1664525u + 1013904223u;
+        in = (int16_t)(n < 2 * FS ? (int32_t)(prbs >> 16) - 32768 : ((prbs >> 31) ? 32767 : -32768));
+        memmove(x + 1, x, sizeof x - sizeof x[0]);
+        x[0] = in;
+        for (i = 0; i < HST_GUARD_N; i++) acc += (int64_t)hst_guard[i] * x[i];
+        acc = (acc + (1 << 14)) >> 15;
+        acc = acc > 32767 ? 32767 : acc < -32768 ? -32768 : acc;
+        bad += hst_gf_tick(&g, in) != acc;
+    }
+    printf("guard: %d samples through hst_gf_tick, %d unlike the direct form\n", 4 * FS, bad);
+    bound("hst_gf_tick is the direct form", bad == 0);
 }
 
 int main(int argc, char **argv)
 {
     int only = t_case_arg(argc, argv, 3);
+    verbose = getenv("HST_VERBOSE") != NULL;
     if (T_CASE(only, 1)) pulse_points();
     if (T_CASE(only, 2)) guard();
     if (T_CASE(only, 3)) v32_default();
