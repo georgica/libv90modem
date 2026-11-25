@@ -5,7 +5,8 @@
  * through a delay (the back receiver's hold-back), 1 ms ticks. What is
  * checked: our 0xC0 offer and the merge; the streamlined send rule and the
  * tolerant receiver; the mailbox (agreement, the caller's LA, LD);
- * attention codes as forward holder and as requester; LTs held while an
+ * attention codes as forward holder and as requester (an LN of ours lost:
+ * attn_lost); LTs held while an
  * attention is pending; frames of an unknown id; the reversal policy; the
  * max_up cap; T401 with the back channel's latency; throughput at
  * 14400/450 and 9600/300 (figures under HST_VERBOSE). One line per case. */
@@ -672,6 +673,59 @@ static void max_up(void)
            c1, c2);
 }
 
+/* holding back, our 0x2R lost on the line (Task 22b fix round, I1): a new
+ * request of the pump does not supersede it until it has gone twice or
+ * the pump saw the holder's training (ln_acted). So the far end gets the
+ * LN again at T401 and then the new one, both acted on, V(SA) and its
+ * V(RA) in step. With ln_acted the new request goes at once */
+static void attn_lost(void)
+{
+    int got[4], n = 0, t, c, held, vsa_ok, n2 = 0, got2 = -1;
+    hst_setup(peer_bm(0x01), 14400, 450, 127, 0x7C, 6);
+    CHECK(connect(5000) > 0);
+    run(100);
+    S.L.role = HST_ROLE_BACK;
+    S.L.epoch++;
+    run(100);
+    fwd_err_ppm = 200000;                /* our LN lost */
+    S.L.ln_req = 0x25;
+    for (t = 0; t < 1000 && !(E.l.mnp.ln_code == 0x25 && E.l.mnp.ln_tries >= 1); t++) step();
+    run(20);
+    fwd_err_ppm = 0;
+    run(300);
+    CHECK_EQ_I(mnppeer_get_ln(&P), -1);  /* the far end has not got it */
+    S.L.ln_req = 0x24;                   /* the pump asks again, no training seen */
+    run(1000);
+    held = E.l.mnp.ln_code == 0x25 && S.L.ln_req == 0x24;
+    CHECK(held);
+    for (t = 0; t < 12000 && n < 2; t++) {
+        step();
+        while (n < 4 && (c = mnppeer_get_ln(&P)) >= 0) got[n++] = c;
+    }
+    CHECK_EQ_I(n, 2);
+    CHECK_EQ_I(n > 0 ? got[0] : -1, 0x25);
+    CHECK_EQ_I(n > 1 ? got[1] : -1, 0x24);
+    run(1000);
+    vsa_ok = E.l.mnp.vsa == P.vra && E.l.mnp.ln_code == -1;
+    CHECK(vsa_ok);
+    /* the training seen (ln_acted): the next request supersedes at once */
+    S.L.epoch++;
+    S.L.ln_req = 0x23;
+    for (t = 0; t < 1000 && !(E.l.mnp.ln_code == 0x23 && E.l.mnp.ln_tries >= 1); t++) step();
+    S.L.ln_acted = 1;
+    S.L.ln_req = 0x22;
+    for (t = 0; t < 1500 && n2 < 2; t++) {
+        step();
+        while ((c = mnppeer_get_ln(&P)) >= 0) { n2++; got2 = c; }
+    }
+    CHECK_EQ_I(n2, 2);
+    CHECK_EQ_I(got2, 0x22);
+    CHECK_EQ_I(S.L.ln_acted, 0);
+    printf("attn_lost: our LN 25 lost, the next request held %d; the far end then got %02X, %02X; V(SA) in step %d; "
+           "with ln_acted the next goes at once: %d LNs, the last %02X\n",
+           held, n > 0 ? got[0] : 0, n > 1 ? got[1] : 0, vsa_ok, n2, got2);
+}
+
 /* the far end's LD into the mailbox */
 static void far_ld(void)
 {
@@ -782,6 +836,7 @@ int main(void)
     unknown();
     reversal_policy();
     max_up();
+    attn_lost();
     far_ld();
     t401();
     throughput();

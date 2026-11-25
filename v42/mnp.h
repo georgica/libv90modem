@@ -58,9 +58,10 @@
  *    0x2R/0x3R is passed on too (rate_order); a rate not agreed, or
  *    another class, an LNA and a count (`violations`) only;
  *  - holding back, the pump's 0x2R/0x3R supersedes ours still waiting
- *    for its LNA (sent at least once: V(SA) moves on as if it had come):
- *    that LNA would come on the forward channel the pump asks about
- *    again [OURS];
+ *    for its LNA when the far end has it: the pump saw its training
+ *    (ln_acted), or it has gone twice (V(SA) moves on as if the LNA had
+ *    come; that LNA would come on the forward channel the pump asks about
+ *    again); else the request waits for the LNA or the next T401 [OURS];
  *  - holding forward, LTs out and credit given but N(R) still for 2 x
  *    T401 (the line not stopped): `recover` in the mailbox, once per 2 x
  *    T401 (the pump's recovery, spec "Rate changes") [OURS];

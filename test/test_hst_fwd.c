@@ -1674,13 +1674,15 @@ static void thresholds(void)
     }
 }
 
-/* ---- the upshift's thresholds (hst_up_mse; Task 22b): `test_hst_fwd
+/* ---- "good" read a rate lower (Task 22b): `test_hst_fwd
  * upshift`, built with -DTEST_FULL (make hst-thresh runs it after the
  * sweep). "Good" for code c is a line UP_SNR(c) = its SNR of BER 1e-5 + 3
  * dB (the sweep's crossings, hst_good_mse's line), but the receiver that
  * judges it runs at c - 1: its error on that line, UP_RUNS runs of
  * UP_BITS data bits each (th_run's), against hst_good_mse[c], the error at
- * c itself there. hst_up_mse[c] is the error at c - 1, rounded ---- */
+ * c itself there, and the share of the time under hst_good_mse[c] there
+ * and 1, 2 and 4 dB above (docs/limits.md: equal errors, so the table is
+ * read as it is) ---- */
 #define UP_RUNS 4
 #define UP_BITS 400000L
 static void upshift(void)

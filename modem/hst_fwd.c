@@ -847,8 +847,9 @@ int32_t hst_frx_mse(const hst_frx_t *r) { return r->state == HST_FRX_DATA ? r->m
  * 13.5 (7200's BER 1e-5), so 16 in a row need some 30 % (1.2 units, 22a's
  * figure, is 3.6 %: never at 15 dB). Data and TRN do not pass it: a
  * random point is the one two before and a quarter turn from the last
- * with a chance of 1/8 at 4 points (TRN), 1/128 or less in data; 16 in a
- * row, 4e-15 or less */
+ * with a chance of 1/8 at 4 points (TRN) and about 1/38 in data (16 to
+ * 128 points: the 30 % takes in neighbours; the Task 22b review's Monte
+ * Carlo); 16 in a row, 4e-15 or less */
 #define SW_TOL 300                    /* thousandths of the point's power */
 static int sw_training(hst_frx_t *r, int32_t zr, int32_t zi)
 {

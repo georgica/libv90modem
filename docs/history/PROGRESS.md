@@ -6131,3 +6131,20 @@ Sizes: `hstcall_t` 165712 octets (x86-64), test side only. Host run 33 s
   in it); `tools/golden.sh check build` after the re-record: 158 identical.
   TEST_SHORT build of cases 19-24: pass. Owner rule: no check-arm, verify
   or ports.
+- **Fix round 1** (review I1, M1, M4, M5, M6). I1: the supersede of an
+  unanswered 0x2R/0x3R moves V(SA) on only on evidence that the far end
+  has it: the pump saw the holder's training (new mailbox `ln_acted`) or
+  it has gone twice; else the request waits for the LNA or the next T401.
+  Written as [OURS] in the spec, hst-facts and limits.md with its failure
+  mode. New `test_ec_hst` `attn_lost` (our LN lost on the line, then a new
+  request: both reach the far end in order, V(SA) in step; with ln_acted
+  at once): 10 checks, 7 of them fail under the old rule. M4: `up` and
+  `recovery` profile-aware (HST_3R_TRAINS: 0x3R by training both ways;
+  recovery from the caller's receiver dropping out, `hc_frx_relisten`),
+  run by `make check-hst-bm`. M1: the S detector's false pass is about
+  1/38 a symbol in data (the reviewer's Monte Carlo), 16 in a row still
+  <= 4e-15. M5/M6: comments and limits.md. Goldens re-recorded:
+  `v42/test_ec_hst.txt` (attn_lost's line, count 138 -> 148),
+  `bm/api_test_answer_hst.txt` (up's and recovery's lines, count 187 ->
+  214); `api/test_answer_hst.txt` unchanged. `make check PAR=16`: ALL
+  HOST CHECKS PASS (6 min 22 s).

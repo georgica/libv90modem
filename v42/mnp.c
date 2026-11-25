@@ -808,10 +808,17 @@ void mnp_hst_poll(mnp_t *m, hst_link_t *L, unsigned ms, size_t queued)
     /* our attention, one LN at a time: the pump's, the cap, the policy.
      * Holding back, the pump's request supersedes our 0x2R/0x3R still
      * waiting for its LNA: that LNA comes on the forward channel, whose
-     * receiver is what the pump is asking about again (a failed retrain);
-     * the far end has had it (sent at least once) and acted on it [OURS] */
+     * receiver is what the pump is asking about again (a failed retrain).
+     * V(SA) moves on (A.7.4.6 without the LNA) only on evidence that the
+     * far end has the LN: the pump saw the holder's training for it
+     * (ln_acted), or it has gone twice (both lost: p^2). Without that the
+     * new request waits for the LN's LNA or its next T401. A wrong guess
+     * leaves our N(SA) one ahead of the far V(RA): it then acknowledges
+     * every later LN and acts on none (A.7.4.3), for the rest of the call
+     * [OURS; docs/limits.md] */
     if (m->ln_code >= 0 && L->ln_req && m->hst_role == HST_ROLE_BACK
-        && ((m->ln_code >> 4) == 2 || (m->ln_code >> 4) == 3) && ((L->ln_req >> 4) == 2 || (L->ln_req >> 4) == 3)) {
+        && ((m->ln_code >> 4) == 2 || (m->ln_code >> 4) == 3) && ((L->ln_req >> 4) == 2 || (L->ln_req >> 4) == 3)
+        && (m->ln_tries == 0 || m->ln_tries >= 2 || L->ln_acted)) {
         if (m->ln_tries > 0) m->vsa++;
         m->ln_code = -1;
         m->ln_send = 0;
@@ -821,6 +828,7 @@ void mnp_hst_poll(mnp_t *m, hst_link_t *L, unsigned ms, size_t queued)
     if (L->ln_req) {
         code = L->ln_req;
         L->ln_req = 0;
+        L->ln_acted = 0;
     } else if (m->cap_due == 2) {
         code = 0x20 | cap_code(m);
         m->cap_due = 0;

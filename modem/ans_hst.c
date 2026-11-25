@@ -220,6 +220,7 @@ static void rc_clear(hst_t *h)
     h->rc = HST_RC_NONE;
     h->link.rate_order = 0;
     h->link.ln_req = 0;
+    h->link.ln_acted = 0;
     h->link.recover = 0;
     h->hold_t = 0;
     win_reset(h);
@@ -320,8 +321,10 @@ static void rate_back(answer_t *a)
         if (st != HST_FRX_DATA) h->rc_left = 1;
         if (st == HST_FRX_TRAIN && !h->rc_counted) {
             /* the holder's training under way (its LNA may have been lost):
-             * data stops now, not before, so that our request goes out */
+             * data stops now, not before, so that our request goes out;
+             * the far end has our LN (the endpoint's supersede) */
             h->rc_counted = 1;
+            h->link.ln_acted = 1;
             a->retrains++;
             a->retraining = 1;
         }

@@ -8,7 +8,8 @@ layout_learn: A: LT 4 lost, then LT 5: 3 octets, right; C: LT 2 again as 01 01 3
 unknown: rx_unknown 1, id 3F, no LA for it; its data 3004 ms later (the peer's T401 3000 ms)
 reversal_policy: 65 octets after 2000 ms: LN 15 (the peer got 15); 64 octets after 3000 ms: -1; 65 after 1999 ms: -1
 max_up: cap code 4: LN 16 granted, then our 24 after the switch; its LN 36: a count, our 24
+attn_lost: our LN 25 lost, the next request held 1; the far end then got 25, 24; V(SA) in step 1; with ln_acted the next goes at once: 2 LNs, the last 22
 far_ld: far_ld 1, peer_ld_reason 255
 t401: 14400/450 2932 ms, 9600/450 3088 ms, 450/9600 11027 ms, 9600/300 3887 ms
 throughput: clean >= 70 % at 14400/450 and 9600/300: yes; bit errors: >= 55 %, at most k sent again per LT lost: yes
-test_ec_hst: 138 checks, 0 failures
+test_ec_hst: 148 checks, 0 failures

@@ -303,6 +303,10 @@ void hc_frx_arm(hc_frx *r, int code);
  * AB, if in data; done on a carrier loss, and by the caller when it stops
  * listening (a reversal) */
 void hc_frx_keep(hc_frx *r);
+/* the receiver lost (as at a carrier loss): the equaliser kept, listening
+ * for AB again at the code set (the tests' stand-in for a peer that has
+ * dropped out of data while its back channel goes on) */
+void hc_frx_relisten(hc_frx *r);
 int  hc_frx_tick(hc_frx *r, double x);
 int  hc_frx_state(const hc_frx *r);
 /* the equalised points' SNR, dB, from the decisions (0 before training) */

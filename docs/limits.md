@@ -524,7 +524,9 @@ Measured against `sim/hstcall` only; no real HST modem has called it yet.
   after the request left (`HST_RC_BOUND_MS`), when its training ends
   without data (TRAINFAIL), or when it loses the data mode it reached
   within 2 s (`HST_RC_HOLD_MS`); a failed one is asked again at the same
-  rate. The receiver losing data mode by itself with the carrier there
+  rate. Frame errors are the endpoint's broken frames alone: hst-facts
+  (P2:538) also counts 50 ms blocks of fill characters, which the spec
+  narrows to CRC failures. The receiver losing data mode by itself with the carrier there
   (UNLOCKED, TRAINFAIL) is a retrain at the rate in force. At 15 dB SNR
   from 12000 (`test_answer_hst` `fallback`): three retrains at 12000 fail
   (data, then the lock lost within 0.5 s), then at 9600 the same, then
@@ -533,6 +535,22 @@ Measured against `sim/hstcall` only; no real HST modem has called it yet.
   until that window has passed: ending the call there is Task 23's
   (`V90M_END_RETRAIN_FAILED`). Untested against a real HST: what a
   Courier counts as good, and whether it retrains or marks (R2).
+- **An attention superseded** (v42/mnp.c, [OURS], a departure from Annex
+  A's "sent again every T401 until its LNA"). Holding back, a failed
+  retrain's next 0x2R/0x3R replaces ours still waiting for its LNA, V(SA)
+  moving on without it: that LNA comes on the forward receiver that
+  failed, and waiting for it ran to N400 and the link's end. It does so
+  only on evidence that the far end has the LN: the pump saw the
+  holder's training for it (`ln_acted`), or it has gone twice (both lost
+  on the healthy back channel: p squared). Otherwise the new request
+  waits for the LNA or the next T401 (2.9 s at 14400/450, under the 4 s
+  bound). The failure mode if the guess is wrong: our N(SA) one ahead of
+  the far V(RA), so the far end acknowledges every later LN, a 0x1R too,
+  and acts on none, for the rest of the call (`v42/test/test_ec_hst`
+  `attn_lost`: our LN lost, then a new request: both reach the far end in
+  order; the rule without the evidence fails it so). Task 23 and the
+  interop runs (R2) watch for a far end that acknowledges attentions and
+  does nothing.
 - **The armed receiver's S detection** (`hst_frx_arm_switch`,
   `hst_frx_arm_train`; Task 22b, which found both limits of 22a's): a
   training is seen in data mode as S or S-bar, 16 symbols each the point
@@ -542,8 +560,9 @@ Measured against `sim/hstcall` only; no real HST modem has called it yet.
   loops had pulled the points 15 degrees and 1.2 dB off A..D a dozen
   symbols in, and on any line under some 20 dB (the difference of two
   points carries twice the noise). A random point passes the test with a
-  chance of 1 in 8 at 4 points (TRN), 1 in 128 or less in data: 16 in a
-  row, 4e-15 or less.
+  chance of 1 in 8 at 4 points (TRN) and about 1 in 38 in data (16 to 128
+  points, the tolerance taking in neighbours; the Task 22b review's Monte
+  Carlo): 16 in a row, 4e-15 or less.
 
 ## Included tables (x2)
 

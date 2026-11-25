@@ -793,6 +793,12 @@ static void frx_listen(hc_frx *r)
     r->armed = 0;
 }
 
+void hc_frx_relisten(hc_frx *r)
+{
+    hc_frx_keep(r);
+    frx_listen(r);
+}
+
 int hc_frx_tick(hc_frx *r, double x)
 {
     double g = frx_guard(r, x), c, s;

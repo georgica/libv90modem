@@ -111,9 +111,11 @@
  *               none and no LN in the last 15 s; the data intact
  *
  * Built with -DHST_PROFILE_BM (make check-hst-bm) the caller trains as
- * BinModem (V.17's long train) and, with no case named, only `rates` and
- * `rev_caller` run, the switch then 20 ms plus V.17's turn-off after the
- * LNA drained.
+ * BinModem (V.17's long train) and, with no case named, only `rates`,
+ * `rev_caller`, `up` and `recovery` run: the switch then 20 ms plus V.17's
+ * turn-off after the LNA drained; a 0x3R carried out by a training both
+ * ways (HST_3R_TRAINS: data stops for each); recovery from the caller's
+ * receiver dropping out of data.
  *
  * V90M_END_HST_FAILED and v90m_stats.reversals are pinned. The output (the golden file) holds exact integers
  * and pass / fail lines; times only with HST_VERBOSE. Each case seeds its
@@ -388,6 +390,9 @@ static void our_ms(our_t *o)
 #define EXP_ONES_LO  0
 #define EXP_ONES_HI  1
 #endif
+/* how a 0x3R is carried out: by marks, or (HST_3R_TRAINS, the BinModem
+ * profile) by a training */
+#define R3_HOW (HST_3R_TRAINS ? "by training" : "by marks")
 static void hc_defaults(hstcall_cfg *c)
 {
     hstcall_defaults(c);
@@ -1445,7 +1450,7 @@ static void up(void)
     int i35, i36, ok_t35, ok_t36, e35, e36, k;
     hc_defaults(&hc);
     hc.rev_backlog = 64; hc.force_kind = 0x30; hc.force_rate_code = 4; hc.force_rate_at_ms = 6000;
-    printf("up: our switch by marks to 9600 as holder; then holding back, 10 s good: our 0x35, then 0x36\n");
+    printf("up: our switch %s to 9600 as holder; then holding back, 10 s good: our 0x35, then 0x36\n", R3_HOW);
     rc_call(&hc, &oc, 100000000L, 2048, 2201u);
     C.after_fwd = 1;
     run_ms(60000L, holding_back_data);
@@ -1454,8 +1459,17 @@ static void up(void)
     run_ms(t_back + 32000L, ended);
     printf("  our switches by marks %d: %d to %d; our trainings %d; switches %d\n", RC.nmk, RC.nmk ? RC.mk_from[0] : 0,
            RC.nmk ? RC.mk_to[0] : 0, RC.ntr, RV.n);
+#if HST_3R_TRAINS
+    {
+        int k, kt = -1;
+        for (k = 0; k < RC.ntr; k++) if (RC.tr_ms[k] >= 6000 && RC.tr_code[k] == 4 && kt < 0) kt = k;
+        bound("holding forward, the caller's 0x34: our short training at 9600 (HST_3R_TRAINS), RATES tx 9600",
+              RC.nmk == 0 && kt >= 0 && RC.tr_code[kt] == 4 && RC.tr_len[kt] == EXP_S3_SHORT && rates_at(RC.tr_ms[kt], 9600, 0) >= 0);
+    }
+#else
     bound("holding forward, the caller's 0x34: our switch by marks, 14400 to 9600, RATES tx 9600",
           RC.nmk == 1 && RC.mk_from[0] == 6 && RC.mk_to[0] == 4 && rates_at(RC.mk_ms[0], 9600, 0) >= 0);
+#endif
     bound("then its reversal: we hold the back channel at 9600", RV.n == 1 && RV.to[0] == HST_ROLE_BACK && rates_at(RV.sw[0], 0, 9600) >= 0);
     i35 = rc_ln_index(0x35, 0); i36 = rc_ln_index(0x36, i35 < 0 ? 0 : i35);
     printf("  our LNs %d: 0x35 %s, 0x36 %s\n", RC.nln, i35 >= 0 ? "sent" : "not sent", i36 >= 0 ? "sent" : "not sent");
@@ -1473,11 +1487,15 @@ static void up(void)
                         i36 >= 0 ? RC.ln_ms[i36] : -1L, i36 >= 0 && e36 >= 0 ? RC.ln_ms[i36] - RC.ep_ms[e36] : -1L);
     bound("our 0x35 10 s after the receiver came into data, our first LN", ok_t35 && i35 == 0);
     bound("our 0x36 10 s after the switch to 12000 was in", ok_t36 && i36 == 1);
-    bound("the receiver switched by marks to 12000, then 14400, untrained; RATES rx 12000, rx 14400",
-          RC.nrx == 3 && RC.rx_code[0] == 4 && RC.rx_code[1] == 5 && RC.rx_code[2] == 6 && !RC.rx_trained[1] && !RC.rx_trained[2]
+    bound(HST_3R_TRAINS ? "the receiver retrained at 12000, then 14400; RATES rx 12000, rx 14400"
+                        : "the receiver switched by marks to 12000, then 14400, untrained; RATES rx 12000, rx 14400",
+          RC.nrx == 3 && RC.rx_code[0] == 4 && RC.rx_code[1] == 5 && RC.rx_code[2] == 6
+          && RC.rx_trained[1] == HST_3R_TRAINS && RC.rx_trained[2] == HST_3R_TRAINS
           && i35 >= 0 && rates_at(RC.ln_ms[i35], 0, 12000) >= 0 && i36 >= 0 && rates_at(RC.ln_ms[i36], 0, 14400) >= 0);
     rc_data_line();
-    bound("data never stopped after the post-agreement retrain", count_ev(V90M_EV_DATA_STOPPED, moved_index()) == 0);
+    bound(HST_3R_TRAINS ? "data stopped for each of the three changes (trainings), not otherwise"
+                        : "data never stopped after the post-agreement retrain",
+          count_ev(V90M_EV_DATA_STOPPED, moved_index()) == 3 * HST_3R_TRAINS);
     bound("no more LNs (14400 is the top); the data both ways intact, ours all in", RC.nln == 2 && C.bad == 0 && O.bad == 0
           && C.r == O.to_send && O.r > 20000 && O.end_ms < 0);
 }
@@ -1607,26 +1625,40 @@ static void max_up(void)
     bound("the data both ways intact", C.bad == 0 && O.bad == 0 && C.r == O.to_send && O.r > 10000 && O.end_ms < 0);
 }
 
-/* recovery: holding forward at 14400, the caller's 0x35, which it carries
- * out by a training (BinModem's way) where we switch by marks: its
- * receiver lost, nothing we send acknowledged while its back channel
- * goes on; 2 x T401 on, our short training at 12000, a retrain */
+/* recovery: holding forward, nothing acknowledged while the caller's back
+ * channel goes on; 2 x T401 on (within 1 s more), our short training at
+ * the rate in force, a retrain, the data moving again. The default
+ * profile: at 14400 the caller's 0x35, which it carries out by a training
+ * and listens for one (BinModem's way) where we switch by marks to 12000.
+ * HST_3R_TRAINS (the BinModem profile, where we train for a 0x3R too):
+ * the caller's receiver drops out of data at 14400 (hc_frx_relisten) */
 static void recovery(void)
 {
     hstcall_cfg hc;
     our_cfg oc = hst_ours();
     v90m_stats ss;
     mnp_t *m;
-    int t401 = 0, n0, i1, i2, k = -1, i, n_tr;
-    long d = -1, c_at, o_at;
+    int t401 = 0, n0, i1, i2, k = -1, i, n_tr, code = HST_3R_TRAINS ? 6 : 5;
+    long d = -1, c_at, o_at, t_stall = -1;
     hc_defaults(&hc);
+#if HST_3R_TRAINS
+    printf("recovery: the caller's receiver drops out of data; 2 x T401: our short training\n");
+#else
     hc.retrain_3r = 1; hc.force_kind = 0x30; hc.force_rate_code = 5; hc.force_rate_at_ms = 12000;
     printf("recovery: the caller expects a training where we switch by marks; 2 x T401: our short training\n");
+#endif
     rc_call(&hc, &oc, 100000000L, 100000000L, 2205u);
     run_ms(11900, ended);
     m = our_mnp();
     n0 = O.nev;
+#if HST_3R_TRAINS
+    run_ms(12000, ended);
+    hc_frx_relisten(&HC.frx);
+    t_stall = now_ms;
+#else
     while (now_ms < 30000 && RC.nmk == 0 && O.end_ms < 0) run_ms(now_ms + 1, NULL);
+    if (RC.nmk) t_stall = RC.mk_ms[0];
+#endif
     t401 = m ? m->t401_ms : 0;
     /* to 1 s after our next training, then 10 s more: the data moving again */
     n_tr = RC.ntr;
@@ -1635,18 +1667,28 @@ static void recovery(void)
     c_at = C.r; o_at = O.r;
     run_ms(now_ms + 10000, ended);
     v90m_get_stats(O.m, &ss);
-    for (i = 0; i < RC.ntr; i++) if (RC.nmk && RC.tr_ms[i] >= RC.mk_ms[0]) { k = i; break; }
-    if (k >= 0) d = RC.tr_ms[k] - RC.mk_ms[0];
+    for (i = 0; i < RC.ntr; i++) if (t_stall >= 0 && RC.tr_ms[i] >= t_stall) { k = i; break; }
+    if (k >= 0) d = RC.tr_ms[k] - t_stall;
     i1 = index_of(V90M_EV_DATA_STOPPED, n0); i2 = i1 < 0 ? -1 : index_of(V90M_EV_DATA_MOVING, i1);
+#if HST_3R_TRAINS
+    printf("  our switches by marks %d; then our trainings %d, code %d, S3 %d\n", RC.nmk,
+           k >= 0 ? RC.ntr - k : 0, k >= 0 ? RC.tr_code[k] : 0, k >= 0 ? RC.tr_len[k] : 0);
+    if (verbose) printf("  (the caller's receiver out at %ld ms, our training %ld ms later; T401 %d ms)\n", t_stall, d, t401);
+    bound("no switch, no retrain until then", RC.nmk == 0 && (i1 < 0 || O.ev_ms[i1] > t_stall + 1000));
+#else
     printf("  our switch by marks: %d to %d; then our trainings %d, code %d, S3 %d\n", RC.nmk ? RC.mk_from[0] : 0, RC.nmk ? RC.mk_to[0] : 0,
            k >= 0 ? RC.ntr - k : 0, k >= 0 ? RC.tr_code[k] : 0, k >= 0 ? RC.tr_len[k] : 0);
-    if (verbose) printf("  (marks at %ld ms, our training %ld ms later; T401 %d ms)\n", RC.nmk ? RC.mk_ms[0] : -1L, d, t401);
+    if (verbose) printf("  (marks at %ld ms, our training %ld ms later; T401 %d ms)\n", t_stall, d, t401);
     bound("the caller's 0x35: our switch by marks to 12000, no retrain there", RC.nmk == 1 && RC.mk_from[0] == 6 && RC.mk_to[0] == 5
           && (i1 < 0 || O.ev_ms[i1] > RC.mk_ms[0] + 1000));
-    bound("2 x T401 on (within 1 s more), our short training at 12000", k >= 0 && RC.ntr - k == 1 && RC.tr_code[k] == 5
+#endif
+    bound(HST_3R_TRAINS ? "2 x T401 on (within 1 s more), our short training at 14400"
+                        : "2 x T401 on (within 1 s more), our short training at 12000",
+          k >= 0 && RC.ntr - k == 1 && RC.tr_code[k] == code
           && RC.tr_len[k] == EXP_S3_SHORT && t401 > 0 && d >= 2 * t401 && d <= 2 * t401 + 1000);
-    bound("a retrain: DATA_STOPPED, DATA_MOVING; retrains 2; the caller's receiver at 12000",
-          i1 >= 0 && i2 > i1 && ss.retrains == 2 && HC.frx.state == HC_FRX_DATA && HC.frx.d.code == 5);
+    bound(HST_3R_TRAINS ? "a retrain: DATA_STOPPED, DATA_MOVING; retrains 2; the caller's receiver at 14400"
+                        : "a retrain: DATA_STOPPED, DATA_MOVING; retrains 2; the caller's receiver at 12000",
+          i1 >= 0 && i2 > i1 && ss.retrains == 2 && HC.frx.state == HC_FRX_DATA && HC.frx.d.code == code);
     rc_data_line();
     if (verbose) printf("  (then in 10 s: %ld octets to the caller, %ld to us)\n", C.r - c_at, O.r - o_at);
     bound("the data both ways intact, and moving again", C.bad == 0 && O.bad == 0 && C.r - c_at > 2000 && O.r - o_at > 200 && O.end_ms < 0);
@@ -1702,11 +1744,14 @@ int main(int argc, char **argv)
     only = argc > 1 ? atoi(argv[1]) : 0;
 #if HST_LONG_V17
     /* the BinModem profile's build (make check-hst-bm): `rates` and
-     * `rev_caller`, unless a case is named */
+     * `rev_caller`, and (Task 22b review M4) `up` and `recovery`, the
+     * 0x3R by training both ways and recovery, unless a case is named */
     if (!only) {
         printf("test_answer_hst: the HST answering branch through the API, the BinModem profile (W %d ms)\n", HST_W_MS);
         rates();
         rev_caller();
+        up();
+        recovery();
         CHECK_EQ_I(proc_err, 0);
         if (O.m) v90m_destroy(O.m);
         if (O.ec) v90m_ec_destroy(O.ec);

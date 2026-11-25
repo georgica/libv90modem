@@ -321,7 +321,13 @@ is byte-identical to 0.6.0.
   again from the first unacknowledged LT"; credit N(k) from the last LA,
   zero stops the sender.
 - **LN/LNA:** LN has its own V(SA) from 1; one outstanding, sent again
-  every T401 until its LNA; each delivered once. Outside HST, types 1–3
+  every T401 until its LNA; each delivered once. **[OURS]** One
+  departure, on HST holding the back channel: the pump's new 0x2R/0x3R
+  supersedes ours still waiting for its LNA (V(SA) moves on without it)
+  when the far end has it: the pump saw the holder's training for it, or
+  it has gone twice. That LNA would come on the forward receiver the pump
+  is asking about again, and waiting for it ran to N400. The failure
+  mode: a wrong guess leaves our N(SA) one ahead of the far V(RA), so the far end acknowledges every later LN, a 0x1R too, and acts on none, for the rest of the call (docs/limits.md, "The rate policy"). Outside HST, types 1–3
   are the break kinds, mapped to `v90m_ec_send_break`/`get_break`; on HST
   the octet carries the attention codes.
 - **LD:** reason 255 on `v90m_ec_release()`, as the Courier does (BF §6;
