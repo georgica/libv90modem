@@ -89,7 +89,7 @@ void    hst_btx_stop(hst_btx_t *t);
 /* -DHST_PROFILE_BM: a test build for runs against BinModem only (SPEC D16);
  * release builds and golden files never use it */
 #define HST_OPEN_CODE   3    /* 7200 (BinModem's); provisional: Task 20 / R1 */
-#define HST_LONG_V17    1    /* the long training is V.17's */
+#define HST_LONG_V17    1    /* every training, long or short, is V.17's long train */
 #define HST_3R_TRAINS   1    /* a 0x3R rate request is carried out with a training */
 #else
 #define HST_OPEN_CODE   4    /* 9600 before MNP agreement; provisional: Task 20 / R1 */
@@ -124,8 +124,9 @@ typedef struct {
 /* level = RMS of the line signal (16-bit sample units); getbit gives the
  * data. Silent until hst_ftx_train. */
 void    hst_ftx_init(hst_ftx_t *t, int level, v32_getbit_fn getbit, void *user);
-/* from the next symbol: the training, long or short, then data at `code`
- * (2..6; outside, the nearest). The scrambler starts from zero; the pulses
+/* from the next symbol: the training, long or short (under HST_LONG_V17
+ * always V.17's long train), then data at `code` (2..6; outside, the
+ * nearest). The scrambler starts from zero; the pulses
  * already sent ring out under it. */
 void    hst_ftx_train(hst_ftx_t *t, int code, int long_form);
 /* the symbol begun last was data */

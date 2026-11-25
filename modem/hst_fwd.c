@@ -9,6 +9,8 @@
  * v32tx scrambles for us and its scrambler runs on from the training into
  * the data, with no second copy of it (plan ruling F7). */
 #include "hst.h"
+/* for v32_label_abcd, V.32's Table 4 (dibit -> synchronising state), which
+ * S3 sends as V.32's TRN does: v32's own table, not exported by v32.h */
 #include "../v32/v32_priv.h"
 
 /* what a training segment sends (hst_ftx_t.kind) */
@@ -16,13 +18,16 @@ enum {
     K_S,          /* A B A B ... (V.32's S) */
     K_SBAR,       /* C D C D ... (V.32's S-bar) */
     K_TRN,        /* ones through the scrambler, a dibit a symbol, as V.32's
-                   * Table 4 (A 00, B 01, C 11, D 10): the 4 points from the
-                   * first symbol (V.32's TRN begins with 256 on A and C) */
+                   * Table 4 (A 00, B 01, C 11, D 10), on the 4 points from
+                   * the first symbol: our receiver, once it has found AB,
+                   * trains decision-directed on all 4 (V.32's TRN begins
+                   * with 256 on A and C for V.32's receiver) */
     K_COND,       /* V.17's segment 2: the same, scrambler from HST_BM_SCR0,
                    * 00 C, 01 D, 11 A, 10 B */
     K_BRIDGE,     /* V.17's segment 3: 0000 0001 0001 0001 (B0 first),
                    * scrambled, differentially encoded as V.32's 4800 */
-    K_ONES        /* V.17's segment 4: scrambled ones at the rate */
+    K_ONES        /* V.17's segment 4: scrambled ones at the rate, the
+                   * differential encoder from the bridge's first symbol */
 };
 
 /* the bridge as v32tx's rate sequence (B0 the most significant bit) */
@@ -40,11 +45,15 @@ void hst_ftx_init(hst_ftx_t *t, int level, v32_getbit_fn getbit, void *user)
     t->d0 = 0;
 }
 
+/* Under HST_PROFILE_BM every training is V.17's long train, the opening
+ * and the short ones alike (a retrain, a reversal, 0x2R, recovery):
+ * BinModem's receiver trains on nothing else (BinModem itself always sends
+ * the long form). Coordinator's ruling, review of Task 15 (I-1). */
 void hst_ftx_train(hst_ftx_t *t, int code, int long_form)
 {
     static const int8_t k_hst[4] = { K_S, K_SBAR, K_TRN, K_ONES };
     static const int8_t k_v17[4] = { K_S, K_COND, K_BRIDGE, K_ONES };
-    int i, v17 = long_form && HST_LONG_V17;
+    int i, v17 = HST_LONG_V17;
     t->code = code < 2 ? 2 : code > 6 ? 6 : code;
     for (i = 0; i < 4; i++) t->kind[i] = v17 ? k_v17[i] : k_hst[i];
     if (v17) {
@@ -75,6 +84,20 @@ void hst_ftx_stop(hst_ftx_t *t)
 
 static int scr1(hst_ftx_t *t) { return v32_scramble(&t->tx.scr, t->tx.answer, 1); }
 
+/* V.17 5.1.4: segment 4's differential encoder starts from the first
+ * symbol of segment 3, i.e. from that point's Y1 Y2 in V.17's labelling,
+ * the same at every rate: A 11, B 01, C 10, D 00 (Figures 2-5/V.17; our
+ * 7200 set, v32_c7200, labels the four alike; our 9600 to 14400 sets are
+ * V.32bis's, on another scale, without them). v32tx takes the start as a
+ * state and uses its 4800 label (A 00, B 01, C 11, D 10), so the state
+ * whose 4800 label is that Y1 Y2: A -> C, B -> B, C -> D, D -> A. At 4800
+ * (no V.17 rate) the 4800 labelling is the rate's own: the state itself. */
+static int ones_start(int rate, int s)
+{
+    static const uint8_t v17_y12_state[4] = { 2, 1, 3, 0 };
+    return rate == 0 ? s : v17_y12_state[s & 3];
+}
+
 /* the mode, and what it needs, of the symbol about to begin */
 static void next_symbol(hst_ftx_t *t)
 {
@@ -104,11 +127,12 @@ static void next_symbol(hst_ftx_t *t)
         v32tx_set_mode(&t->tx, V32_TX_STATE);
         break;
     case K_BRIDGE:
+        if (pos == 1) t->d0 = t->tx.abcd;     /* the state of the bridge's first symbol */
         t->tx.rword = BRIDGE_WORD;
         v32tx_set_mode(&t->tx, V32_TX_RATE);
         break;
-    default:     /* K_ONES: the differential encoder from the bridge's first symbol (V.17 5.1.4) */
-        if (pos == 0) t->tx.abcd = t->d0;
+    default:     /* K_ONES */
+        if (pos == 0) t->tx.abcd = ones_start(t->code - 2, t->d0);
         t->tx.rate = t->code - 2;
         v32tx_set_mode(&t->tx, V32_TX_ONES);
         break;
@@ -117,13 +141,8 @@ static void next_symbol(hst_ftx_t *t)
 
 int16_t hst_ftx_tick(hst_ftx_t *t)
 {
-    int16_t out;
     if (v32tx_symbol_due(&t->tx)) next_symbol(t);
-    out = v32tx_tick(&t->tx);
-    if (t->tx.newsym && t->seg >= HST_SEG_S1 && t->seg <= HST_SEG_S4
-        && t->kind[t->seg - HST_SEG_S1] == K_BRIDGE && t->left == t->len[t->seg - HST_SEG_S1] - 1)
-        t->d0 = t->tx.abcd;
-    return out;
+    return v32tx_tick(&t->tx);
 }
 
 void hst_gf_init(hst_gf_t *g)

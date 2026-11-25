@@ -246,15 +246,17 @@ firmware's DSP (BF §3).
 - Constants, each commented provisional (Task 20 / R1): `HST_S1_SYMS` 180,
   `HST_S2_SYMS` 72, `HST_S3_LONG` 3096, `HST_S3_SHORT` 200, `HST_OPEN_CODE` 4
   (plan Task 15). [OURS]
-- S3 maps its dibits by V.32's Table 4 from its first symbol; V.32's own TRN
-  begins with 256 symbols on A and C alone, which would leave the 200-symbol
-  short form on 2 points. The scrambler (v32tx's, `answer` 0: GPC) starts
+- S3 maps its dibits by V.32's Table 4 from its first symbol, on all 4
+  points: our receiver, once it has found AB, trains decision-directed on
+  the 4 points A to D (spec "Forward channel: receiver"). V.32's own TRN
+  begins with 256 symbols on A and C alone, for V.32's receiver. The scrambler (v32tx's, `answer` 0: GPC) starts
   from zero at each training and runs on into the data (hst 15 in
   PROGRESS.md). [OURS]
 - BinModem sends V.17's long train (section `V.17 long train`) and V.17's
   turn-off (32 symbols of ones, 48 quiet): stand-ins, not HST (BF §2). [BM]
-- The `-DHST_PROFILE_BM` test build: opening code 3 (7200), the long training
-  V.17-shaped, rate requests 0x3R with a retrain. Release builds and golden
+- The `-DHST_PROFILE_BM` test build: opening code 3 (7200), every training
+  (long or short) V.17's long train, rate requests 0x3R with a retrain
+  (hst 15 and its review fixes in PROGRESS.md). Release builds and golden
   files never use it (SPEC D16). [OURS]
 
 ## V.17 long train

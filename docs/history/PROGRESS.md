@@ -4508,9 +4508,10 @@ bench hashes).
 
 `-DHST_PROFILE_BM`: `HST_OPEN_CODE` 3, the long form V.17's (256 AB, 2976
 conditioning from GPC state 0x2ECDD5 mapped 00 C, 01 D, 11 A, 10 B, 64
-bridge as v32tx's rate sequence 0x0111, 48 ones at the rate, the
-differential encoder from the bridge's first symbol: 3344 symbols, then
-data), `HST_3R_TRAINS` 1. `make check-hst-bm` (in `make check`) builds
+bridge as v32tx's rate sequence 0x0111, 48 ones at the rate: 3344
+symbols, then data), `HST_3R_TRAINS` 1. (Segment 4's differential start
+took the bridge's first state's 4800 label, V.17's only when that state is
+B, which it always is here; the review fixes below make it V.17's for any.) `make check-hst-bm` (in `make check`) builds
 `HST_BM_TESTS` (test_hst_fwd) in `$(BUILD)/bm` with it and runs them; their
 golden files are `test/golden/out/bm/<program>.txt` (`print-golden` lists
 `bm/<program>`).
@@ -4533,3 +4534,46 @@ Not yet in `answer_t.u`; `v90m_mem_size()` unchanged.
                    re-recorded (its own), bm/test_hst_fwd's new; bench 17,
                    replay 636 identical; armv7hf and big-endian short-cmp
                    135 identical; ubsan pass; fixed 110 objects, 0 float helpers)
+
+### hst 15, review fixes (2026-11-25)
+
+- **Ruling (I-1):** under `-DHST_PROFILE_BM` every training is V.17's long
+  train: the opening, and a retrain, a reversal, 0x2R and recovery as well
+  (`hst_ftx_train` ignores `long_form` when `HST_LONG_V17`): BinModem's
+  receiver trains on nothing else, and BinModem itself always sends the
+  long form. Recorded in hst_fwd.c. New BM case `bm_short`: a short
+  training asked for at every code 2..6, from data, sends the V.17 long
+  train. `s1_s2`, `train_short` and `trn` test the HST-shaped training and
+  run in the default build only.
+- **M-2:** segment 4's differential encoder starts from the bridge's first
+  symbol's Y1 Y2 in V.17's labelling (A 11, B 01, C 10, D 00, the same at
+  every rate; our 7200 set's; our 9600-14400 sets, V.32bis's, are on
+  another scale and do not hold A..D): v32tx is given the state whose 4800
+  label is that Y1 Y2 (A -> C, B -> B, C -> D, D -> A); at 4800 the state
+  itself. The train is fixed, so that first state is always B (where the old
+  start was already right). `bm` now checks: A..D in the 7200 set with those
+  labels; segment 4's first Q1 Q2 against the scrambled ones by Table 1 in
+  every V.17 training (Table 2 at 4800); and, with the kept state replaced
+  after the bridge, all four starts at codes 3..6 (the old start: 12 of 16
+  unlike).
+- **M-1:** S3's 4 points from its first symbol: the reason is that our
+  receiver trains decision-directed on all 4 after AB (hst-facts.md and the
+  `K_TRN` comment corrected).
+- **M-4:** hst_fwd.c includes v32_priv.h for `v32_label_abcd` alone; the
+  comment says so.
+- **M-5:** the bridge's first state is taken once, in `next_symbol` (the
+  bridge's second symbol), not tested every sample.
+- **Note (M-3):** the BM build (`bm/test_hst_fwd`) belongs in
+  `verify-phase` once, before Task 25 ships a BM build (Task 26): no ARM or
+  port run builds it yet.
+- **Note (M-6):** `hst_ftx_stop` drops straight to silence; BinModem ends a
+  burst with V.17's turn-off (32 symbols of scrambled ones, 48 quiet). That
+  is for the reversal tasks (21-22) under the BM profile.
+
+    build/test_hst_fwd -> test_hst_fwd: 91 checks, 0 failures
+    make check-hst-bm -> test_hst_fwd: 111 checks, 0 failures
+      bm short asked, code 2..6: training 256 2976 64 48 ...; segment 4's start 0
+      bm: segment 4 from each of A..D at codes 3..6: 0 of 16 unlike V.17's start
+    mutation: the old start (the state itself) -> 12 of 16 unlike, 1 failure
+    make verify -> VERIFY PASS (931 s; golden 150 identical, bm/test_hst_fwd's
+                   re-recorded (its own), test_hst_fwd's unchanged)
