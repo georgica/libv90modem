@@ -1,0 +1,419 @@
+/* The endpoint (v42ec_t, answerer, MNP on) linked to an HST pump through
+ * the mailbox of hst_link.h, with a stub pump here: a hst_link_t owned by
+ * the test and a get function that returns it with the state the test
+ * sets. What is checked: T400 held while the modem has not decided; the
+ * pre-connect ring drained into the receive path (in v42ec_tick and at
+ * the top of v42ec_tx_bit and v42ec_rx_bit), so an LR sent during our
+ * training is answered at the first transmitted bit; the HST window (our
+ * training's end plus 5 s, NO_EC, no start-stop) in T400's place;
+ * v42ec_reset keeping the link and a captured LR; plain MNP over the link.
+ * The caller's frames are built here (own HDLC bit layer and CRC) or come
+ * from sim/mnppeer. 1 ms ticks. One line per case. */
+#include <stdint.h>
+#include "v42.h"
+#include "hst_link.h"
+#include "../../sim/mnppeer.h"
+#include "test.h"
+
+/* ---- the stub pump ---- */
+typedef struct {
+    hst_link_t L;
+    int state;                 /* HST_LINK_* */
+    unsigned long calls;       /* get calls */
+} stub_t;
+
+static hst_link_t *stub_get(void *ctx, int *state)
+{
+    stub_t *s = (stub_t *)ctx;
+    s->calls++;
+    *state = s->state;
+    return s->state == HST_LINK_ON ? &s->L : NULL;
+}
+
+static stub_t S;
+static v42ec_t E;
+static v42ec_cfg_t C;
+
+/* our answerer, MNP on, linked (link 1) or not, the stub in state st */
+static void ep_init(int link, int st)
+{
+    v42ec_cfg_default(&C, 0);
+    C.mnp.enable = 1;
+    v42ec_init(&E, &C);
+    memset(&S, 0, sizeof S);
+    S.state = st;
+    if (link) v42ec_set_link(&E, stub_get, &S);
+}
+
+static int ep_proto(void)
+{
+    v42ec_status_t s;
+    v42ec_get_status(&E, &s);
+    return s.protocol;
+}
+
+static int ep_reason(void)
+{
+    v42ec_status_t s;
+    v42ec_get_status(&E, &s);
+    return s.reason;
+}
+
+/* ---- the caller's bits, built here: HDLC with its own CRC ---- */
+static uint8_t cb[8000];
+static int cb_n, cb_i;
+
+static void cbit(int b) { if (cb_n < (int)sizeof cb) cb[cb_n++] = (uint8_t)b; }
+
+static void cflag(void)
+{
+    int i;
+    for (i = 0; i < 8; i++) cbit((0x7E >> i) & 1);
+}
+
+/* x^16 + x^12 + x^5 + 1, reflected, bit by bit */
+static uint16_t crc16(const uint8_t *d, int n)
+{
+    uint16_t crc = 0xFFFFu;
+    int i, b;
+    for (i = 0; i < n; i++)
+        for (b = 0; b < 8; b++) {
+            unsigned x = (crc ^ (unsigned)(d[i] >> b)) & 1u;
+            crc = (uint16_t)(x ? (crc >> 1) ^ 0x8408u : crc >> 1);
+        }
+    return (uint16_t)(crc ^ 0xFFFFu);
+}
+
+/* flag, body and FCS with zeros inserted, flag */
+static void cframe(const uint8_t *body, int n)
+{
+    uint8_t f[300];
+    uint16_t c = crc16(body, n);
+    int i, b, ones = 0;
+    memcpy(f, body, (size_t)n);
+    f[n] = (uint8_t)(c & 0xFF);
+    f[n + 1] = (uint8_t)(c >> 8);
+    cflag();
+    for (i = 0; i < n + 2; i++)
+        for (b = 0; b < 8; b++) {
+            int x = (f[i] >> b) & 1;
+            cbit(x);
+            ones = x ? ones + 1 : 0;
+            if (ones == 5) { cbit(0); ones = 0; }
+        }
+    cflag();
+}
+
+/* the Courier's LR (hst-facts.md `LR and 0xC0`): framing 3, k 8, N401 64,
+ * no parameter 8, no 0xC0 */
+static const uint8_t lr_courier[] = {
+    0x14, 0x01, 0x02, 0x01, 0x06, 0x01, 0x00, 0x00, 0x00, 0x00, 0xFF,
+    0x02, 0x01, 0x03, 0x03, 0x01, 0x08, 0x04, 0x02, 0x40, 0x00 };
+
+/* the caller during our training: ten flags, its LR, then flags */
+static void caller_lr(int tail_flags)
+{
+    int i;
+    cb_n = cb_i = 0;
+    for (i = 0; i < 10; i++) cflag();
+    cframe(lr_courier, (int)sizeof lr_courier);
+    for (i = 0; i < tail_flags; i++) cflag();
+}
+
+/* the pump: the caller's next n bits (mark once they are out) into the ring */
+static void pump_bits(int n)
+{
+    while (n-- > 0) (void)hst_pre_put(&S.L, cb_i < cb_n ? cb[cb_i++] : 1);
+}
+
+/* ---- our bits: the first HDLC frame among them ---- */
+static uint8_t ob[4000];
+
+static void our_bits(int n)
+{
+    int i;
+    for (i = 0; i < n && i < (int)sizeof ob; i++) ob[i] = (uint8_t)v42ec_tx_bit(&E);
+}
+
+static int is_flag(const uint8_t *b, int i, int n)
+{
+    int k;
+    if (i + 8 > n) return 0;
+    for (k = 0; k < 8; k++) if (b[i + k] != ((0x7E >> k) & 1)) return 0;
+    return 1;
+}
+
+/* the first frame after a flag in b[0..n): body and FCS into f (zeros
+ * removed), its length (0 none); *at the index of its first bit */
+static int first_frame(const uint8_t *b, int n, uint8_t *f, int max, int *at)
+{
+    int i = 0, j, len = 0, nb = 0, ones = 0;
+    unsigned cur = 0;
+    while (i < n && !is_flag(b, i, n)) i++;
+    if (i >= n) return 0;
+    while (is_flag(b, i, n)) i += 8;
+    *at = i;
+    for (j = i; j < n && !is_flag(b, j, n); j++) {
+        if (ones == 5) { ones = 0; if (b[j] == 0) continue; }
+        ones = b[j] ? ones + 1 : 0;
+        cur |= (unsigned)b[j] << nb;
+        if (++nb == 8) {
+            if (len < max) f[len++] = (uint8_t)cur;
+            cur = 0; nb = 0;
+        }
+    }
+    if (j >= n) return 0;
+    return len;
+}
+
+/* our first frame is an LR with a good FCS: 1, and where it began */
+static int our_lr_first(int *at)
+{
+    uint8_t f[300];
+    int n;
+    *at = -1;
+    our_bits(600);
+    n = first_frame(ob, 600, f, (int)sizeof f, at);
+    if (n < 5) return 0;
+    if (crc16(f, n - 2) != (uint16_t)(f[n - 2] | (f[n - 1] << 8))) return 0;
+    return f[1] == 0x01 && f[2] == 0x02 && f[0] + 3 == n;
+}
+
+/* ---- the cases ---- */
+
+/* Review Focus 2's unit form: UNDECIDED holds T400; from NONE on, 750 ms */
+static void undecided_holds_t400(void)
+{
+    int t, acc = 0, st3, unl;
+    ep_init(1, HST_LINK_UNDECIDED);
+    for (t = 0; t < 3000; t++) v42ec_tick(&E, 1);
+    st3 = v42ec_state(&E);
+    CHECK_EQ_I(st3, V42EC_DETECT);
+    CHECK(S.calls >= 3000);
+    S.state = HST_LINK_NONE;
+    for (t = 0; t < 5000 && v42ec_state(&E) == V42EC_DETECT; ) {
+        v42ec_tick(&E, 1);
+        t++;
+        acc += 2400;
+        while (acc >= 1000) { acc -= 1000; v42ec_rx_bit(&E, 1); (void)v42ec_tx_bit(&E); }
+    }
+    CHECK_EQ_I(t, 750);
+    CHECK_EQ_I(v42ec_state(&E), V42EC_ASYNC);
+    /* the same endpoint unlinked: T400 from its start */
+    ep_init(0, HST_LINK_UNDECIDED);
+    for (unl = 0; unl < 3000 && v42ec_state(&E) == V42EC_DETECT; unl++) v42ec_tick(&E, 1);
+    CHECK_EQ_I(unl, 750);
+    CHECK_EQ_I(S.calls, 0);
+    printf("undecided_holds_t400: UNDECIDED 3000 ms: state %d; NONE: start-stop %d ms later; unlinked: at %d ms\n",
+           st3, t, unl);
+}
+
+/* an LR in the ring during our training: captured, answered at the first
+ * transmitted bit; through the ticks and with no tick at all */
+static void lr_from_ring(void)
+{
+    int t, at_a, at_b, ok_a, ok_b, proto_before;
+    ep_init(1, HST_LINK_ON);
+    caller_lr(200);
+    for (t = 0; t < 1400; t++) {        /* our training: no getbit, no putbit */
+        if (t % 20 < 9) pump_bits(1);   /* 450 bit/s */
+        v42ec_tick(&E, 1);
+    }
+    CHECK(cb_i > cb_n - 200 * 8);       /* the LR is in */
+    CHECK_EQ_I(ep_proto(), V42EC_PROTO_MNP);
+    CHECK_EQ_I(v42ec_state(&E), V42EC_ESTABLISH);
+    CHECK_EQ_I(S.L.pre_r, S.L.pre_w);   /* drained */
+    ok_a = our_lr_first(&at_a);
+    CHECK(ok_a);
+    CHECK_EQ_I(at_a, 16);               /* two flags, then our LR */
+
+    ep_init(1, HST_LINK_ON);
+    caller_lr(4);
+    pump_bits(cb_n);                    /* no tick: nothing drained yet */
+    proto_before = ep_proto();
+    CHECK_EQ_I(proto_before, V42EC_PROTO_NONE);
+    CHECK_EQ_I(S.L.pre_w - S.L.pre_r, cb_n);
+    ok_b = our_lr_first(&at_b);
+    CHECK_EQ_I(ep_proto(), V42EC_PROTO_MNP);
+    CHECK(ok_b);
+    CHECK_EQ_I(at_b, 16);
+    CHECK_EQ_I(S.L.pre_lost, 0);
+    printf("lr_from_ring: ticks: protocol MNP, our LR %s at bit %d; no tick: protocol %d, then our LR %s at bit %d\n",
+           ok_a ? "out" : "MISSING", at_a, proto_before, ok_b ? "out" : "MISSING", at_b);
+}
+
+/* no LR on an HST call: NO_EC at our training's end plus 5 s, never
+ * start-stop; with mark (detection) and with flags (LAPM establishment) */
+static int window_run(int flags, int *at750)
+{
+    int t, end = -1, async = 0;
+    ep_init(1, HST_LINK_ON);
+    cb_n = cb_i = 0;
+    if (flags) while (cb_n + 8 <= (int)sizeof cb) cflag();
+    for (t = 1; t <= 8000 && end < 0; t++) {
+        if (t % 20 < 9) pump_bits(1);
+        if (t == 1400) S.L.trained = 1;
+        v42ec_tick(&E, 1);
+        if (t == 751) *at750 = v42ec_state(&E);
+        if (v42ec_state(&E) == V42EC_ASYNC) async = 1;
+        if (v42ec_state(&E) == V42EC_DISCONNECTED) end = t;
+    }
+    CHECK(!async);
+    CHECK_EQ_I(ep_reason(), V42EC_R_NO_EC);
+    return end;
+}
+
+static void window(void)
+{
+    int s1 = -1, s2 = -1, e1, e2;
+    e1 = window_run(0, &s1);
+    CHECK_EQ_I(s1, V42EC_DETECT);
+    CHECK_NEAR(e1, 1400 + 5000, 1);
+    e2 = window_run(1, &s2);
+    CHECK_EQ_I(s2, V42EC_ESTABLISH);
+    CHECK_NEAR(e2, 1400 + 5000, 1);
+    printf("window: trained at 1400 ms; mark: state %d at 751 ms, NO_EC at %d ms; flags: state %d at 751 ms, NO_EC at %d ms\n",
+           s1, e1, s2, e2);
+}
+
+/* v42ec_reset keeps the link and a captured LR (or one still in the
+ * ring); with mnp.enable 0 it unlinks; v42ec_init starts clean */
+static void reset_keeps(void)
+{
+    int t, at_a, at_b, ok_a, ok_b, linked_a, linked_c, t400;
+    unsigned long calls;
+    v42ec_cfg_t off;
+
+    ep_init(1, HST_LINK_ON);
+    caller_lr(4);
+    for (t = 0; t < 1400; t++) { if (t % 20 < 9) pump_bits(1); v42ec_tick(&E, 1); }
+    CHECK_EQ_I(ep_proto(), V42EC_PROTO_MNP);
+    v42ec_reset(&E, &C);                /* the host's reset at CONNECTED */
+    linked_a = v42ec_linked(&E);
+    CHECK_EQ_I(linked_a, 1);
+    CHECK_EQ_I(ep_proto(), V42EC_PROTO_MNP);
+    ok_a = our_lr_first(&at_a);
+    CHECK(ok_a);
+    CHECK_EQ_I(at_a, 16);
+
+    ep_init(1, HST_LINK_ON);
+    caller_lr(4);
+    pump_bits(cb_n);                    /* in the ring, not drained */
+    v42ec_reset(&E, &C);
+    CHECK_EQ_I(v42ec_linked(&E), 1);
+    CHECK_EQ_I(S.L.pre_w - S.L.pre_r, cb_n);
+    ok_b = our_lr_first(&at_b);
+    CHECK(ok_b);
+    CHECK_EQ_I(at_b, 16);
+
+    off = C;
+    off.mnp.enable = 0;
+    v42ec_reset(&E, &off);
+    linked_c = v42ec_linked(&E);
+    CHECK_EQ_I(linked_c, 0);
+    CHECK_EQ_I(ep_proto(), V42EC_PROTO_NONE);
+    CHECK_EQ_I(v42ec_state(&E), V42EC_DETECT);
+    calls = S.calls;
+    for (t400 = 0; t400 < 3000 && v42ec_state(&E) == V42EC_DETECT; t400++) v42ec_tick(&E, 1);
+    CHECK_EQ_I(S.calls, calls);
+    CHECK_EQ_I(t400, 750);
+
+    ep_init(1, HST_LINK_ON);
+    v42ec_init(&E, &C);                 /* a clean start: no link */
+    CHECK_EQ_I(v42ec_linked(&E), 0);
+    printf("reset_keeps: captured LR: linked %d, our LR %s at bit %d; LR in the ring: %s at bit %d; "
+           "mnp.enable 0: linked %d, start-stop at %d ms\n",
+           linked_a, ok_a ? "out" : "MISSING", at_a, ok_b ? "out" : "MISSING", at_b, linked_c, t400);
+}
+
+/* an MNP caller without 0xC0 over the link: its LR during our training
+ * through the ring, then the line at 2400: plain MNP, data both ways */
+static mnppeer_t P;
+
+static void plain_mnp_over_link(void)
+{
+    mnp_peer_cfg pc;
+    int t, acc = 0, t401_2400;
+    size_t up_made = 0, up_got = 0, dn_made = 0, dn_got = 0;
+    uint32_t hu_in = 2166136261u, hu_out = 2166136261u, hd_in = 2166136261u, hd_out = 2166136261u;
+    uint8_t buf[256];
+    int i, st6500 = -1;
+
+    memset(&pc, 0, sizeof pc);
+    pc.originator = 1; pc.framing = 3; pc.k = 8; pc.n401 = 64; pc.seed = 7u;
+    mnppeer_init(&P, &pc);
+    ep_init(1, HST_LINK_ON);
+    for (t = 1; t <= 30000; t++) {
+        mnppeer_tick(&P, 1);
+        if (t == 1400) S.L.trained = 1;
+        acc += 2400;
+        while (acc >= 1000) {
+            int x = mnppeer_tx_bit(&P);
+            acc -= 1000;
+            if (t <= 1400) {            /* our training: the pump hands its bits over */
+                (void)hst_pre_put(&S.L, x);
+                mnppeer_rx_bit(&P, 1);
+            } else {                    /* CONNECTED: getbit and putbit */
+                int y = v42ec_tx_bit(&E);
+                v42ec_rx_bit(&E, x);
+                mnppeer_rx_bit(&P, y);
+            }
+        }
+        v42ec_tick(&E, 1);
+        if (t == 6500) st6500 = v42ec_state(&E);
+        if (v42ec_state(&E) == V42EC_CONNECTED) {
+            uint8_t d[64];
+            size_t n, w;
+            for (i = 0; i < 64; i++) d[i] = (uint8_t)(up_made + (size_t)i);
+            n = up_made + 64 <= 3000 ? 64 : 3000 - up_made;
+            w = v42ec_write(&E, d, n);
+            for (i = 0; i < (int)w; i++) hu_in = (hu_in ^ d[i]) * 16777619u;
+            up_made += w;
+            for (i = 0; i < 64; i++) d[i] = (uint8_t)(dn_made * 7u + (size_t)i);
+            n = dn_made + 64 <= 3000 ? 64 : 3000 - dn_made;
+            w = mnppeer_write(&P, d, n);
+            for (i = 0; i < (int)w; i++) hd_in = (hd_in ^ d[i]) * 16777619u;
+            dn_made += w;
+        }
+        while ((i = (int)mnppeer_read(&P, buf, sizeof buf)) > 0) {
+            int k;
+            for (k = 0; k < i; k++) hu_out = (hu_out ^ buf[k]) * 16777619u;
+            up_got += (size_t)i;
+        }
+        while ((i = (int)v42ec_read(&E, buf, sizeof buf)) > 0) {
+            int k;
+            for (k = 0; k < i; k++) hd_out = (hd_out ^ buf[k]) * 16777619u;
+            dn_got += (size_t)i;
+        }
+        if (t > 6500 && up_got >= up_made && dn_got >= dn_made && up_made >= 3000 && dn_made >= 3000) break;
+    }
+    CHECK_EQ_I(ep_proto(), V42EC_PROTO_MNP);
+    CHECK_EQ_I(v42ec_state(&E), V42EC_CONNECTED);
+    CHECK_EQ_I(st6500, V42EC_CONNECTED);
+    CHECK_EQ_I(S.L.agreed, 1);
+    CHECK_EQ_I(S.L.agreed_rates, 0);
+    CHECK_EQ_I(S.L.back300, 0);
+    CHECK(up_got == up_made && hu_in == hu_out && up_made >= 3000);
+    CHECK(dn_got == dn_made && hd_in == hd_out && dn_made >= 3000);
+    /* the pump's rates reach T401 */
+    t401_2400 = E.l.mnp.t401_ms;
+    S.L.tx_bps = 9600; S.L.rx_bps = 450;
+    v42ec_tick(&E, 1);
+    CHECK_EQ_I(E.l.mnp.tx_bps, 9600);
+    CHECK_EQ_I(E.l.mnp.rx_bps, 450);
+    CHECK(E.l.mnp.t401_ms != t401_2400);
+    printf("plain_mnp_over_link: agreed %d, rates 0x%02X, back300 %d; state %d at 6500 ms; 3000 octets each way %s; "
+           "T401 %d ms at 2400, %d ms at 9600/450\n",
+           S.L.agreed, S.L.agreed_rates, S.L.back300, st6500,
+           hu_in == hu_out && hd_in == hd_out ? "intact" : "DAMAGED", t401_2400, E.l.mnp.t401_ms);
+}
+
+int main(void)
+{
+    undecided_holds_t400();
+    lr_from_ring();
+    window();
+    reset_keeps();
+    plain_mnp_over_link();
+    T_REPORT("test_ec_link");
+}

@@ -205,7 +205,7 @@ moving until `v90m_ec_tx_busy` is 0.
   LR gets start-stop at 750 ms as with MNP off.
 
 **Memory.** At most `V90M_EC_MEM_SIZE` (50 KiB; `v90m_ec_mem_size()` gives
-the exact size, 50144 octets on x86-64, 49904 on 32-bit ARM).
+the exact size, 50440 octets on x86-64, 50188 on 32-bit ARM).
 
 More on the V.42 code, the compression and the readings taken where the
 Recommendations leave a choice: `v42/README.md`.

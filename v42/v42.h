@@ -52,6 +52,13 @@
  *     LNs of types 1 to 3; v42ec_release sends LD 255 and is
  *     V42EC_DISCONNECTED at once (wait for v42ec_tx_busy() to be 0 before
  *     dropping the line).
+ *   - HST (v42ec_set_link, hst_link.h): a linked answerer hunts for an LR
+ *     from the first bit the pump hands over before CONNECTED, holds T400
+ *     while the modem has not decided, and on an HST call has a window
+ *     (our training's end plus V42EC_HST_WINDOW_MS) in T400's place: no
+ *     LR in it ends with V42EC_R_NO_EC, never start-stop. v42ec_reset
+ *     keeps the link and an LR already taken (the host's reset at
+ *     CONNECTED); v42ec_init starts clean.
  *   - After V42EC_DISCONNECTED keep calling v42ec_tx_bit() for a few dozen
  *     bits if the line is still up, so a final UA or DM gets out; data
  *     already received stays readable.
@@ -76,6 +83,7 @@
 #include "v42_comp.h"
 #include "v44_comp.h"
 #include "mnp.h"
+#include "hst_link.h"
 
 /* user data buffers, octets (compile-time) */
 #ifndef V42EC_TXBUF
@@ -105,6 +113,13 @@ enum {
  * start-stop. Any other frame, typed text included, is not waited for. A mode 2 LR at 300 bit/s takes about
  * 1 s (the Courier's, 31 characters), longer than T400. [OURS] */
 #define V42EC_T400_LR_HOLD_MS 2000
+
+/* HST link (hst_link.h), state HST_LINK_ON: with no LR, the endpoint ends
+ * with V42EC_R_NO_EC this long after the pump says our training is out
+ * (`trained`), in T400's place; no start-stop over HST (decision 19) */
+#define V42EC_HST_WINDOW_MS 5000
+/* the longest LR the endpoint keeps for v42ec_reset: an LI of at most 254 */
+#define V42EC_LR_CAP 255
 
 /* MNP (V.42 Annex A) beside LAPM: the answerer takes a caller's LR */
 typedef struct {
@@ -214,6 +229,17 @@ typedef struct v42ec {
     int tx_bps, rx_bps;      /* v42ec_set_rates; 0 = not given */
     int t400_held;           /* MNP on: T400 ran out inside a start-stop frame and
                                 was held (V42EC_T400_LR_HOLD_MS) */
+    /* the HST link (v42ec_set_link), kept by v42ec_reset with the window
+     * and the caller's LR: link_state, HST_LINK_* as last heard (NONE
+     * unlinked); hst_win, ms left of the HST window, -1 not started;
+     * lr_cap, the LR that started MNP on HST (its length, 0 none, and
+     * framing); agreed_due, the mailbox is still to hear of the LRs'
+     * agreement */
+    hst_link_get_fn link_get;
+    void *link_ctx;
+    int link_state, hst_win;
+    int lr_cap_len, lr_cap_fr, agreed_due;
+    uint8_t lr_cap[V42EC_LR_CAP];
 } v42ec_t;
 
 /* Fill cfg with defaults for the given role: detection on, fallback on,
@@ -223,8 +249,28 @@ typedef struct v42ec {
  * a history of min(4096, V44COMP_MAX_HISTORY), 16-bit FCS,
  * T401 1000 ms, N400 10, T403 off. */
 void   v42ec_cfg_default(v42ec_cfg_t *cfg, int originator);
-/* Start. Call when the modem reports its data mode is up (7.2). */
+/* Start. Call when the modem reports its data mode is up (7.2). A clean
+ * start: no HST link. */
 void   v42ec_init(v42ec_t *e, const v42ec_cfg_t *cfg);
+/* Start again with cfg (e from v42ec_init), keeping the HST link, the pre-connect ring's
+ * unread bits (they are the pump's) and an LR already taken through the
+ * link, which is answered again; the window keeps counting from our
+ * training's end. With cfg->mnp.enable 0 (or an originator) it is
+ * v42ec_init: unlinked. Without a link it is v42ec_init. The rates of
+ * v42ec_set_rates are forgotten (the pump's come again). */
+void   v42ec_reset(v42ec_t *e, const v42ec_cfg_t *cfg);
+/* Link to an HST pump (hst_link.h): get(ctx, &state) is called from
+ * v42ec_tx_bit, v42ec_rx_bit and v42ec_tick. NULL get unlinks; so does
+ * MNP off (cfg.mnp.enable 0, or an originator): nothing is linked. Linked,
+ * the endpoint holds T400 while the state is HST_LINK_UNDECIDED, is the
+ * unlinked one from HST_LINK_NONE on (T400 counted from there), and on
+ * HST_LINK_ON drains the pre-connect ring into its receive path, writes
+ * the LRs' agreement into the mailbox, takes the pump's rates for T401
+ * when they change, and has the HST window in T400's place (no start-stop:
+ * NO_EC; fallback does not apply). */
+void   v42ec_set_link(v42ec_t *e, hst_link_get_fn get, void *ctx);
+/* 1 when linked */
+int    v42ec_linked(const v42ec_t *e);
 
 /* Line side, one bit at a time. */
 int    v42ec_tx_bit(v42ec_t *e);

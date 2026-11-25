@@ -1,0 +1,87 @@
+/* The HST mailbox: what the MNP endpoint (v42.h) and the HST pump
+ * (modem/, the answerer's ANS_HST branch) tell each other on an HST call
+ * (spec "Tying the endpoint to the modem", decisions 8, 18 to 21).
+ *
+ * The mailbox lives in the pump's engine. The endpoint reaches it through
+ * a get function and a context given to v42ec_set_link(): get returns the
+ * modem's decision in *state and, only while it is HST_LINK_ON, the
+ * mailbox (NULL otherwise). The endpoint calls it from v42ec_tx_bit,
+ * v42ec_rx_bit and v42ec_tick only, on the host's thread: no concurrency.
+ *
+ *   HST_LINK_UNDECIDED  the modem has not decided yet (ANSam, the HST
+ *                       wait, any training not yet connected): the
+ *                       endpoint holds T400;
+ *   HST_LINK_NONE       connected or ended on another path: the endpoint
+ *                       is the unlinked one, T400 counted from here;
+ *   HST_LINK_ON         an HST call (ANS_HST): no T400, no start-stop; the
+ *                       endpoint hunts for an LR from the first bit of the
+ *                       pre-connect ring until our training ends plus
+ *                       V42EC_HST_WINDOW_MS, then NO_EC.
+ *
+ * The pre-connect ring: from ANS_HST until the modem is connected the pump
+ * appends the back receiver's bits (hst_pre_put); the endpoint drains them
+ * into its receive path (hst_pre_get) in v42ec_tick and at the top of
+ * v42ec_tx_bit and v42ec_rx_bit, before the bit in hand, so they count as
+ * line bits for detection and an LR sent during our training is answered
+ * at our first transmitted bit. pre_w and pre_r count bits and wrap (a
+ * multiple of HST_PRE_BITS); bit i is bit i % 8 of pre[(i % HST_PRE_BITS)
+ * / 8]. A full ring drops the new bit and counts it in pre_lost.
+ *
+ * This header includes nothing of modem/: modem/ includes it. */
+#ifndef V90D_HST_LINK_H
+#define V90D_HST_LINK_H
+#include <stdint.h>
+
+enum { HST_LINK_UNDECIDED = 0, HST_LINK_NONE, HST_LINK_ON };
+enum { HST_ROLE_FWD = 0, HST_ROLE_BACK };      /* we hold the forward / the back channel */
+#define HST_PRE_BITS 1024
+
+typedef struct {
+    /* the pump writes */
+    uint8_t  offer_rates;     /* 0xC0 rates: n = 2..6 with 2400n <= max_down_bps (0x7C unlimited) */
+    uint8_t  cap_up_code;     /* highest rate code we may receive (max_up_bps), 6 unlimited */
+    int      trained;         /* our first training has gone out */
+    int      role, tx_bps, rx_bps, fwd_code;   /* the endpoint recomputes T401 (mnp_set_rates) when they change */
+    int      ln_req;          /* attention the pump wants sent (0x1R/0x2R/0x3R), 0 = none; endpoint clears it */
+    unsigned epoch;           /* bumped when a reversal or rate change has completed */
+    uint8_t  pre[HST_PRE_BITS / 8]; unsigned pre_w, pre_r; unsigned long pre_lost;
+    /* the endpoint writes */
+    int      agreed;          /* the LR exchange is done; agreed_rates, back300 valid */
+    uint8_t  agreed_rates;    /* 0: plain MNP, the pump stays at the opening rate */
+    int      back300;
+    int      la_rx;           /* the caller's confirming LA arrived: the post-agreement retrain */
+    int      rev_lna_sent;    /* we granted a 0x1R and that LNA and its closing flag have left */
+    int      rev_lna_rx;      /* our 0x1R was granted (its LNA arrived) */
+    int      rev_code;        /* R of that reversal */
+    int      rate_order;      /* 0x2R or 0x3R for the holder to execute, 0 = none; the pump clears it */
+    int      far_ld;          /* the far end sent LD */
+    int      ep_idle;         /* no frame in flight in our transmitter */
+} hst_link_t;
+
+typedef hst_link_t *(*hst_link_get_fn)(void *ctx, int *state);   /* state: HST_LINK_* */
+
+/* The pump: one received bit into the ring. 0, or -1 when full (counted). */
+static inline int hst_pre_put(hst_link_t *l, int bit)
+{
+    unsigned i;
+    uint8_t m;
+    if (l->pre_w - l->pre_r >= HST_PRE_BITS) { l->pre_lost++; return -1; }
+    i = l->pre_w % HST_PRE_BITS;
+    m = (uint8_t)(1u << (i % 8));
+    if (bit) l->pre[i / 8] = (uint8_t)(l->pre[i / 8] | m);
+    else l->pre[i / 8] = (uint8_t)(l->pre[i / 8] & (uint8_t)~m);
+    l->pre_w++;
+    return 0;
+}
+
+/* The endpoint: the oldest bit (0 or 1), or -1 when the ring is empty. */
+static inline int hst_pre_get(hst_link_t *l)
+{
+    unsigned i;
+    if (l->pre_r == l->pre_w) return -1;
+    i = l->pre_r % HST_PRE_BITS;
+    l->pre_r++;
+    return (l->pre[i / 8] >> (i % 8)) & 1;
+}
+
+#endif

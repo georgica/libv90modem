@@ -4393,3 +4393,46 @@ Review fixes (round 1), with the controller's rulings:
     build/api_test_mnp_call                  -> test_mnp_call: 208 checks, 0 failures (host short: 202)
     re-recorded: v42/test_ec_mnp.txt (t400_hold's line, the count), api/test_mnp_call.txt (two v32bis_rates lines, the count)
     make verify                              -> VERIFY PASS (793 s; golden 147 identical; a7 and big-endian skip api_test_mnp_call)
+
+## hst 7: the HST mailbox; a linked endpoint hunts from the first sample and has the HST window (2026-11-25)
+
+The tie between the endpoint and the HST pump (spec "Tying the endpoint
+to the modem", D18, D19), with a stub pump; the pump itself is Task 18.
+
+- `v42/hst_link.h`: the mailbox `hst_link_t` (the plan's fields), the get
+  function type, `HST_LINK_UNDECIDED/NONE/ON`, `HST_ROLE_*`, and the
+  pre-connect ring's two accessors (`hst_pre_put` for the pump, a full
+  ring drops the new bit and counts it in `pre_lost`; `hst_pre_get` for the
+  endpoint). It includes nothing of `modem/`.
+- `v42ec_set_link(e, get, ctx)` (NULL unlinks; MNP off or an originator
+  is never linked), `v42ec_linked`. Linked, the endpoint asks `get` at the
+  top of `v42ec_tx_bit`, `v42ec_rx_bit` and `v42ec_tick` (F5 a): the
+  ring's bits go into the receive path before the bit in hand, so an LR
+  sent during our training is answered at our first transmitted bit,
+  ticked or not.
+- T400 is held while the state is UNDECIDED and counts from NONE on (F4:
+  the modem says NONE once connected or ended on another path, so a
+  non-HST call gets start-stop 750 ms after CONNECTED). On ON there is no
+  T400 and no start-stop: the window, from the tick that sees `trained`,
+  `V42EC_HST_WINDOW_MS` (5000), then `V42EC_R_NO_EC`, in detection and in
+  LAPM's establishment (flags without an LR) alike, whatever `fallback`.
+- `v42ec_reset(e, cfg)` (F2): keeps the link, the ring (it is the pump's),
+  the window and an LR taken on HST, which it answers again; with
+  `mnp.enable` 0 it unlinks. `v42ec_init` stays a clean start.
+- The endpoint writes `agreed` (1), `agreed_rates` (0) and `back300` (0)
+  when it accepts the caller's LR (no profile yet: Task 8), and takes the
+  pump's `tx_bps`/`rx_bps` for T401 whenever they change (F18).
+- Nothing changes for an unlinked endpoint (every path tests `link_get`).
+- `v90m_ec_mem_size()`: 50144 -> 50440 on x86-64, 49904 -> 50188 on ARMv5
+  (F3; `V90M_EC_MEM_SIZE` 51200 unchanged, 760 octets left on x86-64),
+  re-pinned in `test_api.c` (same check count: its golden is unchanged)
+  and in `docs/error-control.md`.
+
+    v42/build/test_ec_link (before hst_link.h) -> fatal error: hst_link.h: No such file or directory
+    v42/build/test_ec_link (before v42.c)      -> implicit declaration of v42ec_set_link, v42ec_reset, v42ec_linked
+    v42/build/test_ec_link                     -> test_ec_link: 52 checks, 0 failures (5 cases)
+    mutations (no drain in tx_bit; reset without the LR) -> 5, 3 failures
+    make -s -C v42 test                        -> ALL TESTS PASS (test_ec_mnp 163 checks, unchanged)
+    build/api_test_api                         -> api: 1030 checks, 0 failures
+    new golden: v42/test_ec_link.txt
+    make verify                                -> VERIFY PASS (442 s; golden 148 identical, replay 636 runs, bench 17, ubsan, a7, big-endian, fixed)
