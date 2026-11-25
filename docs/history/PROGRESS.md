@@ -5099,3 +5099,431 @@ Review fixes (round 1).
   350 Hz, or 4th order at 300 Hz) then +7 Hz makes 300 detect at 836-856
   ms, past W, with the rule or without it (-7 Hz: 566-576 ms); 450 at
   436-446 ms, 4 ms inside its budget. A real-line profile should carry it.
+
+## hst 14: the forward pulse, v32tx's pulse pointer, guard filter (2026-11-25)
+
+`v32tx_t` gains `const int16_t *pulse; int pulse_len;` (v32tx_init: `v32_txh`,
+`V32_TXL`) and `v32tx_set_pulse()`. The symbol history grows to
+`V32_TXL_MAX + V32_TXD` (`V32_TXL_MAX` 30 = `HST_FL`, a compile-time check in
+`modem/hst.h`); the shift and the line filter are bounded by the pulse in use,
+the echo canceller's reference keeps V.32's pulse. `sizeof(v32tx_t)` 112 -> 160
+on x86-64 (148 on ARMv5); `sizeof(v32_t)` 36472 -> 36520; `answer_t` and
+`v90m_mem_size()` unchanged (106320 x86-64, 106016 ARMv5: test_api on both).
+
+`tools/gen_hst_tabs.py` (extended: `tab_fpulse`, `tab_guard`; `design()` takes
+the transition width that starts its search, default unchanged, so the
+earlier tables are byte-identical):
+- `hst_fpulse[10][HST_FL][2]`: RRC beta 1/12, Kaiser window, v32_txh's layout,
+  scaled to V.32's line RMS (`v32_tx_rms_q12` 17072, so v32tx's gain holds).
+  The shortest length meeting the firmware's points with margin is 30 symbols
+  (window beta 1.75): +-1100 Hz -0.13..0.03 dB, +-1200 Hz -3.19 dB, <= -45.7 dB
+  1400 Hz off and beyond. At 24 symbols the window pulls the -3 dB points to
+  -3.5 dB (beta 2) or loses the -40 dB (beta <= 1.5).
+- `hst_guard`: 407 taps, Kaiser high-pass, cut-off 530 Hz: >= 560 Hz within
+  0.02 dB, <= -51.4 dB over 0-500 Hz. About 3.3 M MAC/s at 8000 Hz (half with
+  the symmetry): a candidate for the "cheaper guard filter" lever.
+
+`test_hst_fwd` (new; its golden file is new): `pulse_points` measures the
+pulse from 10 s of random data with each Welch frame's power divided by that
+of the symbols sent in it (a plain Welch estimate wandered +-0.6 dB from data
+randomness alone); `guard`; `v32_default` (FNV-1a of 10 000 samples and
+references through every transmit mode, recorded from a44426a's v32/).
+
+    make -s build/test_hst_fwd (before the code) -> error: 'v32tx_t' has no member named 'pulse' ...
+    build/test_hst_fwd -> test_hst_fwd: 16 checks, 0 failures
+      pulse_points: 30 symbols; 700-2900 Hz -0.13 to 0.02 dB, 600 Hz -3.19, 3000 Hz -3.19,
+                    >= 3200 Hz -45.6, <= 400 Hz -45.9; level 3036 (V.32's 3036)
+      guard: 407 taps, >= 560 Hz -0.02 to 0.02 dB, 250-500 Hz at most -51.4 dB
+      v32_default: line 0x62AA7B75, reference 0x3C258E9C
+    api_test_api (x86-64, ARMv5 under qemu) -> 0 failures, pins unchanged
+    make verify -> VERIFY PASS (1104 s; golden 149 identical, test_hst_fwd's new;
+                   bench hashes 17 identical; replay 636 identical; armv7hf and
+                   big-endian short-cmp identical; ubsan pass; fixed 0 float helpers)
+
+### hst 14, review fixes (2026-11-25)
+
+- `test_hst_fwd` prints only integers (counts, levels, hashes) and one
+  pass/fail line per bound; the measured dB values only with `HST_VERBOSE`.
+  Its golden file is re-recorded (still this program's own).
+- The guard takes the spec's edges: >= 50 dB at 480 Hz and below (not 500),
+  cut-off 520 Hz: 307 taps (was 407), >= 560 Hz within 0.02 dB, <= 480 Hz
+  at most -52.7 dB. `hst_gf_tick` (new `modem/hst_fwd.c`) runs it on a
+  doubled delay line with the symmetry, mirrored samples added first: 154
+  multiplies a sample, 1.23 M MAC/s at 8000 Hz (was 3.3 M direct at 407
+  taps). 64-bit sum (sum |h| is 92938, over 2^16), rounded to nearest,
+  saturated; the test checks it against the direct form on 32 000 samples.
+- `v32_default` hashes both roles (calling: line 0x93EA3185, reference
+  0xC5E4CCCC, recorded from a44426a's v32/ with gcc and clang) and runs
+  30 -> 12 -> 30 symbols mid-stream (the history past 18 cleared; without
+  the clearing both checks fail).
+- `tools/gen_hst_tabs.py` writes only when run as a program.
+- The spec's "about 24 symbols" now says 30 and why.
+- The pulse's cost against 24 symbols: 12 MACs a sample (96 k MAC/s), not
+  60 (the first report counted all 10 phases).
+
+CPU levers for later (the CPU task; neither changes V.32):
+- v32tx computes V.32's 12-tap echo canceller reference for HST too, which
+  has no canceller: 192 k MAC/s.
+- V32_TXD's 6-symbol lag between the reference and the line (2.5 ms of
+  transmit delay) serves no purpose in HST.
+
+    build/test_hst_fwd -> test_hst_fwd: 23 checks, 0 failures
+    make verify -> VERIFY PASS (640 s; golden 149 identical, test_hst_fwd's
+                   re-recorded (its own); bench 17, replay 636 identical;
+                   armv7hf and big-endian short-cmp identical; ubsan pass;
+                   fixed 110 objects, 0 float helpers)
+
+## hst 15: the forward transmitter and its provisional training (2026-11-25)
+
+`hst_ftx_t` (`modem/hst.h`, `modem/hst_fwd.c`): v32tx on `hst_fpulse`
+(`v32tx_set_pulse` after `v32tx_init`), `answer` 0 so that v32tx's own
+scrambler is GPC (ruling F7: the polynomial is why, recorded in
+hst_fwd.c); data through `v32_encode` at rate index code - 2.
+`hst_ftx_train(t, code, long_form)` sends S1 180 (V.32's S), S2 72 (S-bar),
+S3 3096 or 200, then data: 3348 symbols (1.395 s) or 452 (188 ms). S3 is
+ones through GPC from zero, Table 4's dibits on all 4 points from its first
+symbol (V.32's TRN starts with 256 on A and C). The constants are commented
+"provisional: Task 20 / R1"; `HST_OPEN_CODE` 4. `HST_FTX_DELAY` is 70 samples
+(a compile-time check; V32_TX_DELAY's 40 is V.32's pulse's).
+
+v32tx gains one mode, `V32_TX_STATE` (send the state in `abcd`), which V.32
+never sets: S3's and V.17's conditioning points need a chosen state a
+symbol. V.32's output is unchanged (test_hst_fwd's v32_default hashes, the
+bench hashes).
+
+`-DHST_PROFILE_BM`: `HST_OPEN_CODE` 3, the long form V.17's (256 AB, 2976
+conditioning from GPC state 0x2ECDD5 mapped 00 C, 01 D, 11 A, 10 B, 64
+bridge as v32tx's rate sequence 0x0111, 48 ones at the rate: 3344
+symbols, then data), `HST_3R_TRAINS` 1. (Segment 4's differential start
+took the bridge's first state's 4800 label, V.17's only when that state is
+B, which it always is here; the review fixes below make it V.17's for any.) `make check-hst-bm` (in `make check`) builds
+`HST_BM_TESTS` (test_hst_fwd) in `$(BUILD)/bm` with it and runs them; their
+golden files are `test/golden/out/bm/<program>.txt` (`print-golden` lists
+`bm/<program>`).
+
+`sizeof(hst_ftx_t)`: 200 octets on x86-64, 184 on ARMv5 (v32tx_t 160 / 148).
+Not yet in `answer_t.u`; `v90m_mem_size()` unchanged.
+
+    make -s build/test_hst_fwd (before the code) -> 36 errors: unknown type
+                   name 'hst_ftx_t', 'HST_SEG_DATA', 'HST_S1_SYMS' undeclared ...
+    build/test_hst_fwd -> test_hst_fwd: 91 checks, 0 failures
+      train_long, code 4: S1 180 S2 72 S3 3096 ...; data from symbol 3348 (1395 ms)
+      train_short, code 2..6: S1 180 S2 72 S3 200 ...; data from symbol 452 (188 ms)
+      trn: long S3, 3096 symbols: 0 unlike GPC's, 2340 unlike GPA's
+    make check-hst-bm -> test_hst_fwd: 96 checks, 0 failures
+      bm: long training 256 2976 64 48 ...; data from symbol 3344 (1393 ms)
+      bm: unlike: AB 0, first 16 0, conditioning 0, bridge bits 0, ones ... 0
+    mutations: answer 1 (GPA) -> trn 4 failures; bridge word 0x0110 -> bm 1 failure
+    api_test_api (x86-64; ARMv5 under qemu) -> 1030 / 1020 checks, 0 failures
+    make verify -> VERIFY PASS (654 s; golden 150 identical: test_hst_fwd's
+                   re-recorded (its own), bm/test_hst_fwd's new; bench 17,
+                   replay 636 identical; armv7hf and big-endian short-cmp
+                   135 identical; ubsan pass; fixed 110 objects, 0 float helpers)
+
+### hst 15, review fixes (2026-11-25)
+
+- **Ruling (I-1):** under `-DHST_PROFILE_BM` every training is V.17's long
+  train: the opening, and a retrain, a reversal, 0x2R and recovery as well
+  (`hst_ftx_train` ignores `long_form` when `HST_LONG_V17`): BinModem's
+  receiver trains on nothing else, and BinModem itself always sends the
+  long form. Recorded in hst_fwd.c. New BM case `bm_short`: a short
+  training asked for at every code 2..6, from data, sends the V.17 long
+  train. `s1_s2`, `train_short` and `trn` test the HST-shaped training and
+  run in the default build only.
+- **M-2:** segment 4's differential encoder starts from the bridge's first
+  symbol's Y1 Y2 in V.17's labelling (A 11, B 01, C 10, D 00, the same at
+  every rate; our 7200 set's; our 9600-14400 sets, V.32bis's, are on
+  another scale and do not hold A..D): v32tx is given the state whose 4800
+  label is that Y1 Y2 (A -> C, B -> B, C -> D, D -> A); at 4800 the state
+  itself. The train is fixed, so that first state is always B (where the old
+  start was already right). `bm` now checks: A..D in the 7200 set with those
+  labels; segment 4's first Q1 Q2 against the scrambled ones by Table 1 in
+  every V.17 training (Table 2 at 4800); and, with the kept state replaced
+  after the bridge, all four starts at codes 3..6 (the old start: 12 of 16
+  unlike).
+- **M-1:** S3's 4 points from its first symbol: the reason is that our
+  receiver trains decision-directed on all 4 after AB (hst-facts.md and the
+  `K_TRN` comment corrected).
+- **M-4:** hst_fwd.c includes v32_priv.h for `v32_label_abcd` alone; the
+  comment says so.
+- **M-5:** the bridge's first state is taken once, in `next_symbol` (the
+  bridge's second symbol), not tested every sample.
+- **Note (M-3):** the BM build (`bm/test_hst_fwd`) belongs in
+  `verify-phase` once, before Task 25 ships a BM build (Task 26): no ARM or
+  port run builds it yet.
+- **Note (M-6):** `hst_ftx_stop` drops straight to silence; BinModem ends a
+  burst with V.17's turn-off (32 symbols of scrambled ones, 48 quiet). That
+  is for the reversal tasks (21-22) under the BM profile.
+
+    build/test_hst_fwd -> test_hst_fwd: 91 checks, 0 failures
+    make check-hst-bm -> test_hst_fwd: 111 checks, 0 failures
+      bm short asked, code 2..6: training 256 2976 64 48 ...; segment 4's start 0
+      bm: segment 4 from each of A..D at codes 3..6: 0 of 16 unlike V.17's start
+    mutation: the old start (the state itself) -> 12 of 16 unlike, 1 failure
+    make verify -> VERIFY PASS (931 s; golden 150 identical, bm/test_hst_fwd's
+                   re-recorded (its own), test_hst_fwd's unchanged)
+
+## hst 16: the forward receiver: AB acquisition on qamrx, decision-directed training, stored equaliser (2026-11-25)
+
+`hst_frx_t` (`modem/hst.h`, `modem/hst_fwd.c`): `hst_gf_t` (the guard
+high-pass, now in the receiver's state), `qamrx_t` (`qamrx_init(r, 2400, 3,
+4)`), `v32_vit_t`. `hst_frx_init/set_code/tick/state/store/restore/snr`;
+`hst_eqstore_t` (taps and carrier frequency). qamrx is not changed: the
+receiver sets its taps, frequency and `running` itself, so V.34's and
+V.90/V.92's outputs are untouched (golden, replay, bench identical). The
+spec's design held; no fallback to v32rx was needed.
+
+- **AB [OURS]:** single-bin detectors at 600 and 3000 Hz on the guard's
+  output (exact phases: both repeat in 40 samples), each at least 1/16 of
+  the power, the power at least -43 dBm0, for 40 ms. The symbol timing is
+  the turn of 600 x conj(3000) (2400 Hz times a symbol centre's time);
+  the carrier offset is the turn of each tone against itself 40 samples
+  back (a clock offset turns them oppositely and cancels). Without the
+  offset estimate, -7 Hz falsely entered data mode on 3 of 24 seeds.
+- **The first equaliser:** the transmit pulse's matched filter, read from
+  `hst_fpulse` (the carrier folded in) at T/3, scaled so that A..D come out
+  at their size (`MF_GAIN` 29; at 4 they came out at 0.14 of it and the
+  normalised carrier and timing errors were 7 times too loud: training
+  never converged). Through the transmitter and the receiver as it starts
+  (nothing adapted) S3's points are 32.9 dB above their scatter; through
+  the test line, 13.9 dB.
+- **Training:** decision-directed on A..D with the spec's flags
+  (`QRX_EQ | QRX_CARRIER | QRX_TIMING | QRX_TFAST`), step 9 (8 diverges; at
+  10 a short S3 left 14400 in error on 14 of 32 seeds), until the error has
+  held under -20 dB for 100 symbols, then 12. Two rules the line needed:
+  no equaliser update while the last 8 decisions alternate (S and S-bar
+  have power at 600, 1800 and 3000 Hz only: adapted on them, the equaliser
+  wandered elsewhere and S3 began with a burst of errors), and no update at
+  all on a point off the 4 (the first data points, trained against A..D at
+  the fast step, wrecked the taps at 14400). The error measure is our own
+  (smoothed over 16 symbols from the first): qamrx's starts at 0 dB and
+  falls at 1/64 a symbol, which the matched filter has long left behind.
+- **Data:** at 3..6 when more than 3 of the last 8 points are farther from
+  A..D than 4 times the error's RMS (1.2 to 2.5 units: 50 to 88 % of each
+  rate's points, e^-16 of a training point), gated on the error before
+  those 8 (under -14 dB, or the hold reached); the decoder is given the
+  window from its oldest off point. At code 2 once S and S-bar have been
+  over 24 symbols. Before the hold, data mode adapts at step 10 without
+  QRX_TFAST; after it, 13.
+- **TRN at code 2:** V.32's TRN is Table 4's dibits of scrambled ones,
+  mapped directly; through the differential decoder (as 4800 data must be
+  read) it gives random bits (393 ones in 758, checked), not ones as the
+  spec says. So the receiver reads the 4 points directly under each quarter
+  turn as well; while one of them gives TRN (8 symbols of ones, found only
+  in training) its bits are given as ones, and the data descrambler is
+  loaded from it, so the data after TRN descrambles from its first bit.
+- **Stored equaliser:** `hst_frx_store` copies the taps and frequency;
+  `hst_frx_restore` returns to listening and the next start uses them in
+  place of the matched filter and the AB estimate.
+
+Sizes (x86-64 / ARMv5): `hst_frx_t` 3200 / 3200 (guard 1232, qamrx 1112,
+Viterbi 588), `hst_eqstore_t` 584 / 584, `hst_ftx_t` 200 / 184,
+`hst_btx_t` 256 / 244, `hst_gf_t` 1232; with track B's two `hst_brx_t`
+(1568 each) the HST state so far is 7376 octets (x86-64), under the 12 KB
+target and the 45096 limit. Not yet in `answer_t.u`: `v90m_mem_size()`
+unchanged (test_api).
+
+CPU, ARMv5 (qemu `-one-insn-per-tb -d exec,nochain`, a scratch bench
+replaying a recorded code-6 call: long training then data): seconds 3 to 4,
+14400 data mode, 30.73 M instructions (105528861 - 74800911); training
+(seconds 0.2 to 1.6) about 28 M a second. By function (tools/qprof):
+`v32_vit_step` 9.35 M, `hst_gf_tick` 8.89 M, qamrx 9.93 M (produce 4.06,
+eq_out 3.23, qamrx_update 2.29, qamrx_tick 0.36), the rest of hst_frx 0.7 M,
+the bench's file reads 0.9 M: the receiver about 29.8 M. The spec's "holding
+back" (receiver + back transmitter 1.8 M + MNP) is to be under 30 M: it is
+over by some 2-3 M. Levers: the guard (307 taps, 8.9 M; spec: "a cheaper
+guard filter"), the equaliser at T/2, the Viterbi's 128-point search
+(v32's, shared with V.32bis). For `make cost-hst` (milestone 4) to settle.
+
+`test_hst_fwd` (golden re-recorded: 91 -> 129 checks; bm 111 -> 123; only
+the count lines and the new lines after the old ones differ): `acq_long`,
+`acq_short` (nothing stored) at codes 2..6, `acq_offset` (+-7 Hz, +-100
+ppm, 14400), `stored_eq` (codes 3 and 6), `trn_as_ones`, `zero_isi` (the
+pulse against itself at whole symbols -49.4 dB; through the transmitter and
+the receiver's start 32.9 dB, 31.7 on V.17's conditioning); in the BM
+build `acq_v17` at codes 2..6 and `zero_isi`. The line: v32line, mu-law, 6
+dB, the mild loop { 0.3, 1, -0.5, 0.3 }, 25 ms, noise 30 dB under the
+signal. 10^5 data bits a case (BER < 1e-5), 10^4 under TEST_SHORT.
+
+    make -s build/test_hst_fwd (before the code) -> undefined reference to
+                   hst_frx_init, hst_frx_tick, hst_frx_state, ...
+    with stub functions (never leaving IDLE) -> acq_long 10 checks, 10 failures;
+                   trn_as_ones 2 of 2; zero_isi 1 of 2 (the pulse's half passes)
+    build/test_hst_fwd -> test_hst_fwd: 129 checks, 0 failures (5 s)
+    make check-hst-bm -> test_hst_fwd: 123 checks, 0 failures
+    HST_VERBOSE: data mode 1462 ms after a long training began (the data's
+                   arrival), 255 ms after a short one; SNR 30-31 dB; with the
+                   equaliser restored, tracking before the data came
+    seed sweeps (scratch, 10^4 bits): 32 seeds x acq_long, acq_short,
+                   acq_offset, stored_eq, trn_as_ones: 0 failures; 24 seeds
+                   x acq_v17: 0 failures
+    clang -fsanitize=undefined, both profiles -> output identical to gcc's
+                   (it found i << 32 with i negative in ab_freq: now a product)
+    qemu-arm ARMv5 short set -> 129 checks, 0 failures, identical to the
+                   host's -DTEST_FORCE_SHORT (270 s; tools/test-times.txt)
+    make verify -> VERIFY PASS (725 s; golden 150 identical, bench 17,
+                   replay 636; armv7hf and big-endian short-cmp 135 identical)
+    make check-arm ARM_CC=$A5 (ARMv5, short) -> ALL ARM CHECKS PASS
+
+### hst 16, review fixes (2026-11-25)
+
+- **The receiver's own ends (ruling).** It reports them through
+  `hst_frx_state` and listens for AB again; what to do about them (retrain,
+  wait, end) is Task 23's scheme's.
+  - `HST_FRX_NOCARRIER`: the guard's output under -48 dBm0 for 300 ms in
+    training or data. A dropout is clamped from 20 ms on, or as soon as
+    the power is 10 dB under its slow (0.5 s) mean: no bits, nothing
+    adapted. If the power is back (over -45 dBm0, within 10 dB) before
+    300 ms, all goes on. The equaliser and frequency are kept for the next
+    training.
+  - `HST_FRX_UNLOCKED`: in data mode the error over 256 symbols above
+    `lock_mse[code]` for 1200 symbols. The thresholds, -5.8, -12.8,
+    -15.8, -19.0, -21.9 dB at codes 2..6, are 1 dB under the noise floor
+    of the rate's hard decisions (noise alone, decided to the nearest
+    point: s^2 / 6 over the set's power, -4.8, -11.8, -14.8, -18.0, -20.9
+    dB). A flat -10 dB never fires at 14400, where garbage reads -21 dB.
+  - `HST_FRX_TRAINFAIL`: no data mode 3600 symbols after the start.
+  - The data-mode gate's `mse0` is now the error 8 symbols back. Taken
+    only when none of the last 8 points was off, it was biased low on a
+    poor line, and data mode was declared at 6 dB.
+- **Gain loop in data mode** (on qamrx's input):
+  - A power step is set at once by the root of the power ratio, then
+    G_FLUSH symbols unmeasured. It counts as a step when the points' power
+    over 32 symbols is a quarter or more off, or over 128 symbols a sixth
+    or more off, for 64 symbols, within 10 dB.
+  - While the power is a quarter off over 32 symbols, or 30 % off over 8,
+    or during the flush, nothing else adapts.
+  - Otherwise the gain tracks the power, at 2^-8 or 2^-10 a symbol.
+  - What the tries showed:
+    - Decision-directed loops and an overshooting continuous loop both
+      fed wrong decisions to the carrier loop. It was kicked a Hz off
+      within 2-3 symbols and took seconds to come back.
+    - The 8-symbol power is the quickest decision-free sign; flapping is
+      harmless there, it only pauses adaptation.
+    - Error-based freezes broke ±7 Hz tracking.
+- **qamrx API (ruling), additive:** `qamrx_stop`, `qamrx_get_eq`,
+  `qamrx_sync_eq` (`qamrx_sync`, then the taps loaded held to ±QRX_CMAX,
+  then the frequency). No existing function changed. hst_frx writes no
+  qamrx field and reads only the point (`zr/zi`). The
+  taps' bound now holds however often they are kept and loaded again.
+- **Spec amendment:** "Forward channel: receiver" step 4, the TRN-at-4800
+  sentence replaced with the reviewer's wording.
+- **Smaller fixes:**
+  - `train_reset` shared by init and start.
+  - `hst_frx_set_code`'s lost `V32_VDEPTH` symbols documented.
+  - `hst_frx_snr` zeroed by `hst_frx_restore`.
+  - AB needs both tones together at 1/4 of the power as well: 14400
+    data back after a cut once passed for AB on 1/16 each.
+
+`test_hst_fwd` (golden re-recorded: 129 -> 162 checks, the old lines
+unchanged; bm unchanged at 123), new cases:
+
+| case | what it checks |
+|---|---|
+| `carrier_loss` | codes 2, 4, 6: NOCARRIER within 500 ms of the caller's stop, no bits from 200 ms on |
+| `carrier_return` | NOCARRIER after a 1 s cut. The data back without a training: still NOCARRIER, no bits. A short training then starts from the kept equaliser: trained before the data, no error from its 41st symbol |
+| `dropout` | 100 ms, codes 2, 4, 6: data mode kept, no error from 4000 bits on; the last errors 320-927 bits after |
+| `train_fail` | 15 dB, codes 3 and 4: not in training 2.2 s on. 6 dB: TRAINFAIL, no bits |
+| `level_step` | -1 / +3 dB at 14400, -2 / +6 dB at 9600: data mode kept, no error from 16000 bits on; the last errors 5442 / 61 / none / 41 bits after |
+| `lock_loss` | the line's carrier 40 Hz off at 14400: UNLOCKED in 611 ms, no bits |
+
+    seed sweep (scratch, 24 seeds, 10^4 bits): acq_*, offsets, stored_eq,
+                   trn_as_ones, carrier_*, dropout, train_fail, lock_loss:
+                   0 failures; level_step: 92 of 96 runs clean, 4 end
+                   UNLOCKED (the carrier loop kicked before the step is seen)
+    clang -fsanitize=undefined, both profiles -> identical to gcc's
+
+CPU, ARMv5, the same bench and recording (14400 data, seconds 3 to 4):
+30.74 M instructions; the receiver alone about 29.8 M (the bench's reads
+0.9 M), as before the fixes. By function: `hst_gf_tick` 7.66 M (8.89 before:
+the four-pair unroll, output identical; a two-pointer walk measured worse,
+7.96), `v32_vit_step` 9.35, qamrx 9.77, the rest of hst_frx (now the
+carrier detect, the gain loop and the lock measure) 1.19 + 0.56 of 64-bit
+division (0.64 before the gain loop's step became a constant division).
+**The CPU task's target (milestone 4, `make cost-hst`): the forward
+receiver alone ≤ 26 M**, so that holding back (with the back transmitter's
+1.8 M and MNP) is under 30 M. The levers: a cheaper guard (the delayed
+input less a decimated low-pass, or a shorter one with the matched
+filter's own rejection counted), and an optional T/2 mode of qamrx as a new
+init option (V.34 untouched). The Viterbi decoder stays as it is (V.32bis's).
+
+    build/test_hst_fwd -> test_hst_fwd: 162 checks, 0 failures (5.5 s)
+    make check-hst-bm -> test_hst_fwd: 123 checks, 0 failures (unchanged)
+    qemu-arm ARMv5 short set -> 162 checks, 0 failures, identical to the
+                   host's -DTEST_FORCE_SHORT (381 s; tools/test-times.txt)
+    make verify -> VERIFY PASS (534 s; golden 150 identical, test_hst_fwd's
+                   re-recorded (its own); replay 636 and bench 17 identical:
+                   V.34, V.90/V.92 and k56d unchanged by the qamrx additions;
+                   armv7hf and big-endian short-cmp 135 identical)
+
+### hst 16, review fixes, second round (2026-11-25)
+
+- **Carrier loss against the data's level.** A loss went unseen when the
+  line's noise, left after the carrier, stayed above -48 dBm0: the
+  receiver stayed in data mode at full rate (30 and 25 dB lines), or saw
+  it only after 6-10 s (20 dB, -40 dBm0 of noise). The relative clamp
+  compared with a mean that decayed (2^-12 a sample), so it let go after
+  some 2 s; and the gain loop's freeze, which a power more than 10 dB
+  down never ends, kept the lock count at 0.
+  - Low is now under -48 dBm0, or 10 dB under the signal's level `pref`.
+    That level is taken at the start, follows the signal only while the
+    receiver is well and within 3 dB of it, and is set again with a level
+    step's gain: held, not decaying.
+  - Low for HST_FRX_LOSS_MS (now 200 ms) is NOCARRIER.
+  - Once counting, the count goes on until the power is back (over -45
+    dBm0 and within 9 dB of the level). A level between the two no longer
+    clamps for ever (the dead band).
+  - The lock count runs through the gain loop's freezes as well.
+- **The clock through clamps and freezes.** The clamp, the gain loop's
+  freezes and training's off-grid points called qamrx_update with no
+  flags, and with QRX_TIMING off qamrx's clock integrator is not applied.
+  A 100 ms dropout at 9600 on the harsh line at -7 Hz lost lock on 3 of
+  12 seeds. They now pass the point as its own decision with QRX_TIMING
+  alone (`clock_only`): a zero error, the integrator still on (the
+  reviewer's variant). The harsh line: 12 of 12 recovered, 0 errors
+  (`harsh_dropout`).
+- **The data gate's `mse0`**: the error 8 symbols back, but taken only
+  while none of the last 8 points is off, then held. Round 1's "8 back"
+  rose with data's first points and shut the gate before 4 were counted:
+  on a 20 dB line, where the error sits near -19 dB and the hold never
+  comes, 9600's long training ended in TRAINFAIL on 2 of 24 seeds. The
+  error taken from before the window does not overlap it: not the
+  selection bias that declared data mode at 6 dB.
+- **Gain loop division.** `g d / 2pt` is computed as `(g d / 2^21) /
+  set_pw[code]`, the second a 32-bit division by a constant (two
+  truncating divisions by positive numbers are one, so the result is
+  exactly the 64-bit division's). There is no 64-bit division by a
+  variable.
+- **Names.** "The lock thresholds" (-5.8 ... -21.9 dB, `lock_mse`) and
+  "the noise floor of the rate's hard decisions" (-4.8 ... -20.9 dB) are
+  named so in hst.h, hst_fwd.c and here.
+- **Ruling:** no fourth qamrx function. UNLOCKED, then the scheme's
+  retrain, is acceptable for the level steps that do not recover.
+
+`test_hst_fwd` (golden re-recorded: 162 -> 187 checks, the old lines
+unchanged; bm unchanged), new cases:
+
+| case | what it checks |
+|---|---|
+| `carrier_stop_noisy` | the caller stops, the noise left above -48 dBm0 (30 and 25 dB lines with no loss, a 20 dB line, -40 dBm0 of noise; codes 2, 4, 6): NOCARRIER at 275 ms on every one, no bits from 200 ms |
+| `harsh_dropout` | 12 runs recovered, 0 errors |
+
+    seed sweep (scratch, 24 seeds, 10^4 bits): acq_*, offsets, stored_eq,
+                   trn_as_ones, carrier_*, train_fail, lock_loss,
+                   carrier_stop_noisy, harsh_dropout: 0 failures;
+                   level_step: 91 of 96 runs clean, 5 end UNLOCKED (-1 dB
+                   at 14400 twice, +3 dB at 14400 once, +6 dB at 9600
+                   twice); dropout (mild line): 2 of 24 slow at 14400
+                   (errors past 4000 bits, data mode kept); on 72 more
+                   seeds 3 slow, the same 3 of 72 with round 1's receiver:
+                   not new
+    build/test_hst_fwd -> test_hst_fwd: 187 checks, 0 failures
+    make check-hst-bm -> test_hst_fwd: 123 checks, 0 failures (unchanged)
+    clang -fsanitize=undefined, both profiles -> identical to gcc's
+    qemu-arm ARMv5 short set -> 187 checks, 0 failures, identical to the
+                   host's -DTEST_FORCE_SHORT (498 s; tools/test-times.txt)
+    CPU, ARMv5, the bench as before (14400 data): 30.67 M; the receiver
+                   alone about 29.7 M; no 64-bit division in the profile
+    make verify -> VERIFY PASS (862 s; golden 150 identical, test_hst_fwd's
+                   re-recorded (its own); replay 636 and bench 17
+                   identical; armv7hf and big-endian short-cmp 135)

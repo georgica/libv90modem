@@ -89,6 +89,25 @@ void qamrx_sync(qamrx_t *r, int32_t delay_q8)
     r->running = 1;
 }
 
+void qamrx_stop(qamrx_t *r) { r->running = 0; }
+
+void qamrx_get_eq(const qamrx_t *r, int32_t *cr, int32_t *ci, int32_t *freq)
+{
+    int k;
+    for (k = 0; k < QRX_NTAP; k++) { cr[k] = r->cr[k]; ci[k] = r->ci[k]; }
+    *freq = r->freq;
+}
+
+static int32_t held(int32_t c) { return c > QRX_CMAX ? QRX_CMAX : c < -QRX_CMAX ? -QRX_CMAX : c; }
+
+void qamrx_sync_eq(qamrx_t *r, int32_t delay_q8, const int32_t *cr, const int32_t *ci, int32_t freq)
+{
+    int k;
+    qamrx_sync(r, delay_q8);            /* cgrow 0: the taps within QRX_CMAX below */
+    for (k = 0; k < QRX_NTAP; k++) { r->cr[k] = held(cr[k]); r->ci[k] = held(ci[k]); }
+    r->freq = freq;
+}
+
 int qamrx_centroid(const qamrx_t *r)
 {
     int64_t num = 0, den = 0;

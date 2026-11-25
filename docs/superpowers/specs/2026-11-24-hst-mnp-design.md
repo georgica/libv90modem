@@ -627,9 +627,10 @@ silence, and must stay silent on all.
   firmware gives flat to 1100 Hz from the carrier, −3 dB at 1200, −36 dB
   at 1400. An RRC is flat to (1 − β)·1200 = 1100 Hz when β = 1/12, −3 dB
   at 1200, and nominally zero beyond 1300: the channel spans 500 to
-  3100 Hz. `gen_hst_tabs.py` makes the table long enough (about 24
-  symbols) for −40 dB at 400 Hz and below; a unit test checks the three
-  firmware points.
+  3100 Hz. `gen_hst_tabs.py` makes the table long enough (30 symbols,
+  Kaiser window β 1.75) for −40 dB at 400 Hz and below; a unit test checks
+  the three firmware points. (24 symbols would meet the limits at the band
+  edges with only 0.02–0.6 dB to spare; Task 14.)
 - **`v32tx` change:** it has V.32's 25 % pulse (`v32_txh`) built in,
   reaching down to 300 Hz, on top of the back channel. `v32tx_t` gains a
   pulse-table pointer and length, defaulting to V.32's, so V.32's output
@@ -699,7 +700,15 @@ end that does not depend on the training's contents:
    the Viterbi decoder. The descrambler is self-synchronising and the
    differential decoder resynchronises in one symbol, so no segment length
    is needed; HDLC finds the flags. At 4800 the data set is the training
-   set, and TRN (scrambled ones) decodes as ones: harmless idle.
+   set. TRN's dibits are mapped to A..D directly (V.32 Table 4, not
+   differentially), so read through the data path they are not ones; the
+   receiver therefore recognises TRN itself (the 4 points read directly
+   under each quarter turn and descrambled give ones for 8 symbols),
+   delivers ones while it lasts (harmless idle), and loads the data
+   descrambler from that reading, so that the data descrambles from its
+   first bit. Under the BinModem profile, V.17's bridge (descrambled 0000
+   0001 0001 0001) reaches the endpoint as bits between those ones and the
+   data; it holds no flag and is harmless. **[OURS]**
 5. **Stored equaliser:** at a reversal keep the taps and carrier
    frequency; restore them on the next training of that direction.
 

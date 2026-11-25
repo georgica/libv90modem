@@ -46,6 +46,29 @@ The back channel (hst-facts.md "Back channel"):
                  within +-0.5 dB, at least 40 dB down at 500 Hz and below.
                  Kaiser FIR, cut-offs 550 and 3700 Hz, fewest odd taps, Q15.
 
+The forward channel (hst-facts.md "Forward channel"):
+
+  hst_fpulse     the transmit pulse for v32tx_set_pulse [OURS, derived from
+                 FW]: root-raised-cosine, beta 1/12, Kaiser window, on the
+                 1800 Hz carrier, in v32_txh's layout ([10 phases a third of
+                 a sample apart][symbol age][re, im], Q14, the carrier's
+                 phase counted from the symbol's start). HST_FL, its length,
+                 and the window's beta are the shortest and the first (from
+                 0.5 up in quarters) that hold the firmware's points with
+                 room for test/test_hst_fwd.c's measurement: flat within
+                 +-0.2 dB to 1100 Hz either side of the carrier, -3 +- 0.2 dB
+                 1200 Hz off, -40 dB 1400 Hz and more above it, -45 dB at 400
+                 Hz and below. A window narrows the band at the -3 dB points,
+                 so about 24 symbols is not enough: at 24 the -3 dB points
+                 come out near -3.5 dB. Scaled so that its line RMS per unit
+                 symbol gain is V.32's (v32_tx_rms_q12): v32tx's gain holds.
+  hst_guard      the forward receiver's guard high-pass [OURS]: within
+                 +-0.5 dB from 560 Hz up, at least 50 dB down at 480 Hz and
+                 below (the spec's edges; the back channel's -20 dB band ends
+                 at 476 Hz). Kaiser FIR, cut-off 520 Hz, the fewest odd taps,
+                 Q15; run by hst_gf_tick (modem/hst_fwd.c), which uses its
+                 symmetry: (HST_GUARD_N + 1) / 2 multiplies a sample.
+
 To add a table: write a function that returns (header lines, source
 lines) and append it to TABLES.
 
@@ -230,11 +253,13 @@ def flat(h, passband, fs=FS):
     return min(pb), max(pb)
 
 
-def design(name, f1, f2, passband, stops, atten, fs=FS):
-    """The fewest odd taps whose Q15 Kaiser band-pass (cut-offs f1, f2) is
-    flat to +-0.5 dB over `passband` and `atten` dB down over each of `stops`."""
+def design(name, f1, f2, passband, stops, atten, fs=FS, trans=100.0):
+    """The fewest odd taps whose Q15 Kaiser band-pass (cut-offs f1, f2; f2 =
+    fs / 2 makes it a high-pass) is flat to +-0.5 dB over `passband` and
+    `atten` dB down over each of `stops`; `trans`, the narrowest transition
+    band in Hz, only sets where the search starts."""
     beta = 0.1102 * (atten + 2 - 8.7)
-    est = int((atten + 2 - 7.95) / (2.285 * 2 * math.pi * 100.0 / fs))     # Kaiser's, 100 Hz transitions
+    est = int((atten + 2 - 7.95) / (2.285 * 2 * math.pi * trans / fs))     # Kaiser's estimate
     for n in range(max(est - est % 2 - 39, 11) | 1, 601, 2):
         h = kaiser_fir(f1, f2, n, beta, fs)
         lo, hi = flat(h, passband, fs)
@@ -301,7 +326,116 @@ def tab_bpf():
     return h, c
 
 
-TABLES = (tab_bstep, tab_bpulse, tab_bpf)
+# ---------------- the forward channel's transmit pulse ----------------
+F_BETA = 1.0 / 12             # spec decision 11 [OURS, derived from FW]
+F_SPS = FS / 2400.0           # samples a symbol, 10/3
+F_WC = 2 * math.pi * 1800.0 / FS
+F_LENS = range(20, 49, 2)
+F_WINS = [0.5 + 0.25 * k for k in range(15)]
+
+
+def v32_rms_q12():
+    """V.32's line RMS per unit symbol gain (v32/v32_tabs.c), which v32tx's
+    gain is computed from"""
+    import re
+    with open("v32/v32_tabs.c") as f:
+        m = re.search(r"v32_tx_rms_q12 = (\d+);", f.read())
+    if not m:
+        die("no v32_tx_rms_q12 in v32/v32_tabs.c")
+    return int(m.group(1))
+
+
+def fpulse_g(L, wb):          # the baseband pulse, three points a sample, in time order
+    half = L * F_SPS / 2
+    return [rrc((n / 3.0 - half) / F_SPS, F_BETA) * kaiser((n / 3.0 - half) / half, wb) for n in range(10 * L)]
+
+
+def fpulse_db(g, f):          # power at f Hz from the carrier against the carrier, g complex or real
+    re = im = re0 = im0 = 0.0
+    for n, v in enumerate(g):
+        a = 2 * math.pi * f * n / 24000.0
+        vr, vi = (v.real, v.imag) if isinstance(v, complex) else (v, 0.0)
+        re += vr * math.cos(a) + vi * math.sin(a)
+        im += vi * math.cos(a) - vr * math.sin(a)
+        re0 += vr
+        im0 += vi
+    return 10 * math.log10((re * re + im * im) / (re0 * re0 + im0 * im0) + 1e-30)
+
+
+def fpulse_ok(g, step):
+    """the design's margins inside test_hst_fwd's limits (+-0.5 dB flat,
+    -3 +- 0.5 dB, -36 and -40 dB): the worst flatness, the -3 dB points,
+    the most power 1400 Hz and more above, and 400 Hz and below"""
+    e = [fpulse_db(g, f) for f in (-1200, 1200)]
+    if max(abs(d + 3.0103) for d in e) > 0.2:
+        return None
+    low = max(fpulse_db(g, -f) for f in range(1400, 1801, step))
+    if low > -45:
+        return None
+    high = max(fpulse_db(g, f) for f in range(1400, 2201, step))
+    if high > -40:
+        return None
+    flat = [fpulse_db(g, f) for f in range(-1100, 1101, step)]
+    if min(flat) < -0.2 or max(flat) > 0.2:
+        return None
+    return min(flat), max(flat), e, high, low
+
+
+def tab_fpulse():
+    for L in F_LENS:
+        for wb in F_WINS:
+            if fpulse_ok(fpulse_g(L, wb), 10):
+                break
+        else:
+            continue
+        break
+    else:
+        die("fpulse: no length up to %d symbols" % F_LENS[-1])
+    g = fpulse_g(L, wb)
+    # scaled so that its line RMS per unit symbol gain is V.32's: v32tx's
+    # gain then holds for it (line power = sum |h|^2 / phases / 2 x mean |s|^2)
+    rms_q12 = v32_rms_q12()
+    k = (rms_q12 / 4096.0) / math.sqrt(sum(v * v for v in g) / 10 / 2 * 40)
+    qt = [[(q(g[p + 10 * j] * k * math.cos(F_WC * (p + 10 * j) / 3.0), 16384),
+            q(g[p + 10 * j] * k * math.sin(F_WC * (p + 10 * j) / 3.0), 16384)) for j in range(L)] for p in range(10)]
+    got = round(math.sqrt(sum(a * a + b * b for r in qt for a, b in r) / 16384.0 ** 2 / 10 / 2 * 40) * 4096)
+    if got != rms_q12:
+        die("fpulse: line RMS %d, V.32's %d" % (got, rms_q12))
+    # the quantised pulse, back at baseband
+    gq = [complex(*qt[n % 10][n // 10]) * complex(math.cos(F_WC * n / 3.0), -math.sin(F_WC * n / 3.0))
+          for n in range(10 * L)]
+    r = fpulse_ok(gq, 2)
+    if not r:
+        die("fpulse: the quantised pulse misses")
+    sys.stderr.write("gen_hst_tabs: fpulse: %d symbols, Kaiser %.2f; +-1100 Hz %.2f..%.2f dB, +-1200 Hz %.2f %.2f dB, "
+                     ">= +1400 Hz %.1f dB, <= -1400 Hz %.1f dB\n" % (L, wb, r[0], r[1], r[2][0], r[2][1], r[3], r[4]))
+    h = [define("HST_FL", L, "pulse length, symbols (v32.h's V32_TXL_MAX)"),
+         "/* the forward pulse for v32tx_set_pulse: RRC beta 1/12, Kaiser window",
+         " * (beta %g), on the 1800 Hz carrier, in v32_txh's layout: [phase, thirds" % wb,
+         " * of a sample][symbol age][re, im], Q14; its line RMS is V.32's (v32_tx_rms_q12) */",
+         "extern const int16_t hst_fpulse[10][HST_FL][2];"]
+    c = ["const int16_t hst_fpulse[10][HST_FL][2] = {"]
+    for row in qt:
+        c.append("  {")
+        c += ["    " + " ".join("{%6d,%6d}," % t for t in row[i:i + 6]) for i in range(0, L, 6)]
+        c.append("  },")
+    c.append("};")
+    c.append("")
+    return h, c
+
+
+# ---------------- the forward receiver's guard high-pass ----------------
+def tab_guard():
+    taps = design("hst_guard", 520.0, FS / 2, (560, 4000), ((0, 480),), 50, trans=80.0)
+    h = ["#define HST_GUARD_N %d" % len(taps),
+         "/* high-pass before the forward receiver: within 0.5 dB from 560 Hz up, >= 50 dB",
+         " * down at 480 Hz and below (the back channel); Q15, linear phase, gain 1 */",
+         "extern const int16_t hst_guard[HST_GUARD_N];"]
+    c = ["const int16_t hst_guard[HST_GUARD_N] = {"] + rows(taps, 12) + ["};", ""]
+    return h, c
+
+
+TABLES = (tab_bstep, tab_bpulse, tab_bpf, tab_fpulse, tab_guard)
 
 
 def main():
@@ -322,4 +456,5 @@ def main():
         f.write("\n".join(src) + "\n")
 
 
-main()
+if __name__ == "__main__":
+    main()

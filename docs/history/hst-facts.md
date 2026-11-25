@@ -189,9 +189,11 @@ firmware's DSP (BF §3).
 - The DSP sample rate is 7200 Hz (BF §0). [FW]
 - Our pulse: root-raised-cosine with beta = 1/12. Flat to (1 - beta) x 1200 =
   1100 Hz, -3 dB at 1200 Hz, nominally zero beyond 1300 Hz; the channel spans
-  500 to 3100 Hz. `gen_hst_tabs.py` makes the table about 24 symbols long,
-  for -40 dB at 400 Hz and below; a unit test checks the three firmware
-  points (SPEC D11; spec "Forward channel: transmitter"). [OURS]
+  500 to 3100 Hz. `gen_hst_tabs.py` makes the table 30 symbols long
+  (Kaiser window, beta 1.75), for -40 dB at 400 Hz and below with the -3 dB
+  points within 0.2 dB (at 24 symbols the window pulls them to about -3.5
+  dB); a unit test checks the three firmware points (SPEC D11; spec
+  "Forward channel: transmitter"; hst 14 in PROGRESS.md). [OURS]
 - `v32tx` gets a pulse-table pointer and length defaulting to V.32's own 25 %
   table, so V.32's output stays byte-identical (spec "`v32tx` change"). [OURS]
 - Guard filters: a high-pass before the forward receiver (stop below 480 Hz,
@@ -244,10 +246,17 @@ firmware's DSP (BF §3).
 - Constants, each commented provisional (Task 20 / R1): `HST_S1_SYMS` 180,
   `HST_S2_SYMS` 72, `HST_S3_LONG` 3096, `HST_S3_SHORT` 200, `HST_OPEN_CODE` 4
   (plan Task 15). [OURS]
+- S3 maps its dibits by V.32's Table 4 from its first symbol, on all 4
+  points: our receiver, once it has found AB, trains decision-directed on
+  the 4 points A to D (spec "Forward channel: receiver"). V.32's own TRN
+  begins with 256 symbols on A and C alone, for V.32's receiver. The scrambler (v32tx's, `answer` 0: GPC) starts
+  from zero at each training and runs on into the data (hst 15 in
+  PROGRESS.md). [OURS]
 - BinModem sends V.17's long train (section `V.17 long train`) and V.17's
   turn-off (32 symbols of ones, 48 quiet): stand-ins, not HST (BF §2). [BM]
-- The `-DHST_PROFILE_BM` test build: opening code 3 (7200), the long training
-  V.17-shaped, rate requests 0x3R with a retrain. Release builds and golden
+- The `-DHST_PROFILE_BM` test build: opening code 3 (7200), every training
+  (long or short) V.17's long train, rate requests 0x3R with a retrain
+  (hst 15 and its review fixes in PROGRESS.md). Release builds and golden
   files never use it (SPEC D16). [OURS]
 
 ## V.17 long train

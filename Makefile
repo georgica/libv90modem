@@ -125,7 +125,7 @@ MODEM_SRC := modem/sintab.c modem/v34_tabs.c modem/v21.c modem/ansam.c modem/v8m
              modem/info.c modem/dpsk.c modem/probe.c modem/p2d.c modem/p2common.c modem/qamrx.c modem/ec.c modem/ecdly.c modem/tonedet.c modem/v34train.c modem/p34d.c modem/v34up.c modem/pcmenc.c \
              modem/v34mp.c modem/p2ans.c modem/v34mod.c modem/v34dx.c modem/v34ans.c modem/anstone.c modem/v8orig.c modem/orig.c modem/p2call.c modem/v34orig.c modem/v90arx.c modem/v90adec.c modem/v90dil.c modem/v90a.c modem/v90a_up90.c modem/v90a_up92.c modem/v90a_down.c modem/v90a_watch.c modem/pcmtx.c modem/v92aseq.c modem/belltone.c \
              modem/x2rec.c modem/x2map.c modem/x2tab.c modem/x2bank.c modem/x2tx.c modem/x2d.c modem/k56tab.c modem/k56enc.c modem/k56tx.c modem/k56d.c modem/v8bismsg.c modem/v8bis.c \
-             modem/hst_tabs.c modem/hst_back.c \
+             modem/hst_tabs.c modem/hst_back.c modem/hst_fwd.c \
              $(wildcard v90/*.c) $(wildcard v34/*.c) $(wildcard v32/*.c) $(wildcard v92/*.c)
 T_SRC    := $(SIM_SRC) $(MODEM_SRC)
 HDRS     := $(wildcard modem/*.h sim/*.h test/*.h v90/*.h v34/*.h v92/*.h v90/test/v90_dec.h)
@@ -136,7 +136,7 @@ TESTS    := test_g711 test_noise test_filt test_resamp test_channel test_v21 tes
             test_v22tx test_v22rx test_v22bis test_v14 test_answer test_info test_dpsk test_probe test_p2 test_qamrx test_ec test_ecdly test_v34train test_sres test_answer_v90 test_p34 test_pcmenc \
             test_v34mp test_p2ans test_v34mod test_v34dx test_v34call test_answer_v34 test_answer_v32 test_answer_v90_v34 \
             test_p2_v92 test_v92call test_answer_v92 test_v92real test_answer_lin \
-            test_anstone test_v8orig test_orig test_orig_v32 test_p2call test_orig_v34 test_v90arx test_v90arx_robust test_v90adec test_v90dil test_p2v90 test_v90a test_orig_v90 test_orig_v90_te test_orig_seeds test_orig_retrain test_pcmtx test_v92aseq test_p2v92a test_v92a test_orig_v92 test_belltone test_orig_bell test_realcheck test_x2_pad test_answer_x2 test_x2rec test_x2map test_x2tx test_k56tab test_k56enc test_k56tx test_v8bismsg test_v8bis test_answer_k56 test_clock test_shared test_fixmath test_v34up test_ans_table test_exact test_interp_bound test_v90arx_paths test_small_exact test_v92_hostile test_hst_back test_hst_det
+            test_anstone test_v8orig test_orig test_orig_v32 test_p2call test_orig_v34 test_v90arx test_v90arx_robust test_v90adec test_v90dil test_p2v90 test_v90a test_orig_v90 test_orig_v90_te test_orig_seeds test_orig_retrain test_pcmtx test_v92aseq test_p2v92a test_v92a test_orig_v92 test_belltone test_orig_bell test_realcheck test_x2_pad test_answer_x2 test_x2rec test_x2map test_x2tx test_k56tab test_k56enc test_k56tx test_v8bismsg test_v8bis test_answer_k56 test_clock test_shared test_fixmath test_v34up test_ans_table test_exact test_interp_bound test_v90arx_paths test_small_exact test_v92_hostile test_hst_back test_hst_det test_hst_fwd
 # the slowest programs, split by case: `prog --cases` prints the count, `prog N`
 # runs case N alone, no argument all of them (tools/split-check.sh); the ARM
 # runner (check-arm) runs each case as its own job
@@ -395,8 +395,19 @@ endif
 test-times:
 	@tools/par-run.sh --merge $(BUILD)/test-times.txt tools/test-times.txt && echo "tools/test-times.txt: from $(BUILD)/test-times.txt"
 
-check: test-all test-api test-examples test-fixtures check-symbols check-soname check-version check-headers check-diag-names
+check: test-all test-api test-examples test-fixtures check-symbols check-soname check-version check-headers check-diag-names check-hst-bm
 	@echo "ALL HOST CHECKS PASS"
+# HST's BinModem profile (-DHST_PROFILE_BM; docs/history/hst-facts.md
+# "Training"), a test build only: HST_BM_TESTS, library code and all, built
+# with it in $(BUILD)/bm and run there; their logs in $(BUILD)/log/bm, their
+# golden files test/golden/out/bm/<program>.txt
+HST_BM_TESTS := test_hst_fwd
+.PHONY: check-hst-bm
+check-hst-bm:
+	@$(MAKE) -s BUILD=$(BUILD)/bm EXTRA_CPPFLAGS="$(strip $(EXTRA_CPPFLAGS) -DHST_PROFILE_BM)" $(addprefix $(BUILD)/bm/,$(HST_BM_TESTS))
+	@echo "== the BinModem profile (HST_PROFILE_BM) =="; mkdir -p $(BUILD)/log/bm; fail=0; for t in $(HST_BM_TESTS); do \
+	   $(abspath $(BUILD))/bm/$$t > $(BUILD)/log/bm/$$t.log 2>&1 || fail=1; cat $(BUILD)/log/bm/$$t.log; \
+	 done; [ $$fail -eq 0 ]
 # Golden outputs (tools/golden.sh): every program of make check, its output
 # (less host timing) against test/golden/out/<dir>/<prog>.txt. golden runs
 # make check (PAR defaults to every CPU here) and compares; golden-record
@@ -411,6 +422,7 @@ print-golden:
 	@for t in $(TESTS); do echo $$t $(abspath $(BUILD))/$$t; done
 	@for d in $(SUBS); do $(MAKE) -s --no-print-directory -C $$d BUILD=$(SUB_BUILD) print-tests | sed "s|^.*/\([^/]*\)$$|$$d/\1 &|" || exit 1; done
 	@for t in $(API_TESTS); do echo api/$$t $(abspath $(BUILD))/api_$$t; done
+	@for t in $(HST_BM_TESTS); do echo bm/$$t $(abspath $(BUILD))/bm/$$t; done
 	@echo examples/call_loop $(abspath $(BUILD))/call_loop
 # the benches' tx and rx hashes against test/golden/bench.txt (host only)
 bench-hashes:

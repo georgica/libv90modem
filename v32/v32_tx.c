@@ -12,7 +12,8 @@ void v32tx_init(v32tx_t *t, int answer, int level, v32_getbit_fn getbit, void *u
     int i;
     t->answer = answer;
     t->mode = V32_TX_SILENCE;
-    for (i = 0; i < V32_TXL + V32_TXD; i++) t->br[i] = t->bi[i] = 0;
+    for (i = 0; i < V32_TXL_MAX + V32_TXD; i++) t->br[i] = t->bi[i] = 0;
+    t->pulse = &v32_txh[0][0][0]; t->pulse_len = V32_TXL;
     t->acc = 10; t->rot = 0; t->ref = 0; t->newsym = 0;
     t->gain = (int32_t)(((int64_t)level << 12) / v32_tx_rms_q12);
     t->scr.reg = 0;
@@ -23,6 +24,21 @@ void v32tx_init(v32tx_t *t, int answer, int level, v32_getbit_fn getbit, void *u
 }
 
 int v32tx_symbol_due(const v32tx_t *t) { return t->acc >= 10; }
+
+/* symbols of history in use: the line's, V32_TXD back, and the reference's */
+static int hist_len(int pulse_len)
+{
+    return pulse_len + V32_TXD > V32_TXL ? pulse_len + V32_TXD : V32_TXL;
+}
+
+void v32tx_set_pulse(v32tx_t *t, const int16_t *taps, int len)
+{
+    int i;
+    if (len < 1 || len > V32_TXL_MAX) return;
+    /* past the old pulse's history nothing was shifted in: no symbols there */
+    for (i = hist_len(t->pulse_len); i < V32_TXL_MAX + V32_TXD; i++) t->br[i] = t->bi[i] = 0;
+    t->pulse = taps; t->pulse_len = len;
+}
 
 void v32tx_set_mode(v32tx_t *t, v32_txmode mode)
 {
@@ -38,7 +54,7 @@ static int sbit(v32tx_t *t, int b) { return v32_scramble(&t->scr, t->answer, b);
 static void next_symbol(v32tx_t *t)
 {
     int x = 0, y = 0, i, q, n, s = -1, tmp;
-    for (i = V32_TXL + V32_TXD - 1; i > 0; i--) { t->br[i] = t->br[i - 1]; t->bi[i] = t->bi[i - 1]; }
+    for (i = hist_len(t->pulse_len) - 1; i > 0; i--) { t->br[i] = t->br[i - 1]; t->bi[i] = t->bi[i - 1]; }
     switch (t->mode) {
     case V32_TX_SILENCE: break;
     case V32_TX_AC:   s = (t->nsym & 1) ? 2 : 0; break;
@@ -47,6 +63,7 @@ static void next_symbol(v32tx_t *t)
     case V32_TX_CC:   s = 2; break;
     case V32_TX_S:    s = (t->nsym & 1) ? 1 : 0; break;
     case V32_TX_SBAR: s = (t->nsym & 1) ? 3 : 2; break;
+    case V32_TX_STATE: s = t->abcd & 3; break;
     case V32_TX_TRN:
         /* 5.2.3: scrambler from zero, ones in; 256 symbols of A / C from the
          * first bit of each dibit, then Table 4 */
@@ -84,17 +101,17 @@ static void next_symbol(v32tx_t *t)
 
 int16_t v32tx_tick(v32tx_t *t)
 {
-    const int16_t (*h)[2], (*w)[2];
+    const int16_t *h, (*w)[2];
     int32_t acc = 0, ref = 0;
     int64_t v;
-    int j;
+    int j, n = t->pulse_len;
     t->newsym = 0;
     if (t->acc >= 10) { t->acc -= 10; next_symbol(t); t->newsym = 1; }
-    h = v32_txh[t->acc]; w = v32_ech[t->acc];
-    for (j = 0; j < V32_TXL; j++) {
-        acc += t->br[j + V32_TXD] * h[j][0] - t->bi[j + V32_TXD] * h[j][1];
+    h = t->pulse + 2 * n * t->acc; w = v32_ech[t->acc];
+    for (j = 0; j < n; j++)
+        acc += t->br[j + V32_TXD] * h[2 * j] - t->bi[j + V32_TXD] * h[2 * j + 1];
+    for (j = 0; j < V32_TXL; j++)
         ref += t->br[j] * w[j][0] - t->bi[j] * w[j][1];
-    }
     v = ((int64_t)ref * t->gain + (1 << 13)) >> 14;
     t->ref = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
     v = ((int64_t)acc * t->gain + (1 << 13)) >> 14;

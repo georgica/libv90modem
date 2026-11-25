@@ -67,6 +67,16 @@ int  qamrx_tick(qamrx_t *r, int16_t x);
 /* dr/di: the point that should have been received; mu_shift: equaliser step
  * (10 = fast training ... 14 = slow tracking) */
 void qamrx_update(qamrx_t *r, int32_t dr, int32_t di, int flags, int mu_shift);
+/* For a receiver that keeps its equaliser between trainings (HST): stop
+ * producing points (the input ring and the power go on, as before the
+ * first qamrx_sync); the taps and the carrier frequency now; and
+ * qamrx_sync with taps and a frequency to start from in place of the
+ * centre spike, each tap held to +-QRX_CMAX as it is loaded, so that the
+ * taps' bound (qamrx.c, QRX_CHEAD) holds however often they are kept and
+ * loaded again. */
+void qamrx_stop(qamrx_t *r);
+void qamrx_get_eq(const qamrx_t *r, int32_t *cr, int32_t *ci, int32_t *freq);
+void qamrx_sync_eq(qamrx_t *r, int32_t delay_q8, const int32_t *cr, const int32_t *ci, int32_t freq);
 /* centre of gravity of the equaliser taps, in T/3 taps x 256 */
 int  qamrx_centroid(const qamrx_t *r);
 /* For data mode: x, or 0 when it is an impulse, more than 18 dB above the
