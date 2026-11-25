@@ -283,6 +283,22 @@ static uint32_t isqrt_u32(uint32_t v)
     return r;
 }
 
+/* a confirmed lock lost: the held bits are given (hst_brx_band) up to the
+ * newest symbol that is not 3 dB under the mean (bit 3 of a ring entry):
+ * the faded ones, and the one a cut signal (no pulse ringing out) halves,
+ * whose decision is not sure, stay back */
+static void rx_release(hst_brx_t *r)
+{
+    const int32_t n = HST_BRX_DLY;
+    int32_t k, m = r->ndly, p = (r->pdly - r->ndly + n) % n;
+    if (r->conf > 0 || r->nconf > 0) m = 0;                 /* not yet confirmed: none */
+    while (m > 0 && (r->dly[(p + m - 1) % n] & 8)) m--;
+    for (k = 0; k < m; k++) { r->rel[k] = (uint8_t)(r->dly[p] & 7); if (++p == n) p = 0; }
+    r->nrel = m;
+    r->prel = 0;
+    r->ndly = 0;
+}
+
 /* the band's power, a block at a time: carrier detect and AGC */
 static void rx_block(hst_brx_t *r)
 {
@@ -293,7 +309,10 @@ static void rx_block(hst_brx_t *r)
         if (r->cnt >= CD_BLKS) { r->cd = 1; r->cnt = 0; r->ps = p; r->nhold = 0; rx_acquire(r); }
     } else {
         r->cnt = p < CD_OFF_PW ? r->cnt + 1 : 0;
-        if (r->cnt >= CD_OFF_BLKS) { r->cd = 0; r->cnt = 0; r->locked = 0; r->grid_ok = 0; }
+        if (r->cnt >= CD_OFF_BLKS) {
+            if (r->locked) rx_release(r);
+            r->cd = 0; r->cnt = 0; r->locked = 0; r->grid_ok = 0;
+        }
         else if (p * 8 < r->ps && r->nhold < HOLD_BLKS) r->nhold++;    /* a dropout: the gain held */
         else {
             r->nhold = 0;
@@ -573,13 +592,14 @@ static int rx_symbol(hst_brx_t *r, int32_t yr, int32_t yi)
     int64_t pw = (int64_t)yr * yr + (int64_t)yi * yi, e, adj, lim;
     uint32_t a = v34_angle(yr, yi), d;
     int32_t de, dq, pd;
-    int fade, weak, psh;
+    int fade, weak, soft, psh;
 
     /* a fade: the symbol 9 dB under the mean. fade_lose in a row lose the
      * lock (a dropout under the carrier detect), and the bits held back
      * with them; fewer (a lost 20 ms packet) keep it, and their bits go
      * out with the rest */
     weak = pw * 8 < r->pref;
+    soft = pw * 2 < r->pref;                                /* 3 dB under: not released (rx_release) */
     fade = r->locked && weak;
     r->nfade = fade ? r->nfade + 1 : 0;
     r->nweak = weak ? r->nweak + 1 : 0;
@@ -645,6 +665,7 @@ static int rx_symbol(hst_brx_t *r, int32_t yr, int32_t yi)
             }
         } else if (ones(~r->okhist & 0xFFFFu) >= 8 || r->qbad >= HST_BRX_WIN || r->nfade >= fade_lose[r->lane]) {
             r->locked = 0; r->wait = 0;                     /* lost: acquire again */
+            rx_release(r);                                  /* this symbol is not in the ring */
         } else if (r->conf > 0) {
             /* the second check, before any bit is out: two fresh windows
              * after the lock, their mismatches summed, the turn in use
@@ -690,7 +711,7 @@ static int rx_symbol(hst_brx_t *r, int32_t yr, int32_t yi)
      * the bits not yet out with it */
     {
         const int32_t n = HST_BRX_DLY;
-        uint8_t in = (uint8_t)(r->bits[0] | r->bits[1] << 1 | r->bits[2] << 2), out = r->dly[r->pdly];
+        uint8_t in = (uint8_t)(r->bits[0] | r->bits[1] << 1 | r->bits[2] << 2 | soft << 3), out = r->dly[r->pdly];
         r->dly[r->pdly] = in;
         if (++r->pdly == n) r->pdly = 0;
         if (r->ndly < n) { r->ndly++; return 0; }
@@ -699,7 +720,42 @@ static int rx_symbol(hst_brx_t *r, int32_t yr, int32_t yi)
     }
 }
 
+static int rx_band(hst_brx_t *r, int32_t y);
+
+int hst_brx_flush(hst_brx_t *r, uint8_t *bits)
+{
+    const int32_t n = HST_BRX_DLY;
+    int32_t k, m = 0, p;
+    for (k = r->prel; k < r->prel + r->nrel; k++, m += 3) {
+        bits[m] = r->rel[k] & 1; bits[m + 1] = (r->rel[k] >> 1) & 1; bits[m + 2] = (r->rel[k] >> 2) & 1;
+    }
+    if (r->locked && r->conf == 0 && r->nconf == 0) {
+        p = (r->pdly - r->ndly + n) % n;
+        for (k = 0; k < r->ndly; k++, m += 3) {
+            bits[m] = r->dly[p] & 1; bits[m + 1] = (r->dly[p] >> 1) & 1; bits[m + 2] = (r->dly[p] >> 2) & 1;
+            if (++p == n) p = 0;
+        }
+    }
+    r->nrel = r->prel = 0;
+    r->ndly = r->pdly = 0;
+    return (int)m;
+}
+
+/* the band's sample; and after a lost lock, one released symbol's bits
+ * at each sample that gives none of its own */
 int hst_brx_band(hst_brx_t *r, int32_t y)
+{
+    int nb = rx_band(r, y);
+    if (nb == 0 && r->nrel > 0) {
+        uint8_t v = r->rel[r->prel++];
+        r->bits[0] = v & 1; r->bits[1] = (v >> 1) & 1; r->bits[2] = (v >> 2) & 1;
+        if (--r->nrel == 0) r->prel = 0;
+        return 3;
+    }
+    return nb;
+}
+
+static int rx_band(hst_brx_t *r, int32_t y)
 {
     const int32_t P = lanes[r->lane].P, k = rx_k[r->lane];
     int64_t g;

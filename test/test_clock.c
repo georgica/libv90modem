@@ -319,7 +319,11 @@ static void v22_call(void)
  * (the mailbox's ring drained into it, agreed and la_rx written as the
  * endpoint writes them, v42/hst_link.h). In data at 14400 / 450, the
  * answerer's clock and the back receivers' symbol counts moved on as if
- * 2^31 samples had gone by: three more seconds, data intact. ---- */
+ * 2^31 samples had gone by: three more seconds, data intact. Reversals
+ * (Task 21) add no free-running counter: hst_t's `rt` counts only within
+ * a reversal (bounded, HST_REV_BOUND_MS + 2 s at most), `reversals` is a
+ * uint32_t count, and the forward receiver held while we hold the back
+ * channel saturates its symbol counts (hst_fwd.c). ---- */
 
 static hstcall_t HCK;
 static mnppeer_t HM;

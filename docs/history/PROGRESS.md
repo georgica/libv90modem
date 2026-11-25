@@ -5819,3 +5819,55 @@ Sizes: `hstcall_t` 165712 octets (x86-64), test side only. Host run 33 s
   The extra delay is 9 samples (1.1 ms), far inside every event's slack.
 - Only the forward receiver's own goldens changed. Review fixes M1, M2
   (comments); M3 to M5 are wording and are left.
+
+## hst 21: channel reversal, both roles (2026-11-25)
+
+- `modem/ans_hst.c`: the spec's "Channel reversal" table, steps 1-4, as
+  `hst_t.rev` (HST_REV_GRANT, LISTEN, GAP, TRAIN). Holding forward, the
+  endpoint's granting LNA drained: 20 ms, then ones from the endpoint's
+  first bit between frames (`cut`: ep_idle sampled once a sample missed
+  every octet boundary when a symbol's 6 bits never ended on one, so the
+  first try waited the 0.5 s bound and the caller had trained before we
+  switched), then the switch: forward carrier off, the back receivers'
+  held bits to putbit (`hst_brx_flush`), 8 ones (the endpoint's HDLC
+  receiver aborts: its reset), back transmitter at the agreed speed
+  (preamble, then ones until the far training is in), forward receiver
+  from `eq_fwd`. Its data: epoch. Not heard within 3 s
+  (`HST_REV_BOUND_MS`): the forward channel taken back with a short
+  training, counted as a retrain (Task 23 adds the watchdogs after it).
+  Holding back, our 0x1R's LNA: back transmitter off at once, the forward
+  equaliser stored, 8 ones, both back receivers afresh, 200 ms, our short
+  training and its 48 symbols of ones, epoch. RATES at each switch, moving
+  stays 1, `reversals` counts; holding back `snr_db10` is the forward
+  receiver's. `hst_fwd.c` unchanged (store/restore were there).
+- Carried rulings: (1) Task 13 I-B: `hst_back.c` releases a confirmed
+  lock's held bits on its loss (fade, quality, carrier detect) but for the
+  symbols 3 dB or more under the mean (a cut signal halves its last one,
+  whose decision is unsure: `fades` 100 ms gave one wrong bit without that
+  trim); `test_hst_back` `stop_tail`: before, 33-42 (450) and 42-51 (300)
+  bits short of the last sent; after, none short, 12 lines a speed.
+  (2) Task 15: under `-DHST_PROFILE_BM` the forward burst ends with V.17's
+  32 symbols of ones before the switch; the forward carrier's silence
+  after it covers the 48 quiet. Not exercised: the BM build's API path
+  fails at the base already (a BM caller never reaches data in
+  `api_test_answer_hst` built with the profile at e1498b4; Task 23's
+  `bm_profile`). (3) test_clock's comment: no free-running counter added.
+- Each end now sends an LA first after a reversal (v42/mnp.c at the epoch,
+  sim/hstcall at its switch; hst-facts `Reversal` [OURS]): without it the
+  LAs lost at the switch left LTs unacknowledged, the backlog (queued plus
+  unacknowledged, D14) over 64, and a needless reversal 2 s on: rev_ours
+  made 4 reversals, rev_back300 6 (and, with the 0.5 s switch, lost the
+  call).
+- `test_answer_hst` cases 12-17: rev_caller (switch 20 ms after the LNA
+  drained, the caller's long training, RATES exchanged, reversals 1),
+  rev_ours and rev_back300 (our 0x16; short training 200 ms after its LNA,
+  the caller's receiver from its kept equaliser; reversals 2), rev_many
+  (20 reversals by 58.5 s, 25 when drained; data intact), rev_lost (taken
+  back 3000 ms after the switch), snr (snr_db10 within 0.6 dB of the
+  line's on a flat line at -40 dBm0; on the loop4 line 1.2 dB under, the
+  equaliser's noise). Golden files re-recorded: test_hst_back (+4,
+  count), test_answer_hst (+51, count), v42/test_ec_hst (`attn_out`: LAs
+  4 -> 5, the LA at the epoch).
+- `make check`: ALL HOST CHECKS PASS (x86-64; ARM, verify-phase and ports
+  not run, the owner's rule until the release).
+

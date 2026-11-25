@@ -56,7 +56,9 @@
  *    caller's training is in (the next epoch); a rate not agreed, or
  *    another class, an LNA and a count (`violations`) only;
  *  - from an attention we send or grant until the pump's epoch changes
- *    (at most MNP_HST_HOLD_MAX_MS) no LT goes, the control frames do;
+ *    (at most MNP_HST_HOLD_MAX_MS) no LT goes, the control frames do; at
+ *    the epoch's change an LA goes first (the LAs in flight at a reversal's
+ *    switch are lost, hst-facts.md `Reversal`);
  *  - holding the back channel, we ask for the forward one (0x1R at the
  *    current forward rate) when our backlog, queued plus unacknowledged,
  *    is over MNP_HST_BACKLOG octets, the far end has held the forward

@@ -1331,12 +1331,73 @@ static void echo(void)
         }
 }
 
+/* The far end's back transmitter stops at once (a channel reversal: on
+ * the LNA, Task 21; or its carrier stop after an LD): random data until
+ * then, the last of it a frame's FCS and closing flag. Every bit sent
+ * reaches us, in place: the bits held back when the lock is lost are given
+ * but for the faded symbols (the Task 13 ruling I-B). Six stop instants a
+ * line, +-7 Hz, +-100 ppm, 20 and 40 dB */
+#define TAIL_BITS 24                   /* an FCS and a flag */
+static void stop_tail(void)
+{
+    static uint8_t sent[3 * FS], got[3 * FS];
+    int s, k;
+    for (s = 0; s < 2; s++) {
+        int bps = s ? 300 : 450, bad = 0;
+        long worst = 0;
+        for (k = 0; k < 12; k++) {
+            double snr = k < 6 ? 20 : 40, nrms = LEVEL * pow(10.0, -snr / 20);
+            hst_btx_t tx;
+            hst_brx_t rx;
+            src_t src;
+            chan_t ch;
+            long n, stop_at = 2 * FS + 37L * k, ngot = 0, off = 0, i, j, short_by;
+            int found = 0;
+            int16_t y[4];
+            prbs_seed(0x7A11u + 16u * (uint32_t)k + (uint32_t)bps);
+            memset(&src, 0, sizeof src);
+            src.random = 1; src.log = sent; src.maxlog = (long)sizeof sent;
+            hst_btx_init(&tx, bps, LEVEL, getbit, &src);
+            hst_btx_preamble(&tx);
+            hst_brx_init(&rx, bps);
+            chan_init(&ch, (k & 1) ? -7 : 7, (k & 1) ? -100 : 100, nrms, 0x7A110u + (uint32_t)(16 * k + bps));
+            for (n = 0; n < 3 * FS; n++) {
+                int m, b, nb;
+                if (n == stop_at) hst_btx_stop(&tx);
+                m = chan_push(&ch, hst_btx_tick(&tx), y);
+                for (i = 0; i < m; i++) {
+                    nb = hst_brx_tick(&rx, y[i]);
+                    for (b = 0; b < nb && ngot < (long)sizeof got; b++) got[ngot++] = rx.bits[b];
+                }
+            }
+            /* where the bits given sit in those sent (the preamble's ones are
+             * given, not sent through getbit): 64 in a row from the 200th */
+            for (j = 0; ngot > 264 && j + 64 <= src.nlog && !found; j++) {
+                for (i = 0; i < 64 && got[200 + i] == sent[j + i]; i++) {}
+                if (i == 64) { off = j - 200; found = 1; }
+            }
+            /* the sent bits the stream given covers in place, from the 200th on */
+            short_by = TAIL_BITS + 1;
+            if (found) {
+                for (i = 200; i < ngot && i + off < src.nlog && got[i] == sent[i + off]; i++) {}
+                short_by = src.nlog - (i + off);
+            }
+            if (short_by > worst) worst = short_by;
+            if (short_by > 0) bad++;
+            if (verbose && short_by > 0) printf("  (stop %d, %.0f dB: %ld bits sent not given; %ld given, %ld sent, at %ld)\n", k, snr, short_by, ngot, src.nlog, off);
+        }
+        printf("stop_tail %d: data to the far end's stop, 12 lines\n", bps);
+        if (verbose) printf("  (at most %ld of the last bits sent not given)\n", worst);
+        bound("every bit sent given, the frame's FCS and flag included", bad == 0);
+    }
+}
+
 static void loop_450(int c) { loop_case(450, c, 0); }
 static void loop_300(int c) { loop_case(300, c, 0); }
 
 int main(int argc, char **argv)
 {
-    int only = t_case_arg(argc, argv, 30), c;
+    int only = t_case_arg(argc, argv, 31), c;
     verbose = getenv("HST_VERBOSE") != NULL;
     if (T_CASE(only, 1)) steps();
     if (T_CASE(only, 2)) scr17();
@@ -1362,5 +1423,6 @@ int main(int argc, char **argv)
     if (T_CASE(only, 28)) grid_ok();
     if (T_CASE(only, 29)) first_bit();
     if (T_CASE(only, 30)) echo();
+    if (T_CASE(only, 31)) stop_tail();
     T_REPORT("test_hst_back");
 }

@@ -120,15 +120,15 @@ typedef char hst_fl_is_v32_txl_max[(HST_FL == V32_TXL_MAX) ? 1 : -1];
  * rest, a few of them wrong: the stream has no gap. Faded symbols move
  * neither the loops nor the grid history.
  *
- * Losing the lock, to a fade or to the carrier detect, discards every bit
- * still held back: the whole ring, HST_BRX_DLY symbols, not just the faded
- * ones. On a carrier stop that is the last 10 to 15 symbols the far end
- * really sent before it (measured, a stop at 40 dB: the last bit given is
- * 42 line bits short of the last sent at 450, 31 at 300), so a frame sent
- * just before the far end's back transmitter stops loses its FCS and
- * closing flag. Task 21 (reversals) releases the held bits older
- * than the fade's start (plus the matched filter's 4 symbols) on a loss
- * instead, or sends 20 symbols of flags or more before a stop.
+ * Losing a confirmed lock, to a fade, to its quality or to the carrier
+ * detect, releases the bits still held back but for the faded symbols':
+ * one symbol's bits at each 1600 Hz sample after the loss (so within 14
+ * ms), while `locked` is already 0. A carrier stop is so given to its last
+ * symbol (test_hst_back `stop_tail`: every bit sent, the last frame's FCS
+ * and flag included), where discarding the ring lost the last 10 to 15
+ * symbols the far end sent (Task 13's I-B; Task 21). A lock lost to the
+ * second alias check, or to three alias checks in a row, may be 45 degrees
+ * off: its held bits are dropped.
  *
  * Carrier detect: the band's power in 10 ms blocks (before the AGC), on
  * at -44 dBm0 for 3 blocks, off under -47 dBm0 for 6 blocks (a lost 50 ms
@@ -187,8 +187,11 @@ typedef struct {
     int64_t  wsum, wp1, wds;          /* its sums: squared errors; powers, squared changes */
     int32_t  wpn, wdn;                /* the powers and the changes counted in them */
     int32_t  nfade;                   /* locked symbols 9 dB under the mean in a row */
-    uint8_t  dly[HST_BRX_DLY];        /* the last decisions' bits while locked, a ring (bit b: bits[b]) */
+    uint8_t  dly[HST_BRX_DLY];        /* the last decisions' bits while locked, a ring (bit b: bits[b];
+                                       * bit 3: the symbol 3 dB under the mean) */
     int32_t  ndly, pdly;              /* bits held back: symbols, the ring's place */
+    uint8_t  rel[HST_BRX_DLY];        /* the held bits a lost lock releases, the oldest first */
+    int32_t  nrel, prel;              /* symbols of them; the next one given */
     int32_t  conf;                    /* symbols to the second alias check after a lock (0: done) */
     int32_t  nconf;                   /* fresh windows checked after the lock (0 or 1) */
     int64_t  econf[3];                /* the first one's mismatch at r - 45, r, r + 45 */
@@ -206,14 +209,21 @@ typedef struct {
 /* bps 450 or 300 */
 void hst_brx_init(hst_brx_t *r, int bps);
 /* one sample at 8000 Hz; returns the bits given (0 or 3), in r->bits[]:
- * only while locked, and held back HST_BRX_DLY symbols (see above), so the
- * first come some 140 ms (450) or 210 ms (300) after the lock */
+ * while locked, held back HST_BRX_DLY symbols (see above), so the first
+ * come some 140 ms (450) or 210 ms (300) after the lock; and just after a
+ * lock is lost, those it releases */
 int  hst_brx_tick(hst_brx_t *r, int16_t x);
 /* one band-passed sample at 1600 Hz, as hst_brx_tick computes it at every
  * 5th sample (it returns the same). Both receivers run on one band-pass:
  * hst_brx_tick on the first, and whenever its `dec` is back to 0,
  * hst_brx_band on the second with the first's `y` */
 int  hst_brx_band(hst_brx_t *r, int32_t y);
+/* every bit held back (a confirmed lock's, and those a lost lock has yet
+ * to release) into bits[], the oldest first, at most HST_BRX_FLUSH; their
+ * number. They are given no more: the receiver is to be left, its far end
+ * still sending (the holder's switch of a channel reversal) */
+#define HST_BRX_FLUSH (6 * HST_BRX_DLY)
+int  hst_brx_flush(hst_brx_t *r, uint8_t *bits);
 /* carrier, with hysteresis */
 int  hst_brx_cd(const hst_brx_t *r);
 /* the differential decisions on the grid: 11 of the last 12, after the
@@ -346,6 +356,8 @@ int  hst_det_energy(const hst_det_t *d);
 #define HST_BM_BRIDGE   64   /* the bridge, 16 bits 8 times */
 #define HST_BM_ONES     48   /* scrambled ones at the rate */
 #define HST_BM_SCR0 0x2ECDD5u /* the conditioning's scrambler state */
+#define HST_BM_TOFF_ONES 32  /* V.17's turn-off: scrambled ones, then HST_BM_TOFF_QUIET symbols of no energy */
+#define HST_BM_TOFF_QUIET 48 /* (hst-facts.md "V.17 long train", [PUB]): the BinModem profile's end of a burst */
 
 #ifdef HST_PROFILE_BM
 /* -DHST_PROFILE_BM: a test build for runs against BinModem only (SPEC D16);
@@ -584,6 +596,22 @@ int  hst_frx_snr(const hst_frx_t *r, int64_t *num, int64_t *den);
                                          (48 symbols, V.17's segment 4) before the first data
                                          bit: the far receiver enters data on them [OURS] */
 
+#define HST_REV_DRAIN_MS   20         /* holder: our granting LNA drained, then this, then the switch [OURS] */
+#define HST_REV_GAP_MS    200         /* requester: its LNA, our back transmitter off, this, our training
+                                         [OURS; BinModem 400, BM] */
+#define HST_REV_BOUND_MS 3000         /* holder switched: no forward signal this long, the forward
+                                         channel taken back [OURS] */
+
+/* a channel reversal in progress (spec "Channel reversal"; Task 21) */
+enum {
+    HST_REV_NONE,
+    HST_REV_GRANT,                    /* holding forward: our LNA granting a 0x1R has drained; 20 ms */
+    HST_REV_LISTEN,                   /* switched to the back channel: the far end's training awaited */
+    HST_REV_GAP,                      /* holding back: our 0x1R's LNA came, our back transmitter
+                                         stopped; 200 ms */
+    HST_REV_TRAIN                     /* switched to the forward channel: our training, its ones */
+};
+
 typedef struct {
     hst_link_t    link;               /* the mailbox: zeroed at ANS_HST_WAIT, never again in the call */
     hst_det_t     det;                /* ANS_HST_WAIT's detector; its receivers are the back channel's */
@@ -598,6 +626,10 @@ typedef struct {
     int32_t       ones;               /* samples since the training's last symbol, to HST_ONES_N */
     int32_t       la_seen;            /* the caller's confirming LA has been acted on */
     uint32_t      reversals;          /* channel reversals this call (Task 21) */
+    int32_t       rev;                /* HST_REV_* */
+    int32_t       rt;                 /* samples in it */
+    int32_t       cut;                /* HST_REV_GRANT: the endpoint has been between frames since its
+                                         20 ms: ones until the switch; 1 + the symbols begun since */
 } hst_t;
 
 #endif

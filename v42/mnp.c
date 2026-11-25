@@ -787,6 +787,7 @@ void mnp_hst_poll(mnp_t *m, hst_link_t *L, unsigned ms, size_t queued)
          * granted above the cap is followed by our 0x2R now */
         m->hst_epoch = L->epoch;
         m->attn_hold = 0;
+        m->la_due = 1;          /* the LAs in flight at the switch are lost: acknowledge anew [OURS] */
         if (L->tx_bps > 0 && L->rx_bps > 0) mnp_set_rates(m, L->tx_bps, L->rx_bps);
         if (m->cap_due == 1 && m->hst_role == HST_ROLE_BACK) m->cap_due = 2;
     }

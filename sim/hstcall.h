@@ -28,6 +28,8 @@
  *    asks for the forward channel (LN 0x1R, R the current forward code);
  *    on the LNA it stops its back transmitter, waits 200 ms, and trains
  *    forward at R, long the first time, short after (`Reversal`, [OURS]).
+ *    After each switch its first frame on the new channel is an LA
+ *    (`Reversal`, [OURS]: the LAs in flight at a switch are lost).
  *  - Holding the forward channel, it takes 0x1R (once its LNA has gone,
  *    plus 20 ms: forward off, back preamble, forward receiver listening),
  *    0x2R (a short training at R) and 0x3R (by marks: 15 ms of ones at the

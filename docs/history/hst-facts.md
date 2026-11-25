@@ -677,6 +677,17 @@ As responder (we answer), from Annex A.7.1 (PS §3.1):
   (spec "Channel reversal"). [OURS]
 - BinModem's: the holder waits until its encoder and queue are empty plus 120
   ms; the requester waits 400 ms (BF §4). [BM]
+- Each end sends an LA as its first frame on its new channel once the
+  reversal is done (our endpoint at the pump's epoch; sim/hstcall at its
+  switch): the LAs in flight at the switch are lost by construction (the
+  holder stops listening at its switch, the requester stops at once on the
+  LNA), and the LTs they acknowledged would otherwise count in the backlog
+  until T401, asking for a needless reversal 2 s on (Task 21). [OURS]
+- At the holder's switch our back receivers' held bits are given, and a back
+  receiver losing a lock gives its held bits but for the faded symbols', so
+  a frame sent just before a far carrier stop arrives whole (Task 21). [OURS]
+- Under the BinModem profile the holder ends its forward burst with V.17's
+  turn-off (section `V.17 long train`) before the switch (Task 21). [OURS]
 - Bound: if the new forward signal is not detected within 3 s of the switch,
   the watchdogs take over (spec "Channel reversal"). [OURS]
 - At the API: `moving` stays 1; `bitrate` and `rx_bitrate` swap, so
