@@ -658,6 +658,88 @@ static void raw_lr_on_bad(void)
     printf("raw_lr_on_bad: LR sent %d times by 600 ms (T401 5 s)\n", r.p.est_tries);
 }
 
+/* a destructive break (LN 1) mid-transfer, from either end, 1 % of the
+ * frames lost: both ends reset their sequences once (Tables 4 and 5 note
+ * a), the link stays up, and data written afterwards arrives intact */
+static void loop_break(void)
+{
+    int from;
+    for (from = 0; from < 2; from++) {
+        mnp_peer_cfg a = cfg(1, 3), b = cfg(0, 3);
+        loop_t l;
+        mnppeer_t *s;
+        uint8_t junk[256];
+        long i, end;
+        int vs_before;
+        a.lose_ppm = b.lose_ppm = 10000;
+        loop_init(&l, &a, &b);
+        (void)loop_data(&l, (size_t)1 << 24, 3000);
+        s = from ? &l.b : &l.a;
+        vs_before = s->vs;
+        CHECK(l.ab.got > 0 && l.ba.got > 0);
+        CHECK_EQ_I(mnppeer_send_ln(s, 1), 1);
+        for (i = 0; i < 60000 && !(l.a.resets == 1 && l.b.resets == 1 && s->ln_code < 0 && s->lnq_n == 0); i++) {
+            loop_ms(&l);
+            while (mnppeer_read(&l.a, junk, sizeof junk) > 0) {}
+            while (mnppeer_read(&l.b, junk, sizeof junk) > 0) {}
+        }
+        end = l.ms + 5000;
+        while (l.ms < end) {
+            loop_ms(&l);
+            while (mnppeer_read(&l.a, junk, sizeof junk) > 0) {}
+            while (mnppeer_read(&l.b, junk, sizeof junk) > 0) {}
+        }
+        CHECK_EQ_I(l.a.resets, 1);
+        CHECK_EQ_I(l.b.resets, 1);
+        CHECK_EQ_I(mnppeer_get_ln(from ? &l.a : &l.b), 1);
+        CHECK(vs_before > 1);
+        stream_init(&l.ab, 0x5555u);
+        stream_init(&l.ba, 0xAAAAu);
+        CHECK(loop_data(&l, 16384, l.ms + 300000));
+        CHECK_EQ_I(l.ab.h_out, l.ab.h_in);
+        CHECK_EQ_I(l.ba.h_out, l.ba.h_in);
+        CHECK_EQ_I(mnppeer_state(&l.a), MNPP_CONNECTED);
+        CHECK_EQ_I(mnppeer_state(&l.b), MNPP_CONNECTED);
+        CHECK_EQ_I(l.a.rx_over_credit, 0);
+        CHECK_EQ_I(l.b.rx_over_credit, 0);
+        printf("loop_break: LN 1 from the %s: one reset each end, then 16 KiB each way %s\n",
+               from ? "responder" : "originator",
+               (l.ab.h_out == l.ab.h_in && l.ba.h_out == l.ba.h_in) ? "intact" : "DAMAGED");
+    }
+}
+
+/* while an LT keeps the line busy, an LNA for an older LN (N(RA) 0: the
+ * LN is due again) and then the matching one: no LN goes after it */
+static void raw_lna_match(void)
+{
+    static raw_t r;
+    mnp_peer_cfg b = cfg(0, 3);
+    uint8_t d[512], lna[5] = { 4, 7, 1, 1, 0 };
+    int i;
+    raw_init(&r, &b);
+    raw_frame(&r, lr_courier, (int)sizeof lr_courier, 0);
+    raw_ms(&r, 600);
+    raw_frame(&r, la_conf, (int)sizeof la_conf, 0);
+    raw_ms(&r, 300);
+    CHECK_EQ_I(mnppeer_state(&r.p), MNPP_CONNECTED);
+    for (i = 0; i < (int)sizeof d; i++) d[i] = (uint8_t)i;
+    CHECK_EQ_I((int)mnppeer_write(&r.p, d, sizeof d), (int)sizeof d);
+    CHECK_EQ_I(mnppeer_send_ln(&r.p, 2), 1);
+    for (i = 0; i < 1000 && !(r.p.ln_code >= 0 && !r.p.ln_send); i++) raw_ms(&r, 1);
+    raw_ms(&r, 100);
+    CHECK(r.p.line_framing == 3 && r.p.tx_lt > 0);
+    raw_frame(&r, lna, 5, 0);
+    lna[4] = 1;
+    raw_frame(&r, lna, 5, 0);
+    raw_ms(&r, 600);
+    CHECK_EQ_I(r.p.vsa, 2);
+    CHECK_EQ_I(r.p.ln_code, -1);
+    CHECK_EQ_I(r.p.ln_send, 0);
+    CHECK_EQ_I(r.p.ln_t, 0);
+    CHECK_EQ_I(r.p.ln_tries, 1);
+    printf("raw_lna_match: an older LNA, then the match, while an LT is out: no LN after it\n");
+}
+
 int main(void)
 {
     loop_mode3();
@@ -670,10 +752,12 @@ int main(void)
     loop_ln_full();
     loop_conf_std();
     loop_zero_credit();
+    loop_break();
     loop_no_lr();
     wire();
     raw_over_credit();
     raw_ld_codes();
     raw_lr_on_bad();
+    raw_lna_match();
     T_REPORT("test_mnppeer");
 }

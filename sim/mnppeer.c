@@ -234,7 +234,7 @@ static void send_la(mnppeer_t *p, int framing)
 static int lt_ready(const mnppeer_t *p)
 {
     int pos = (uint8_t)(p->nxt - p->ack);   /* 1: the first after N(R) */
-    if (p->state != MNPP_CONNECTED) return 0;
+    if (p->state != MNPP_CONNECTED || p->brk_wait) return 0;
     if (pos > p->credit) return 0;          /* S(k) (A.7.3.1, A.7.3.4) */
     if (p->nxt != p->vs) return 1;          /* again (A.7.3.5) */
     return p->txq_n > 0 && pos <= p->k;
@@ -313,6 +313,17 @@ static void next_frame(mnppeer_t *p)
         p->lnq_n--;
         p->ln_send = 1;
         p->ln_tries = 0;
+        /* Table 4, destructive: what has not gone is discarded, nothing
+         * more goes and what comes is discarded until the LNA; data not
+         * yet delivered is discarded */
+        if (p->ln_code == 1) {
+            p->brk_wait = 1;
+            p->txq_n = 0;
+            p->rxq_n = 0;
+            p->t401 = 0;
+            p->unacked = 0;
+            p->la_now = 0;
+        }
     }
     if (p->ln_send) {
         b[0] = 7; b[1] = T_LN; b[2] = 1; b[3] = 1; b[4] = p->vsa; b[5] = 2; b[6] = 1; b[7] = (uint8_t)p->ln_code;
@@ -324,9 +335,10 @@ static void next_frame(mnppeer_t *p)
     }
     {
         int ready = lt_ready(p), half = p->k / 2 > 0 ? p->k / 2 : 1;
-        int la = p->la_now
-              || (p->unacked > 0 && (!ready || p->unacked >= half))          /* A.7.3.3 e, f */
-              || (p->adv_credit == 0 && credit_now(p) > 0);                 /* credit back */
+        int la = !p->brk_wait
+              && (p->la_now
+                  || (p->unacked > 0 && (!ready || p->unacked >= half))      /* A.7.3.3 e, f */
+                  || (p->adv_credit == 0 && credit_now(p) > 0));            /* credit back */
         if (la) { send_la(p, p->framing); return; }
         if (ready) send_lt(p);
     }
@@ -392,6 +404,33 @@ static int our_framing(const mnppeer_t *p, int framing)
     return p->est_framing == 0 || framing == p->est_framing;
 }
 
+/* LT and LA state at its start: on link up, and after a destructive
+ * break (Tables 4 and 5 note a: every state variable but the break ones
+ * to its initial value) */
+static void seq_start(mnppeer_t *p, int credit)
+{
+    p->vs = 1; p->ack = 0; p->nxt = 1;
+    p->credit = min_i(credit, p->k);
+    p->last_nr = -1;
+    p->t401 = 0; p->retries = 0;
+    p->vr = 1; p->dup_seen = 0; p->unacked = 0;
+    p->la_now = 0;
+    p->adv_credit = p->k;
+    /* R(k) at the start: the k of the LRs (A.6.3.10) */
+    p->adv_edge = (uint8_t)p->k;
+    p->t402 = 0; p->t404 = T404_MS;
+}
+
+/* a destructive break: data not yet sent and data not yet delivered are
+ * discarded (Tables 4 and 5, A.6.7.1.4), the sequences start again */
+static void brk_reset(mnppeer_t *p)
+{
+    p->txq_n = 0;
+    p->rxq_n = 0;
+    seq_start(p, p->k);
+    p->resets++;
+}
+
 static void link_up(mnppeer_t *p, int credit)
 {
     p->state = MNPP_CONNECTED;
@@ -400,15 +439,7 @@ static void link_up(mnppeer_t *p, int credit)
      * agreed makes it 256 from here (A.6.4.1.8) */
     if (!p->cfg.originator && (p->lr_opt & 1)) p->n401 = MNPP_MAX_N401;
     p->connect_ms = p->now_ms;
-    p->vs = 1; p->ack = 0; p->nxt = 1;
-    p->credit = min_i(credit, p->k);
-    p->last_nr = -1;
-    p->t401 = 0; p->retries = 0;
-    p->vr = 1; p->dup_seen = 0; p->unacked = 0;
-    p->adv_credit = p->k;
-    /* R(k) at the start: the k of the LRs (A.6.3.10) */
-    p->adv_edge = (uint8_t)p->k;
-    p->t402 = 0; p->t404 = T404_MS;
+    seq_start(p, credit);
     /* the originator hears the establishment framing too until the
      * responder is heard in the agreed one (a repeated LR, A.7.1.3) */
     p->est_listen = p->cfg.originator && p->est_framing != p->framing;
@@ -597,6 +628,8 @@ static void on_frame(mnppeer_t *p, const uint8_t *b, int n, int framing)
             return;
         }
         p->last_layout_rx = lay;
+        /* our destructive LN is out: what comes is discarded (Table 4) */
+        if (p->brk_wait && p->phase == PH_DATA) { if (type == T_LT) p->rx_lt++; return; }
         if (type == T_LA) {
             nr = lay == MNPP_LAYOUT_STD ? b[4] : b[2];
             nk = lay == MNPP_LAYOUT_STD ? b[7] : b[3];
@@ -621,6 +654,7 @@ static void on_frame(mnppeer_t *p, const uint8_t *b, int n, int framing)
             }
             p->lnr[p->lnr_n++] = b[7];
             p->vra++;
+            if (b[7] == 1) brk_reset(p);                 /* Table 5, destructive */
         }
         p->lna_due = 1;
         p->lna_nr = b[4];
@@ -631,7 +665,9 @@ static void on_frame(mnppeer_t *p, const uint8_t *b, int n, int framing)
         if (b[4] == p->vsa) {                            /* A.7.4.6 */
             p->vsa++;
             p->ln_code = -1;
+            p->ln_send = 0;
             p->ln_t = 0;
+            if (p->brk_wait) { p->brk_wait = 0; brk_reset(p); }   /* Table 4 note a */
         } else {
             p->ln_send = 1;                              /* A.7.4.7 */
         }

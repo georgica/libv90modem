@@ -49,8 +49,13 @@
  *    every valid LN gets its LNA, except one that finds the receive queue
  *    full: it is counted (`ln_rx_full`), not taken and not acknowledged, so
  *    the sender brings it again. mnppeer_send_ln says when its queue is
- *    full. The LN's type octet is passed through as
- *    `code`; Tables 4 and 5 (what a break does to data) are not modelled.
+ *    full. The LN's type octet is passed through as `code`. Type 1, the
+ *    destructive break, follows Tables 4 and 5 and their note a: sent,
+ *    the write and read queues are emptied, no LT goes and what comes is
+ *    discarded until the LNA, then every LT/LA state variable goes back
+ *    to its start; received, the same queues are emptied and the state
+ *    reset when the LN is taken, then the LNA. `resets` counts them.
+ *    Types 2 and 3 do nothing to data.
  *
  * Layouts: standard, or Annex A's optimised LT and LA when both LRs carry
  * parameter 8 and its AND has bit 2 (A.6.4.1.8); `layout_rx_any` takes
@@ -166,6 +171,7 @@ typedef struct {
     uint8_t vsa, vra;
     int lna_due; uint8_t lna_nr;
     int lnr[MNPP_LNQ], lnr_n;     /* codes received */
+    int brk_wait;                 /* our destructive LN is out, its LNA not in */
 
     /* disconnect */
     int ld_due, ld_reason;
@@ -182,6 +188,7 @@ typedef struct {
     int rx_over_credit;           /* LTs beyond any credit we gave (N(R) + N(k)) */
     int ln_rx_full;               /* LNs not taken (and not acknowledged): queue full */
     int rx_unknown;               /* valid frames of an unknown type */
+    int resets;                   /* destructive breaks that reset the link */
     int tx_frames, rx_frames;
 } mnppeer_t;
 

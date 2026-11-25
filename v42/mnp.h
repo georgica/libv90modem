@@ -9,7 +9,25 @@
  * v42async. `tx_framing` says which framing the frame just returned by
  * mnp_tx_frame goes in: our LR and anything before the link is up go in
  * the framing the caller's LR came in, the rest in the agreed one. While
- * MNP_S_CONFIRMING the caller hears both.
+ * MNP_S_CONFIRMING the caller hears both. mnp_rx_bad is for the framing in
+ * use only (the other one's octets can look like broken frames).
+ *
+ * Receiving: the information of one LT is held at a time. The caller takes
+ * it (mnp_rx_avail, mnp_rx_consume) after every mnp_rx_frame, and sets
+ * mnp_set_busy while its own buffer has less than k x N401 octets free:
+ * our credit is k, not counted down per LT held.
+ *
+ * Breaks (A.7.4, Tables 4 and 5): an LN of type 1, 2 or 3 holds the
+ * user's data (mnp_can_send is 0) until its LNA; type 3 goes out only
+ * once the LTs stored at its request are acknowledged. Type 1, the
+ * destructive break, resets the link (Tables 4 and 5 note a): every state
+ * variable but V(SA) and V(RA) to its initial value, stored LTs and the
+ * held LT discarded. Sent: at once LTs are dropped, nothing goes and what
+ * comes is discarded until the LNA, then the reset. Received: the reset
+ * when the LN is taken, then the LNA. Each reset counts in `resets`
+ * (compare with a remembered copy, as v42lapm_t's): the caller flushes
+ * what it holds for and from the far end at that moment, and from its
+ * own mnp_send_ln(1) until the reset holds what the user sends.
  *
  * The facts, each with its source, are in docs/history/hst-facts.md,
  * sections `MNP frames`, `LR and 0xC0`, `Establishment`, `Data and
@@ -71,6 +89,7 @@ typedef struct {
     int tx_framing;              /* framing of the frame mnp_tx_frame just gave */
     mnp_lr_t lr;                 /* our reply LR */
     int lr_due, lr_tries;
+    int est_fail;                /* T401 expiries and bad frames in establishment */
     int tx_bps, rx_bps, t401_ms, t404_ms;
 
     /* sender (A.7.3.1, A.7.3.4, A.7.3.5): stored LTs ack+1 .. vs-1 */
@@ -82,7 +101,8 @@ typedef struct {
     uint8_t vh;                  /* one past the highest N(S) sent */
     int credit;                  /* N(k) of the last LA, at most k */
     int last_nr;                 /* N(R) of the last LA, -1 none */
-    int retries;
+    int retries;                 /* go-backs since N(R) last moved (A.7.3.6) */
+    int stall;                   /* T401 expiries at credit 0 with no LA */
 
     /* receiver (A.7.3.2, A.7.3.3) */
     uint8_t vr;                  /* N(S) expected */
@@ -96,7 +116,8 @@ typedef struct {
 
     /* attention (A.7.4) */
     int ln_code;                 /* our outstanding LN's type, -1 none */
-    int ln_send, ln_tries;
+    int ln_send, ln_tries;       /* ln_tries: sends of the outstanding LN */
+    int brk_wait;                /* our destructive LN is out, its LNA not in */
     uint8_t vsa, vra;
     int lna_due; uint8_t lna_nr;
     int lnq[MNP_LNQ], lnq_n;
@@ -111,6 +132,9 @@ typedef struct {
     /* framing mode 2, for the caller */
     mnp2_tx_t tx2;
     mnp2_rx_t rx2;
+
+    /* events for the layer above: compare with a remembered copy */
+    unsigned long resets;        /* destructive breaks that reset the link */
 
     /* statistics */
     unsigned long tx_lt, tx_retx, rx_lt, rx_dropped, tx_la, rx_la;
@@ -148,7 +172,8 @@ void mnp_rx_consume(mnp_t *m, int n);
 /* the user cannot take data: our credit is 0 until cleared */
 void mnp_set_busy(mnp_t *m, int busy);
 
-/* LN of this type (0..255): 0, or -1 if not connected or one outstanding */
+/* LN of this type (0..255; 1 to 3 the breaks, see above): 0, or -1 if
+ * not connected or one outstanding */
 int  mnp_send_ln(mnp_t *m, int code);
 /* 1 and the type of the next LN received, once each; 0 none */
 int  mnp_get_ln(mnp_t *m, int *code);

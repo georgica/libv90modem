@@ -4109,3 +4109,41 @@ check is ≤ 4096.
     timer hold, LN delivered twice, no go-back)         -> each caught
     test/golden/out/v42/test_mnp.txt                    -> new (a new program; nothing re-recorded)
     make verify                                         -> VERIFY PASS (471 s; golden 144 identical; log: build/verify-task4.log)
+
+Review fixes (round 1):
+
+- A repeated LR during establishment only sends our LR again (A.7.1.3 c),
+  at most N400 of ours. Rejection (LD 1) comes on the second failure, either
+  a T401 expiry or a bad frame. Before this, our LR lost, then the T401
+  resend, then the caller's own LR retry ended the call.
+- On a matching LNA, `ln_send` is cleared, and the LN branch requires an
+  outstanding LN. Before this, an LNA for an older LN followed by the
+  matching one made `mnp_tx_frame` return -1. `sim/mnppeer` had the same
+  fault, which sent an LN of type 0xFF, and is fixed the same way.
+- A destructive break (LN 1) resets the link, following Tables 4 and 5 note
+  a and A.6.7.1.4. Every state variable except V(SA) and V(RA) goes back to
+  its start, and stored LTs and the held LT are dropped. On a received LN 1,
+  the reset happens when the LN is taken, then the LNA goes. On an LN 1 we
+  send, LTs that have not gone are dropped. Nothing more goes, and what the
+  far end sends is discarded, until the LNA, then the reset. `resets` counts
+  them for the endpoint (Task 5 flushes its rings and holds the user's data).
+  `sim/mnppeer` now applies the same rules from the Annex A text, with its
+  own `resets` and `brk_wait`, and empties its write and read queues as
+  Tables 4 and 5 say.
+- LN 1, 2 and 3 hold new data (`mnp_can_send` 0) until their LNA. LN 3 goes
+  only once the LTs stored at its request are acknowledged (A.7.4.1).
+- An LN fails after N400 retransmissions, as an LT does (A.7.4.8), not after
+  N400 sends.
+- Retries count go-backs and reset only when N(R) moves. With credit 0,
+  T401 expiries count in a separate `stall`, which any LA resets. A far end
+  that alternates N(k) 0 and 8 without moving N(R) now ends in N400.
+- `test_mnp`'s N401 256 check asserts `mnp_can_send == 256` with the window
+  empty.
+
+    v42/build/test_mnp against the old mnp.c          -> 445 checks, many failures (I1, I2, I3, LN order, stall)
+    v42/build/test_mnppeer, the peer's LNA unfixed    -> raw_lna_match: ln_t 3584 and ln_tries 2
+    v42/build/test_mnp                                -> test_mnp: 445 checks, 0 failures
+    v42/build/test_mnppeer                            -> test_mnppeer: 181 checks, 0 failures
+    qemu-arm armv5 (0.9 s, 1.9 s), clang, -DMNP_FCS2=1,2,3 -> identical outputs, 0 failures
+    sizeof(mnp_t)                                     -> 3264 (x86-64), 3204 (ARMv5)
+    make verify                                       -> VERIFY PASS (597 s; golden 144 identical; log: build/verify-task4-fix1.log)

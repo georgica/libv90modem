@@ -50,6 +50,7 @@ typedef struct {
     int bps, acc;
     long ms, con_ms;
     uint32_t rng; int lose_ppm;   /* our frames lost */
+    int drop_first;               /* our first frames lost, this many */
     unsigned long our_frames, our_lost, accepts, load_fail;
     stream_t up, down;            /* up: ours to the peer; down: the peer's to us */
 } rig_t;
@@ -107,7 +108,10 @@ static int rig_tx_bit(rig_t *r)
         if (n > 0) {
             r->our_frames++;
             r->rng ^= r->rng << 13; r->rng ^= r->rng >> 17; r->rng ^= r->rng << 5;
-            if (r->rng % 1000000u < (uint32_t)r->lose_ppm) { r->our_lost++; continue; }
+            if (r->rng % 1000000u < (uint32_t)r->lose_ppm || r->our_frames <= (unsigned long)r->drop_first) {
+                r->our_lost++;
+                continue;
+            }
             if (r->m.tx_framing == 2) {
                 if (mnp2_tx_frame(&r->m.tx2, f, n) != 0) r->load_fail++;
                 if (r->last_hdlc) { r->marks = 20; r->last_hdlc = 0; }
@@ -495,7 +499,12 @@ static void t_data(void)
     CHECK(intact(&R, 16384));
     CHECK_EQ_I(R.m.n401, 256); CHECK_EQ_I(R.p.n401, 256);
     CHECK_EQ_I(R.m.layout, MNP_LAYOUT_OPT);
-    CHECK_EQ_I(mnp_can_send(&R.m) == 0 || mnp_can_send(&R.m) == 256, 1);
+    {
+        long end = R.ms + 3000;
+        while (R.ms < end) rig_ms(&R);
+        CHECK_EQ_I(mnp_unacked(&R.m), 0);
+        CHECK_EQ_I(mnp_can_send(&R.m), 256);
+    }
     CHECK(R.m.rx_lt <= 16384 / 256 + 8);
     peer_clean(&R);
     printf("data: parameter 8 = 3, N401 %d both ways, 16 KiB each way %s, LT in %lu\n",
@@ -788,6 +797,307 @@ static void t_break(void)
     printf("break: the peer's LD 255: reason PEER_DISC\n");
 }
 
+/* A.7.1.3: our LR lost, resent on T401, then the caller's LR again: our LR
+ * again, no rejection; the LA connects. Only a second T401 expiry (or bad
+ * frame) rejects. */
+static void t_repeated_lr(void)
+{
+    static mnp_t m;
+    mnp_cfg_t c;
+    mnp_peer_cfg pc = peer_cfg(3);
+    uint8_t f[MNP_MAX_BODY];
+    int n, ok;
+    mnp_cfg_default(&c);
+    mnp_init(&m, &c);
+    CHECK_EQ_I(mnp_accept_lr(&m, courier_lr, sizeof courier_lr, 3), 0);
+    CHECK_EQ_I(mnp_tx_frame(&m, f), (int)sizeof courier_lr);     /* lost */
+    mnp_tick(&m, 2000);
+    CHECK_EQ_I(mnp_tx_frame(&m, f), (int)sizeof courier_lr);     /* T401 */
+    mnp_tick(&m, 22);
+    mnp_rx_frame(&m, courier_lr, sizeof courier_lr);
+    CHECK_EQ_I(m.state, MNP_S_CONFIRMING);
+    CHECK_EQ_I(mnp_tx_frame(&m, f), (int)sizeof courier_lr);     /* the LR again */
+    mnp_rx_frame(&m, courier_lr, sizeof courier_lr);
+    CHECK_EQ_I(mnp_tx_frame(&m, f), (int)sizeof courier_lr);
+    CHECK_EQ_I(m.state, MNP_S_CONFIRMING);
+    n = la_std(f, 0, 8);
+    mnp_rx_frame(&m, f, n);
+    CHECK_EQ_I(m.state, MNP_S_CONNECTED);
+
+    /* the same, then no LA: the second T401 expiry rejects */
+    mnp_init(&m, &c);
+    CHECK_EQ_I(mnp_accept_lr(&m, courier_lr, sizeof courier_lr, 3), 0);
+    CHECK_EQ_I(mnp_tx_frame(&m, f), (int)sizeof courier_lr);
+    mnp_tick(&m, 2000);
+    CHECK_EQ_I(mnp_tx_frame(&m, f), (int)sizeof courier_lr);
+    mnp_rx_frame(&m, courier_lr, sizeof courier_lr);
+    CHECK_EQ_I(mnp_tx_frame(&m, f), (int)sizeof courier_lr);
+    mnp_tick(&m, 2000);
+    n = mnp_tx_frame(&m, f);
+    CHECK(n == 5 && f[1] == 2 && f[4] == 1);
+    CHECK_EQ_I(m.reason, MNP_R_N400);
+
+    /* the caller's LR repeated forever: at most N400 of ours, then LD 1 */
+    mnp_init(&m, &c);
+    CHECK_EQ_I(mnp_accept_lr(&m, courier_lr, sizeof courier_lr, 3), 0);
+    for (n = 0; n < 40 && m.state == MNP_S_CONFIRMING; n++) {
+        (void)mnp_tx_frame(&m, f);
+        mnp_rx_frame(&m, courier_lr, sizeof courier_lr);
+    }
+    CHECK_EQ_I(m.state, MNP_S_DISCONNECTED);
+    CHECK_EQ_I(m.lr_tries, 12);
+
+    /* over the bits: our first LR lost; the peer's LR again meets our T401
+     * resend (the review's reproduction) */
+    rig_init(&R, &c, &pc, 2400);
+    R.drop_first = 1;
+    ok = rig_connect(&R, 10000);
+    CHECK(ok);
+    CHECK_EQ_I(R.our_lost, 1);
+    CHECK(R.m.lr_tries >= 2);
+    ok = ok && rig_transfer(&R, 4096, 60000);
+    CHECK(intact(&R, 4096));
+    peer_clean(&R);
+    printf("repeated_lr: our LR lost, T401 resend, the caller's LR: LR again, connected at %ld ms; %d LRs of ours\n",
+           R.con_ms, R.m.lr_tries);
+}
+
+/* an LNA for an older LN, then the matching one: nothing more goes */
+static void t_lna_match(void)
+{
+    static mnp_t m;
+    mnp_cfg_t c;
+    uint8_t f[MNP_MAX_BODY], lna[5] = { 4, 7, 1, 1, 0 };
+    int n;
+    mnp_cfg_default(&c);
+    fl_connect(&m, &c);
+    CHECK_EQ_I(mnp_send_ln(&m, 2), 0);
+    n = mnp_tx_frame(&m, f);
+    CHECK(n == 8 && f[1] == 6 && f[4] == 1 && f[7] == 2);
+    mnp_rx_frame(&m, lna, 5);                 /* N(RA) 0: the LN is due again */
+    lna[4] = 1;
+    mnp_rx_frame(&m, lna, 5);
+    CHECK_EQ_I(mnp_tx_frame(&m, f), 0);
+    CHECK_EQ_I(m.ln_code, -1);
+    CHECK_EQ_I(m.vsa, 2);
+    CHECK_EQ_I(m.ln_tries, 1);
+    printf("lna_match: an older LNA, then the match: no frame after it\n");
+}
+
+/* LN 1 resets the link, frame by frame, each way */
+static void t_destructive(void)
+{
+    static mnp_t m;
+    mnp_cfg_t c;
+    uint8_t f[MNP_MAX_BODY], ln[8] = { 7, 6, 1, 1, 1, 2, 1, 1 }, lna[5] = { 4, 7, 1, 1, 1 };
+    int n, i, code;
+    mnp_cfg_default(&c);
+
+    /* received: what we stored and what we hold are dropped, the LNA,
+     * then the far end's N(S) 1 is taken and ours starts at 1 */
+    fl_connect(&m, &c);
+    for (i = 0; i < 2; i++) CHECK_EQ_I(mnp_send(&m, (const uint8_t *)"ab", 2), 0);
+    for (i = 1; i <= 2; i++) { n = mnp_tx_frame(&m, f); CHECK_EQ_I(lt_ns(f, n), i); }
+    n = lt_std(f, 1, (const uint8_t *)"Z", 1);
+    mnp_rx_frame(&m, f, n);
+    CHECK_EQ_I(mnp_rx_avail(&m, NULL), 1);
+    mnp_rx_frame(&m, ln, 8);
+    CHECK_EQ_I(m.resets, 1);
+    CHECK_EQ_I(mnp_rx_avail(&m, NULL), 0);
+    CHECK_EQ_I(mnp_unacked(&m), 0);
+    CHECK_EQ_I(mnp_get_ln(&m, &code), 1);
+    CHECK_EQ_I(code, 1);
+    n = mnp_tx_frame(&m, f);
+    CHECK(n == 5 && memcmp(f, lna, 5) == 0);
+    CHECK_EQ_I(mnp_tx_frame(&m, f), 0);
+    mnp_rx_frame(&m, ln, 8);                  /* the same LN again: LNA, no reset */
+    CHECK_EQ_I(m.resets, 1);
+    n = mnp_tx_frame(&m, f);
+    CHECK(n == 5 && memcmp(f, lna, 5) == 0);
+    n = lt_std(f, 1, (const uint8_t *)"Y", 1);
+    mnp_rx_frame(&m, f, n);
+    CHECK_EQ_I(mnp_rx_avail(&m, NULL), 1);
+    mnp_rx_consume(&m, 1);
+    CHECK_EQ_I(mnp_send(&m, (const uint8_t *)"c", 1), 0);
+    n = mnp_tx_frame(&m, f);
+    if (lt_ns(f, n) < 0) n = mnp_tx_frame(&m, f);       /* an LA first, for the LT taken */
+    CHECK_EQ_I(lt_ns(f, n), 1);
+
+    /* sent: what is stored is dropped, no data goes or is taken until the
+     * LNA, then the sequences start again */
+    fl_connect(&m, &c);
+    for (i = 0; i < 3; i++) CHECK_EQ_I(mnp_send(&m, (const uint8_t *)"ab", 2), 0);
+    n = mnp_tx_frame(&m, f); CHECK_EQ_I(lt_ns(f, n), 1);
+    n = lt_std(f, 1, (const uint8_t *)"Z", 1);
+    mnp_rx_frame(&m, f, n);
+    CHECK_EQ_I(mnp_send_ln(&m, 1), 0);
+    CHECK_EQ_I(mnp_can_send(&m), 0);
+    CHECK_EQ_I(mnp_rx_avail(&m, NULL), 0);
+    n = mnp_tx_frame(&m, f);
+    CHECK(n == 8 && f[1] == 6 && f[7] == 1);
+    CHECK_EQ_I(mnp_tx_frame(&m, f), 0);       /* no LT 2, no LA */
+    n = lt_std(f, 2, (const uint8_t *)"X", 1);
+    mnp_rx_frame(&m, f, n);
+    CHECK_EQ_I(mnp_rx_avail(&m, NULL), 0);
+    mnp_tick(&m, 2000);
+    CHECK_EQ_I(mnp_tx_frame(&m, f), 0);
+    CHECK_EQ_I(m.resets, 0);
+    mnp_rx_frame(&m, lna, 5);
+    CHECK_EQ_I(m.resets, 1);
+    CHECK_EQ_I(mnp_unacked(&m), 0);
+    CHECK_EQ_I(mnp_can_send(&m), 64);
+    CHECK_EQ_I(mnp_send(&m, (const uint8_t *)"d", 1), 0);
+    n = mnp_tx_frame(&m, f);
+    CHECK_EQ_I(lt_ns(f, n), 1);
+    n = lt_std(f, 1, (const uint8_t *)"W", 1);
+    mnp_rx_frame(&m, f, n);
+    CHECK_EQ_I(mnp_rx_avail(&m, NULL), 1);
+    printf("destructive: LN 1 received or sent: stored and held data dropped, one reset, N(S) 1 both ways after\n");
+}
+
+/* LN 1 mid-transfer against the peer, from either end, 1 % lost both
+ * ways: one reset each end, the link stays up, later data intact */
+static void t_destructive_peer(void)
+{
+    int from;
+    for (from = 0; from < 2; from++) {
+        mnp_cfg_t c;
+        mnp_peer_cfg pc = peer_cfg(3);
+        uint8_t junk[MNP_MAX_N401];
+        const uint8_t *p;
+        long i, end;
+        int a, ok, code = -1;
+        mnp_cfg_default(&c);
+        pc.lose_ppm = 10000;
+        rig_init(&R, &c, &pc, 9600);
+        R.lose_ppm = 10000;
+        ok = rig_connect(&R, 10000);
+        CHECK(ok);
+        while (ok && R.ms < 3000) { rig_ms(&R); rig_data(&R, (size_t)1 << 24); }
+        CHECK(R.up.got > 0 && R.down.got > 0);
+        if (from == 0) CHECK_EQ_I(mnp_send_ln(&R.m, 1), 0);
+        else CHECK_EQ_I(mnppeer_send_ln(&R.p, 1), 1);
+        for (i = 0; i < 60000; i++) {
+            rig_ms(&R);
+            while (mnppeer_read(&R.p, junk, sizeof junk) > 0) {}
+            while ((a = mnp_rx_avail(&R.m, &p)) > 0) mnp_rx_consume(&R.m, a);
+            if (R.m.resets == 1 && R.p.resets == 1 && R.m.ln_code < 0 && R.p.ln_code < 0 && R.p.lnq_n == 0) break;
+        }
+        end = R.ms + 5000;
+        while (R.ms < end) {
+            rig_ms(&R);
+            while (mnppeer_read(&R.p, junk, sizeof junk) > 0) {}
+            while ((a = mnp_rx_avail(&R.m, &p)) > 0) mnp_rx_consume(&R.m, a);
+        }
+        CHECK_EQ_I(R.m.resets, 1);
+        CHECK_EQ_I(R.p.resets, 1);
+        if (from == 0) CHECK_EQ_I(mnppeer_get_ln(&R.p), 1);
+        else { CHECK_EQ_I(mnp_get_ln(&R.m, &code), 1); CHECK_EQ_I(code, 1); }
+        stream_init(&R.up, 0x5555u);
+        stream_init(&R.down, 0xAAAAu);
+        ok = rig_transfer(&R, 16384, R.ms + 300000);
+        CHECK(ok);
+        CHECK(intact(&R, 16384));
+        CHECK_EQ_I(R.m.state, MNP_S_CONNECTED);
+        CHECK_EQ_I(mnppeer_state(&R.p), MNPP_CONNECTED);
+        peer_clean(&R);
+        printf("destructive_peer: LN 1 from %s mid-transfer: one reset each end, then 16 KiB each way %s\n",
+               from ? "the peer" : "ours", intact(&R, 16384) ? "intact" : "DAMAGED");
+    }
+}
+
+/* A.7.4.1 and Table 4: LN 3 after the LTs pending at its request are
+ * acknowledged; LN 2 at once; both hold new data until their LNA. LN
+ * retransmissions count as LT ones: N400 of them, then LD 4. */
+static void t_ln_order(void)
+{
+    static mnp_t m;
+    mnp_cfg_t c;
+    uint8_t f[MNP_MAX_BODY], lna[5] = { 4, 7, 1, 1, 1 };
+    int n, i, sends;
+    mnp_cfg_default(&c);
+    fl_connect(&m, &c);
+    for (i = 0; i < 2; i++) CHECK_EQ_I(mnp_send(&m, (const uint8_t *)"ab", 2), 0);
+    for (i = 1; i <= 2; i++) { n = mnp_tx_frame(&m, f); CHECK_EQ_I(lt_ns(f, n), i); }
+    CHECK_EQ_I(mnp_send_ln(&m, 3), 0);
+    CHECK_EQ_I(mnp_can_send(&m), 0);
+    CHECK_EQ_I(mnp_tx_frame(&m, f), 0);
+    n = la_std(f, 1, 8);
+    mnp_rx_frame(&m, f, n);
+    CHECK_EQ_I(mnp_tx_frame(&m, f), 0);
+    n = la_std(f, 2, 8);
+    mnp_rx_frame(&m, f, n);
+    n = mnp_tx_frame(&m, f);
+    CHECK(n == 8 && f[1] == 6 && f[7] == 3);
+    CHECK_EQ_I(mnp_can_send(&m), 0);
+    mnp_rx_frame(&m, lna, 5);
+    CHECK_EQ_I(mnp_can_send(&m), 64);
+
+    CHECK_EQ_I(mnp_send(&m, (const uint8_t *)"ab", 2), 0);
+    n = mnp_tx_frame(&m, f); CHECK_EQ_I(lt_ns(f, n), 3);
+    CHECK_EQ_I(mnp_send_ln(&m, 2), 0);
+    n = mnp_tx_frame(&m, f);
+    CHECK(n == 8 && f[1] == 6 && f[4] == 2 && f[7] == 2);
+    CHECK_EQ_I(mnp_can_send(&m), 0);
+    lna[4] = 2;
+    mnp_rx_frame(&m, lna, 5);
+    CHECK_EQ_I(mnp_can_send(&m), 64);
+
+    /* N400 LN retransmissions, then LD 4 */
+    fl_connect(&m, &c);
+    CHECK_EQ_I(mnp_send_ln(&m, 2), 0);
+    sends = 0;
+    for (i = 0; i < 40 && m.state == MNP_S_CONNECTED; i++) {
+        while ((n = mnp_tx_frame(&m, f)) > 0) if (f[1] == 6) sends++;
+        mnp_tick(&m, (unsigned)m.t401_ms);
+    }
+    n = mnp_tx_frame(&m, f);
+    CHECK(n == 5 && f[1] == 2 && f[4] == 4);
+    CHECK_EQ_I(sends, 13);
+    CHECK_EQ_I(m.reason, MNP_R_N400);
+    printf("ln_order: LN 3 after the pending LTs, LN 2 at once, data held until the LNA; LN: %d sends, then LD 4\n", sends);
+}
+
+/* credit: a far end that alternates N(k) 0 and N(k) 8 without moving N(R)
+ * still ends in N400; one that holds 0 and answers stays up; one silent
+ * at credit 0 ends */
+static void t_stall(void)
+{
+    static mnp_t m;
+    mnp_cfg_t c;
+    uint8_t f[MNP_MAX_BODY];
+    int n, i;
+    mnp_cfg_default(&c);
+    fl_connect(&m, &c);
+    CHECK_EQ_I(mnp_send(&m, (const uint8_t *)"ab", 2), 0);
+    n = mnp_tx_frame(&m, f); CHECK_EQ_I(lt_ns(f, n), 1);
+    for (i = 0; i < 100 && m.state == MNP_S_CONNECTED; i++) {
+        n = la_std(f, 0, 0); mnp_rx_frame(&m, f, n);
+        n = la_std(f, 0, 8); mnp_rx_frame(&m, f, n);
+        while (mnp_tx_frame(&m, f) > 0) {}
+    }
+    CHECK_EQ_I(m.state, MNP_S_DISCONNECTED);
+    CHECK_EQ_I(m.reason, MNP_R_N400);
+    CHECK(i <= 13);
+
+    fl_connect(&m, &c);
+    n = la_std(f, 0, 0); mnp_rx_frame(&m, f, n);
+    CHECK_EQ_I(mnp_send(&m, (const uint8_t *)"ab", 2), 0);
+    for (i = 0; i < 60; i++) {
+        mnp_tick(&m, 3000);
+        n = la_std(f, 0, 0); mnp_rx_frame(&m, f, n);    /* T404's LA, still busy */
+        while (mnp_tx_frame(&m, f) > 0) {}
+    }
+    CHECK_EQ_I(m.state, MNP_S_CONNECTED);
+    for (i = 0; i < 20 && m.state == MNP_S_CONNECTED; i++) {
+        mnp_tick(&m, (unsigned)m.t401_ms);
+        while (mnp_tx_frame(&m, f) > 0) {}
+    }
+    CHECK_EQ_I(m.state, MNP_S_DISCONNECTED);
+    CHECK_EQ_I(i, 13);
+    printf("stall: alternating credit ends in N400; credit 0 with LAs stays up 180 s; silent at credit 0: %d T401s\n", i);
+}
+
 static void t_size(void)
 {
     CHECK(sizeof(mnp_t) <= 4096);
@@ -807,6 +1117,12 @@ int main(void)
     t_n400();
     t_timers_held();
     t_break();
+    t_repeated_lr();
+    t_lna_match();
+    t_destructive();
+    t_destructive_peer();
+    t_ln_order();
+    t_stall();
     t_size();
     T_REPORT("test_mnp");
 }
