@@ -45,7 +45,9 @@
  *     LR with a good FCS, in start-stop (framing mode 2) or HDLC (mode 3),
  *     starts the MNP link of mnp.h in LAPM's place (v42ec_status_t.protocol);
  *     so does one in HDLC after flags, before LAPM has taken anything. An ODP
- *     first means LAPM. Replies go in the framing the LR came in. Breaks are
+ *     first means LAPM. Replies go in the framing the LR came in. T400 is
+ *     held, once and at most V42EC_T400_LR_HOLD_MS, while a start-stop
+ *     frame is under way when it runs out (an LR at 300 bit/s). Breaks are
  *     LNs of types 1 to 3; v42ec_release sends LD 255 and is
  *     V42EC_DISCONNECTED at once (wait for v42ec_tx_busy() to be 0 before
  *     dropping the line).
@@ -95,6 +97,12 @@ enum {
 #define V42EC_R_NO_EC        16   /* peer has no V.42 and fallback is disabled */
 #define V42EC_R_COMPRESSION  17   /* V.42 bis or V.44 decoder reported C-ERROR */
 #define V42EC_R_NO_SABME     18   /* answerer: nothing after the detection phase */
+
+/* MNP on, answerer: when T400 runs out while an LR in start-stop is partly
+ * received (after its SYN DLE STX), T400 is held until that frame ends, and
+ * at most this long; then start-stop. A mode 2 LR at 300 bit/s takes about
+ * 1 s (the Courier's, 31 characters), longer than T400. [OURS] */
+#define V42EC_T400_LR_HOLD_MS 2000
 
 /* MNP (V.42 Annex A) beside LAPM: the answerer takes a caller's LR */
 typedef struct {
@@ -201,6 +209,8 @@ typedef struct v42ec {
     int mnp_brk;             /* MNP: our destructive break waits for its LNA; that
                                 LNA's reset flushes nothing (mnp.h, Breaks) */
     mnp2_rx_t hunt2;         /* MNP on, detection: the start-stop LR hunter */
+    int t400_held;           /* MNP on: T400 ran out inside a start-stop frame and
+                                was held (V42EC_T400_LR_HOLD_MS) */
 } v42ec_t;
 
 /* Fill cfg with defaults for the given role: detection on, fallback on,

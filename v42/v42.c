@@ -424,6 +424,13 @@ static int lr_still_taken(const v42ec_t *e)
         && e->l.lapm.established == 0;
 }
 
+/* MNP on, detection: the start-stop hunter is inside a frame that may be
+ * an LR (T400 is held for it) */
+static int lr_partly_in(const v42ec_t *e)
+{
+    return e->cfg.mnp.enable && e->sub == 0 && e->state == V42EC_DETECT && mnp2_rx_in_frame(&e->hunt2);
+}
+
 /* Detection picks MNP: the link starts in LAPM's place with the caller's
  * LR (f is the hunter's or the HDLC receiver's, outside the union) and
  * answers in its framing fr */
@@ -759,6 +766,11 @@ void v42ec_rx_bit(v42ec_t *e, int bit)
             mnp_pick(e, e->hunt2.buf, e->hunt2.len, 2);
             return;
         }
+        /* T400 was held for a frame that has ended without being an LR */
+        if (e->t400_held && e->t400 >= 0 && !lr_partly_in(e)) {
+            enter_async(e);
+            return;
+        }
         /* flags or a frame start the protocol phase, with or without ODP;
          * a frame with no opening flag (after a run of ones, v42_hdlc.h)
          * only with an address LAPM takes (0x01, 0x03): a caller without
@@ -826,8 +838,15 @@ void v42ec_tick(v42ec_t *e, unsigned ms)
     if (e->t400 >= 0) {
         e->t400 -= (int)ms;
         if (e->t400 <= 0) {
-            /* 7.2.1.2, 7.2.1.3: no error-correcting peer */
+            /* 7.2.1.2, 7.2.1.3: no error-correcting peer; MNP on, an LR
+             * still arriving in start-stop is waited for, once and at most
+             * V42EC_T400_LR_HOLD_MS (v42.h) */
             e->t400 = -1;
+            if (!e->t400_held && lr_partly_in(e)) {
+                e->t400_held = 1;
+                e->t400 = V42EC_T400_LR_HOLD_MS;
+                return;
+            }
             if (e->cfg.originator) e->want_async = 1;   /* at the pattern boundary */
             else enter_async(e);
             return;

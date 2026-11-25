@@ -4253,3 +4253,31 @@ Endpoint tests the review found missing (M3), in `test_ec_mnp`:
     re-recorded: v42/test_mnp.txt, the `wrap` line only: the peer alternates LN 2 and LN 3 while
       it writes data, and its LN 3s now wait for the data written before them, so the
       frame counts move (LT in 314 -> 311, retx 15/19 -> 10/14); 300/300 LNs in order, data intact
+
+**T400 at 300 bit/s** (review: a mode 2 LR at 300 bit/s takes about 1 s,
+longer than T400's 750 ms, so a V.21 MNP caller fell to start-stop). With
+MNP on, when T400 runs out while the start-stop hunter is inside a frame
+(after its SYN DLE STX; new `mnp2_rx_in_frame`), T400 is held: once, until
+that frame ends (an LR: MNP; anything else: start-stop at the frame's end),
+and at most `V42EC_T400_LR_HOLD_MS` = 2000 ms [OURS] (an LR of about 80
+characters started at once still fits at 300 bit/s; real ones are 20 to 31).
+Only start-stop frames are waited for: MNP over V.21 is framing 2, and an
+HDLC receiver is "in a frame" after any flag in a typed stream, which would
+delay a plain caller's start-stop mode. With MNP off nothing new runs. A
+plain caller that types SYN DLE STX just before T400 gets start-stop at
+the frame's end (DLE ETX and two octets) or at 2750 ms; with MNP off, at
+750 ms as before.
+
+- `lr_300`: mnppeer, framing 2, at 300 bit/s: still DETECT at 750 ms, then
+  MNP, 256 octets each way intact.
+- `t400_hold`: at 300 bit/s, a frame that never ends: start-stop at exactly
+  2750 ms; a Courier LR with a bad FCS: start-stop at its last character,
+  1214 ms; MNP off: at 750 ms.
+- `v90m_ec_mem_size()`: +8 on x86-64 (50128 -> 50136), +4 on ARMv5 (49892
+  -> 49896), the `t400_held` flag; re-pinned in `test_api.c`.
+
+    v42/build/test_ec_mnp before the hold -> 8 failures (lr_300: protocol ASYNC; t400_hold: 750 ms both)
+    v42/build/test_ec_mnp                 -> test_ec_mnp: 146 checks, 0 failures (18 cases)
+    build/api_test_api; qemu-arm $A5      -> 1025 / 1015 checks, 0 failures (the new pins)
+    re-recorded: v42/test_ec_mnp.txt (the count line and the two new lines)
+    make verify                           -> VERIFY PASS (450 s; golden 146 identical)

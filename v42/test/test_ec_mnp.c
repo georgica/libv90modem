@@ -2,7 +2,7 @@
  * the ODP, the MNP link in the endpoint (data, breaks, busy, release),
  * status. The caller is sim/mnppeer, an independent MNP entity, another
  * v42ec_t (LAPM), or bits built here (characters, mode 2 and HDLC frames,
- * with their own CRCs). 2400 bit/s, 1 ms ticks. One line per case. */
+ * with their own CRCs). 2400 bit/s (300 where a case says), 1 ms ticks. One line per case. */
 #include <stdint.h>
 #include "v42.h"
 #include "../../sim/mnppeer.h"
@@ -49,6 +49,7 @@ typedef struct {
     long ms; int acc;
     int max_proto;                     /* every protocol seen, as a bit map */
     int cut;                           /* 1: the caller's bits no longer reach us (mark) */
+    int bps;                           /* the line rate (BPS unless a case sets it) */
 } rig_t;
 
 /* our link's N400 for the next rig_init (0: the default) */
@@ -74,6 +75,7 @@ static void rig_init(rig_t *r, int src, int mnp_on, int fallback, const mnp_peer
     r->ms = 0; r->acc = 0;
     r->max_proto = 0;
     r->cut = 0;
+    r->bps = BPS;
 }
 
 static int proto(const v42ec_t *e)
@@ -88,7 +90,7 @@ static void rig_ms(rig_t *r)
     v42ec_tick(&r->e, 1);
     if (r->src == SRC_PEER) mnppeer_tick(&r->p, 1);
     if (r->src == SRC_LAPM) v42ec_tick(&r->o, 1);
-    r->acc += BPS;
+    r->acc += r->bps;
     while (r->acc >= 1000) {
         int x, y = v42ec_tx_bit(&r->e);
         r->acc -= 1000;
@@ -668,6 +670,77 @@ static void ln_brk(void)
     printf("ln_brk: ours: LN 3 after %d of 600 octets (500 written before it), then LN %d; no reset\n", (int)at, code);
 }
 
+/* 300 bit/s (V.21): a mode 2 LR of about 31 characters takes about 1 s,
+ * longer than T400. T400 is held while an LR is partly received, until
+ * that frame ends, for at most V42EC_T400_LR_HOLD_MS (2000 ms) */
+static void lr_300(void)
+{
+    mnp_peer_cfg pc = peer_cfg(2);
+    v42ec_status_t s;
+    stream_t up, down;
+    int ok, st750;
+    pc.send_opt = 1; pc.opt = 2;
+    pc.t401_ms = 30000;
+    rig_init(&R, SRC_PEER, 1, 1, &pc);
+    R.bps = 300;
+    rig_run(&R, 750);
+    st750 = v42ec_state(&R.e);
+    rig_run(&R, 4250);
+    v42ec_get_status(&R.e, &s);
+    CHECK_EQ_I(st750, V42EC_DETECT);
+    CHECK_EQ_I(s.protocol, V42EC_PROTO_MNP);
+    CHECK_EQ_I(s.state, V42EC_CONNECTED);
+    CHECK_EQ_I(s.mnp_framing, 2);
+    stream_init(&up, 31u); stream_init(&down, 32u);
+    ok = rig_data(&R, &up, &down, 256, R.ms + 120000);
+    CHECK(ok && up.h_out == up.h_in && down.h_out == down.h_in);
+    printf("lr_300: an MNP caller at 300 bit/s, framing 2: state %d at 750 ms (T400 held), then MNP; "
+           "256 octets each way %s\n", st750, ok && up.h_out == up.h_in && down.h_out == down.h_in ? "intact" : "DAMAGED");
+}
+
+/* the hold's ends at 300 bit/s: a frame that never ends gives start-stop
+ * at 750 + 2000 ms; one that ends without being an LR (bad FCS) gives
+ * start-stop at its end; MNP off, at 750 ms */
+static void t400_hold(void)
+{
+    int i, t_async = -1, t_bad = -1;
+    rig_init(&R, SRC_BITS, 1, 1, NULL);
+    R.bps = 300;
+    char_in(&R, 0x16); char_in(&R, 0x10); char_in(&R, 0x02);
+    for (i = 0; i < 200; i++) char_in(&R, (uint8_t)'a');
+    while (R.ms < 5000 && t_async < 0) {
+        rig_ms(&R);
+        if (v42ec_state(&R.e) == V42EC_ASYNC) t_async = (int)R.ms;
+    }
+    CHECK_EQ_I(t_async, 2750);
+
+    rig_init(&R, SRC_BITS, 1, 1, NULL);
+    R.bps = 300;
+    mark_in(&R, 30);
+    frame2_in(&R, lr_courier, (int)sizeof lr_courier, 1);
+    while (R.ms < 5000 && t_bad < 0) {
+        rig_ms(&R);
+        if (v42ec_state(&R.e) == V42EC_ASYNC) t_bad = (int)R.ms;
+    }
+    /* 30 marks, then SYN DLE STX, 21 octets, DLE ETX and the FCS: 28
+     * characters of 12 bits (char_in's two marks after each), the frame
+     * over at the last one's stop bit */
+    CHECK(t_bad > 750 && t_bad < 2750);
+    CHECK_EQ_I(t_bad, ((30 + 28 * 12 - 2) * 1000 + 299) / 300);
+    CHECK_EQ_I(R.max_proto & (1 << V42EC_PROTO_MNP), 0);
+
+    rig_init(&R, SRC_BITS, 0, 1, NULL);
+    R.bps = 300;
+    char_in(&R, 0x16); char_in(&R, 0x10); char_in(&R, 0x02);
+    for (i = 0; i < 200; i++) char_in(&R, (uint8_t)'a');
+    rig_run(&R, 749);
+    CHECK_EQ_I(v42ec_state(&R.e), V42EC_DETECT);
+    rig_run(&R, 1);
+    CHECK_EQ_I(v42ec_state(&R.e), V42EC_ASYNC);
+    printf("t400_hold: at 300 bit/s a frame that never ends: start-stop at %d ms; a bad LR: at its end, %d ms; "
+           "MNP off: at 750 ms\n", t_async, t_bad);
+}
+
 int main(void)
 {
     odp_lapm();
@@ -686,5 +759,7 @@ int main(void)
     ld_const1();
     n400_end();
     ln_brk();
+    lr_300();
+    t400_hold();
     T_REPORT("test_ec_mnp");
 }

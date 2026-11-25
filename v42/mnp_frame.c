@@ -113,6 +113,11 @@ static int rx_take(mnp2_rx_t *r, uint8_t c)
     return MNP2_RX_NONE;
 }
 
+int mnp2_rx_in_frame(const mnp2_rx_t *r)
+{
+    return r->state >= RX_BODY;
+}
+
 int mnp2_rx_octet(mnp2_rx_t *r, uint8_t c)
 {
     uint8_t want[2];
