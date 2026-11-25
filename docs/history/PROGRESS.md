@@ -4467,3 +4467,55 @@ Review fixes (task-7-review.md):
     build/api_test_api                      -> api: 1030 checks, 0 failures
     re-recorded: v42/test_ec_link.txt (its own: five new lines, the count)
     make verify                             -> VERIFY PASS (441 s; golden 148 identical, replay 636, bench 17, ubsan, a7, big-endian, fixed)
+
+## hst 8: the HST profile: 0xC0, streamlined layouts, tolerant parser, attention codes, reversal policy (2026-11-25)
+
+- `mnp_frame`: `mnp_lr_merge(..., hst_profile, ...)` merges USR's 0xC0
+  (bit 0 from both, 300 if either asks, rates ours & theirs & 0x7C) when
+  the caller's has bit 0; `mnp_c0_best`. `mnp_hdr_build` and
+  `mnp_hdr_parse` take `MNP_LAYOUT_STREAM` (no LI). The parser reads every
+  layout except with plain `MNP_LAYOUT_STD`/`_OPT` (Annex A only, as
+  before): when both readings fit, the agreed layout wins
+  (`MNP_LAYOUT_STREAM`, or `_STD|MNP_RX_ALL`), `MNP_LAYOUT_ANY` lets the
+  expected N(S) break the tie; an LR is always standard; an unknown first
+  octet is `MNP_PARSE_UNKNOWN`.
+- `mnp`: the profile state in `mnp_t` (3264 -> 3368 octets; ec memory
+  unchanged, 50448/50200). Our LR offers `C0 02 01 offer_rates`;
+  streamlined when both LRs carry a non-zero parameter 8; without it the
+  receive layout is the caller's last LA/LN/LNA's. Attention codes as
+  holder (0x1R granted, its LNA's closing flag reported; 0x2R/0x3R to
+  `rate_order`) and holding back (the far holder's 0x2R/0x3R passed on, or
+  above `cap_up_code` a count and our 0x2R at the cap; also after a
+  reversal granted above it, at the next epoch); others an LNA and a
+  count. LTs held from an attention until the epoch changes, at most 12 s.
+  The reversal policy (backlog > 64, far end forward >= 2 s, no attention
+  outstanding). On HST a repeated N(R) goes back once per N(R) value, and
+  T401 adds the far end's one LT and the back receiver's hold-back (127
+  ms at 450, 180 at 300). LD in the streamlined layout after agreement.
+- `v42.c`: the offer from the mailbox at the LR, `mnp_hst_poll` at every
+  poll, `ep_idle` and `rev_lna_sent` after each transmitted bit, the
+  status fields, no break on HST.
+- `sim/mnppeer` HST mode (F13), from the facts: 0xC0 in both roles,
+  streamlined layouts (or `stream_always`), attention codes passed
+  through, `unknown_ids`, and T401 from Annex A's formula when `tx_bps`
+  and `rx_bps` are given (`loop_hst`).
+- Decision 26 (spec, facts): a failed establishment ends with LD 1 and
+  `N400`, as the code already did.
+- Throughput, simulated (our endpoint at the forward rate, the peer's LAs
+  at the back rate through its hold-back; tools in the task report):
+
+      14400/450, clean:   66.3 % -> 75.7 % of the line
+      9600/300, clean:    66.4 % -> 75.7 %
+      14400/450, 20 ppm:  48.9 % -> 66.6 %; LTs sent again per LT lost 24.3 -> 7.2
+      9600/300, 20 ppm:   49.9 % -> 66.4 %; 21.1 -> 6.0
+      (N401 256 would give 96.4 % / 96.3 % clean; decision 23 keeps 64)
+
+    v42/build/test_mnp_frame (before)  -> MNP_C0_HST, mnp_c0_best, MNP_LAYOUT_ANY, MNP_RX_ALL undeclared
+    v42/build/test_ec_hst (before)     -> test_ec_hst: 113 checks, 55 failures
+    v42/build/test_mnp_frame           -> test_mnp_frame: 350 checks, 0 failures
+    v42/build/test_mnppeer             -> test_mnppeer: 246 checks, 0 failures
+    v42/build/test_ec_hst              -> test_ec_hst: 117 checks, 0 failures (12 cases)
+    mutations (literal go-back; rev_lna_sent at framing; backlog >= 64; no HST T401) -> 4, 1, 1, 4 failures
+    re-recorded: v42/test_mnp_frame.txt, v42/test_mnppeer.txt (new lines and the count only)
+    new golden: v42/test_ec_hst.txt
+    make verify                        -> VERIFY PASS (457 s; golden 149 identical, bench 17, ubsan, a7, big-endian, fixed)

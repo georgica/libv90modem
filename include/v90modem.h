@@ -547,7 +547,10 @@ typedef struct {
     int protocol;                   /* V90M_EC_PROTO_* */
     int mnp_framing, mnp_opt, mnp_streamlined;  /* MNP: framing mode 2 or 3, parameter 8
                                                    agreed, the HST layout */
-    int hst, hst_rates, hst_back300;            /* the HST profile agreed (0 for now) */
+    int hst, hst_rates, hst_back300;            /* the HST profile agreed (an HST call whose
+                                                   caller's 0xC0 has bit 0 and a rate in
+                                                   common): 1, the rate mask (bit n:
+                                                   2400n bit/s), 300 bit/s back channel */
     int attn_tx, attn_rx;           /* MNP: the type of the last LN sent, received */
     unsigned long rx_unknown;       /* MNP: valid frames of an unknown type */
     int rx_unknown_id;              /* MNP: the first octet of the last of them */
@@ -592,7 +595,9 @@ void        v90m_ec_abort(v90m_ec_t *e);                /* the line is gone: sto
 /* break signals (V.42 12.3.1): opt is one of these, len10ms the length in
  * 10 ms units. send_break: V90M_OK when the break is on its way;
  * V90M_EINVAL for any other opt; V90M_ESTATE when error control is not up
- * (V90M_EC_CONNECTED) or a break of ours is still pending. get_break: 1 with *opt and *len10ms when a break came
+ * (V90M_EC_CONNECTED), a break of ours is still pending, or on an HST call
+ * with its profile agreed (status hst 1: there, MNP's attention frames carry
+ * the channel's attention codes, no break). get_break: 1 with *opt and *len10ms when a break came
  * (in its place among the octets read), else 0. */
 #define V90M_BRK_NONDESTRUCTIVE_INSEQ      0x00
 #define V90M_BRK_NONDESTRUCTIVE_EXPEDITED  0x40

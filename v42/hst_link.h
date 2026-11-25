@@ -28,6 +28,16 @@
  * The pump starts each call with a zeroed mailbox (the endpoint's reset
  * at CONNECTED tells calls apart by it).
  *
+ * After the LRs (the HST profile, v42/mnp.h): the endpoint writes agreed,
+ * agreed_rates and back300 once, la_rx when the link is up, rev_lna_sent
+ * and rev_code after the last bit of the closing flag of an LNA that
+ * grants a 0x1R, rev_lna_rx and rev_code when our 0x1R's LNA arrives,
+ * rate_order for a 0x2R or 0x3R taken, far_ld on the far end's LD, and
+ * ep_idle after every bit. It takes ln_req when no LN of its own is
+ * outstanding (and clears it), and from an attention it sends or grants
+ * sends no LT until epoch changes (at most 12 s); it reads role,
+ * cap_up_code and fwd_code at every poll and the rates when they change.
+ *
  * The pre-connect ring: from ANS_HST until the modem is connected the pump
  * appends the back receiver's bits (hst_pre_put); the endpoint drains them
  * into its receive path (hst_pre_get) in v42ec_tick and at the top of
@@ -71,9 +81,12 @@ typedef struct {
     int      rev_lna_sent;    /* we granted a 0x1R and that LNA and its closing flag have left */
     int      rev_lna_rx;      /* our 0x1R was granted (its LNA arrived) */
     int      rev_code;        /* R of that reversal */
-    int      rate_order;      /* 0x2R or 0x3R for the holder to execute, 0 = none; the pump clears it */
+    int      rate_order;      /* 0x2R or 0x3R for the holder to execute, 0 = none; the pump clears it.
+                                 Holding back: the far holder's own 0x2R/0x3R at R <= cap_up_code
+                                 (the receiver follows it) */
     int      far_ld;          /* the far end sent LD */
-    int      ep_idle;         /* no frame in flight in our transmitter */
+    int      ep_idle;         /* after our last bit: between frames, at an octet boundary
+                                 (a frame's closing flag is all out) */
 } hst_link_t;
 
 typedef hst_link_t *(*hst_link_get_fn)(void *ctx, int *state);   /* state: HST_LINK_* */

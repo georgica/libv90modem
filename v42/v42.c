@@ -453,6 +453,10 @@ static void mnp_pick(v42ec_t *e, const uint8_t *f, int len, int fr)
     if (e->tx_bps > 0) mnp_set_rates(&e->l.mnp, e->tx_bps, e->rx_bps);    /* v42ec_set_rates */
     v42hdlc_rx_set_fcs(&e->hrx, V42HDLC_FCS16);
     if (e->hst_call) {
+        /* the HST profile: our 0xC0 offer, from the pump in ANS_HST */
+        int st;
+        hst_link_t *L = e->link_get(e->link_ctx, &st);
+        if (st == HST_LINK_ON && L) mnp_hst_offer(&e->l.mnp, L);
         /* kept for the reset at this call's CONNECTED: the LI and its LI
          * octets, at most V42EC_LR_CAP (is_lr: an LI of at most 254) */
         memcpy(e->lr_cap, f, (size_t)f[0] + 1);
@@ -550,6 +554,12 @@ static void mnp_next(v42ec_t *e)
         e->hdlc_tx_on = 0;
         (void)mnp2_tx_frame(&m->tx2, f, n);
     }
+    if (m->rev_lna_out) {
+        /* an LNA granting a reversal: its closing flag is waited for */
+        m->rev_lna_out = 0;
+        m->rev_wait = 1;
+        m->rev_frame0 = e->htx.frames;
+    }
     mnp_sync(e);
 }
 
@@ -602,13 +612,36 @@ static void mnp_rx_bit(v42ec_t *e, int bit)
 /* ----------------------------------------------------------- the HST link */
 static void rx_line(v42ec_t *e, int bit);
 
+/* HST, after each bit we transmit: ep_idle (between frames, at an octet
+ * boundary), and rev_lna_sent once the LNA granting a reversal has gone
+ * with its closing flag (the frame count passed it, and the flag's last
+ * bit is out or the next frame has begun on it) */
+static void hst_tx_after(v42ec_t *e, hst_link_t *L)
+{
+    mnp_t *m = &e->l.mnp;
+    int idle = e->hdlc_tx_on ? !e->htx.in_frame && e->htx.nbits == 0
+                             : !mnp2_tx_busy(&m->tx2) && v42async_tx_idle(&e->atx);
+    L->ep_idle = idle;
+    if (m->rev_wait) {
+        unsigned long d = e->htx.frames - m->rev_frame0;
+        int done = e->hdlc_tx_on ? d >= 2 || (d == 1 && (e->htx.nbits == 0 || e->htx.in_frame)) : idle;
+        if (done) {
+            m->rev_wait = 0;
+            m->rev_grant = 0;
+            L->rev_lna_sent = 1;
+            L->rev_code = m->rev_code;
+        }
+    }
+}
+
 /* The modem's decision in *state (HST_LINK_NONE unlinked) and, on an HST
  * call, the mailbox: the pre-connect ring drained into the receive path,
  * the pump's rates taken for T401 when they change, the LRs' agreement
- * told. Called at the top of v42ec_tx_bit, v42ec_rx_bit and v42ec_tick
+ * told, the HST profile's exchange (mnp_hst_poll; ms the tick's, 0 at a
+ * bit). Called at the top of v42ec_tx_bit, v42ec_rx_bit and v42ec_tick
  * (hst_link.h). NONE before any ON is final for the call: get is not asked
  * again until the next init or reset. */
-static hst_link_t *link_poll(v42ec_t *e, int *state)
+static hst_link_t *link_poll(v42ec_t *e, int *state, unsigned ms)
 {
     hst_link_t *L;
     int b;
@@ -634,10 +667,17 @@ static hst_link_t *link_poll(v42ec_t *e, int *state)
     e->link_r = L->pre_r;
     if (L->tx_bps > 0 && L->rx_bps > 0 && (L->tx_bps != e->tx_bps || L->rx_bps != e->rx_bps))
         (void)v42ec_set_rates(e, L->tx_bps, L->rx_bps);
-    if (e->agreed_due) {
-        /* no HST profile yet: plain MNP, the pump stays at its opening rate */
-        e->agreed_due = 0;
-        L->agreed = 1; L->agreed_rates = 0; L->back300 = 0;
+    if (e->protocol == V42EC_PROTO_MNP) {
+        mnp_t *m = &e->l.mnp;
+        if (e->agreed_due) {
+            /* the LRs exchanged: agreed_rates 0 is plain MNP, the pump
+             * staying at its opening rate */
+            e->agreed_due = 0;
+            L->agreed = 1;
+            L->agreed_rates = m->hst ? m->hst_rates : 0;
+            L->back300 = m->hst ? m->back300 : 0;
+        }
+        mnp_hst_poll(m, L, ms, e->txr.len);
     }
     return L;
 }
@@ -781,12 +821,17 @@ static int hdlc_bit(v42ec_t *e)
 
 int v42ec_tx_bit(v42ec_t *e)
 {
+    hst_link_t *L = NULL;
     e->tx_seen = 1;
     if (e->link_get) {
         int ls;
-        (void)link_poll(e, &ls);            /* an LR in the ring is answered now */
+        L = link_poll(e, &ls, 0);           /* an LR in the ring is answered now */
     }
-    if (e->protocol == V42EC_PROTO_MNP) return mnp_tx_bit(e);   /* also after release: the LD */
+    if (e->protocol == V42EC_PROTO_MNP) {   /* also after release: the LD */
+        int bit = mnp_tx_bit(e);
+        if (L) hst_tx_after(e, L);
+        return bit;
+    }
     if (e->hdlc_tx_on) return hdlc_bit(e);      /* also after release: the last UA or DM */
 
     if (e->state == V42EC_ASYNC) {
@@ -938,7 +983,7 @@ static void rx_line(v42ec_t *e, int bit)
 void v42ec_rx_bit(v42ec_t *e, int bit)
 {
     int ls;
-    if (e->link_get) (void)link_poll(e, &ls);   /* the ring's bits came first */
+    if (e->link_get) (void)link_poll(e, &ls, 0);   /* the ring's bits came first */
     rx_line(e, bit);
 }
 
@@ -977,7 +1022,7 @@ void v42ec_line_restored(v42ec_t *e)
 void v42ec_tick(v42ec_t *e, unsigned ms)
 {
     int ls;
-    hst_link_t *L = link_poll(e, &ls);
+    hst_link_t *L = link_poll(e, &ls, ms);
 
     if (e->state == V42EC_DISCONNECTED || e->state == V42EC_ASYNC) return;
     if (ms > 1000000u) ms = 1000000u;       /* as v42lapm_tick: past every timer, and an int */
@@ -1111,7 +1156,7 @@ int v42ec_send_break(v42ec_t *e, int opt, int len10ms)
     if (e->protocol == V42EC_PROTO_MNP) {
         mnp_t *m = &e->l.mnp;
         int ln = mnp_ln_of_brk(opt);
-        if (ln < 0 || m->ln_code >= 0) return -1;
+        if (ln < 0 || m->ln_code >= 0 || m->hst) return -1;   /* HST: LN codes are attention */
         if (ln == MNP_LN_INSEQ) {
             /* after the data already written; feed_mnp() hands it on */
             e->brk_tx_pend = 1; e->brk_tx_opt = opt; e->brk_tx_len = len10ms;
@@ -1177,6 +1222,9 @@ void v42ec_get_status(const v42ec_t *e, v42ec_status_t *st)
         st->t401_expiries = m->t401_expiries; st->violations = m->violations;
         st->mnp_framing = m->framing; st->mnp_opt = m->opt;
         st->mnp_streamlined = m->layout == MNP_LAYOUT_STREAM;
+        st->hst = m->hst;
+        st->hst_rates = m->hst ? m->hst_rates : 0;
+        st->hst_back300 = m->hst ? m->back300 : 0;
         st->attn_tx = m->attn_tx; st->attn_rx = m->attn_rx;
         st->rx_unknown = m->rx_unknown; st->rx_unknown_id = m->rx_unknown_id;
         st->peer_ld_reason = m->peer_ld_reason;

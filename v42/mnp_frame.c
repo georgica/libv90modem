@@ -177,11 +177,50 @@ static int byte_ok(int v)
     return v >= 0 && v <= 255;
 }
 
+/* HST's streamlined layouts: the type first, no LI, no parameter octets */
+static int build_stream(uint8_t *out, int max, const mnp_hdr_t *h)
+{
+    uint8_t b[3];
+    int n = 0;
+    b[n++] = (uint8_t)h->type;
+    switch (h->type) {
+    case MNP_LT:
+        if (!byte_ok(h->ns) || h->dlen < 1 || h->dlen > MNP_MAX_N401 || h->data == NULL) return -1;
+        if (2 + h->dlen > max) return -1;
+        out[0] = MNP_LT;
+        out[1] = (uint8_t)h->ns;
+        memcpy(out + 2, h->data, (size_t)h->dlen);
+        return 2 + h->dlen;
+    case MNP_LA:
+        if (!byte_ok(h->nr) || !byte_ok(h->nk)) return -1;
+        b[n++] = (uint8_t)h->nr; b[n++] = (uint8_t)h->nk;
+        break;
+    case MNP_LN:
+        if (!byte_ok(h->ns) || !byte_ok(h->code)) return -1;
+        b[n++] = (uint8_t)h->ns; b[n++] = (uint8_t)h->code;
+        break;
+    case MNP_LNA:
+        if (!byte_ok(h->nr)) return -1;
+        b[n++] = (uint8_t)h->nr;
+        break;
+    case MNP_LD:
+        if (!byte_ok(h->reason) || h->code != 0) return -1;
+        b[n++] = (uint8_t)h->reason;
+        break;
+    default:
+        return -1;
+    }
+    if (n > max) return -1;
+    memcpy(out, b, (size_t)n);
+    return n;
+}
+
 int mnp_hdr_build(uint8_t *out, int max, int layout, const mnp_hdr_t *h)
 {
     uint8_t b[8];
     int n = 0, opt = layout == MNP_LAYOUT_OPT;
 
+    if (layout == MNP_LAYOUT_STREAM) return build_stream(out, max, h);
     if (layout != MNP_LAYOUT_STD && layout != MNP_LAYOUT_OPT) return -1;
     switch (h->type) {
     case MNP_LT:
@@ -243,12 +282,11 @@ static int params12(const uint8_t *p, int n, int v[3], int have[3])
     return 0;
 }
 
-int mnp_hdr_parse(const uint8_t *f, int len, int agreed_layout, int expect_ns, mnp_hdr_t *h)
+/* Annex A's reading: standard and optimised layouts */
+static int parse_annex(const uint8_t *f, int len, mnp_hdr_t *h)
 {
     int li, type, v[3], have[3];
 
-    (void)agreed_layout;
-    (void)expect_ns;
     memset(h, 0, sizeof *h);
     h->data = NULL;
     if (len < 2) return -1;
@@ -308,6 +346,82 @@ int mnp_hdr_parse(const uint8_t *f, int len, int agreed_layout, int expect_ns, m
         break;
     }
     return 0;
+}
+
+/* a streamlined frame's first octet */
+static int stream_type(int c)
+{
+    return c == MNP_LD || c == MNP_LT || c == MNP_LA || c == MNP_LN || c == MNP_LNA;
+}
+
+/* the streamlined reading: 0, or -1 when the length is not its layout's */
+static int parse_stream(const uint8_t *f, int len, mnp_hdr_t *h)
+{
+    memset(h, 0, sizeof *h);
+    h->data = NULL;
+    h->type = f[0];
+    h->layout = MNP_LAYOUT_STREAM;
+    switch (f[0]) {
+    case MNP_LT:
+        if (len < 3 || len - 2 > MNP_MAX_N401) return -1;
+        h->ns = f[1]; h->data = f + 2; h->dlen = len - 2;
+        return 0;
+    case MNP_LA:
+        if (len != 3) return -1;
+        h->nr = f[1]; h->nk = f[2];
+        return 0;
+    case MNP_LN:
+        if (len != 3) return -1;
+        h->ns = f[1]; h->code = f[2];
+        return 0;
+    case MNP_LNA:
+        if (len != 2) return -1;
+        h->nr = f[1];
+        return 0;
+    case MNP_LD:
+        if (len != 2) return -1;
+        h->reason = f[1];
+        return 0;
+    default:
+        return -1;
+    }
+}
+
+int mnp_hdr_parse(const uint8_t *f, int len, int agreed_layout, int expect_ns, mnp_hdr_t *h)
+{
+    mnp_hdr_t a, s;
+    int ra, rs;
+
+    if (agreed_layout == MNP_LAYOUT_STD || agreed_layout == MNP_LAYOUT_OPT) return parse_annex(f, len, h);
+    ra = parse_annex(f, len, &a);
+    if (len < 2) { *h = a; return -1; }
+    if (ra == 0 && a.type == MNP_LR) {
+        mnp_lr_t lr;
+        /* an LR always comes standard: its LI is no streamlined type; with
+         * one that is (2..7), too short for an LR's parameters, it is only
+         * if it reads as one */
+        if (!stream_type(f[0]) || mnp_lr_parse(f, len, &lr) != -1) { *h = a; return 0; }
+        ra = -1;
+    }
+    rs = stream_type(f[0]) ? parse_stream(f, len, &s) : -1;
+    if (ra == 0 && rs == 0) {
+        int stream;
+        if (agreed_layout == MNP_LAYOUT_STREAM) stream = 1;
+        else if (agreed_layout == MNP_LAYOUT_ANY)
+            stream = expect_ns >= 0 && s.type == MNP_LT && s.ns == expect_ns
+                  && !(a.type == MNP_LT && a.ns == expect_ns);
+        else stream = 0;
+        *h = stream ? s : a;
+        return 0;
+    }
+    if (ra == 0) { *h = a; return 0; }
+    if (rs == 0) { *h = s; return 0; }
+    *h = a;
+    if (stream_type(f[0])) return -1;                      /* a streamlined frame, wrong length */
+    if (ra == MNP_PARSE_UNKNOWN) return MNP_PARSE_UNKNOWN;
+    /* a consistent LI and a known type, its header malformed */
+    if (f[0] >= 1 && f[0] != 255 && f[0] + 1 <= len) return -1;
+    return MNP_PARSE_UNKNOWN;                              /* an id we do not know */
 }
 
 /* ------------------------------------------------------------ link request */
@@ -379,9 +493,16 @@ static int imin(int a, int b)
     return a < b ? a : b;
 }
 
+int mnp_c0_best(unsigned rates)
+{
+    int n;
+    for (n = 7; n >= 2; n--)
+        if ((rates >> n) & 1u) return n;
+    return 0;
+}
+
 int mnp_lr_merge(const mnp_lr_t *ours, const mnp_lr_t *theirs, int hst_profile, mnp_lr_t *reply)
 {
-    (void)hst_profile;
     memset(reply, 0, sizeof *reply);
     reply->const1 = 2;
     reply->framing = imin(ours->framing, theirs->framing);
@@ -390,6 +511,14 @@ int mnp_lr_merge(const mnp_lr_t *ours, const mnp_lr_t *theirs, int hst_profile, 
     if (theirs->have_opt) {
         reply->have_opt = 1;
         reply->opt = (ours->have_opt ? ours->opt : 0) & theirs->opt & 3;
+    }
+    /* USR's 0xC0: HST needs bit 0 from both, 300 if either asks, the
+     * rates in common less 16800 (`LR and 0xC0`) */
+    if (hst_profile && ours->have_c0 && theirs->have_c0 && (theirs->c0_flags & MNP_C0_HST)) {
+        reply->have_c0 = 1;
+        reply->c0_flags = (uint8_t)((ours->c0_flags & theirs->c0_flags & MNP_C0_HST)
+                                    | ((ours->c0_flags | theirs->c0_flags) & MNP_C0_BACK300));
+        reply->c0_rates = (uint8_t)(ours->c0_rates & theirs->c0_rates & MNP_C0_RATES);
     }
     if (reply->framing < 2 || reply->k < 1 || reply->n401 < 1) return -1;
     return 0;

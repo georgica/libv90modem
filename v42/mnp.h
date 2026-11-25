@@ -34,15 +34,52 @@
  * LNA's reset, not flushed by it. Every later change of `resets` (a later
  * break from the far end) flushes as usual.
  *
+ * The HST profile (spec "HST profile"), on an HST call only
+ * (mnp_hst_offer before mnp_accept_lr): our LR carries 0xC0 when the
+ * caller's has it with bit 0; agreed (bit 0 from both, a rate in common),
+ * `hst` is 1 and:
+ *  - we send the streamlined layouts when both LRs carry a non-zero
+ *    parameter 8 (`streamlined`); we read every layout, the agreed one
+ *    winning a tie, or with no parameter 8, the one the caller's last LA,
+ *    LN or LNA came in (until one has come, the expected N(S) breaks a
+ *    tie) [OURS];
+ *  - LN codes are attention codes, never breaks: as forward holder we
+ *    grant 0x1R (a reversal: the LNA, and the endpoint reports when its
+ *    closing flag has gone) and take 0x2R and 0x3R as orders for the pump;
+ *    holding the back channel, the far holder's 0x2R/0x3R is passed on,
+ *    or above max_up (cap_up_code) refused with a count and our own 0x2R
+ *    at the cap, which also follows a reversal granted above it once the
+ *    caller's training is in (the next epoch); a rate not agreed, or
+ *    another class, an LNA and a count (`violations`) only;
+ *  - from an attention we send or grant until the pump's epoch changes
+ *    (at most MNP_HST_HOLD_MAX_MS) no LT goes, the control frames do;
+ *  - holding the back channel, we ask for the forward one (0x1R at the
+ *    current forward rate) when our backlog, queued plus unacknowledged,
+ *    is over MNP_HST_BACKLOG octets, the far end has held the forward
+ *    channel MNP_HST_FAR_MS and no attention is outstanding (D14);
+ *  - a repeated N(R) sends us back once per N(R) value: the LAs a single
+ *    loss draws on the slow channel come one after another, each of them
+ *    a go-back under A.7.3.5 a's literal reading; a loss of the frame
+ *    sent again is T401's (A.7.3.5 b) [OURS];
+ *  - T401 adds to Annex A's formula the far end's one LT ahead of its LA
+ *    (an LT at rx_bps, part of Trt's "queuing delay") and the back
+ *    receiver's hold-back when we receive the back channel (Trt's
+ *    "remote processing"): MNP_HST_LAT_450_MS, _300_MS. T402 (T401/2)
+ *    and T404 follow; our LAs go on the fast channel, or at 450/300 bit/s
+ *    after the k/2 LTs Annex A asks for.
+ * mnp_hst_poll exchanges all of it with the pump's mailbox (hst_link.h).
+ *
  * The facts, each with its source, are in docs/history/hst-facts.md,
  * sections `MNP frames`, `LR and 0xC0`, `Establishment`, `Data and
- * attention` and `Timers`. No allocation, no callbacks, no global state;
- * time arrives through mnp_tick. */
+ * attention`, `Timers`, `Reversal` and `Rate changes`. No allocation, no
+ * callbacks, no global state; time arrives through mnp_tick. */
 #ifndef V90D_MNP_H
 #define V90D_MNP_H
 #include <stdint.h>
+#include <stddef.h>
 #include "mnp_frame.h"
 #include "v42_lapm.h"
+#include "hst_link.h"
 
 /* our window ceiling: k is 1..8 (spec "Status, end reasons, configuration") */
 #define MNP_MAX_K   8
@@ -51,6 +88,17 @@
 #define MNP_TRT_MS  1000
 /* establishment T401 (`Establishment`) [OURS] */
 #define MNP_T401_EST_MS 2000
+/* HST: the reversal policy, backlog and the far end's time on the forward
+ * channel (`Reversal`, P1:416, P1:466, D14) [PUB] */
+#define MNP_HST_BACKLOG     64
+#define MNP_HST_FAR_MS      2000
+/* HST: an attention's hold on our LTs at most this long, the longest a
+ * call goes without a far signal (spec "Retrain, watchdogs") [OURS] */
+#define MNP_HST_HOLD_MAX_MS 12000
+/* HST: the back-channel receiver delivers its bits this late (its
+ * decision delay, measured with the receiver of track B, Task 12) */
+#define MNP_HST_LAT_450_MS  127
+#define MNP_HST_LAT_300_MS  180
 
 typedef struct {
     int k;            /* window offered, 1..MNP_MAX_K (8) */
@@ -128,7 +176,27 @@ typedef struct {
     int lnq[MNP_LNQ], lnq_n;
     int attn_tx, attn_rx;        /* the last LN type sent, received */
 
-    int ld_due, ld_reason;
+    /* the HST profile (above) */
+    int hst_offer;               /* an HST call: 0xC0 offered (mnp_hst_offer) */
+    uint8_t hst_offer_rates;     /* its rate mask */
+    int hst, streamlined, back300;
+    uint8_t hst_rates;           /* the agreed rate mask */
+    int rx_layout;               /* mnp_hdr_parse's agreed_layout for what comes */
+    int gb_nr;                   /* N(R) of the last go-back on a repeated LA, -1 none */
+    int hst_role, hst_cap;       /* the pump's role and cap_up_code, as last polled */
+    unsigned hst_epoch;          /* its epoch, as last polled */
+    int la_told;                 /* the mailbox has la_rx */
+    int attn_hold, attn_hold_ms; /* no LT until the epoch changes; ms held */
+    int rev_grant;               /* we granted a 0x1R: its LNA not yet out */
+    int rev_lna_out;             /* that LNA has just been framed (for the endpoint) */
+    int rev_wait;                /* the endpoint waits for that LNA's closing flag */
+    unsigned long rev_frame0;    /* the HDLC frame count when it was framed */
+    int rev_rx, rev_code;        /* our 0x1R's LNA came (for the mailbox); R */
+    int rate_order;              /* 0x2R/0x3R for the mailbox, 0 none */
+    int cap_due;                 /* our 0x2R at the cap: 1 at the next epoch, 2 now */
+    int far_ms;                  /* holding back: ms the far end has held forward */
+
+    int ld_due, ld_reason, ld_layout;
 
     /* timers, ms left, 0 stopped; held while the line is stopped */
     int t401, t402, t404, ln_t, est_t;
@@ -195,6 +263,17 @@ void mnp_release(mnp_t *m);
 void mnp_abort(mnp_t *m);
 /* our transmit and the far end's rate (bit/s): T401 and T404 again */
 void mnp_set_rates(mnp_t *m, int tx_bps, int rx_bps);
+
+/* The HST profile. On an HST call, before mnp_accept_lr: our 0xC0 offer
+ * (L->offer_rates) and the pump's state as it stands. */
+void mnp_hst_offer(mnp_t *m, const hst_link_t *L);
+/* The mailbox, at every poll (hst_link.h): ms since the last (0 between
+ * ticks), queued the octets written and not yet in an LT. Writes la_rx,
+ * far_ld, rate_order, rev_lna_rx and rev_code; takes ln_req, role,
+ * cap_up_code, fwd_code, epoch and the rates. The agreement and
+ * rev_lna_sent are the endpoint's to write (agreed when the LRs are
+ * exchanged; rev_lna_sent from rev_lna_out and its HDLC transmitter). */
+void mnp_hst_poll(mnp_t *m, hst_link_t *L, unsigned ms, size_t queued);
 
 /* T401 (A.7.5.1): 2 x ((k/2) Lb (Lf + Llt + N401) / tx_bps + Lb (Lf + Lla)
  * / rx_bps) + MNP_TRT_MS, rounded up to the ms, at least floor_ms. Lb, Lf

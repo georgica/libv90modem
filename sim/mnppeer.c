@@ -30,6 +30,8 @@ enum { PH_O_WAIT, PH_O_LR, PH_R_WAIT, PH_R_REPLY, PH_R_LR, PH_DATA };
 #define T400_MS      750     /* V.42 detection phase (`MNP framing`) */
 #define T401_EST_MS  2000    /* `Establishment`: 2 s (0.5 to 9 s, A.7.5.1) */
 #define T401_DATA_MS 4000    /* Table A.9, N401 = 64 at 2400 bit/s */
+#define TRT_MS       1000    /* `Timers`: Annex A's Trt [OURS] */
+#define T401_FLOOR   1500    /* `Timers`: never below 1500 ms [OURS] */
 #define T404_MS      3000    /* Table A.10, 2400 bit/s and faster */
 #define N400_DEF     12      /* A.7.5.5 */
 #define SYN 0x16
@@ -97,7 +99,28 @@ static int timer_run(int *t, int ms)
     return 1;
 }
 
-static int t401_data(const mnppeer_t *p) { return p->cfg.t401_ms > 0 ? p->cfg.t401_ms : T401_DATA_MS; }
+static int t401_data(const mnppeer_t *p)
+{
+    if (p->cfg.t401_ms > 0) return p->cfg.t401_ms;
+    return p->t401_f > 0 ? p->t401_f : T401_DATA_MS;
+}
+
+/* Annex A's T401 (A.7.5.1) in ms: 2 ((k/2) Lb (Lf + Llt + N401) / tx +
+ * Lb (Lf + Lla) / rx) + Trt, rounded up, at least T401_FLOOR. Lb 10 and Lf
+ * 7 in framing mode 2, 8 and 4 in mode 3; Llt and Lla 5 and 8 standard, 3
+ * and 4 optimised, 2 and 3 streamlined (`MNP frames`, `Timers`) */
+static int t401_formula(int framing, int layout, int k, int n401, int tx, int rx)
+{
+    uint64_t lb = framing == 2 ? 10u : 8u, lf = framing == 2 ? 7u : 4u, llt, lla, num, den, ms;
+    if (layout == MNPP_LAYOUT_STREAM) { llt = 2; lla = 3; }
+    else if (layout == MNPP_LAYOUT_OPT) { llt = 3; lla = 4; }
+    else { llt = 5; lla = 8; }
+    num = 1000u * ((uint64_t)k * lb * (lf + llt + (uint64_t)n401) * (uint64_t)rx
+                   + 2u * lb * (lf + lla) * (uint64_t)tx);
+    den = (uint64_t)tx * (uint64_t)rx;
+    ms = (num + den - 1u) / den + TRT_MS;
+    return ms < T401_FLOOR ? T401_FLOOR : (int)ms;
+}
 static int t401_est(const mnppeer_t *p)  { return p->cfg.t401_ms > 0 ? p->cfg.t401_ms : T401_EST_MS; }
 
 /* the framing frames go in now: the agreed one in the data phase, else the
@@ -202,6 +225,12 @@ static void send_lr(mnppeer_t *p)
     /* N401 low octet first, as the Courier's template has it (`LR and 0xC0`) */
     b[n++] = 4; b[n++] = 2; b[n++] = (uint8_t)(n401 & 0xFF); b[n++] = (uint8_t)(n401 >> 8);
     if (have_opt) { b[n++] = 8; b[n++] = 1; b[n++] = (uint8_t)opt; }
+    /* USR's parameter 0xC0, `C0 02 flags rates` (`LR and 0xC0`) */
+    if (p->cfg.originator ? p->cfg.c0 : p->c0_reply) {
+        b[n++] = 0xC0; b[n++] = 2;
+        b[n++] = p->cfg.originator ? (uint8_t)p->cfg.c0_flags : p->c0_reply_flags;
+        b[n++] = p->cfg.originator ? (uint8_t)p->cfg.c0_rates : p->c0_reply_rates;
+    }
     b[0] = (uint8_t)(n - 1);
     put_frame(p, b, n, p->est_framing);
     p->est_tries++;
@@ -216,6 +245,9 @@ static void send_la(mnppeer_t *p, int framing)
     if (p->layout == MNPP_LAYOUT_STD) {
         b[0] = 7; b[1] = T_LA; b[2] = 1; b[3] = 1; b[4] = nr; b[5] = 2; b[6] = 1; b[7] = (uint8_t)nk;
         n = 8;
+    } else if (p->layout == MNPP_LAYOUT_STREAM) {
+        b[0] = T_LA; b[1] = nr; b[2] = (uint8_t)nk;          /* `05 N(R) N(k)` */
+        n = 3;
     } else {
         b[0] = 3; b[1] = T_LA; b[2] = nr; b[3] = (uint8_t)nk;
         n = 4;
@@ -238,6 +270,7 @@ static void send_la(mnppeer_t *p, int framing)
 static size_t new_data(const mnppeer_t *p)
 {
     int i;
+    if (p->hst) return p->txq_n;            /* HST: attention codes, no breaks */
     if (p->ln_code == 3) return 0;
     for (i = 0; i < p->lnq_n; i++)
         if (p->lnq[i] == 3) return p->lnq_ahead[i] < p->txq_n ? p->lnq_ahead[i] : p->txq_n;
@@ -266,8 +299,8 @@ static void send_lt(mnppeer_t *p)
 {
     uint8_t b[MNPP_BODY];
     uint8_t ns = p->nxt;
-    int slot = ns % MNPP_MAX_K, h, len, i;
-    if (ns == p->vs) {
+    int slot = ns % MNPP_MAX_K, h, len, i, first = ns == p->vs;
+    if (first) {
         size_t avail = new_data(p);
         len = (int)(avail < (size_t)p->n401 ? avail : (size_t)p->n401);
         for (i = 0; i < p->lnq_n; i++)
@@ -280,12 +313,22 @@ static void send_lt(mnppeer_t *p)
         p->sto_n[slot] = len;
         p->vs++;
         p->tx_lt++;
+        /* HST: every Nth new LT goes once as a frame of an unknown id */
+        p->unk[slot] = 0;
+        if (p->cfg.unknown_ids > 0 && ++p->unk_n % p->cfg.unknown_ids == 0) p->unk[slot] = 1;
     } else {
         p->tx_retx++;
         if (ns == (uint8_t)(p->ack + 1)) p->t401 = 0;   /* restarted below */
     }
-    if (p->layout == MNPP_LAYOUT_STD) {
+    if (first && p->unk[slot]) {
+        /* its first sending: `3F N(S) data`; again, an ordinary LT */
+        b[0] = 0x3F; b[1] = ns; h = 2;
+        p->unk[slot] = 0;
+        p->tx_unknown++;
+    } else if (p->layout == MNPP_LAYOUT_STD) {
         b[0] = 4; b[1] = T_LT; b[2] = 1; b[3] = 1; b[4] = ns; h = 5;
+    } else if (p->layout == MNPP_LAYOUT_STREAM) {
+        b[0] = T_LT; b[1] = ns; h = 2;                       /* `04 N(S) data` */
     } else {
         b[0] = 2; b[1] = T_LT; b[2] = ns; h = 3;
     }
@@ -300,8 +343,13 @@ static void next_frame(mnppeer_t *p)
 {
     uint8_t b[8];
     if (p->ld_due) {
-        b[0] = 4; b[1] = T_LD; b[2] = 1; b[3] = 1; b[4] = (uint8_t)p->ld_reason;
         p->ld_due = 0;
+        if (p->phase == PH_DATA && p->layout == MNPP_LAYOUT_STREAM) {
+            b[0] = T_LD; b[1] = (uint8_t)p->ld_reason;          /* `02 reason` */
+            put_frame(p, b, 2, cur_framing(p));
+            return;
+        }
+        b[0] = 4; b[1] = T_LD; b[2] = 1; b[3] = 1; b[4] = (uint8_t)p->ld_reason;
         put_frame(p, b, 5, cur_framing(p));
         return;
     }
@@ -321,7 +369,8 @@ static void next_frame(mnppeer_t *p)
          * the layout the responder's LR set (A.6.4.2) */
         int lay = p->layout;
         p->conf_la = 0;
-        if (p->cfg.confirm_la_standard) p->layout = MNPP_LAYOUT_STD;
+        /* HST: the last standard-layout frame [BM] */
+        if (p->cfg.confirm_la_standard || lay == MNPP_LAYOUT_STREAM) p->layout = MNPP_LAYOUT_STD;
         send_la(p, p->est_framing);
         p->layout = lay;
         return;
@@ -331,7 +380,7 @@ static void next_frame(mnppeer_t *p)
     /* a non-expedited one (type 3) once the data written before it has
      * gone and every LT stored is acknowledged (A.7.4.1) */
     if (p->ln_code < 0 && p->lnq_n > 0
-        && (p->lnq[0] != 3 || (p->lnq_ahead[0] == 0 && p->vs == (uint8_t)(p->ack + 1)))) {
+        && (p->hst || p->lnq[0] != 3 || (p->lnq_ahead[0] == 0 && p->vs == (uint8_t)(p->ack + 1)))) {
         p->ln_code = p->lnq[0];
         memmove(p->lnq, p->lnq + 1, (size_t)(p->lnq_n - 1) * sizeof p->lnq[0]);
         memmove(p->lnq_ahead, p->lnq_ahead + 1, (size_t)(p->lnq_n - 1) * sizeof p->lnq_ahead[0]);
@@ -340,16 +389,26 @@ static void next_frame(mnppeer_t *p)
         p->ln_tries = 0;
     }
     if (p->ln_send) {
-        b[0] = 7; b[1] = T_LN; b[2] = 1; b[3] = 1; b[4] = p->vsa; b[5] = 2; b[6] = 1; b[7] = (uint8_t)p->ln_code;
         p->ln_send = 0;
         p->ln_tries++;
         p->ln_t = t401_data(p);
+        if (p->layout == MNPP_LAYOUT_STREAM) {
+            b[0] = T_LN; b[1] = p->vsa; b[2] = (uint8_t)p->ln_code;   /* `06 N(SA) code` */
+            put_frame(p, b, 3, p->framing);
+            return;
+        }
+        b[0] = 7; b[1] = T_LN; b[2] = 1; b[3] = 1; b[4] = p->vsa; b[5] = 2; b[6] = 1; b[7] = (uint8_t)p->ln_code;
         put_frame(p, b, 8, p->framing);
         return;
     }
     if (p->lna_due) {
-        b[0] = 4; b[1] = T_LNA; b[2] = 1; b[3] = 1; b[4] = p->lna_nr;
         p->lna_due = 0;
+        if (p->layout == MNPP_LAYOUT_STREAM) {
+            b[0] = T_LNA; b[1] = p->lna_nr;                     /* `07 N(RA)` */
+            put_frame(p, b, 2, p->framing);
+            return;
+        }
+        b[0] = 4; b[1] = T_LNA; b[2] = 1; b[3] = 1; b[4] = p->lna_nr;
         put_frame(p, b, 5, p->framing);
         return;
     }
@@ -475,6 +534,8 @@ static void link_up(mnppeer_t *p, int credit)
      * agreed makes it 256 from here (A.6.4.1.8) */
     if (!p->cfg.originator && (p->lr_opt & 1)) p->n401 = MNPP_MAX_N401;
     p->connect_ms = p->now_ms;
+    if (p->cfg.tx_bps > 0 && p->cfg.rx_bps > 0)
+        p->t401_f = t401_formula(p->framing, p->layout, p->k, p->n401, p->cfg.tx_bps, p->cfg.rx_bps);
     seq_start(p, credit);
     /* the originator hears the establishment framing too until the
      * responder is heard in the agreed one (a repeated LR, A.7.1.3) */
@@ -483,7 +544,7 @@ static void link_up(mnppeer_t *p, int credit)
     if (p->zc_left > 0 && !p->cfg.originator) p->la_now = 1;
     p->est_t = 0;
     /* a destructive break asked for before the link was up begins now */
-    for (i = 0; i < p->lnq_n; i++) if (p->lnq[i] == 1) brk_begin(p);
+    for (i = 0; i < p->lnq_n && !p->hst; i++) if (p->lnq[i] == 1) brk_begin(p);
 }
 
 static void bad_frame(mnppeer_t *p, int framing)
@@ -500,7 +561,7 @@ static void bad_frame(mnppeer_t *p, int framing)
     }
 }
 
-typedef struct { int const1, have_c2, fr, k, n401, have_opt, opt; } lr_t;
+typedef struct { int const1, have_c2, fr, k, n401, have_opt, opt, have_c0, c0_flags, c0_rates; } lr_t;
 
 /* -1 malformed */
 static int parse_lr(const uint8_t *b, int n, lr_t *r)
@@ -524,6 +585,9 @@ static int parse_lr(const uint8_t *b, int n, lr_t *r)
             r->n401 = l == 1 ? b[i + 2] : b[i + 2] | (b[i + 3] << 8);
             break;
         case 8: r->have_opt = 1; r->opt = b[i + 2]; break;
+        case 0xC0:                /* `C0 02 flags rates`; another length ignored */
+            if (l == 2) { r->have_c0 = 1; r->c0_flags = b[i + 2]; r->c0_rates = b[i + 3]; }
+            break;
         default: break;          /* unknown: ignored (A.7.1.5) */
         }
         i += 2 + l;
@@ -547,6 +611,15 @@ static void on_lr(mnppeer_t *p, const uint8_t *b, int n, int framing)
         p->framing = r.fr; p->k = r.k; p->n401 = r.n401;
         p->layout = (opt & 2) ? MNPP_LAYOUT_OPT : MNPP_LAYOUT_STD;
         if (opt & 1) p->n401 = MNPP_MAX_N401;
+        /* HST: bit 0 from both ends and a rate in common (`LR and 0xC0`) */
+        if (p->cfg.c0 && r.have_c0 && (r.c0_flags & p->cfg.c0_flags & 1) && (r.c0_rates & 0xFC)) {
+            p->hst = 1;
+            p->hst_rates = r.c0_rates & 0xFC;
+            p->back300 = (r.c0_flags & 8) != 0;
+            if (p->cfg.stream_always
+                || (p->cfg.send_opt && (p->cfg.opt & 0xFF) != 0 && r.have_opt && r.opt != 0))
+                p->layout = MNPP_LAYOUT_STREAM;
+        }
         link_up(p, r.k);
         p->conf_la = 1;
         return;
@@ -570,6 +643,18 @@ static void on_lr(mnppeer_t *p, const uint8_t *b, int n, int framing)
     p->lr_have_opt = opt != 0;                       /* A.6.4.1.8: only if agreeing */
     p->lr_opt = (uint8_t)opt;
     p->layout = (opt & 2) ? MNPP_LAYOUT_OPT : MNPP_LAYOUT_STD;
+    /* HST: a reply 0xC0 to an LR whose 0xC0 has bit 0; the merge [BM] */
+    if (p->cfg.c0 && r.have_c0 && (r.c0_flags & 1)) {
+        p->c0_reply = 1;
+        p->c0_reply_flags = (uint8_t)((p->cfg.c0_flags & r.c0_flags & 1) | ((p->cfg.c0_flags | r.c0_flags) & 8));
+        p->c0_reply_rates = (uint8_t)(p->cfg.c0_rates & r.c0_rates & 0xFC);
+        if ((p->c0_reply_flags & 1) && p->c0_reply_rates) {
+            p->hst = 1;
+            p->hst_rates = p->c0_reply_rates;
+            p->back300 = (p->c0_reply_flags & 8) != 0;
+            if (p->cfg.stream_always || (opt != 0 && r.opt != 0)) p->layout = MNPP_LAYOUT_STREAM;
+        }
+    }
     p->est_framing = framing;
     p->phase = PH_R_REPLY;
     p->lr_due = p->cfg.lr_delay_ms;
@@ -633,10 +718,90 @@ static void on_lt(mnppeer_t *p, uint8_t ns, const uint8_t *info, int len)
     }
 }
 
+/* a streamlined type octet: LD, LT, LA, LN, LNA */
+static int stype(int c)
+{
+    return c == T_LD || c == T_LT || c == T_LA || c == T_LN || c == T_LNA;
+}
+
+/* the length of a streamlined frame of that type fits n octets */
+static int sfits(int type, int n)
+{
+    switch (type) {
+    case T_LT: return n >= 3;
+    case T_LA: case T_LN: return n == 3;
+    default: return n == 2;                 /* LD, LNA */
+    }
+}
+
+/* an Annex A frame exactly as this peer builds it (standard or optimised) */
+static int annex_form(const uint8_t *b, int n)
+{
+    int li = b[0];
+    if (n < 2 || li == 255 || li + 1 > n) return 0;
+    switch (b[1]) {
+    case T_LR: return 1;
+    case T_LT: return (li == 4 && n >= 6 && b[2] == 1 && b[3] == 1) || (li == 2 && n >= 4);
+    case T_LA: return (li == 7 && n == 8 && b[2] == 1 && b[3] == 1) || (li == 3 && n == 4);
+    case T_LN: return li == 7 && n == 8 && b[2] == 1 && b[3] == 1;
+    case T_LNA: case T_LD: return li == 4 && n == 5 && b[2] == 1 && b[3] == 1;
+    default: return 0;
+    }
+}
+
+static void on_frame_annex(mnppeer_t *p, const uint8_t *b, int n, int framing);
+
+/* HST: a streamlined frame is taken as its standard form (the LI and
+ * parameter octets put back); an unknown first octet is counted. In the
+ * streamlined layout agreed, every frame that reads as one; with
+ * layout_rx_any, only those that are no Annex A frame as this peer
+ * builds them. 1 when handled here. */
+static int on_frame_stream(mnppeer_t *p, const uint8_t *b, int n, int framing)
+{
+    uint8_t s[MNPP_BODY + 8];
+    int m = 0;
+    int fits;
+    if (n < 2 || (b[1] == T_LR && !stype(b[0]))) return 0;           /* an LR: standard */
+    fits = stype(b[0]) && sfits(b[0], n);
+    if (p->layout != MNPP_LAYOUT_STREAM || p->cfg.layout_rx_any) {
+        if (!fits || annex_form(b, n)) return 0;      /* an Annex A frame first */
+    } else if (!fits) {
+        if (annex_form(b, n)) return 0;           /* the confirming LA, standard [BM] */
+        if (!stype(b[0])) { p->rx_frames++; p->rx_unknown++; }      /* LT1-3, LTR, ... */
+        else bad_frame(p, framing);
+        return 1;
+    }
+    switch (b[0]) {
+    case T_LT:
+        s[m++] = 4; s[m++] = T_LT; s[m++] = 1; s[m++] = 1; s[m++] = b[1];
+        memcpy(s + m, b + 2, (size_t)(n - 2));
+        m += n - 2;
+        break;
+    case T_LA:  s[m++] = 7; s[m++] = T_LA; s[m++] = 1; s[m++] = 1; s[m++] = b[1];
+                s[m++] = 2; s[m++] = 1; s[m++] = b[2]; break;
+    case T_LN:  s[m++] = 7; s[m++] = T_LN; s[m++] = 1; s[m++] = 1; s[m++] = b[1];
+                s[m++] = 2; s[m++] = 1; s[m++] = b[2]; break;
+    default:    s[m++] = 4; s[m++] = b[0]; s[m++] = 1; s[m++] = 1; s[m++] = b[1]; break;
+    }
+    p->syn = 1;
+    on_frame_annex(p, s, m, framing);
+    p->syn = 0;
+    return 1;
+}
+
 static void on_frame(mnppeer_t *p, const uint8_t *b, int n, int framing)
 {
-    int li, type, lay;
     if (p->state == MNPP_DISCONNECTED) return;
+    if ((p->hst && (p->layout == MNPP_LAYOUT_STREAM || p->cfg.layout_rx_any)
+         && (p->phase == PH_DATA || p->phase == PH_R_LR))
+        && on_frame_stream(p, b, n, framing))
+        return;
+    on_frame_annex(p, b, n, framing);
+}
+
+static void on_frame_annex(mnppeer_t *p, const uint8_t *b, int n, int framing)
+{
+    int li, type, lay;
     if (n < 2) { bad_frame(p, framing); return; }
     li = b[0]; type = b[1];
     if (li == 255 || li + 1 > n) { bad_frame(p, framing); return; }
@@ -652,12 +817,14 @@ static void on_frame(mnppeer_t *p, const uint8_t *b, int n, int framing)
         p->state = MNPP_DISCONNECTED;
         return;
     case T_LT: case T_LA: {
-        uint8_t nr; int nk;
+        uint8_t nr; int nk, form;
         if (type == T_LT && li == 4 && b[2] == 1 && b[3] == 1) lay = MNPP_LAYOUT_STD;
         else if (type == T_LT && li == 2) lay = MNPP_LAYOUT_OPT;
         else if (type == T_LA && li == 7 && n == 8 && b[2] == 1 && b[3] == 1 && b[5] == 2 && b[6] == 1) lay = MNPP_LAYOUT_STD;
         else if (type == T_LA && li == 3 && n == 4) lay = MNPP_LAYOUT_OPT;
         else { bad_frame(p, framing); return; }
+        form = lay;                               /* where the fields are */
+        if (p->syn) lay = MNPP_LAYOUT_STREAM;     /* how it came */
         if (p->phase != PH_DATA && p->phase != PH_R_LR) return;
         /* the confirming LA is taken in either layout: A.6.4.2 wants A.3b
          * when bit 2 is agreed, BinModem sends A.3a [BM] */
@@ -669,13 +836,13 @@ static void on_frame(mnppeer_t *p, const uint8_t *b, int n, int framing)
         /* our destructive LN is out: what comes is discarded (Table 4) */
         if (p->brk_wait && p->phase == PH_DATA) { if (type == T_LT) p->rx_lt++; return; }
         if (type == T_LA) {
-            nr = lay == MNPP_LAYOUT_STD ? b[4] : b[2];
-            nk = lay == MNPP_LAYOUT_STD ? b[7] : b[3];
+            nr = form == MNPP_LAYOUT_STD ? b[4] : b[2];
+            nk = form == MNPP_LAYOUT_STD ? b[7] : b[3];
             if (p->phase == PH_R_LR) { link_up(p, nk); p->last_nr = nr; return; }
             on_la(p, nr, nk);
         } else {
             if (p->phase == PH_R_LR) link_up(p, p->k);   /* the LA was lost */
-            if (lay == MNPP_LAYOUT_STD) on_lt(p, b[4], b + 5, n - 5);
+            if (form == MNPP_LAYOUT_STD) on_lt(p, b[4], b + 5, n - 5);
             else on_lt(p, b[2], b + 3, n - 3);
         }
         return;
@@ -696,7 +863,7 @@ static void on_frame(mnppeer_t *p, const uint8_t *b, int n, int framing)
              * (Table 4: data held and discarded "until receive
              * acknowledgement") the reset waits for that acknowledgement,
              * so a break from both ends resets once */
-            if (b[7] == 1 && !p->brk_wait) brk_reset(p);
+            if (b[7] == 1 && !p->brk_wait && !p->hst) brk_reset(p);
         }
         p->lna_due = 1;
         p->lna_nr = b[4];
@@ -942,7 +1109,7 @@ int mnppeer_send_ln(mnppeer_t *p, int code)
     p->lnq[p->lnq_n++] = code & 0xFF;
     /* the destructive break begins on its arrival; before the link is up,
      * when the link comes up */
-    if ((code & 0xFF) == 1 && p->state == MNPP_CONNECTED) brk_begin(p);
+    if ((code & 0xFF) == 1 && p->state == MNPP_CONNECTED && !p->hst) brk_begin(p);
     return 1;
 }
 

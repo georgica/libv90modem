@@ -64,9 +64,31 @@
  *
  * Layouts: standard, or Annex A's optimised LT and LA when both LRs carry
  * parameter 8 and its AND has bit 2 (A.6.4.1.8); `layout_rx_any` takes
- * either in any case. The HST fields (`c0`, `c0_flags`, `c0_rates`,
- * `unknown_ids`, the streamlined layout) are declared for the HST work and
- * have no effect yet.
+ * either in any case (and, on HST, the streamlined ones too).
+ *
+ * HST mode (hst-facts.md `MNP frames`, `LR and 0xC0`, `Data and
+ * attention`), with `c0`: the LR carries USR's `C0 02 flags rates`. The
+ * originator takes HST as agreed when the reply's 0xC0 has bit 0 (and so
+ * did ours) and a non-zero rate mask; the responder replies with the merge
+ * (bit 0 from both, 300 if either asks, the rates' AND, AND 0xFC [BM]),
+ * only to an LR whose 0xC0 has bit 0. Agreed, both ends send the
+ * streamlined layouts (no LI: LT `04 N(S) data`, LA `05 N(R) N(k)`, LN `06
+ * N(SA) code`, LNA `07 N(RA)`, LD `02 reason`) when both LRs carry a
+ * non-zero parameter 8, or always with `stream_always` (the patent
+ * streamlines every frame; the Courier's LR has no parameter 8). The
+ * originator's confirming LA stays standard [BM]. Received in the
+ * streamlined layout: a frame whose first octet is a type with the length
+ * of its layout; an LR by its second octet 0x01 (its first, an LI, is no
+ * type); any other first octet is counted in `rx_unknown`. LN codes are
+ * attention codes, passed through: none is a break. `unknown_ids` N: every
+ * Nth new LT goes once with first octet 0x3F (`3F N(S) data`, counted in
+ * `tx_unknown`), and when it is sent again, as an ordinary LT (the patent's
+ * reformat).
+ *
+ * T401 in the data phase: `t401_ms`, or with it 0 and `tx_bps`, `rx_bps`
+ * given, Annex A's formula (A.7.5.1) for the agreed framing, layout, k and
+ * N401: 2 ((k/2) Lb (Lf + Llt + N401) / tx + Lb (Lf + Lla) / rx) + Trt, Trt
+ * 1000 ms, at least 1500 ms (`Timers`), rounded up to the ms; else 4000.
  *
  * Every frame this peer sends is lost with probability `lose_ppm` per
  * million and has one bit inverted with probability `corrupt_ppm` (after
@@ -84,20 +106,22 @@ typedef struct {
     int n401;            /* information field offered, 1..MNPP_MAX_N401 (0: 64) */
     int opt;             /* LR parameter 8's value, when send_opt */
     int send_opt;        /* 1: the LR carries parameter 8 */
-    int c0, c0_flags, c0_rates;   /* HST: the 0xC0 parameter (no effect yet) */
+    int c0, c0_flags, c0_rates;   /* HST: the 0xC0 parameter, sent when c0 (see above) */
     int layout_rx_any;   /* 1: take LT and LA in either Annex A layout */
     int lose_ppm, corrupt_ppm;    /* impairments of the frames we send */
     uint32_t seed;
     int zero_credit_ms;  /* credit 0 for this long after connecting */
     int lr_delay_ms;     /* our LR goes out no earlier than this (the responder: after the caller's) */
     int odp_first;       /* originator: V.42's ODP for T400 before the LR */
-    int unknown_ids;     /* HST: every Nth LT once with first octet 0x3F (no effect yet) */
+    int unknown_ids;     /* HST: every Nth new LT once with first octet 0x3F (0: none) */
     int never_lr;        /* 1: never send an LR */
     int t401_ms;         /* T401 (0: 2000 ms in establishment, 4000 ms in data) */
     int n400;            /* N400 (0: 12) */
     int confirm_la_standard;  /* originator: the confirming LA in the standard
                                  layout even when bit 2 is agreed, as BinModem
                                  sends it [BM] (Annex A A.6.4.2 says A.3b) */
+    int stream_always;   /* HST agreed: streamlined layouts even without parameter 8 */
+    int tx_bps, rx_bps;  /* our transmit rate, the far end's: T401 from the formula */
 } mnp_peer_cfg;
 
 enum { MNPP_IDLE = 0, MNPP_CONNECTED, MNPP_DISCONNECTED };
@@ -194,6 +218,14 @@ typedef struct {
     int rx_over_credit;           /* LTs beyond any credit we gave (N(R) + N(k)) */
     int ln_rx_full;               /* LNs not taken (and not acknowledged): queue full */
     int rx_unknown;               /* valid frames of an unknown type */
+    int tx_unknown;               /* HST: LTs sent with first octet 0x3F */
+    /* HST (agreed by the LRs' 0xC0) */
+    int hst, hst_rates, back300;
+    uint8_t c0_reply_flags, c0_reply_rates; int c0_reply;   /* responder: our reply's 0xC0 */
+    int unk_n;                    /* new LTs counted for unknown_ids */
+    uint8_t unk[MNPP_MAX_K];      /* the stored LT went with 0x3F, not yet again */
+    int syn;                      /* the frame being handled came streamlined */
+    int t401_f;                   /* data phase T401 from the formula, 0 none */
     int resets;                   /* destructive breaks that reset the link */
     int tx_frames, rx_frames;
 } mnppeer_t;

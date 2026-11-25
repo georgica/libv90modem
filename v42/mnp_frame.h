@@ -22,8 +22,13 @@
 enum { MNP_LR = 1, MNP_LD = 2, MNP_LT = 4, MNP_LA = 5, MNP_LN = 6, MNP_LNA = 7 };
 
 /* header layouts: Annex A's standard one, its optimised LT and LA
- * (LR parameter 8 bit 2), HST's streamlined one (no LI; not built or read yet) */
+ * (LR parameter 8 bit 2), HST's streamlined one (no LI: the type first) */
 enum { MNP_LAYOUT_STD = 0, MNP_LAYOUT_OPT, MNP_LAYOUT_STREAM };
+/* mnp_hdr_parse's agreed_layout, beside the three: no layout known (HST,
+ * the caller's layout not settled by the LRs nor yet heard); and a flag
+ * or'ed into MNP_LAYOUT_STD or _OPT: read the streamlined layouts too */
+#define MNP_LAYOUT_ANY (-1)
+#define MNP_RX_ALL     0x10
 
 /* The mode 2 FCS's initial value and octet order are in no public text.
  * The four candidates: initial 0 or 0xFFFF, low or high octet first; no
@@ -107,19 +112,34 @@ typedef struct {
 /* mnp_hdr_parse: a CRC-valid frame of a type this does not know */
 #define MNP_PARSE_UNKNOWN (-2)
 
-/* Build the body of an LT, LA, LN, LNA or LD in layout (MNP_LAYOUT_STD, or
- * MNP_LAYOUT_OPT, which changes LT and LA only) into out. Returns its
- * length, or -1 (max too small, another type or layout, a value outside
- * 0..255, an LT with no information or more than MNP_MAX_N401). */
+/* Build the body of an LT, LA, LN, LNA or LD in layout into out:
+ * MNP_LAYOUT_STD; MNP_LAYOUT_OPT, which changes LT and LA only; or
+ * MNP_LAYOUT_STREAM, HST's (LT `04 N(S) data`, LA `05 N(R) N(k)`, LN `06
+ * N(SA) code`, LNA `07 N(RA)`, LD `02 reason`). Returns its length, or -1
+ * (max too small, another type or layout, a value outside 0..255, an LT
+ * with no information or more than MNP_MAX_N401, a streamlined LD with a
+ * user code). */
 int mnp_hdr_build(uint8_t *out, int max, int layout, const mnp_hdr_t *h);
-/* Read the body f of len octets (FCS removed). agreed_layout is the layout
- * in force; standard and optimised LT and LA are both taken in either,
- * told apart by their LI. expect_ns, the N(S) expected next (-1 for none),
- * will break the tie between a standard and a streamlined reading; not
- * used yet. Returns 0, MNP_PARSE_UNKNOWN, or
- * -1 (malformed: too short, an LI past the end, a parameter past the
- * header, a mandatory parameter missing, an empty LT). Unknown parameters
- * are skipped. */
+/* Read the body f of len octets (FCS removed). Returns 0, MNP_PARSE_UNKNOWN
+ * or -1 (malformed: too short, an LI past the end, a parameter past the
+ * header, a mandatory parameter missing, an empty LT, a streamlined frame
+ * of the wrong length). Unknown parameters are skipped.
+ *
+ * agreed_layout MNP_LAYOUT_STD or _OPT alone: Annex A's layouts only
+ * (plain MNP); standard and optimised LT and LA are both taken, told apart
+ * by their LI; a frame whose second octet is no type is MNP_PARSE_UNKNOWN.
+ *
+ * The others read every layout (spec "HST profile"): the standard reading
+ * fits when octet 0 is a consistent LI, octet 1 a known type and the
+ * header reads (an LR also as an LR); the streamlined one when octet 0 is
+ * a type of LT, LA, LN, LNA or LD and the length is its layout's. When
+ * both fit, MNP_LAYOUT_STREAM takes the streamlined one, MNP_LAYOUT_STD or
+ * _OPT with MNP_RX_ALL the standard one, and MNP_LAYOUT_ANY the one that
+ * is an LT with N(S) expect_ns (-1 none), else the standard one. When
+ * neither fits: -1 if octet 0 is a type (a streamlined frame of the wrong
+ * length) or the standard header is malformed, else MNP_PARSE_UNKNOWN (a
+ * USR frame we do not implement, `MNP frames`). An LR is always standard:
+ * a frame whose second octet is 1 and whose first is no streamlined type. */
 int mnp_hdr_parse(const uint8_t *f, int len, int agreed_layout, int expect_ns, mnp_hdr_t *h);
 
 /* ------------------------------------------------------------ link request */
@@ -150,12 +170,23 @@ int mnp_lr_build(uint8_t *out, int max, const mnp_lr_t *lr);
  * length; with no parameter 4, n401 is 64 [OURS]; the reserved bits of
  * parameter 8 (3 to 8) are dropped. */
 int mnp_lr_parse(const uint8_t *f, int len, mnp_lr_t *lr);
+/* USR's 0xC0 (`LR and 0xC0`): flags bit 0 HST, bit 3 the 300 bit/s back
+ * channel; rates bit n for 2400n bit/s, n = 2..7. We never agree 16800
+ * (code 7): MNP_C0_RATES masks it out. */
+#define MNP_C0_HST     0x01
+#define MNP_C0_BACK300 0x08
+#define MNP_C0_RATES   0x7C
+/* the best rate code of a mask: its highest bit, 7 down to 2; 0 none */
+int mnp_c0_best(unsigned rates);
+
 /* Our reply to their LR (A.7.1.5): the lower framing mode, the lower k,
  * the smaller N401; parameter 8 only if they sent it, as the AND of both
- * maps; no 0xC0 yet (hst_profile is not used yet). N401 is never above
- * MNP_MAX_N401. Returns 0, or -1 when the
- * parameters cannot be agreed (framing mode below 2, k or N401 of 0): LD
- * reason 3. */
+ * maps. 0xC0 only with hst_profile, when both LRs carry it and theirs has
+ * bit 0 (spec "HST profile"): flags = the AND of bit 0 and the OR of bit
+ * 3 (300 if either asks), rates = ours AND theirs AND MNP_C0_RATES (0:
+ * nothing in common, plain MNP). N401 is never above MNP_MAX_N401.
+ * Returns 0, or -1 when the parameters cannot be agreed (framing mode
+ * below 2, k or N401 of 0). */
 int mnp_lr_merge(const mnp_lr_t *ours, const mnp_lr_t *theirs, int hst_profile, mnp_lr_t *reply);
 
 #endif

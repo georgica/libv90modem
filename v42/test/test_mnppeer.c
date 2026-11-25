@@ -776,6 +776,107 @@ static void raw_ln1_before_connect(void)
     printf("raw_ln1_before_connect: break begun at link up, data dropped, one reset at the LNA\n");
 }
 
+/* HST mode against itself (hst-facts.md `LR and 0xC0`, `MNP frames`):
+ * 0xC0 merged, streamlined layouts after agreement (parameter 8 from both,
+ * or stream_always), attention codes passed through with no break, LTs of
+ * an unknown id sent again as ordinary LTs, T401 from Annex A's formula */
+static mnp_peer_cfg hst_cfg(int originator, int flags, int rates, int opt)
+{
+    mnp_peer_cfg c = cfg(originator, 3);
+    c.c0 = 1; c.c0_flags = flags; c.c0_rates = rates;
+    c.send_opt = opt != 0; c.opt = opt;
+    return c;
+}
+
+static void loop_hst(void)
+{
+    mnp_peer_cfg a = hst_cfg(1, 0x01, 0xFC, 3), b = hst_cfg(0, 0x09, 0x7C, 2);
+    loop_t l;
+    int ok, c1, c2, rst, t401, nob0, sa_ok;
+    loop_init(&l, &a, &b);
+    ok = loop_data(&l, 4096, 60000);
+    CHECK(ok);
+    CHECK_EQ_I(l.ab.h_out, l.ab.h_in);
+    CHECK_EQ_I(l.ba.h_out, l.ba.h_in);
+    CHECK(l.a.hst == 1 && l.b.hst == 1);
+    CHECK_EQ_I(l.a.hst_rates, 0x7C);
+    CHECK_EQ_I(l.b.hst_rates, 0x7C);
+    CHECK(l.a.back300 == 1 && l.b.back300 == 1);
+    CHECK_EQ_I(l.a.layout, MNPP_LAYOUT_STREAM);
+    CHECK_EQ_I(l.b.layout, MNPP_LAYOUT_STREAM);
+    CHECK_EQ_I(l.a.last_layout_rx, MNPP_LAYOUT_STREAM);
+    CHECK_EQ_I(l.b.last_layout_rx, MNPP_LAYOUT_STREAM);
+    /* attention codes: delivered once, no reset */
+    rst = l.a.resets + l.b.resets;
+    mnppeer_send_ln(&l.b, 0x14);
+    mnppeer_send_ln(&l.a, 0x01);
+    for (ok = 0; ok < 5000; ok++) loop_ms(&l);
+    c1 = mnppeer_get_ln(&l.a);
+    c2 = mnppeer_get_ln(&l.b);
+    CHECK_EQ_I(c1, 0x14);
+    CHECK_EQ_I(c2, 0x01);
+    CHECK_EQ_I(l.a.resets + l.b.resets, rst);
+    CHECK_EQ_I(l.a.ln_code, -1);
+    CHECK_EQ_I(l.b.ln_code, -1);
+    printf("loop_hst: 0xC0 01/FC and 09/7C: hst %d/%d, rates %02X, back300 %d, streamlined both ways, "
+           "4096 octets each way %s; LN 14 and 01 delivered as codes, resets %d\n",
+           l.a.hst, l.b.hst, l.a.hst_rates, l.a.back300,
+           l.ab.h_out == l.ab.h_in && l.ba.h_out == l.ba.h_in ? "intact" : "DAMAGED", l.a.resets + l.b.resets);
+
+    /* no parameter 8 in either LR: standard; stream_always: streamlined */
+    a = hst_cfg(1, 0x01, 0xFC, 0); b = hst_cfg(0, 0x01, 0x7C, 0);
+    loop_init(&l, &a, &b);
+    CHECK(loop_data(&l, 2048, 20000));
+    CHECK(l.a.hst == 1 && l.b.hst == 1);
+    CHECK_EQ_I(l.a.layout, MNPP_LAYOUT_STD);
+    CHECK_EQ_I(l.b.layout, MNPP_LAYOUT_STD);
+    a.stream_always = 1; b.stream_always = 1;
+    loop_init(&l, &a, &b);
+    CHECK(loop_data(&l, 2048, 20000));
+    CHECK_EQ_I(l.a.layout, MNPP_LAYOUT_STREAM);
+    CHECK_EQ_I(l.b.last_layout_rx, MNPP_LAYOUT_STREAM);
+    CHECK_EQ_I(l.ab.h_out, l.ab.h_in);
+    sa_ok = l.ab.h_out == l.ab.h_in && l.ba.h_out == l.ba.h_in;
+    /* 0xC0 without bit 0 from the caller: no 0xC0 in the reply, no HST */
+    a = hst_cfg(1, 0x00, 0xFC, 3); b = hst_cfg(0, 0x01, 0x7C, 2);
+    loop_init(&l, &a, &b);
+    CHECK(loop_data(&l, 2048, 20000));
+    CHECK(l.a.hst == 0 && l.b.hst == 0 && l.b.c0_reply == 0);
+    CHECK_EQ_I(l.a.layout, MNPP_LAYOUT_OPT);
+    nob0 = l.a.hst;
+    /* rates with nothing in common: no HST */
+    a = hst_cfg(1, 0x01, 0x80, 3);
+    loop_init(&l, &a, &b);
+    CHECK(loop_data(&l, 2048, 20000));
+    CHECK(l.a.hst == 0 && l.b.hst == 0 && l.b.c0_reply == 1 && l.b.c0_reply_rates == 0);
+    printf("loop_hst: no parameter 8: standard; stream_always: streamlined, %s; caller without bit 0: hst %d; "
+           "no rate in common: hst %d\n", sa_ok ? "intact" : "DAMAGED", nob0, l.a.hst);
+
+    /* every 3rd new LT once with 0x3F: counted unknown, its data comes again */
+    a = hst_cfg(1, 0x01, 0xFC, 3); b = hst_cfg(0, 0x01, 0x7C, 2);
+    a.unknown_ids = 3;
+    loop_init(&l, &a, &b);
+    ok = loop_data(&l, 4096, 60000);
+    CHECK(ok);
+    CHECK_EQ_I(l.ab.h_out, l.ab.h_in);
+    CHECK(l.a.tx_unknown > 0);
+    CHECK_EQ_I(l.b.rx_unknown, l.a.tx_unknown);
+    printf("loop_hst: unknown_ids 3: %d LTs sent with 3F, %d counted unknown, 4096 octets %s\n",
+           l.a.tx_unknown, l.b.rx_unknown, l.ab.h_out == l.ab.h_in ? "intact" : "DAMAGED");
+
+    /* T401 from the formula: mode 3 streamlined, k 8, N401 64, at 450 bit/s
+     * to a 14400 bit/s receiver: 2 (4 x 8 x 70 / 450 + 8 x 7 / 14400) s +
+     * 1000 ms = 10963.3 -> 10964 ms; the other end, 14400 to 450: 1560 ms */
+    a = hst_cfg(1, 0x01, 0xFC, 3); b = hst_cfg(0, 0x01, 0x7C, 2);
+    a.tx_bps = 450; a.rx_bps = 14400; b.tx_bps = 14400; b.rx_bps = 450;
+    loop_init(&l, &a, &b);
+    CHECK(loop_data(&l, 1024, 20000));
+    t401 = l.a.t401_f;
+    CHECK_EQ_I(t401, 10964);
+    CHECK_EQ_I(l.b.t401_f, 1560);
+    printf("loop_hst: T401 from the formula: %d ms at 450 to 14400, %d ms at 14400 to 450\n", t401, l.b.t401_f);
+}
+
 int main(void)
 {
     loop_mode3();
@@ -796,5 +897,6 @@ int main(void)
     raw_lr_on_bad();
     raw_lna_match();
     raw_ln1_before_connect();
+    loop_hst();
     T_REPORT("test_mnppeer");
 }

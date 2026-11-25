@@ -12,4 +12,13 @@ layouts: opt LT  02 04 07 41 42 43
 layouts: opt LA  03 05 07 08
 courier_lr: const1 2 framing 3 k 8 n401 64 opt 0 c0 0
 merge: framing 2 k 4 n401 64 opt 1/2
-test_mnp_frame: 225 checks, 0 failures
+c0: ours 01/7C, theirs 09/FC: HST 1, back300 1, rates 7C, best code 6
+c0: theirs 00/FC: 0xC0 in reply 0; theirs 01/80: rates 00 (plain MNP)
+layouts: str LT  04 07 41
+layouts: str LA  05 07 08
+layouts: str LN  06 03 14
+layouts: str LNA 07 03
+layouts: str LD  02 FF
+stream: 04 04 01 01 07 41: std agreed N(S) 7; streamlined agreed N(S) 4; none agreed, expect 4: N(S) 4
+stream: first octet 3F: unknown; the Courier's LR read as an LR in all 5 modes: yes
+test_mnp_frame: 350 checks, 0 failures

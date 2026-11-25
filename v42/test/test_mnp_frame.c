@@ -456,6 +456,142 @@ static void merge(void)
     CHECK_EQ_I(mnp_lr_merge(&ours, &theirs, 0, &reply), -1);
 }
 
+/* USR's 0xC0 (`LR and 0xC0`): HST needs bit 0 from both ends, the back
+ * channel is 300 if either asks, rates = ours AND theirs AND 0x7C, the
+ * best is the highest bit; a C0 of another length is ignored */
+static void c0(void)
+{
+    mnp_lr_t ours = lrv(3, 8, 64, 1, 2), theirs = lrv(3, 8, 64, 1, 3), reply;
+    uint8_t f[48];
+    int n, best, c0_none, r80;
+
+    ours.have_c0 = 1; ours.c0_flags = 0x01; ours.c0_rates = 0x7C;
+    theirs.have_c0 = 1; theirs.c0_flags = 0x09; theirs.c0_rates = 0xFC;
+    CHECK_EQ_I(mnp_lr_merge(&ours, &theirs, 1, &reply), 0);
+    CHECK_EQ_I(reply.have_c0, 1);
+    CHECK_EQ_I(reply.c0_flags & MNP_C0_HST, MNP_C0_HST);
+    CHECK_EQ_I(reply.c0_flags & MNP_C0_BACK300, MNP_C0_BACK300);
+    CHECK_EQ_I(reply.c0_flags, 0x09);
+    CHECK_EQ_I(reply.c0_rates, 0x7C);
+    best = mnp_c0_best(reply.c0_rates);
+    CHECK_EQ_I(best, 6);
+    /* the reply LR ends with C0 02 09 7C */
+    n = mnp_lr_build(f, (int)sizeof f, &reply);
+    CHECK(n > 4 && f[n - 4] == 0xC0 && f[n - 3] == 0x02 && f[n - 2] == 0x09 && f[n - 1] == 0x7C);
+    printf("c0: ours 01/7C, theirs 09/FC: HST %d, back300 %d, rates %02X, best code %d\n",
+           reply.c0_flags & MNP_C0_HST, (reply.c0_flags & MNP_C0_BACK300) != 0, reply.c0_rates, best);
+    /* the profile off: no 0xC0 in the reply */
+    CHECK_EQ_I(mnp_lr_merge(&ours, &theirs, 0, &reply), 0);
+    CHECK_EQ_I(reply.have_c0, 0);
+    /* theirs without bit 0: no HST, no 0xC0 */
+    theirs.c0_flags = 0x00; theirs.c0_rates = 0xFC;
+    CHECK_EQ_I(mnp_lr_merge(&ours, &theirs, 1, &reply), 0);
+    CHECK_EQ_I(reply.have_c0, 0);
+    c0_none = reply.have_c0;
+    /* theirs 01/80 (16800 only): HST but no common rate, plain MNP */
+    theirs.c0_flags = 0x01; theirs.c0_rates = 0x80;
+    CHECK_EQ_I(mnp_lr_merge(&ours, &theirs, 1, &reply), 0);
+    CHECK_EQ_I(reply.c0_rates, 0);
+    CHECK_EQ_I(mnp_c0_best(reply.c0_rates), 0);
+    r80 = reply.c0_rates;
+    /* we leave 300 out, they ask it: 300 */
+    theirs.c0_flags = 0x01; theirs.c0_rates = 0x10;
+    ours.c0_flags = 0x09;
+    CHECK_EQ_I(mnp_lr_merge(&ours, &theirs, 1, &reply), 0);
+    CHECK(reply.c0_flags == 0x09 && reply.c0_rates == 0x10);
+    CHECK_EQ_I(mnp_c0_best(0x10), 4);
+    CHECK_EQ_I(mnp_c0_best(0x0C), 3);
+    printf("c0: theirs 00/FC: 0xC0 in reply %d; theirs 01/80: rates %02X (plain MNP)\n", c0_none, r80);
+    /* a C0 of length 3 or 1 is ignored */
+    memcpy(f, courier, sizeof courier);
+    n = (int)sizeof courier;
+    f[n++] = 0xC0; f[n++] = 0x03; f[n++] = 0x01; f[n++] = 0xFC; f[n++] = 0x00;
+    f[0] = (uint8_t)(n - 1);
+    CHECK_EQ_I(mnp_lr_parse(f, n, &theirs), 0);
+    CHECK_EQ_I(theirs.have_c0, 0);
+    n = (int)sizeof courier;
+    f[n++] = 0xC0; f[n++] = 0x01; f[n++] = 0x01;
+    f[0] = (uint8_t)(n - 1);
+    CHECK_EQ_I(mnp_lr_parse(f, n, &theirs), 0);
+    CHECK_EQ_I(theirs.have_c0, 0);
+}
+
+/* HST's streamlined layouts (`MNP frames`): no LI; the tolerant parser */
+static void stream(void)
+{
+    static const uint8_t d41[] = { 0x41 };
+    static const uint8_t slt[] = { 0x04, 0x07, 0x41 };
+    static const uint8_t sla[] = { 0x05, 0x07, 0x08 };
+    static const uint8_t sln[] = { 0x06, 0x03, 0x14 };
+    static const uint8_t slna[] = { 0x07, 0x03 };
+    static const uint8_t sld[] = { 0x02, 0xFF };
+    /* standard LT N(S) 7 "41", or streamlined LT N(S) 4 "01 01 07 41" */
+    static const uint8_t both[] = { 0x04, 0x04, 0x01, 0x01, 0x07, 0x41 };
+    static const uint8_t unk[] = { 0x3F, 0x05, 0x41, 0x42 };
+    static const uint8_t lt1[] = { 0x04, 0x01, 0x41 };
+    static const uint8_t la_short[] = { 0x05, 0x07 };
+    static const uint8_t lt_empty[] = { 0x04, 0x07 };
+    static const int modes[] = { MNP_LAYOUT_STD, MNP_LAYOUT_OPT, MNP_LAYOUT_STREAM, MNP_LAYOUT_ANY,
+                                 MNP_LAYOUT_STD | MNP_RX_ALL };
+    mnp_hdr_t h, p;
+    uint8_t out[16];
+    int i, lr_all = 1;
+
+    h = hdr(MNP_LT, 7, 0, 0, 0, 0, d41, 1);     one_layout("str LT", MNP_LAYOUT_STREAM, &h, slt, 3);
+    h = hdr(MNP_LA, 0, 7, 8, 0, 0, NULL, 0);    one_layout("str LA", MNP_LAYOUT_STREAM, &h, sla, 3);
+    h = hdr(MNP_LN, 3, 0, 0, 0x14, 0, NULL, 0); one_layout("str LN", MNP_LAYOUT_STREAM, &h, sln, 3);
+    h = hdr(MNP_LNA, 0, 3, 0, 0, 0, NULL, 0);   one_layout("str LNA", MNP_LAYOUT_STREAM, &h, slna, 2);
+    h = hdr(MNP_LD, 0, 0, 0, 0, 255, NULL, 0);  one_layout("str LD", MNP_LAYOUT_STREAM, &h, sld, 2);
+    /* a streamlined LD has no room for a user code */
+    h = hdr(MNP_LD, 0, 0, 0, 9, 255, NULL, 0);
+    CHECK_EQ_I(mnp_hdr_build(out, (int)sizeof out, MNP_LAYOUT_STREAM, &h), -1);
+
+    /* both readings fit: the agreed layout wins; none agreed, the expected N(S) */
+    CHECK_EQ_I(mnp_hdr_parse(both, 6, MNP_LAYOUT_STD, -1, &p), 0);
+    CHECK(p.type == MNP_LT && p.layout == MNP_LAYOUT_STD && p.ns == 7 && p.dlen == 1 && p.data[0] == 0x41);
+    CHECK_EQ_I(mnp_hdr_parse(both, 6, MNP_LAYOUT_STD | MNP_RX_ALL, 4, &p), 0);
+    CHECK(p.layout == MNP_LAYOUT_STD && p.ns == 7);
+    CHECK_EQ_I(mnp_hdr_parse(both, 6, MNP_LAYOUT_STREAM, -1, &p), 0);
+    CHECK(p.type == MNP_LT && p.layout == MNP_LAYOUT_STREAM && p.ns == 4 && p.dlen == 4
+          && same(p.data, both + 2, 4));
+    CHECK_EQ_I(mnp_hdr_parse(both, 6, MNP_LAYOUT_ANY, 4, &p), 0);
+    CHECK(p.layout == MNP_LAYOUT_STREAM && p.ns == 4);
+    CHECK_EQ_I(mnp_hdr_parse(both, 6, MNP_LAYOUT_ANY, 7, &p), 0);
+    CHECK(p.layout == MNP_LAYOUT_STD && p.ns == 7);
+    CHECK_EQ_I(mnp_hdr_parse(both, 6, MNP_LAYOUT_ANY, -1, &p), 0);
+    CHECK(p.layout == MNP_LAYOUT_STD && p.ns == 7);
+    CHECK_EQ_I(mnp_hdr_parse(both, 6, MNP_LAYOUT_ANY, 4, &p), 0);
+    printf("stream: 04 04 01 01 07 41: std agreed N(S) 7; streamlined agreed N(S) 4; none agreed, expect 4: N(S) %d\n",
+           p.ns);
+    /* an unknown first octet, CRC-valid: unknown in every layout read */
+    CHECK_EQ_I(mnp_hdr_parse(unk, 4, MNP_LAYOUT_STREAM, -1, &p), MNP_PARSE_UNKNOWN);
+    CHECK_EQ_I(mnp_hdr_parse(unk, 4, MNP_LAYOUT_ANY, 1, &p), MNP_PARSE_UNKNOWN);
+    CHECK_EQ_I(mnp_hdr_parse(unk, 4, MNP_LAYOUT_STD | MNP_RX_ALL, 1, &p), MNP_PARSE_UNKNOWN);
+    /* an LR is an LR in every layout */
+    for (i = 0; i < (int)(sizeof modes / sizeof modes[0]); i++) {
+        int r = mnp_hdr_parse(courier, (int)sizeof courier, modes[i], 1, &p);
+        CHECK_EQ_I(r, 0);
+        CHECK_EQ_I(p.type, MNP_LR);
+        lr_all = lr_all && r == 0 && p.type == MNP_LR;
+    }
+    /* a streamlined LT with N(S) 1 is not an LR */
+    CHECK_EQ_I(mnp_hdr_parse(lt1, 3, MNP_LAYOUT_STREAM, -1, &p), 0);
+    CHECK(p.type == MNP_LT && p.ns == 1 && p.dlen == 1);
+    CHECK_EQ_I(mnp_hdr_parse(lt1, 3, MNP_LAYOUT_ANY, -1, &p), 0);
+    CHECK(p.type == MNP_LT && p.ns == 1);
+    /* Annex A's layouts alone (plain MNP) take no streamlined frame */
+    CHECK_EQ_I(mnp_hdr_parse(sla, 3, MNP_LAYOUT_STD, -1, &p), -1);
+    CHECK_EQ_I(mnp_hdr_parse(sla, 3, MNP_LAYOUT_OPT, -1, &p), -1);
+    /* read tolerantly, a standard layout agreed: a streamlined LA */
+    CHECK_EQ_I(mnp_hdr_parse(sla, 3, MNP_LAYOUT_STD | MNP_RX_ALL, -1, &p), 0);
+    CHECK(p.type == MNP_LA && p.layout == MNP_LAYOUT_STREAM && p.nr == 7 && p.nk == 8);
+    /* malformed streamlined frames */
+    CHECK_EQ_I(mnp_hdr_parse(la_short, 2, MNP_LAYOUT_STREAM, -1, &p), -1);
+    CHECK_EQ_I(mnp_hdr_parse(lt_empty, 2, MNP_LAYOUT_STREAM, -1, &p), -1);
+    printf("stream: first octet 3F: unknown; the Courier's LR read as an LR in all %d modes: %s\n",
+           (int)(sizeof modes / sizeof modes[0]), lr_all ? "yes" : "NO");
+}
+
 int main(void)
 {
     crc_vectors();
@@ -463,5 +599,7 @@ int main(void)
     layouts();
     courier_lr();
     merge();
+    c0();
+    stream();
     T_REPORT("test_mnp_frame");
 }

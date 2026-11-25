@@ -20,4 +20,8 @@ raw_ld_codes: constant 1 -> LD 2, framing 1 -> LD 1, no LA -> LD 1
 raw_lr_on_bad: LR sent 2 times by 600 ms (T401 5 s)
 raw_lna_match: an older LNA, then the match, while an LT is out: no LN after it
 raw_ln1_before_connect: break begun at link up, data dropped, one reset at the LNA
-test_mnppeer: 210 checks, 0 failures
+loop_hst: 0xC0 01/FC and 09/7C: hst 1/1, rates 7C, back300 1, streamlined both ways, 4096 octets each way intact; LN 14 and 01 delivered as codes, resets 0
+loop_hst: no parameter 8: standard; stream_always: streamlined, intact; caller without bit 0: hst 0; no rate in common: hst 0
+loop_hst: unknown_ids 3: 21 LTs sent with 3F, 21 counted unknown, 4096 octets intact
+loop_hst: T401 from the formula: 10964 ms at 450 to 14400, 1560 ms at 14400 to 450
+test_mnppeer: 246 checks, 0 failures

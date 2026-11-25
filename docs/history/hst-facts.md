@@ -516,6 +516,11 @@ As responder (we answer), from Annex A.7.1 (PS §3.1):
 - The firmware's connect step has the same shape: idle, set the agreed rate,
   start the forward transmitter (8FBB:1C70; BF §2). [FW]
 - Establishment T401 is 2 s (Annex A allows 0.5 to 9 s; A.7.5.1). [OURS]
+- Our LR unconfirmed after its one resend ends with LD reason 1, not 4:
+  Table A.5 leaves the responder only code 1 (3 is the initiator's, 4 to
+  254 reserved) and A.7.2.2 wants an LD once protocol messages came; the
+  Courier's S17 code 4 names a retry timeout, which we send in the data
+  phase (spec decision 26). [OURS]
 
 ## Data and attention
 
@@ -567,6 +572,10 @@ As responder (we answer), from Annex A.7.1 (PS §3.1):
 - BinModem sends no LT frame while a handover or rate change is waiting to
   finish (BF §4). [BM]
 - HST session defaults: window 8, max data 64, class 3 (BF §5). [BM]
+- On HST a repeated N(R) sends us back once per N(R) value; a loss of the
+  LT sent again is left to T401. Read literally, A.7.3.5 a sends us back
+  at every LA the loss draws, and on the slow back channel they come one
+  by one (spec "HST profile"). [OURS]
 
 ## Timers
 
@@ -593,6 +602,11 @@ As responder (we answer), from Annex A.7.1 (PS §3.1):
   streamlined at 14400/450 gives 1560 ms; mode 3 optimised at 14400/450
   gives 1600 ms; a fast link returns the floor, 1500 ms. Worked by hand from
   the formula. [OURS]
+- On HST, T401 also counts the far end's one LT ahead of its LA (an LT
+  at `rx_bps`, Trt's "queuing delay") and, when we receive the back
+  channel, its receiver's hold-back: 127 ms at 450 bit/s, 180 ms at 300
+  (the back receiver of track B, Task 12). 14400/450 streamlined: 1560 +
+  1245 + 127 = 2932 ms (spec "MNP timers"). [OURS]
 - T402, the LA timer, is 0.5 x T401 (A.7.5.2). [PUB]
 - T403, the inactivity timer, is optional with a period of at least 59 s
   (A.7.5.3). [PUB]

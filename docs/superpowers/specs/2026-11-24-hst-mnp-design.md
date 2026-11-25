@@ -161,6 +161,7 @@ be tested earlier, and the design is safer against HST's unknowns.
 | 23 | N401 64 is offered by default (`opt` default without bit 1). | controller |
 | 24 | `v90m_ec_mem_size` is re-pinned at the measured value; no "+16 octets" bound. | controller |
 | 25 | W may grow up to 700 ms, only when HST is offered; sized in simulation. | controller |
+| 26 | A failed establishment (our LR unconfirmed after its one resend, A.7.1.3 and A.7.1.4) ends with LD reason 1 and `V90M_EC_R_N400`, not LD 4: Annex A gives the responder only code 1 (Table A.5: codes 1 to 3 are the establishment failures, 3 the initiator's only, 4 to 254 reserved), A.7.2.2 asks for an LD once protocol messages were received, and the Courier's S17 4 ("remote modem retry timeout") names a data-phase failure, which is where we send 4. **[OURS]** | controller (Task 8) |
 
 ## The answering sequence
 
@@ -340,7 +341,14 @@ is byte-identical to 0.6.0.
 - **T402** 0.5 × T401; **T404** 3 s at 2400 and above, 7 s at 1200
   **[PUB]**; **T403** off.
 - **N400** 12 **[PUB]**; when exhausted, LD reason 4 and
-  `V90M_EC_R_N400`.
+  `V90M_EC_R_N400`. In establishment, our LR unconfirmed after its one
+  resend: LD reason 1 and `V90M_EC_R_N400` (decision 26).
+- **HST** **[OURS]**: T401 adds to the formula the far end's one LT ahead
+  of its LA (Lb (Lf + Llt + N401) / `rx_bps`, Trt's "queuing delay") and,
+  when what we receive is the back channel, its receiver's hold-back (127
+  ms at 450 bit/s, 180 ms at 300: the bits it holds for its decision);
+  14400/450 streamlined: 1560 + 1245 + 127 = 2932 ms. T402 and T404
+  follow from T401 and the receive rate as above.
 
 ### Status, end reasons, configuration
 
@@ -490,7 +498,30 @@ nibble is the rate code **[FW]**):
   (switch to R); any other code gets an LNA, a count, and no action.
 - **While a reversal or rate change is pending,** the endpoint sends only
   control frames (LA, LN, LNA, LD), never an LT, until the pump reports
-  the new state **[OURS]**.
+  the new state (`epoch`), at most 12 s **[OURS]**.
+- **Holding the back channel,** the far holder's own 0x2R or 0x3R at a
+  rate up to `max_up_bps` is passed to the pump (its receiver follows);
+  above it: an LNA, a count and our 0x2R at the cap **[OURS]**.
+- **The receive layout** when HST is agreed without a parameter 8 from
+  both (the Courier's template): the layout of the caller's last LA, LN
+  or LNA (which read only one way), and before one has come, the expected
+  N(S) breaks a tie, else standard **[OURS]**. With a layout agreed it wins
+  every tie, as above; plain MNP reads Annex A's layouts only.
+- **Go-back on HST** **[OURS]**: a repeated N(R) sends us back once per
+  N(R) value. On the slow back channel the LAs that one lost LT draws (one
+  per LT behind it, A.7.3.3 b) arrive one after another, each a go-back
+  under A.7.3.5 a read literally: 21 to 24 LTs sent again per LT lost at
+  14400/450 and 9600/300 with the hold-back, against 6 to 7 once per N(R)
+  (the LTs in flight behind the loss, which the receiver drops,
+  A.7.3.2.2). A loss of the LT sent again is T401's (A.7.3.5 b). Plain
+  MNP stays literal.
+- **k on HST** is 8: the most the Courier's template and BinModem offer
+  and our ceiling. With N401 64 the window (8 LTs, 307 ms at 14400) is
+  shorter than the round trip through the caller's LA at 450 bit/s and
+  its hold-back, so a clean line carries about 76 % of the forward rate
+  (simulation, Task 8; 91 % without the hold-back). N401 256 (parameter 8
+  bit 1, which BinModem offers) would carry 96 %, but decision 23 keeps
+  64 by default.
 
 **Reversal policy (decision 14)** **[PUB, US 5,008,901]**: while we hold
 the back channel, we ask for the forward channel when our backlog (queued

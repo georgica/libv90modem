@@ -58,7 +58,10 @@
  *     (our training's end plus V42EC_HST_WINDOW_MS) in T400's place: no
  *     LR in it ends with V42EC_R_NO_EC, never start-stop. v42ec_reset
  *     keeps the link and an LR already taken (the host's reset at
- *     CONNECTED); v42ec_init starts clean.
+ *     CONNECTED); v42ec_init starts clean. A caller whose LR carries
+ *     0xC0 with bit 0 gets the HST profile of mnp.h (streamlined layouts,
+ *     attention codes for the pump, the reversal policy), told to the
+ *     pump through the mailbox; no break can be sent there.
  *   - After V42EC_DISCONNECTED keep calling v42ec_tx_bit() for a few dozen
  *     bits if the line is still up, so a final UA or DM gets out; data
  *     already received stays readable.
@@ -170,8 +173,9 @@ typedef struct {
     unsigned long async_overruns, async_framing;
     int protocol;            /* V42EC_PROTO_* */
     int mnp_framing, mnp_opt, mnp_streamlined;   /* MNP: the framing mode, parameter 8
-                                                    agreed, the HST layout (not yet: 0) */
-    int hst, hst_rates, hst_back300;             /* the HST profile (not yet: 0) */
+                                                    agreed, we send HST's streamlined layouts */
+    int hst, hst_rates, hst_back300;             /* the HST profile agreed (mnp.h): its rate
+                                                    mask and 300 bit/s back channel; else 0 */
     int attn_tx, attn_rx;    /* MNP: the type of the last LN sent, received */
     unsigned long rx_unknown;    /* MNP: valid frames of an unknown type */
     int rx_unknown_id;       /* MNP: the first octet of the last of them */

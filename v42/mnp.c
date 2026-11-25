@@ -75,11 +75,24 @@ int mnp_t401_ms(int framing, int layout, int k, int n401, int tx_bps, int rx_bps
     return (int)ms < floor_ms ? floor_ms : (int)ms;
 }
 
+/* HST: what T401 adds to the formula (mnp.h): the far end's one LT ahead
+ * of its LA, at rx_bps, and the back receiver's hold-back when what we
+ * receive is the back channel */
+static int hst_t401_extra(const mnp_t *m)
+{
+    uint64_t lb = m->framing == 2 ? 10u : 8u, lf = m->framing == 2 ? 7u : 4u;
+    uint64_t llt = m->layout == MNP_LAYOUT_STREAM ? 2u : m->layout == MNP_LAYOUT_OPT ? 3u : 5u;
+    uint64_t rx = (uint64_t)clampi(m->rx_bps, 75, 10000000), bits = lb * (lf + llt + (uint64_t)m->n401);
+    int lat = m->rx_bps <= 300 ? MNP_HST_LAT_300_MS : m->rx_bps <= 450 ? MNP_HST_LAT_450_MS : 0;
+    return (int)((bits * 1000u + rx - 1u) / rx) + lat;
+}
+
 /* T401 and T404 for the parameters and rates in force. T404 from the rate
  * we receive LTs at: 3 s at 2400 bit/s and above, 7 s below (`Timers`) */
 static void timers_again(mnp_t *m)
 {
     m->t401_ms = mnp_t401_ms(m->framing, m->layout, m->k, m->n401, m->tx_bps, m->rx_bps, m->cfg.t401_min_ms);
+    if (m->hst) m->t401_ms = imin(m->t401_ms + hst_t401_extra(m), 3600000);
     m->t404_ms = m->rx_bps >= 2400 ? 3000 : 7000;
 }
 
@@ -102,6 +115,8 @@ void mnp_init(mnp_t *m, const mnp_cfg_t *c)
     m->last_nr = -1;
     m->ln_code = -1;
     m->vsa = m->vra = 1;
+    m->rx_layout = MNP_LAYOUT_STD;
+    m->gb_nr = -1;
     mnp2_tx_init(&m->tx2);
     mnp2_rx_init(&m->rx2, MNP_MAX_BODY);
     timers_again(m);
@@ -122,6 +137,8 @@ static void finish(mnp_t *m, int ld_reason, int reason)
         m->ld_due = 1;
         m->ld_reason = ld_reason;
         m->tx_framing = fr;
+        /* the layout of the data phase (HST: `02 reason`), else standard */
+        m->ld_layout = m->state == MNP_S_CONNECTED ? m->layout : MNP_LAYOUT_STD;
     }
     m->state = MNP_S_DISCONNECTED;
     m->reason = reason;
@@ -152,9 +169,12 @@ int mnp_accept_lr(mnp_t *m, const uint8_t *f, int len, int framing_in)
     ours.n401 = m->cfg.n401;
     ours.have_opt = 1;
     ours.opt = m->cfg.opt;
+    ours.have_c0 = m->hst_offer;
+    ours.c0_flags = MNP_C0_HST;
+    ours.c0_rates = m->hst_offer_rates;
     /* an LR we cannot take: code 3 is the initiator's only (Table A.5
      * Note), the responder says it had no LR it could use */
-    if (r < 0 || mnp_lr_merge(&ours, &theirs, 0, &m->lr) < 0) {
+    if (r < 0 || mnp_lr_merge(&ours, &theirs, m->hst_offer, &m->lr) < 0) {
         finish(m, LD_NO_LR, MNP_R_NEGOTIATION);
         return MNP_R_NEGOTIATION;
     }
@@ -165,6 +185,20 @@ int mnp_accept_lr(mnp_t *m, const uint8_t *f, int len, int framing_in)
     /* parameter 8 bit 1 agreed: N401 256 both ways (A.6.4.1.8) */
     if (m->opt & 1) m->n401 = MNP_MAX_N401;
     m->layout = (m->opt & 2) ? MNP_LAYOUT_OPT : MNP_LAYOUT_STD;
+    m->rx_layout = m->layout;
+    if (m->lr.have_c0) {
+        /* the HST profile: bit 0 from both, a rate in common; the
+         * streamlined layouts when both LRs carry a non-zero parameter 8
+         * (`MNP frames`, [BM]) */
+        m->hst_rates = m->lr.c0_rates;
+        m->back300 = (m->lr.c0_flags & MNP_C0_BACK300) != 0;
+        m->hst = (m->lr.c0_flags & MNP_C0_HST) && m->hst_rates != 0;
+    }
+    if (m->hst) {
+        m->streamlined = m->lr.have_opt && m->lr.opt != 0 && theirs.opt != 0;
+        if (m->streamlined) m->layout = MNP_LAYOUT_STREAM;
+        m->rx_layout = m->streamlined ? MNP_LAYOUT_STREAM : MNP_LAYOUT_ANY;
+    }
     m->state = MNP_S_CONFIRMING;
     m->lr_due = 1;
     m->lr_tries = 0;
@@ -204,6 +238,7 @@ static void seq_init(mnp_t *m, int credit)
     m->last_nr = -1;
     m->retries = 0;
     m->stall = 0;
+    m->gb_nr = -1;
     m->vr = 1;
     m->dup_seen = 0;
     m->rx_unacked = 0;
@@ -247,12 +282,17 @@ static void on_la(mnp_t *m, int nr, int nk)
         int pos;
         m->ack = (uint8_t)nr;
         m->retries = 0;
+        m->gb_nr = -1;
         pos = (uint8_t)(m->nxt - m->ack);
         if (pos == 0 || pos > (uint8_t)(m->vh - m->ack)) m->nxt = (uint8_t)(m->ack + 1);
     }
     if (stored(m) == 0) m->t401 = 0;
     else if (advanced || m->t401 == 0) m->t401 = m->t401_ms;
     if (dup && sent(m) > 0 && m->credit > 0) {           /* A.7.3.5 a: go back */
+        if (m->hst) {                                     /* HST: once per N(R) (mnp.h) */
+            if (m->gb_nr == nr) return;
+            m->gb_nr = nr;
+        }
         if (m->retries >= m->cfg.n400) { finish(m, LD_RETRY, MNP_R_N400); return; }
         m->retries++;
         m->nxt = (uint8_t)(m->ack + 1);
@@ -281,9 +321,56 @@ static void on_lt(mnp_t *m, int ns, const uint8_t *d, int n)
     }
 }
 
+/* the highest agreed rate code at most the cap; the lowest agreed if
+ * none is that low */
+static int cap_code(const mnp_t *m)
+{
+    int c;
+    for (c = m->hst_cap; c >= 2; c--)
+        if ((m->hst_rates >> c) & 1) return c;
+    for (c = 2; c <= 7; c++)
+        if ((m->hst_rates >> c) & 1) return c;
+    return 2;
+}
+
+static void hst_hold(mnp_t *m)
+{
+    m->attn_hold = 1;
+    m->attn_hold_ms = 0;
+}
+
+/* HST: an attention code received (mnp.h; `Data and attention`) */
+static void hst_attn(mnp_t *m, int code)
+{
+    int act = code >> 4, r = code & 15;
+    if (act < 1 || act > 3 || r < 2 || r > 7 || !((m->hst_rates >> r) & 1)) {
+        m->violations++;                                  /* an LNA, nothing more */
+        return;
+    }
+    if (act == 1) {                                       /* 0x1R: the forward channel at R */
+        if (m->hst_role != HST_ROLE_FWD) { m->violations++; return; }
+        m->rev_grant = 1;
+        m->rev_code = r;
+        hst_hold(m);
+        if (r > m->hst_cap) m->cap_due = 1;               /* granted, then our 0x2R at the cap */
+        return;
+    }
+    if (m->hst_role == HST_ROLE_BACK && r > m->hst_cap) { /* never received above max_up */
+        m->violations++;
+        m->cap_due = 2;
+        return;
+    }
+    m->rate_order = code;                                 /* 0x2R, 0x3R: the pump's */
+    hst_hold(m);
+}
+
 static void on_ln(mnp_t *m, int nsa, int code)
 {
-    if (nsa == m->vra) {                                  /* A.7.4.3 */
+    if (nsa == m->vra && m->hst) {                        /* attention, not a break */
+        m->vra++;
+        m->attn_rx = code;
+        hst_attn(m, code);
+    } else if (nsa == m->vra) {                           /* A.7.4.3 */
         /* no room: neither taken nor acknowledged; it comes again */
         if (m->lnq_n == MNP_LNQ) return;
         m->lnq[m->lnq_n++] = code;
@@ -303,6 +390,10 @@ static void on_lna(mnp_t *m, int nr)
 {
     if (m->ln_code < 0) return;
     if (nr == m->vsa) {                                   /* A.7.4.6 */
+        if (m->hst && (m->ln_code >> 4) == 1) {           /* our 0x1R granted */
+            m->rev_rx = 1;
+            m->rev_code = m->ln_code & 15;
+        }
         m->vsa++;
         m->ln_code = -1;
         m->ln_send = 0;
@@ -325,7 +416,9 @@ void mnp_rx_frame(mnp_t *m, const uint8_t *f, int len)
     mnp_hdr_t h;
     int r;
     if (m->state != MNP_S_CONFIRMING && m->state != MNP_S_CONNECTED) return;
-    r = mnp_hdr_parse(f, len, m->layout, -1, &h);
+    /* plain MNP: Annex A's layouts only; HST: every layout (mnp.h) */
+    r = mnp_hdr_parse(f, len, m->hst ? m->rx_layout : m->layout,
+                      m->state == MNP_S_CONNECTED ? m->vr : 1, &h);
     if (r == MNP_PARSE_UNKNOWN) {
         /* counted and dropped, unacknowledged (`MNP frames`) */
         m->rx_unknown++;
@@ -333,6 +426,11 @@ void mnp_rx_frame(mnp_t *m, const uint8_t *f, int len)
         return;
     }
     if (r < 0) { mnp_rx_bad(m); return; }
+    /* HST, no layout agreed: the caller's, from a frame that cannot be
+     * read two ways (an LT can) */
+    if (m->hst && !m->streamlined && m->state == MNP_S_CONNECTED
+        && (h.type == MNP_LA || h.type == MNP_LN || h.type == MNP_LNA))
+        m->rx_layout = h.layout == MNP_LAYOUT_STREAM ? MNP_LAYOUT_STREAM : (m->layout | MNP_RX_ALL);
     /* our destructive LN is out: data from the far end is discarded, and
      * its LAs speak of the sequences about to start again (Table 4) */
     if (m->brk_wait && (h.type == MNP_LT || h.type == MNP_LA)) {
@@ -381,7 +479,7 @@ void mnp_rx_frame(mnp_t *m, const uint8_t *f, int len)
 static int lt_ready(const mnp_t *m)
 {
     int pos = (uint8_t)(m->nxt - m->ack);
-    return !m->brk_wait && m->nxt != m->vs && pos <= m->credit;
+    return !m->brk_wait && !m->attn_hold && m->nxt != m->vs && pos <= m->credit;
 }
 
 static int build(uint8_t *f, int layout, const mnp_hdr_t *h)
@@ -435,7 +533,7 @@ int mnp_tx_frame(mnp_t *m, uint8_t *f)
         m->ld_due = 0;
         h.type = MNP_LD;
         h.reason = m->ld_reason;
-        return build(f, MNP_LAYOUT_STD, &h);
+        return build(f, m->ld_layout, &h);
     }
     m->tx_framing = cur_framing(m);
     if (m->state == MNP_S_CONFIRMING) {
@@ -459,13 +557,14 @@ int mnp_tx_frame(mnp_t *m, uint8_t *f)
         h.type = MNP_LN;
         h.ns = m->vsa;
         h.code = m->ln_code;
-        return build(f, MNP_LAYOUT_STD, &h);
+        return build(f, m->layout, &h);           /* standard unless streamlined */
     }
     if (m->lna_due) {
         m->lna_due = 0;
         h.type = MNP_LNA;
         h.nr = m->lna_nr;
-        return build(f, MNP_LAYOUT_STD, &h);
+        if (m->rev_grant) m->rev_lna_out = 1;     /* it grants a reversal */
+        return build(f, m->layout, &h);
     }
     {
         int ready = lt_ready(m), half = m->k / 2 > 0 ? m->k / 2 : 1;
@@ -482,7 +581,7 @@ int mnp_tx_frame(mnp_t *m, uint8_t *f)
 /* a break LN (types 1 to 3) holds the user's data until its LNA (Table 4) */
 static int ln_holds_data(const mnp_t *m)
 {
-    return m->ln_code >= MNP_LN_DESTRUCTIVE && m->ln_code <= MNP_LN_INSEQ;
+    return !m->hst && m->ln_code >= MNP_LN_DESTRUCTIVE && m->ln_code <= MNP_LN_INSEQ;
 }
 
 int mnp_can_send(const mnp_t *m)
@@ -536,7 +635,7 @@ int mnp_send_ln(mnp_t *m, int code)
     m->ln_code = code & 0xFF;
     m->ln_send = 1;
     m->ln_tries = 0;
-    if (m->ln_code == MNP_LN_DESTRUCTIVE) {
+    if (m->ln_code == MNP_LN_DESTRUCTIVE && !m->hst) {
         /* Table 4, destructive: LTs not yet sent are discarded, nothing
          * more goes and what comes is discarded until the LNA, then the
          * sequences start again; what is not delivered is discarded */
@@ -620,4 +719,68 @@ void mnp_set_rates(mnp_t *m, int tx_bps, int rx_bps)
     if (tx_bps > 0) m->tx_bps = tx_bps;
     if (rx_bps > 0) m->rx_bps = rx_bps;
     timers_again(m);
+}
+
+/* ------------------------------------------------------------ HST profile */
+void mnp_hst_offer(mnp_t *m, const hst_link_t *L)
+{
+    m->hst_offer = 1;
+    m->hst_offer_rates = (uint8_t)(L->offer_rates & MNP_C0_RATES);
+    m->hst_role = L->role;
+    m->hst_cap = L->cap_up_code;
+    m->hst_epoch = L->epoch;
+}
+
+/* octets in LTs stored and not acknowledged */
+static size_t unacked_octets(const mnp_t *m)
+{
+    size_t n = 0;
+    int i, s = stored(m);
+    for (i = 1; i <= s; i++) n += m->slot_len[(uint8_t)(m->ack + i) % MNP_MAX_K];
+    return n;
+}
+
+void mnp_hst_poll(mnp_t *m, hst_link_t *L, unsigned ms, size_t queued)
+{
+    int t = ms > 60000u ? 60000 : (int)ms, code = 0;
+
+    if (!m->hst_offer || L == NULL) return;
+    if (m->state == MNP_S_CONNECTED && !m->la_told) { m->la_told = 1; L->la_rx = 1; }
+    if (m->state == MNP_S_DISCONNECTED && m->reason == MNP_R_PEER_DISC) L->far_ld = 1;
+    if (!m->hst || m->state != MNP_S_CONNECTED) return;
+
+    /* the pump's state: a role taken anew starts the far end's time */
+    if (L->role != m->hst_role) { m->hst_role = L->role; m->far_ms = 0; }
+    else if (m->hst_role == HST_ROLE_BACK && m->far_ms < 1000000) m->far_ms += t;
+    m->hst_cap = L->cap_up_code;
+    if (L->epoch != m->hst_epoch) {
+        /* a reversal or rate change done: LTs go again; a reversal
+         * granted above the cap is followed by our 0x2R now */
+        m->hst_epoch = L->epoch;
+        m->attn_hold = 0;
+        if (L->tx_bps > 0 && L->rx_bps > 0) mnp_set_rates(m, L->tx_bps, L->rx_bps);
+        if (m->cap_due == 1 && m->hst_role == HST_ROLE_BACK) m->cap_due = 2;
+    }
+    if (m->attn_hold) {
+        m->attn_hold_ms += t;
+        if (m->attn_hold_ms >= MNP_HST_HOLD_MAX_MS) m->attn_hold = 0;
+    }
+    /* what goes to the pump */
+    if (m->rate_order) { L->rate_order = m->rate_order; m->rate_order = 0; }
+    if (m->rev_rx) { m->rev_rx = 0; L->rev_lna_rx = 1; L->rev_code = m->rev_code; }
+
+    /* our attention, one LN at a time: the pump's, the cap, the policy */
+    if (m->ln_code >= 0) return;
+    if (L->ln_req) {
+        code = L->ln_req;
+        L->ln_req = 0;
+    } else if (m->cap_due == 2) {
+        code = 0x20 | cap_code(m);
+        m->cap_due = 0;
+    } else if (m->hst_role == HST_ROLE_BACK && !m->attn_hold && m->far_ms >= MNP_HST_FAR_MS
+               && L->fwd_code >= 2 && L->fwd_code <= 7
+               && queued + unacked_octets(m) > MNP_HST_BACKLOG) {
+        code = 0x10 | L->fwd_code;           /* the reversal policy (D14) */
+    }
+    if (code != 0 && mnp_send_ln(m, code & 0xFF) == 0) hst_hold(m);
 }
