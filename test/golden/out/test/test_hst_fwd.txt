@@ -219,4 +219,12 @@ marks_missed 6 -> 5, no marks: the acquisition at 2 s, state 5, code 5, armed 0
   the acquisition at 2 s, at the new code: pass
 marks_missed 6 -> 5, then a short training: data mode reached; from the 41st data symbol 0 errors in 100000 bits
   then no error from the 41st data symbol: pass
-test_hst_fwd: 202 checks, 0 failures
+long_drift code 3, 19.0 dB, 60 s: data mode kept; the gain 17041 at 10 s, 16099 .. 17566 after (Q14); 0 errors in 144000 bits in the first 20 s, 0 in 144000 in the last
+  data mode never left: pass
+  the gain within 1 dB of its value at 10 s: pass
+  errors in the last window no more than in the first: pass
+long_drift code 4, 17.5 dB, 60 s: data mode kept; the gain 16840 at 10 s, 16355 .. 18150 after (Q14); 0 errors in 192000 bits in the first 20 s, 0 in 192000 in the last
+  data mode never left: pass
+  the gain within 1 dB of its value at 10 s: pass
+  errors in the last window no more than in the first: pass
+test_hst_fwd: 208 checks, 0 failures

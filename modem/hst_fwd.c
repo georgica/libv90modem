@@ -277,9 +277,28 @@ static const int32_t lock_mse[7] = { 0, 0, 17238, 3439, 1724, 825, 423 };
  *   decisions are wrong; fed them for the 30-odd symbols, the carrier loop
  *   was kicked a Hz off and stayed there;
  * - else the gain moves by half the difference (over 32), 2^-8 of it a
- *   symbol while it is a 16th or more, else 2^-10 */
+ *   symbol while it is a 16th or more, else 2^-10;
+ * - and it leaks back to ga, the gain as last set (G_ONE from a training,
+ *   else gain_set's), 1/32 of the way every 64 symbols (a time constant of
+ *   2048 symbols, 0.85 s), and stays within 1 dB of it.
+ * The leak and the bound: the gain and the equaliser's taps both set the
+ * points' scale, and the two loops want different scales. The equaliser
+ * (least squares on the decisions) leaves the points' power at the set's
+ * less the error's (E|z|^2 = E|d|^2 - E|e|^2: its error is orthogonal to
+ * its output); the loop pulls it to the set's. With nothing to fix the
+ * scale, the gain climbed and the taps shrank by the same amount without
+ * end, faster the noisier the line: at 7200 on a 19 dB line the gain went
+ * +4.9 dB in 60 s, the input clipped and the lock went in about 2 min
+ * (Task 22c, test_hst_fwd long_drift). Now the slow scale is the
+ * equaliser's alone; the loop still takes a step at once (a 1 dB step at
+ * 14400 that gain_set does not see is the loop's for the first 0.1 s or
+ * so, while the equaliser follows) */
 #define G_WAIT     64
 #define G_FLUSH    16
+#define G_LEAKN    64              /* every 64 symbols, 1/32 of the way back to ga */
+#define G_LEAK     32
+#define G_LO       7298            /* 2^13 x 10^(-1/20): the loop within 1 dB of ga */
+#define G_HI       9192            /* 2^13 x 10^(1/20) */
 #define G_ONE      16384
 #define G_MIN      2048            /* -18 dB */
 #define G_MAX      131072          /* +18 dB */
@@ -331,7 +350,7 @@ static void train_reset(hst_frx_t *r)
 {
     int i;
     r->off = r->bad = 0;
-    r->g = G_ONE; r->pz = r->pz8 = r->pzl = 0; r->gstep = r->gcnt = 0;
+    r->g = G_ONE; r->pz = r->pz8 = r->pzl = 0; r->gstep = r->gcnt = 0; r->ga = G_ONE;
     r->nsym = r->held = 0; r->fast = 1;
     r->offw = 0; r->sh = 0; r->alt = 0; r->mse = r->mse0 = 65536;
     for (i = 0; i < 8; i++) { r->hzr[i] = r->hzi[i] = 0; r->msh[i] = 65536; }
@@ -596,7 +615,7 @@ static int32_t div_2pt(int64_t x, int code)
 static void gain_set(hst_frx_t *r, int64_t pt, int64_t pz)
 {
     int64_t q = isqrt_s64((pt << 28) / pz), g = (int64_t)r->g * q / 16384;
-    r->g = (int32_t)(g < G_MIN ? G_MIN : g > G_MAX ? G_MAX : g);
+    r->g = r->ga = (int32_t)(g < G_MIN ? G_MIN : g > G_MAX ? G_MAX : g);
     r->pz = r->pz8 = r->pzl = pt;
     r->gcnt = -G_FLUSH;
     r->pref = r->pw;                  /* the signal's level is the new one */
@@ -606,6 +625,7 @@ static void gain_set(hst_frx_t *r, int64_t pt, int64_t pz)
 static void gain(hst_frx_t *r)
 {
     int64_t pt = (int64_t)set_pw[r->code] * U * U, p, d, dl;
+    int32_t lo, hi;
     int step, small;
     p = (int64_t)r->q.zr * r->q.zr + (int64_t)r->q.zi * r->q.zi;
     if (p > 16 * pt) p = 16 * pt;
@@ -632,7 +652,12 @@ static void gain(hst_frx_t *r)
         int32_t q = div_2pt(r->g * d, r->code);
         r->g += d > pt / 16 || d < -pt / 16 ? q / 256 : q / 1024;
     }
-    r->g = r->g < G_MIN ? G_MIN : r->g > G_MAX ? G_MAX : r->g;
+    if ((r->nsym & (G_LEAKN - 1)) == 0) r->g += (r->ga - r->g) / G_LEAK;
+    lo = (int32_t)((int64_t)r->ga * G_LO >> 13);
+    hi = (int32_t)((int64_t)r->ga * G_HI >> 13);
+    lo = lo < G_MIN ? G_MIN : lo;
+    hi = hi > G_MAX ? G_MAX : hi;
+    r->g = r->g < lo ? lo : r->g > hi ? hi : r->g;
 }
 
 /* qamrx's update with nothing adapted but the clock: its own point as the

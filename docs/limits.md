@@ -472,15 +472,24 @@ Measured against `sim/hstcall` only; no real HST modem has called it yet.
   flattens at about -24.5 dB (28 dB of SNR and up), so 14400's "good"
   (-24.13 dB) needs a line of 26.5 dB or better and has only 0.4 dB in
   hand on the cleanest line.
-- **The forward receiver's gain loop drifts on a noisy line.** In data
-  mode the gain loop holds the points' power at the set's while the
-  equaliser, adapting toward the decisions, shrinks it a little below
-  (more so the more noise): the gain climbs and the equaliser shrinks
-  against it without end. At 7200 with 19 dB of SNR the gain went from 1.0
-  to 3.2 in 80 s and the receiver failed at 120 s (the input clipped);
-  at 30 dB it holds. Not fixed here (it changes the receiver's data mode);
-  the thresholds above are measured in 20 s runs so that it does not
-  enter them.
+- **The forward receiver in long calls** (`test_hst_fwd` `long_drift`;
+  the full set `make hst-drift`). Until Task 22c the data mode's gain loop
+  and the equaliser drifted apart on a noisy line: the loop held the
+  points' power at the set's, the equaliser (least squares) at the set's
+  less its error's, and nothing fixed the scale between them, so the gain
+  climbed and the taps shrank with it (7200 at 19 dB: +4.9 dB in 60 s;
+  300 s at codes 3..6, 1 and 3 dB over BER 1e-5: 5 of 8 calls lost the
+  lock, at 31 to 130 s). The loop now leaks back to the gain as last set
+  (0.85 s) and stays within 1 dB of it; the slow scale is the
+  equaliser's. The same 8 calls: no lock lost, no error in 300 s, the
+  gain within -0.83..+0.63 dB of its value at 10 s, the receiver's error
+  at the end within 0.2 dB of a frozen gain's. Short calls are unchanged:
+  `test_hst_fwd`'s 23 earlier cases print the same, level steps of -3..+6
+  dB at 9600 and 14400 (8 seeds each, a scratch sweep) fail 3 of 96 before
+  and after, and `make hst-thresh` again gives the crossings above and
+  the receiver's error 3 dB above them within 0.04 dB (-17.80, -20.56,
+  -23.79, -24.13 dB), so `hst_good_mse` stands. The thresholds' runs of
+  20 s were chosen to keep the drift out; they are kept.
 
 ## Included tables (x2)
 
@@ -657,10 +666,11 @@ CPU"); 0.5.0's in brackets:
 - **V.42:** an endpoint at 56 kbit/s both ways costs 5.21 / 9.08 / 9.48 M a
   second with no compression / V.42bis / V.44 (`make cost-v42`; before
   0.6.0's V.42 work: 7.96 / 11.81 / 12.19).
-- **HST's forward receiver (0.7.0 work):** 25.40 M instructions a second
-  in 14400 data mode (`make cost-hst-fwd`; the budget 26 M), unchanged by
-  the switch by marks while none is armed. A switch by marks from 12000 to
-  14400 costs 636 945 instructions in the 20 ms from where both codes are
+- **HST's forward receiver (0.7.0 work):** 25.43 M instructions a second
+  in 14400 data mode (`make cost-hst-fwd`; the budget 26 M; 25.40 M before
+  the gain loop's leak, Task 22c), unchanged by the switch by marks while
+  none is armed. A switch by marks from 12000 to
+  14400 costs 636 939 instructions in the 20 ms from where both codes are
   decoded (the new code's decoder run over 24 points kept, then both
   decoders, the switch 23 symbols in): 31.70 M a second for those 20 ms
   (the bench's loop taken off), against the plan's 40 M.

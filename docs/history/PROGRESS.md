@@ -6019,3 +6019,48 @@ Sizes: `hstcall_t` 165712 octets (x86-64), test side only. Host run 33 s
 - **Memory:** `hst_frx_t` 4080 -> 4960 octets x86-64 (a second v32_vit_t,
   588; the ring, 256), `hst_ftx_t` 200 -> 208; `hst_t` 10040 -> 10928, under
   12 KB; the union and `v90m_mem_size()` unchanged.
+
+## hst 22c: the forward receiver's gain and equaliser no longer drift apart in long calls (2026-11-25)
+
+- **Fault** (found in 22a): on a noisy line the data mode's gain loop
+  climbed and the equaliser's taps shrank with it until the input clipped
+  and the lock went (7200 at 19 dB: the gain +4.9 dB in 60 s).
+- **Cause** (scratch instrumentation, not committed): the gain and the
+  taps both set the points' scale, and nothing fixed it. Over 125 s at
+  7200 / 19 dB the gain rose 9.6 dB while the taps' energy fell 9.7 dB,
+  their sum constant within 0.3 dB. The two loops want different scales:
+  the loop holds E|z|^2 at the set's power (measured 0.998 of it), the
+  least-squares equaliser at the set's less its error's (orthogonality:
+  E|z|^2 + E|e|^2 = E|d|^2; measured E|z|^2 + E|e|^2 = 1.006..1.010 of it,
+  so the equaliser was always pulling down). The loop's quick branch (its
+  slow one rounds to 0 under a 1/8 difference) acts on the 32-symbol
+  power's swings below the set's, which outnumber those above; the noisier
+  the line, the faster the climb, and the climb raised the error and so
+  itself (it accelerated before the loss).
+- **Fix** (`modem/hst_fwd.c` `gain()`, HST-local; qamrx and v32 untouched):
+  the gain leaks back to `ga`, the gain as last set (G_ONE from a training,
+  else `gain_set`'s), 1/32 of the way every 64 symbols (0.85 s), and is
+  held within 1 dB of it. The slow scale is the equaliser's; level steps
+  are still the loop's (dropping its continuous part instead lost the lock
+  on `level_step`'s -1 dB at 14400 and -2 dB at 9600). After it, at 7200 /
+  19 dB over 300 s: E|z|^2 + E|e|^2 = 0.996..1.007, the taps within 0.3 dB.
+  New field `hst_frx_t.ga` (padding: `hst_frx_t` stays 4960, `hst_t` 10928).
+- **Test:** `test_hst_fwd` case 24 `long_drift` (code 3 at 19 dB, code 4 at
+  17.5 dB, 60 s each; TEST_SHORT code 4, 30 s): data mode kept, the gain
+  within 1 dB of its value at 10 s, errors in the last window no more than
+  in the first. Seen failing first (+4.9 and +8.5 dB). The full set,
+  `make hst-drift` (`test_hst_fwd long_drift` under -DTEST_FULL, an argv
+  mode so the port matrix never runs it, about 20 s): codes 3..6 at 1 and
+  3 dB over BER 1e-5, 300 s each. Before: 5 of 8 lost the lock (31 to
+  130 s), all 8 failed the gain bound. After: 8 of 8 pass, no error, the
+  gain within -0.83..+0.63 dB.
+- **Golden:** `test_hst_fwd.txt` re-recorded: the count line (202 -> 208)
+  and case 24's lines only; cases 1..23 print the same.
+- **Short calls:** a level-step sweep (-3..+6 dB, 9600 and 14400, 8 seeds,
+  scratch) 3/96 bad before and after. `make hst-thresh` again: crossings
+  13.5 / 16.5 / 21.0 / 23.5 dB, the error 3 dB above -17.80 / -20.56 /
+  -23.79 / -24.13 dB (22a: -17.76 / -20.54 / -23.78 / -24.13):
+  `hst_good_mse` kept.
+- **CPU** (`make cost-hst-fwd`, ARMv5): 14400 data mode 25 433 679 a second
+  (25.40 M -> 25.43 M, budget 26 M); the switch window 636 939 in 20 ms.
+- `make check`: ALL HOST CHECKS PASS (x86-64).
