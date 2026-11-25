@@ -352,7 +352,9 @@ and `hst-scan -f` our trainings' segments (180, 72, 3096 and 200 symbols,
 within 10) and constellations (32 points at 9600, 128 at 14400).
 `tools/rtp2rec.py --self-test` checks the RTP converter for R1 and R2 on
 captures it makes itself (pcap and pcapng, IPv4 and IPv6, loss,
-reordering, RFC 2198); it is Python, outside `make check`.
+reordering, RFC 2198 with one or two layers, from the first packet on, and
+an empty redundant block); `make check`'s fixtures run it where python3 is
+found, and say they skipped it where not.
 
 **The calling side and the recordings.** There is no real modem for the
 calling side to call yet. `tools/v90m_fields.c` (`make build/v90m-fields`,

@@ -454,6 +454,8 @@ test-fixtures: $(BUILD)/v90m-replay $(BUILD)/rec_orig $(BUILD)/rec_hst $(BUILD)/
 	@echo "== v90m-replay -s, -l, -r, -B, -M and -F =="; test/fixtures/replay-opts.sh $(abspath $(BUILD))/v90m-replay $(abspath $(BUILD))/rec_orig
 	@echo "== HST: v90m-replay -H, hst-scan -b and -f, bench_hst -c =="; test/fixtures/replay-hst.sh $(abspath $(BUILD))/v90m-replay \
 	   $(abspath $(BUILD))/rec_hst $(abspath $(BUILD))/hst-scan $(abspath $(BUILD))/bench_hst
+	@echo "== tools/rtp2rec.py --self-test =="; if command -v python3 >/dev/null 2>&1; then python3 tools/rtp2rec.py --self-test; \
+	 else echo "  python3 not found: rtp2rec's self-test skipped"; fi
 # every ARM program of every directory in one pool (logs in $(BUILD)/arm_log);
 # each case of a SPLIT_TESTS program a run of its own (arm_test_p34:N);
 # ARM_SKIP=FILE leaves out the programs it lists (tools/ports-slow.txt)
@@ -958,7 +960,7 @@ cost-hst-fwd: $(BUILD)/bench_hst $(BUILD)/bench_hst.arm
 HST_REC := $(BUILD)/hst_call.rec
 .PHONY: bench-hst cost-hst
 bench-hst: $(BUILD)/rec_hst $(BUILD)/bench_hst $(BUILD)/bench_hst.arm
-	$(abspath $(BUILD))/rec_hst 3 $(HST_REC) | tail -3
+	$(abspath $(BUILD))/rec_hst 3 $(HST_REC) > $(BUILD)/rec_hst.log || { cat $(BUILD)/rec_hst.log; exit 1; }; tail -3 $(BUILD)/rec_hst.log
 	$(abspath $(BUILD))/bench_hst -c $(HST_REC)
 	$(QEMU) $(abspath $(BUILD))/bench_hst.arm -c $(HST_REC)
 cost-hst: $(BUILD)/rec_hst $(BUILD)/bench_hst $(BUILD)/bench_hst.arm

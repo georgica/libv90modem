@@ -28,7 +28,8 @@ Reads classic pcap (either byte order, micro- or nanosecond times) and pcapng
 (enhanced and simple packet blocks), with Ethernet (802.1Q tags too), Linux
 cooked (SLL, SLL2), raw IP or loopback link layers, IPv4 and IPv6, UDP. Each
 direction is placed on one 8000 Hz timeline by its RTP timestamps (32-bit,
-wrapping), the two lined up by the arrival of their first packets; a sample no
+wrapping), the two lined up by the arrival of the first packet of each
+(its primary block: RFC 2198's redundant blocks hold older audio); a sample no
 packet gave is silence (mu-law 0xFF, A-law 0xD5), and how many there were is
 printed. Both directions must carry the same law: PCMU (0) gives a mu-law
 recording, PCMA (8) an A-law one (replay it with -a).
@@ -224,34 +225,38 @@ def streams_of(data):
 
 
 def g711_blocks(s, red_pt):
-    """[(rtp timestamp, law, codewords)] of a stream: G.711 packets, or
-    RFC 2198 over G.711 (the redundant blocks too)"""
+    """[(rtp timestamp, law, codewords, redundant, arrival)] of a stream:
+    G.711 packets, or RFC 2198 over G.711 (the redundant blocks too)"""
     out = []
     for t, seq, ts, pt, pl in s.pkts:
         if pt in (0, 8):
-            out.append((ts, pt, pl, 0))
+            out.append((ts, pt, pl, 0, t))
         elif (red_pt is not None and pt == red_pt) or (red_pt is None and 96 <= pt <= 127):
             b = red_blocks(pl)
             if not b or any(x[0] not in (0, 8) for x in b):
                 continue
             for i, (bpt, off, d) in enumerate(b):
-                out.append(((ts - off) & 0xFFFFFFFF, bpt, d, 1 if i < len(b) - 1 else 0))
+                out.append(((ts - off) & 0xFFFFFFFF, bpt, d, 1 if i < len(b) - 1 else 0, t))
     return out
 
 
 def timeline(s, red_pt):
-    """{sample: codeword} from the stream's first timestamp; its law"""
+    """{sample: codeword}, sample 0 the first sample of the primary block
+    of the packet that arrived first (a redundant block's audio is older
+    than its packet: anchored on it, the stream would land late); its law,
+    the redundant samples used, and that packet's arrival"""
     blocks = g711_blocks(s, red_pt)
     if not blocks:
-        return None, None, 0
+        return None, None, 0, None
     laws = set(b[1] for b in blocks)
     if len(laws) != 1:
         raise ValueError("%s: both PCMU and PCMA" % s.name())
-    ts0 = blocks[0][0]
+    anchor = min((b for b in blocks if not b[3]), key=lambda b: b[4])
+    ts0, t0 = anchor[0], anchor[4]
     line, red_used = {}, 0
     # primaries first, then the redundant blocks fill what no primary gave
     for redundant in (0, 1):
-        for ts, law, d, r in blocks:
+        for ts, law, d, r, _ in blocks:
             if r != redundant:
                 continue
             rel = (ts - ts0) & 0xFFFFFFFF
@@ -261,11 +266,7 @@ def timeline(s, red_pt):
                 if rel + i not in line:
                     line[rel + i] = c
                     red_used += redundant
-    return line, laws.pop(), red_used
-
-
-def first_arrival(s):
-    return min(p[0] for p in s.pkts)
+    return line, laws.pop(), red_used, t0
 
 
 def tone_score(line, law):
@@ -330,12 +331,13 @@ def convert(data, sent=None, red_pt=None, t_from=None, t_to=None, log=sys.stderr
         a, b = (st[0], st[1]) if sc[0] >= sc[1] else (st[1], st[0])
         log.write("rtp2rec: the answerer's (sent): %s (answer tone %.0f %% of its first 6 s; the other's %.0f %%)\n"
                   % (a.name(), 100 * max(sc), 100 * min(sc)))
-    (la, law_a, ra), (lb, law_b, rb) = lines[a.key], lines[b.key]
+    (la, law_a, ra, ta), (lb, law_b, rb, tb) = lines[a.key], lines[b.key]
     if law_a != law_b:
         raise ValueError("the two directions are not the same law")
-    # the two lined up by the arrival of their first packets
+    # the two lined up by their anchors' arrivals (each the primary block
+    # of its stream's first packet to arrive)
     off_a = 0
-    off_b = int(round((first_arrival(b) - first_arrival(a)) * 8000))
+    off_b = int(round((tb - ta) * 8000))
     lo = min(off_a + min(la), off_b + min(lb))
     hi = max(off_a + max(la), off_b + max(lb)) + 1
     if t_from is not None:
@@ -389,20 +391,29 @@ def self_test():
     def rtp(pt, seq, ts, ssrc, pl):
         return struct.pack(">BBHII", 0x80, pt, seq & 0xFFFF, ts & 0xFFFFFFFF, ssrc) + pl
 
-    def frames(v6, red):
+    def frames(v6, layers, first=False, empty=False):
+        """layers: RFC 2198 blocks of the packets before, the oldest first
+        (0: plain G.711); first: packet 0 carries them too (silence, from
+        before the call); empty: a redundant block of no octets"""
         out = []
         ts_a, ts_b = 0xFFFFF000, 1234        # the answerer's wraps
-        lost_b = {7, 8, 40}                  # heard: packets lost (8 and 40 come back by redundancy)
+        lost_b = {7, 8, 40}                  # heard: packets lost (with redundancy some come back)
         for k in range(n // 160):
             t = 1000.0 + k * 0.02
             pa = sent[160 * k:160 * k + 160]
             pb = heard[160 * k:160 * k + 160]
-            if red and k > 0:
-                prev = heard[160 * (k - 1):160 * k]
-                hdr = struct.pack(">I", (1 << 31) | (0 << 24) | (160 << 10) | 160) + b"\x00"
-                pb = hdr + prev + pb
+            if layers and (k > 0 or first):
+                hdr, body = b"", b""
+                for j in range(layers, 0, -1):
+                    if empty:
+                        hdr += struct.pack(">I", (1 << 31) | (160 * j << 10))
+                        continue
+                    prev = heard[160 * (k - j):160 * (k - j + 1)] if k >= j else b"\xff" * 160
+                    hdr += struct.pack(">I", (1 << 31) | (0 << 24) | (160 * j << 10) | 160)
+                    body += prev
+                pb = hdr + b"\x00" + body + pb
             fa = rtp(0, k, ts_a + 160 * k, 0xA5A5, pa)
-            fb = rtp(100 if red else 0, k, ts_b + 160 * k, 0xB6B6, pb)
+            fb = rtp(100 if layers else 0, k, ts_b + 160 * k, 0xB6B6, pb)
             if v6:
                 a6, b6 = b"\x20\x01" + b"\x00" * 13 + b"\x01", b"\x20\x01" + b"\x00" * 13 + b"\x02"
                 out.append((t, ("a", k), udp6(a6, 5004, b6, 6000, fa)))
@@ -441,22 +452,30 @@ def self_test():
             pass
 
     ok = True
-    for name, cap, red in (("pcap, IPv4", pcap(frames(False, False)), False),
-                           ("pcapng, IPv6, RFC 2198", pcapng(frames(True, True)), True)):
+    pk = lambda *ks: set(i for k in ks for i in range(160 * k, 160 * k + 160))
+    for name, cap, lost in (
+            ("pcap, IPv4", pcap(frames(False, 0)), pk(7, 8, 40)),
+            ("pcapng, IPv6, RFC 2198", pcapng(frames(True, 1)), pk(7)),
+            ("RFC 2198 from the first packet", pcap(frames(False, 1, first=True)), pk(7)),
+            ("RFC 2198, two layers, from the first packet", pcap(frames(False, 2, first=True)), set()),
+            ("RFC 2198, an empty redundant block, from the first packet", pcap(frames(False, 1, first=True, empty=True)),
+             pk(7, 8, 40))):
         r = convert(cap, log=Null())
         nb = len(r) // 160
         h = b"".join(r[160 * i:160 * i + 80] for i in range(nb))
         s = b"".join(r[160 * i + 80:160 * i + 160] for i in range(nb))
-        # heard arrives 12.3 ms after sent: 98 samples later on the timeline
+        # sent wherever the timeline puts it (redundancy from before the
+        # call may start it earlier); heard 12.3 ms after it, 98 samples
+        s0 = s.find(sent[:400])
         d = round(0.0123 * 8000)
-        want_lost = set(range(7 * 160, 8 * 160)) if red else set(range(7 * 160, 9 * 160)) | set(range(40 * 160, 41 * 160))
-        good = s[:n] == sent and all((h[d + i] == 0xFF) if i in want_lost else (h[d + i] == heard[i]) for i in range(n))
-        good = good and all(c == 0xFF for c in h[:d])
+        good = s0 >= 0 and s[s0:s0 + n] == sent and len(h) >= s0 + d + n
+        good = good and all((h[s0 + d + i] == 0xFF) if i in lost else (h[s0 + d + i] == heard[i]) for i in range(n))
+        good = good and all(c == 0xFF for c in h[:s0 + d])
         print("rtp2rec self-test: %s: %s" % (name, "pass" if good else "FAIL"))
         ok = ok and good
     # --sent naming the other stream: the two channels swapped (the
     # answerer's by its tone above)
-    r = convert(pcap(frames(False, False)), sent="10.0.0.2:6000", log=Null())
+    r = convert(pcap(frames(False, 0)), sent="10.0.0.2:6000", log=Null())
     h = b"".join(r[160 * i:160 * i + 80] for i in range(len(r) // 160))
     good = h[:n] == sent
     print("rtp2rec self-test: --sent: %s" % ("pass" if good else "FAIL"))
