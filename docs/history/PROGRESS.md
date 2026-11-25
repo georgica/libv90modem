@@ -4563,3 +4563,72 @@ For Task 13 (set by the review):
   1874-2076, 2724-2926 and 3474-3676 Hz. `hst_hbpf` wants the same.
 - An echo test of our own forward signal ("holding forward"), since the
   500-1100 Hz band then rests on the matched filter's selectivity.
+
+Review fixes (round 2).
+- N1, a lock 45 degrees off giving bits. The 3:2 alias check at lock let
+  about 0.1 % of hard starts through, mostly after a 1 s dropout at 12 dB,
+  and some 288 wrong bits went out before the in-lock checks caught it.
+  - The check at lock is now 2:1.
+  - A second check on a fresh window 10 symbols later, at 3:2, confirms the
+    lock or ends it. A preference for r +- 45 means estimating again.
+  - While locked, the bits are held back 19 symbols at 450 and 18 at 300,
+    so no bit leaves before the second check. A confirmation at 1:1 let one
+    alias through in the review's set (300, +12 Hz, seed 28).
+  - An unclear second check costs a lock won again, never a bit.
+  - hst.h no longer says such a lock "is never declared". It says no bit
+    is given from one.
+- N2, the hold floor. Holding a lock uses an RMS ceiling of 11 degrees
+  (HST_BRX_RMS_HOLD); winning one still uses 7.
+  - Locked at 25 dB, then the noise raised: 0 losses of lock at 8, 7, 6
+    and 5 dB (10 seeds x 18 s a speed).
+  - Over 4 x 58 s: at 450, BER 1.4e-4 at 6 dB and 5e-4 at 5 dB; at 4 dB,
+    4 losses and BER 1.9e-3. At 300, no errors to 6 dB and 2.5e-4 at 4 dB.
+  - In round 1 it was about 3 losses a minute at 8 dB.
+- N3, the fade gate. A fade loses the lock only after about 75 ms in a row
+  (11 symbols at 450, 8 at 300; it was 2 symbols).
+  - The bits held back (above) let a shorter fade keep the lock and give
+    its bits: no gap in the stream. That also settles the review's M-b.
+  - A fade that loses the lock takes its own bits with it, and those of the
+    8 symbols before it, over which the matched filter ramps down.
+  - Faded symbols move neither the loops nor the grid history.
+  - Carrier detect goes off after 6 blocks under -47 dBm0, not 3, so a lost
+    50 ms packet keeps the carrier. It is still off within 100 ms.
+  - 20/30/50 ms dropouts: the lock held, at most 13-25 wrong bits a line.
+  - 0.1 s: the lock lost and won again, not one wrong bit given.
+  - Level steps of -10, -12 and -15 dB: 0 losses (-15 dB at 300: 1 of 10).
+- Minors:
+  - The range at 300 is written as reliable over +-12 Hz, with what
+    happens at +-15 Hz.
+  - A direct test of I2.
+  - The round-1 figure "0 false locks in 50 minutes" held only for my seeds.
+    The review's set found 1 false lock in 40 minutes at 450 and 3 at 300 on
+    noise alone, and 15 in 240 minutes with hum or dial tone in noise.
+    Now 6 runs in 1910 raise `locked` for 0.07-0.1 s, and none gives a bit.
+
+The review's sets, rebuilt on this code (build/tmp/rv12b; p5.c is p4.c,
+which places an epoch shorter than 12 bits by time from an aligned one
+instead of counting it all wrong):
+
+    7800 hard starts (13 offsets x 30 seeds x 10 conditions x 2 speeds):
+      no epoch from an alias anywhere; no run with more than 9 wrong bits;
+      450: no wrong bit at all within +-12 Hz;
+      300: within +-12 Hz, one run at 12 dB with 3 wrong first bits after
+      the lock, an ordinary error with one decision of 16 off the grid; at
+      +-15 Hz (beyond the reliable range) 34 such runs and 33 not locked
+      at 10 s
+    1910 tone and noise runs of 60 s: 0 bits given; 0 windows of 24 grid_ok
+      in 30; `locked` raised for 0.07-0.1 s in 6 (noise, or tone and noise)
+    lock time: worst 252 ms (450) and 369 ms (300) over 800 lines
+
+New cases in `test_hst_back` (113 checks; 20 s on the host, 2.5 s short):
+- `alias`: 112 hard starts a speed at 12 dB, -10 to +10 Hz, noise first
+  or a 1 s dropout. Each must end locked on the right carrier, with not one
+  wrong bit in all the bits given.
+- `fades`: 20, 30 and 50 ms dropouts; and 0.1 s.
+- `hold`: 8 dB and 6 dB for 60 s a speed.
+- `grid_ok`: 0 before the estimate, and until the 16-decision window is
+  full; 1 after that.
+- `loop_*`'s third bound counts losses of lock once bits have come. Before
+  that, the lock's second check may end a lock, which is not a loss.
+
+CPU (ARMv5, two receivers on one band-pass): 3.70 M a second.

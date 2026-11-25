@@ -508,12 +508,17 @@ typedef struct {
     double snr;                        /* dB below the signal over 0-4 kHz (0: 20) */
     double pre;                        /* seconds of the line's noise before the transmitter starts */
     double drop_at, drop_len;          /* seconds after it starts: the signal off, the noise on */
+    double snr2, at2;                  /* the noise rises to snr2 dB below the signal at at2 s (snr2 0: never) */
+    int    all;                        /* every bit given counts (each lock aligned on its own), not
+                                        * only those after the last lock */
 } line_t;
 
 typedef struct {
     long   lock_at;                    /* samples from the preamble's arrival to the lock; -1: never */
     long   nbits, errors;              /* bits compared after the lock, and in error */
     int    unlocks;                    /* losses of lock after it */
+    int    unlocks_drop;               /* of them, from the dropout's start */
+    int    unlocks_bits;               /* of them, once bits have come (after the lock's second check) */
     int    cd_lost;
     long   snr_num, snr_den;
     int    locked_end;                 /* locked at the end */
@@ -526,19 +531,70 @@ typedef struct {
     run_t    *o;
     long      n, nrx, arrive;
     long      restart;                 /* the sample from which the bits count again (0: none) */
-    int       was;
+    int       was, all, epoch;
+    long      drop;                    /* the sample the dropout reaches the receiver (0: none) */
+    int       flowing;                 /* bits have come */
 } watch_t;
+static int16_t rxepo[LOGN];            /* the lock each received bit came in */
+static int32_t rxn[LOGN];              /* and the line sample it came out at */
 static void watch(watch_t *w, int16_t x)
 {
     int nb = hst_brx_tick(&w->rx, x), lk = hst_brx_locked(&w->rx), k;
     if (lk && w->o->lock_at < 0) w->o->lock_at = w->n - w->arrive;
-    if (w->was && !lk) w->o->unlocks++;
+    if (w->was && !lk) {
+        w->o->unlocks++;
+        if (w->drop && w->n >= w->drop) w->o->unlocks_drop++;
+        if (w->flowing) w->o->unlocks_bits++;
+    }
+    if (nb) w->flowing = 1;
     if (w->o->lock_at >= 0 && !hst_brx_cd(&w->rx)) w->o->cd_lost = 1;
-    if ((lk && !w->was) || w->n == w->restart) w->nrx = 0;     /* the bits from the last lock, or the dropout's end */
+    if (lk && !w->was) w->epoch++;
+    if (!w->all && ((lk && !w->was) || w->n == w->restart)) w->nrx = 0;   /* the bits from the last lock, or the dropout's end */
     w->was = lk;
     if (w->o->lock_at >= 0)
-        for (k = 0; k < nb && w->nrx < LOGN; k++) rxlog[w->nrx++] = w->rx.bits[k];
+        for (k = 0; k < nb && w->nrx < LOGN; k++) {
+            rxepo[w->nrx] = (int16_t)w->epoch; rxn[w->nrx] = (int32_t)w->n;
+            rxlog[w->nrx++] = w->rx.bits[k];
+        }
     w->n++;
+}
+
+/* every received bit, each lock's on its own: aligned by a 64-bit match
+ * (before the data, the preamble's ones); a lock with too few bits for
+ * that is placed by time from an aligned one (the bit rate, +-6 bits) */
+static int expect_bit(long t, long nlog) { return t < 0 ? 1 : t < nlog ? txlog[t] : -1; }
+static void score_epochs(long nrx, long nlog, int bps, run_t *o)
+{
+    long i, abase = 0, an = 0;
+    int anchored = 0, pass;
+    o->nbits = o->errors = 0;
+    for (pass = 0; pass < 2; pass++)
+        for (i = 0; i < nrx; ) {
+            long j = i, off, base = 0, k, q, d, e, emin;
+            int found = 0;
+            while (j < nrx && rxepo[j] == rxepo[i]) j++;
+            for (q = i; q + 64 <= j && !found && q < i + 400; q++)
+                for (off = 0; off + 64 < nlog && !found; off++) {
+                    for (k = 0; k < 64 && rxlog[q + k] == txlog[off + k]; k++) ;
+                    if (k == 64) { found = 1; base = off - (q - i); }
+                }
+            if (pass == 0) {
+                if (found && !anchored) { anchored = 1; abase = base; an = rxn[i]; }
+            } else if (found) {
+                for (k = i; k < j; k++) o->errors += rxlog[k] != expect_bit(base + (k - i), nlog);
+                o->nbits += j - i;
+            } else {
+                long pred = abase + (long)((double)(rxn[i] - an) * bps / FS + 0.5);
+                emin = j - i;
+                for (d = -6; anchored && d <= 6; d++) {
+                    for (e = 0, k = i; k < j; k++) e += rxlog[k] != expect_bit(pred + d + (k - i), nlog);
+                    if (e < emin) emin = e;
+                }
+                o->errors += emin;
+                o->nbits += j - i;
+            }
+            i = j;
+        }
 }
 
 /* the transmitter's preamble then random data through the line; the
@@ -559,6 +615,7 @@ static void run_line(const line_t *ln, long want, double secs, run_t *o)
     o->lock_at = -1;
     memset(&W, 0, sizeof W);
     W.o = o;
+    W.all = ln->all;
     if (ln->mulaw) {
         memset(&lc, 0, sizeof lc);
         lc.mulaw = 1; lc.loss_db = 6; lc.delay = 200; lc.taps = loop; lc.ntaps = 4;
@@ -573,7 +630,10 @@ static void run_line(const line_t *ln, long want, double secs, run_t *o)
     } else {
         chan_init(&ch, ln->hz, ln->ppm, LEVEL * pow(10, -(ln->snr > 0 ? ln->snr : 20) / 20), ln->seed);
         W.arrive = HILN / 2 + 1 + (long)(ln->pre * FS);
-        if (ln->drop_len > 0) W.restart = W.arrive + (long)((ln->drop_at + ln->drop_len) * FS);
+        if (ln->drop_len > 0) {
+            W.restart = W.arrive + (long)((ln->drop_at + ln->drop_len) * FS);
+            W.drop = W.arrive + (long)(ln->drop_at * FS);
+        }
     }
 
     prbs_seed(ln->seed * 2654435761u + 77);
@@ -586,12 +646,14 @@ static void run_line(const line_t *ln, long want, double secs, run_t *o)
 
     nmax = want ? (long)((want + 3000) * FS / (double)ln->bps) + 4 * FS : (long)(secs * FS);
     nmax += (long)((ln->pre + ln->drop_at + ln->drop_len) * FS);
+    if (ln->all) nmax = (long)(secs * FS);
     while (W.n < nmax) {
         if (ln->mulaw) watch(&W, v32line_tick(&L, 0, peer_tx, &tx));
         else {
             int16_t y[4];
             double t = W.n / (double)FS - ln->pre, v = 0;
             int k, m;
+            if (ln->snr2 > 0 && t >= ln->at2) ch.nrms = LEVEL * pow(10, -ln->snr2 / 20);
             if (t >= 0) {
                 v = hst_btx_tick(&tx);
                 if (t >= ln->drop_at && t < ln->drop_at + ln->drop_len) v = 0;
@@ -599,7 +661,7 @@ static void run_line(const line_t *ln, long want, double secs, run_t *o)
             m = chan_push(&ch, v, y);
             for (k = 0; k < m; k++) watch(&W, y[k]);
         }
-        if (want && W.nrx >= want + 400 && src.nlog > want + 400) break;
+        if (want && !ln->all && W.nrx >= want + 400 && src.nlog > want + 400) break;
     }
     {
         int64_t num = 0, den = 0;
@@ -608,6 +670,7 @@ static void run_line(const line_t *ln, long want, double secs, run_t *o)
     o->locked_end = hst_brx_locked(&W.rx);
     o->hz_err = (double)(int32_t)(W.rx.dph - W.rx.dph0) * 1600 / 4294967296.0
               + (double)W.rx.wturn * (ln->bps == 450 ? 150 : 100) / 4294967296.0 - ln->hz;
+    if (ln->all) { score_epochs(W.nrx, src.nlog, ln->bps, o); return; }
     if (!want || o->lock_at < 0 || W.nrx < want + 400) return;
     /* the data's place in the received bits: 64 bits from the 400th, found in the log */
     {
@@ -647,7 +710,7 @@ static void loop_case(int bps, int c, int mulaw)
                o.snr_den ? 10 * log10((double)o.snr_num / o.snr_den) : 0.0);
     bound("locked", o.lock_at >= 0);
     bound(mulaw ? "no bit in error" : "BER < 1e-5 (at most one error)", o.nbits == want && o.errors * 100000L < o.nbits);
-    bound("no loss of lock or carrier after the lock", o.unlocks == 0 && !o.cd_lost);
+    bound("no loss of lock or carrier once the bits come", o.unlocks_bits == 0 && !o.cd_lost);
 }
 
 static void lock_time(void)
@@ -941,12 +1004,144 @@ static void cd_level(void)
     }
 }
 
+#ifdef TEST_SHORT
+#define HOLD_SECS 10
+#else
+#define HOLD_SECS 60
+#endif
+
+/* hard starts: 1 s of noise first, or a 1 s dropout, at 12 dB; offsets
+ * -10 to +10 Hz: no bit given from a lock 45 degrees off, nor any other
+ * wrong bit, in all the bits given */
+static void alias(void)
+{
+    static const double hz[7] = { -10, -7, -3, 0, 3, 7, 10 };
+    int s, seed, c, cond, bad, runs;
+    for (s = 0; s < 2; s++) {
+        int bps = s ? 300 : 450;
+        bad = runs = 0;
+        for (cond = 0; cond < 2; cond++)
+            for (seed = 1; seed <= NSEEDS; seed++)
+                for (c = 0; c < 7; c++) {
+                    line_t ln;
+                    run_t o;
+                    memset(&ln, 0, sizeof ln);
+                    ln.bps = bps; ln.hz = hz[c]; ln.ppm = seed & 1 ? 100 : -100; ln.snr = 12; ln.all = 1;
+                    if (cond == 0) ln.pre = 1.0; else { ln.drop_at = 2.0; ln.drop_len = 1.0; }
+                    ln.seed = (uint32_t)(8000 + 100 * seed + 10 * c + cond + bps);
+                    run_line(&ln, 1, 8.0, &o);
+                    runs++;
+                    if (!(o.locked_end && fabs(o.hz_err) < 1 && o.errors == 0 && o.nbits > 0)) bad++;
+                    if (verbose && (o.errors || !o.locked_end || fabs(o.hz_err) >= 1))
+                        printf("  (%s seed %d %+.0f Hz: %ld wrong of %ld, carrier %+.2f Hz off, locked %d)\n",
+                               cond ? "dropout" : "noise first", seed, hz[c], o.errors, o.nbits, o.hz_err, o.locked_end);
+                }
+        printf("alias %d: %d hard starts at 12 dB (noise first, a 1 s dropout)\n", bps, runs);
+        bound("each locked on the right carrier; not one wrong bit given", bad == 0);
+    }
+}
+
+/* the signal off 20, 30 and 50 ms (a lost packet or two): the lock held,
+ * few wrong bits; 0.1 s: the lock lost, no wrong bit given; 20 dB */
+static void fades(void)
+{
+    static const double len[4] = { 0.02, 0.03, 0.05, 0.1 };
+    int s, l, seed, c;
+    for (s = 0; s < 2; s++) {
+        int bps = s ? 300 : 450;
+        for (l = 0; l < 4; l++) {
+            int bad = 0;
+            long worst = 0;
+            for (seed = 1; seed <= NSEEDS; seed++)
+                for (c = 0; c < 3; c++) {
+                    line_t ln;
+                    run_t o;
+                    memset(&ln, 0, sizeof ln);
+                    ln.bps = bps; ln.hz = offs3[c]; ln.ppm = 100; ln.snr = 20; ln.all = 1;
+                    ln.drop_at = 2.0; ln.drop_len = len[l];
+                    ln.seed = (uint32_t)(9000 + 100 * seed + 10 * c + l + bps);
+                    run_line(&ln, 1, 5.0, &o);
+                    if (o.errors > worst) worst = o.errors;
+                    if (l < 3 ? !(o.unlocks_drop == 0 && o.locked_end && o.errors <= 40)
+                              : !(o.unlocks_drop >= 1 && o.locked_end && fabs(o.hz_err) < 1 && o.errors == 0)) bad++;
+                }
+            printf("fades %d: the signal off %d ms, %d lines\n", bps, (int)(len[l] * 1000 + 0.5), 3 * NSEEDS);
+            if (verbose) printf("  (at most %ld wrong bits a line)\n", worst);
+            bound(l < 3 ? "the lock held, at most 40 wrong bits" : "the lock lost and found again, not one wrong bit given",
+                  bad == 0);
+        }
+    }
+}
+
+/* locked at 25 dB, then the noise up to 8 dB, and to 6 dB: no loss of
+ * lock in HOLD_SECS, BER < 1e-3 */
+static void hold(void)
+{
+    static const double lv[2] = { 8, 6 };
+    int s, l;
+    for (s = 0; s < 2; s++) {
+        int bps = s ? 300 : 450;
+        for (l = 0; l < 2; l++) {
+            line_t ln;
+            run_t o;
+            memset(&ln, 0, sizeof ln);
+            ln.bps = bps; ln.hz = 7; ln.ppm = 100; ln.snr = 25; ln.all = 1;
+            ln.snr2 = lv[l]; ln.at2 = 2.0;
+            ln.seed = (uint32_t)(9500 + bps + l);
+            run_line(&ln, 1, 2.0 + HOLD_SECS, &o);
+            printf("hold %d: %d dB for %d s\n", bps, (int)lv[l], HOLD_SECS);
+            if (verbose) printf("  (%d losses of lock, %ld wrong of %ld bits)\n", o.unlocks, o.errors, o.nbits);
+            bound("no loss of lock, BER < 1e-3", o.unlocks == 0 && o.locked_end && o.errors * 1000 < o.nbits);
+        }
+    }
+}
+
+/* grid_ok on the signal (+-7 Hz, 20 dB): 0 before the carrier's estimate,
+ * and until its window of 16 decisions is full (the estimate's 8 strobes
+ * decided again, its own symbol, then 6 more); 1 afterwards */
+static void grid_ok(void)
+{
+    int s, c;
+    for (s = 0; s < 2; s++) {
+        int bps = s ? 300 : 450, early = 0, later = 0;
+        for (c = 0; c < 2; c++) {
+            static chan_t ch;
+            static hst_brx_t rx;
+            hst_btx_t tx;
+            src_t src;
+            long n = 0;
+            int nsym = 0, since = -1;
+            prbs_seed(0x6E1u + (uint32_t)(bps + c));
+            memset(&src, 0, sizeof src);
+            src.random = 1;
+            hst_btx_init(&tx, bps, LEVEL, getbit, &src);
+            hst_btx_preamble(&tx);
+            chan_init(&ch, c ? -7 : 7, 100, LEVEL / 10.0, (uint32_t)(77 + bps + c));
+            hst_brx_init(&rx, bps);
+            while (n < 2 * FS) {
+                int16_t y[4];
+                int k, m = chan_push(&ch, hst_btx_tick(&tx), y);
+                for (k = 0; k < m; k++, n++) {
+                    hst_brx_tick(&rx, y[k]);
+                    if (rx.nsym == nsym) continue;                   /* not a decision */
+                    nsym = rx.nsym;
+                    if (since < 0 && rx.acq == 2) since = 0;               /* ACQ_LOCK: the estimate made */
+                    else if (since >= 0) since++;
+                    if (hst_brx_grid_ok(&rx)) { if (since < 0 || since <= 6) early++; else later++; }
+                }
+            }
+        }
+        printf("grid_ok %d: 2 lines\n", bps);
+        bound("0 before the estimate and for 6 decisions after it; then 1", early == 0 && later > 0);
+    }
+}
+
 static void loop_450(int c) { loop_case(450, c, 0); }
 static void loop_300(int c) { loop_case(300, c, 0); }
 
 int main(int argc, char **argv)
 {
-    int only = t_case_arg(argc, argv, 24), c;
+    int only = t_case_arg(argc, argv, 28), c;
     verbose = getenv("HST_VERBOSE") != NULL;
     if (T_CASE(only, 1)) steps();
     if (T_CASE(only, 2)) scr17();
@@ -966,5 +1161,9 @@ int main(int argc, char **argv)
     if (T_CASE(only, 22)) noise_locks();
     if (T_CASE(only, 23)) band();
     if (T_CASE(only, 24)) cd_level();
+    if (T_CASE(only, 25)) alias();
+    if (T_CASE(only, 26)) fades();
+    if (T_CASE(only, 27)) hold();
+    if (T_CASE(only, 28)) grid_ok();
     T_REPORT("test_hst_back");
 }

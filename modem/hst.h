@@ -48,23 +48,40 @@
  * wturn drains slowly into the NCO.
  *
  * The whole acquisition again if no lock follows, or when lock is lost.
- * The estimate holds over about +-28 Hz at 450 and +-18 Hz at 300 (beyond,
- * a wrong turn can be chosen); telephone lines stay within +-7 Hz.
+ * The estimate is reliable over +-12 Hz at 300 and about +-28 Hz at 450;
+ * at 300 and +-15 to +-17 Hz lock takes from 0.4 s to several seconds and
+ * comes and goes at first (telephone lines stay within +-7 Hz).
  *
  * Lock needs, over the last HST_BRX_WIN decisions: 15 within +-12 degrees
  * of the grid; at least 4 different steps, none in more than 8 (a tone, or
  * dial tone, or hum, steps the same way every symbol: a scrambled signal
  * uses all eight); an RMS error under HST_BRX_RMS degrees (noise that falls
  * on the grid by chance does not); and the alias check, on the last
- * HST_BRX_EST strobes, preferring the turn in use to r +- 45 by a clear
- * margin. When it prefers r +- 45 the carrier is estimated again from those
- * strobes: a lock 45 degrees off (an estimate made on noise, before the
- * signal or in a dropout, then pulled by the frequency loop) is never
- * declared. The check runs again every 32 symbols while locked, and three
- * in a row for the same turn 45 degrees off estimate the carrier again. A symbol
- * 9 dB under the mean gives no bits, and two in a row lose the lock.
+ * HST_BRX_EST strobes, preferring the turn in use to r +- 45 by 2:1. When
+ * it prefers r +- 45 instead, the carrier is estimated again from those
+ * strobes. A second check on a fresh window 10 symbols later, by 3:2,
+ * confirms the lock or ends it (estimating again when it prefers r +- 45),
+ * and no bit leaves before it: the bits are held back while locked (19
+ * symbols at 450, 18 at 300). So a lock 45 degrees off (an estimate made on
+ * noise, before the signal or in a dropout, pulled there by the frequency
+ * loop) gives no bits. The check runs again every 32 symbols, and three in
+ * a row for the same wrong turn estimate the carrier again.
+ *
+ * Holding a lock takes the same conditions with an RMS ceiling of
+ * HST_BRX_RMS_HOLD degrees (it holds to about 5 dB over 0-4 kHz, where it
+ * is won down to about 8 dB). Noise, alone or with a tone, can raise
+ * `locked` for 0.1 s now and then (6 runs in 1910 minutes of the review's
+ * set); the second check ends it, no bit given.
+ *
+ * A symbol 9 dB under the mean is a fade: about 75 ms of them in a row (11
+ * symbols at 450, 8 at 300) lose the lock, and the bits held back with
+ * them (the 8 symbols before, over which the matched filter ramps down,
+ * too). A shorter fade (a lost 20 ms packet or two) keeps the lock, and
+ * its symbols' bits go out with the rest, a few of them wrong: the stream
+ * has no gap. Faded symbols move neither the loops nor the grid history.
  * Carrier detect: the band's power in 10 ms blocks (before the AGC), on
- * at -44 dBm0 for 3 blocks, off under -47 dBm0 for 3 blocks [OURS]. */
+ * at -44 dBm0 for 3 blocks, off under -47 dBm0 for 6 blocks (a lost 50 ms
+ * packet keeps it) [OURS]. */
 #define HST_BRX_XL  (HST_BBPF_N + 40)  /* the 8000 Hz input, linear, moved down when full */
 #define HST_BRX_ZN  130                /* the matched filter's span at 1600 Hz: 8 symbols at 300, +2 */
 #define HST_BRX_ZL  (HST_BRX_ZN + 32)  /* the 1600 Hz baseband, linear, moved down when full */
@@ -72,6 +89,8 @@
 #define HST_BRX_OM  8                  /* symbols for the timing's */
 #define HST_BRX_WIN 16                 /* decisions the lock and grid_ok look over */
 #define HST_BRX_RMS 7                  /* degrees: the most RMS error for lock and grid_ok */
+#define HST_BRX_RMS_HOLD 11            /* degrees: the most RMS error to hold a lock */
+#define HST_BRX_DLY 19                 /* the most symbols the bits are held back while locked */
 
 typedef struct {
     int16_t  xh[HST_BRX_XL];          /* the input at 8000 Hz */
@@ -106,6 +125,9 @@ typedef struct {
     int32_t  wsq[HST_BRX_WIN];        /* (error in turns Q16)^2 / 16 */
     int32_t  wpos, nwin, qbad;        /* ring place; decisions in it; symbols of bad quality in a row */
     int32_t  nfade;                   /* locked symbols 9 dB under the mean in a row */
+    uint8_t  dly[HST_BRX_DLY];        /* the last decisions' bits while locked, a ring (bit b: bits[b]) */
+    int32_t  ndly, pdly;              /* bits held back: symbols, the ring's place */
+    int32_t  conf;                    /* symbols to the second alias check after a lock (0: done) */
     /* decisions */
     uint32_t aprev;                   /* the last symbol's angle */
     int32_t  wturn;                   /* the carrier's turn a symbol left after the NCO, 2^32 a turn */
@@ -118,8 +140,9 @@ typedef struct {
 
 /* bps 450 or 300 */
 void hst_brx_init(hst_brx_t *r, int bps);
-/* one sample at 8000 Hz; returns the bits decided (0 or 3), in r->bits[];
- * bits only while locked */
+/* one sample at 8000 Hz; returns the bits given (0 or 3), in r->bits[]:
+ * only while locked, and held back (see above), so the first come some
+ * 130 ms (450) or 180 ms (300) after the lock */
 int  hst_brx_tick(hst_brx_t *r, int16_t x);
 /* one band-passed sample at 1600 Hz, as hst_brx_tick computes it at every
  * 5th sample (it returns the same). Both receivers run on one band-pass:
