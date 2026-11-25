@@ -93,6 +93,11 @@
  *   thresholds    (`test_hst_fwd thresholds`, built with -DTEST_FULL: make
  *                 hst-thresh; not a case) the SNR of BER 1e-5 at codes
  *                 3..6 and the receiver's error there: hst_good_mse
+ *   upshift       (`test_hst_fwd upshift`, -DTEST_FULL, make hst-thresh after
+ *                 thresholds; not a case) the error at c - 1 and c on the
+ *                 line where c is good, and how much of the time it is
+ *                 under hst_good_mse[c] there and 1, 2, 4 dB above (Task
+ *                 22b: the policy reads the threshold a rate lower)
  *
  * The program also runs under make check-hst-bm (HST_PROFILE_BM), where
  * every training is V.17's long train; there cases 4 and on are
@@ -1574,6 +1579,8 @@ static void long_drift_full(void)
                                     * Task 22c, when the gain loop drifted over minutes */
 
 typedef struct { double snr, ber, mse_db; long errs, bits; } th_t;
+static int32_t up_thr;             /* upshift: the threshold whose good share is counted (0 none) */
+static long up_good, up_all;
 
 /* one run: a training, the noise added, 1 s, then up to TH_SEG s of data
  * counted into o; 0 when it never got to data mode */
@@ -1604,7 +1611,10 @@ static int th_run(int code, double snr, uint32_t seed, th_t *o, double *msum, lo
             o->bits++;
             o->errs += R.bits[k] != txr[j & (TXR - 1)];
         }
-        if ((n & 63) == 0) { *msum += hst_frx_mse(&R); (*ms)++; }
+        if ((n & 63) == 0) {
+            *msum += hst_frx_mse(&R); (*ms)++;
+            if (up_thr) { up_all++; up_good += hst_frx_mse(&R) < up_thr; }
+        }
     }
     fxn = 0;
     return 1;
@@ -1661,6 +1671,50 @@ static void thresholds(void)
         g = 65536 * pow(10, m3 / 10);
         printf("code %d: BER 1e-5 at SNR %.2f dB; at %.2f dB the receiver's error %.2f dB: hst_good_mse %ld%s\n",
                code, s5, s5 + 3, m3, (long)floor(g + 0.5), s5 + 3 >= pt[0].snr ? " (above the sweep: its first point)" : "");
+    }
+}
+
+/* ---- the upshift's thresholds (hst_up_mse; Task 22b): `test_hst_fwd
+ * upshift`, built with -DTEST_FULL (make hst-thresh runs it after the
+ * sweep). "Good" for code c is a line UP_SNR(c) = its SNR of BER 1e-5 + 3
+ * dB (the sweep's crossings, hst_good_mse's line), but the receiver that
+ * judges it runs at c - 1: its error on that line, UP_RUNS runs of
+ * UP_BITS data bits each (th_run's), against hst_good_mse[c], the error at
+ * c itself there. hst_up_mse[c] is the error at c - 1, rounded ---- */
+#define UP_RUNS 4
+#define UP_BITS 400000L
+static void upshift(void)
+{
+    static const double up_snr[7] = { 0, 0, 0, 16.5, 19.5, 24.0, 26.5 };
+    static const double over[4] = { 0, 1, 2, 4 };
+    int c, k, run, j;
+    printf("upshift: the receiver's error at codes c - 1 and c on the line where c is good (%d runs of %ld bits)\n",
+           UP_RUNS, UP_BITS);
+    for (c = 3; c <= 6; c++) {
+        double m[2];
+        for (j = 0; j < 4; j++) {
+            for (k = 0; k < 2; k++) {
+                double msum = 0;
+                long ms = 0, errs = 0, bits = 0;
+                if (j > 0 && k == 1) continue;
+                up_thr = hst_good_mse[c]; up_good = up_all = 0;
+                for (run = 0; run < UP_RUNS; run++) {
+                    th_t o;
+                    memset(&o, 0, sizeof o);
+                    o.bits = TH_NB - UP_BITS;
+                    if (!th_run(c - 1 + k, up_snr[c] + over[j], 5100u + 100u * (uint32_t)c + 10u * (uint32_t)k + (uint32_t)run + 1000u * (uint32_t)j, &o, &msum, &ms))
+                        printf("  code %d at %.1f dB, run %d: no data mode\n", c - 1 + k, up_snr[c] + over[j], run);
+                    errs += o.errs; bits += o.bits - (TH_NB - UP_BITS);
+                }
+                up_thr = 0;
+                if (j == 0) m[k] = ms ? msum / ms : 0;
+                printf("  code %d at %.1f dB: the receiver's error %.2f dB (%ld), under %ld %ld%% of the time; %ld errors in %ld bits\n",
+                       c - 1 + k, up_snr[c] + over[j], 10 * log10((ms ? msum / ms : 0) / 65536 + 1e-30), (long)floor((ms ? msum / ms : 0) + 0.5),
+                       (long)hst_good_mse[c], up_all ? 100 * up_good / up_all : 0L, errs, bits);
+            }
+        }
+        printf("code %d: hst_good_mse %ld (at %d itself); at code %d the error is %ld\n",
+               c, (long)hst_good_mse[c], c, c - 1, (long)floor(m[0] + 0.5));
     }
 }
 #endif
@@ -1771,6 +1825,15 @@ int main(int argc, char **argv)
         return 0;
 #else
         printf("thresholds: build with -DTEST_FULL (make hst-thresh)\n");
+        return 2;
+#endif
+    }
+    if (argc == 2 && strcmp(argv[1], "upshift") == 0) {
+#ifdef TEST_FULL
+        upshift();
+        return 0;
+#else
+        printf("upshift: build with -DTEST_FULL (make hst-thresh)\n");
         return 2;
 #endif
     }

@@ -43,7 +43,7 @@ static long now;
 static uint8_t ob[40000];              /* our first bits */
 static int ob_n;
 /* the LNA granting a reversal: its closing flag out before the peer has it? */
-static int watch_rev, rev_early, rev_seen;
+static int watch_rev, rev_early, rev_seen, rate_early, rate_seen;
 
 static int flip(void)
 {
@@ -68,6 +68,10 @@ static void step(void)
             if (watch_rev && S.L.rev_lna_sent && !rev_seen) {
                 rev_seen = 1;
                 rev_early = P.ln_code != -1;    /* the peer has not got that LNA */
+            }
+            if (watch_rev && S.L.rate_order && !rate_seen) {
+                rate_seen = 1;
+                rate_early = P.ln_code != -1;   /* likewise for a 0x2R/0x3R's (Task 22b) */
             }
         }
         acc_b += back_bps;
@@ -140,7 +144,7 @@ static void hst_setup(mnp_peer_cfg pc, int fb, int bb, int hold_ms, uint8_t offe
     dq_pos = 0;
     rng = 0x9E3779B9u; fwd_err_ppm = 0;
     now = 0; ob_n = 0;
-    watch_rev = rev_early = rev_seen = 0;
+    watch_rev = rev_early = rev_seen = rate_early = rate_seen = 0;
 }
 
 /* both ends connected within max_ms: the ms it took, -1 not */
@@ -348,10 +352,14 @@ static void attn_in(void)
     S.L.epoch++;                         /* the pump: the reversal is done */
     run(300);
     CHECK(lts() > n0);
-    /* 0x2R and 0x3R with R agreed: the order for the holder */
+    /* 0x2R and 0x3R with R agreed: the order for the holder, once our LNA
+     * and its closing flag have gone (Task 22b: it goes at the old rate,
+     * ahead of the change) */
     CHECK(peer_ln(0x23, 3000));
     r23 = S.L.rate_order;
     CHECK_EQ_I(r23, 0x23);
+    CHECK(rate_seen);
+    CHECK_EQ_I(rate_early, 0);
     S.L.rate_order = 0; S.L.epoch++;
     CHECK(peer_ln(0x35, 3000));
     r35 = S.L.rate_order;
@@ -651,6 +659,8 @@ static void max_up(void)
     for (t = 0; t < 3000 && c1 < 0; t++) { step(); c1 = mnppeer_get_ln(&P); }
     CHECK_EQ_I(c1, 0x24);
     run(1000);
+    CHECK_EQ_I(S.L.rate_order, 0x24);    /* its LNA: the receiver follows (Task 22b) */
+    S.L.rate_order = 0;
     S.L.epoch++;                         /* the caller retrained at 9600 */
     viol = E.l.mnp.violations;
     CHECK(peer_ln(0x36, 3000));

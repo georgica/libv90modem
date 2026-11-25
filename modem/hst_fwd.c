@@ -338,6 +338,7 @@ static void listen(hst_frx_t *r, int why)
         r->code = r->sw_code;
         r->sw_code = 0;
         r->sw_win = 0;
+        r->sw_tonly = 0;
     }
     qamrx_stop(&r->q);                /* its ring and its power go on; no points */
     r->state = r->listen = why;
@@ -367,8 +368,8 @@ void hst_frx_init(hst_frx_t *r)
     v32_vit_init(&r->vit, 1);
     r->eq.valid = 0;
     r->code = HST_OPEN_CODE;
-    r->sw_code = 0; r->sw_left = 0; r->sw_ones = 0; r->sw_win = 0; r->sw_run = 0;
-    r->sw_dscr.reg = 0; r->sw_y = 0; r->sw_alt = 0; r->sw_sh = 0; r->sw_pos = 0;
+    r->sw_code = 0; r->sw_tonly = 0; r->sw_left = 0; r->sw_ones = 0; r->sw_win = 0; r->sw_run = 0;
+    r->sw_dscr.reg = 0; r->sw_y = 0; r->sw_alt = 0; r->sw_hr[0] = r->sw_hr[1] = r->sw_hi[0] = r->sw_hi[1] = 0; r->sw_pos = 0;
     for (i = 0; i < HST_SW_RING; i++) r->sw_zr[i] = r->sw_zi[i] = 0;
     v32_vit_init(&r->vit2, 1);
     r->n40 = 0; r->ph6 = 0;
@@ -387,6 +388,7 @@ void hst_frx_set_code(hst_frx_t *r, int code)
     code = code < 2 ? 2 : code > 6 ? 6 : code;
     r->sw_code = 0;                   /* a switch armed is off */
     r->sw_win = 0;
+    r->sw_tonly = 0;
     if (r->state == HST_FRX_DATA && code != r->code && code > 2) v32_vit_init(&r->vit, code - 2);
     r->code = code;
 }
@@ -403,6 +405,9 @@ void hst_frx_restore(hst_frx_t *r, const hst_eqstore_t *s)
 {
     r->eq = *s;
     r->eq.valid = s->valid != 0;
+    r->sw_code = 0;                   /* not the armed code: the pump's (hst.h) */
+    r->sw_win = 0;
+    r->sw_tonly = 0;
     listen(r, HST_FRX_IDLE);
     r->sig = r->err = 0;
 }
@@ -676,7 +681,7 @@ static void symbol(hst_frx_t *r)
 {
     int32_t zr = r->q.zr, zi = r->q.zi, dr = 0, di = 0;
     int k, st = 0, x, y;
-    if (r->sw_code && --r->sw_left <= 0) {
+    if (r->sw_code && !r->sw_tonly && --r->sw_left <= 0) {
         /* armed 2 s without a switch: the generic acquisition */
         hst_frx_store(r, &r->eq);
         listen(r, HST_FRX_UNLOCKED);
@@ -829,17 +834,35 @@ int hst_ftx_marking(const hst_ftx_t *t) { return t->marks; }
  * -23.78, -24.13 dB (65536 = 0 dB) */
 const int32_t hst_good_mse[7] = { 0, 0, 0, 1098, 579, 274, 253 };
 int32_t hst_frx_mse(const hst_frx_t *r) { return r->state == HST_FRX_DATA ? r->mlock : 4 << 16; }
-/* Armed, S or S-bar (V.32's, ours, V.17's segment 1): HST_SW_ALT symbols
- * in a row each within 1.2 units of A..D, alternating A B or C D */
+/* Armed, S or S-bar (V.32's, ours, V.17's segment 1: A B or C D in turn,
+ * B = jA, D = jC): HST_SW_ALT symbols in a row each the point two before
+ * and a quarter turn, either way, from the one before, both within SW_TOL
+ * of its power (-5.2 dB), and at least a quarter of A's power. Neither
+ * A..D themselves nor their turn: in data mode the carrier may sit at any
+ * quarter turn (the differential code does not mind), and the loops,
+ * deciding the training's points as data, pull them off A..D within a few
+ * symbols (seen in Task 22b: S at -90 degrees, and at 15 degrees and +1.2
+ * dB from them 12 symbols in). The tolerance: a difference of two points
+ * carries twice the line's noise, 6 % of the power at 15 dB SNR, 9 % at
+ * 13.5 (7200's BER 1e-5), so 16 in a row need some 30 % (1.2 units, 22a's
+ * figure, is 3.6 %: never at 15 dB). Data and TRN do not pass it: a
+ * random point is the one two before and a quarter turn from the last
+ * with a chance of 1/8 at 4 points (TRN), 1/128 or less in data; 16 in a
+ * row, 4e-15 or less */
+#define SW_TOL 300                    /* thousandths of the point's power */
 static int sw_training(hst_frx_t *r, int32_t zr, int32_t zi)
 {
-    int st = slice4(zr, zi), x, y, p1 = (int)(r->sw_sh & 3u), p2 = (int)((r->sw_sh >> 2) & 3u);
-    int64_t er, ei;
-    v32_state_point(st, &x, &y);
-    er = zr - (int64_t)x * U; ei = zi - (int64_t)y * U;
-    if (er * er + ei * ei <= OFF2_MIN && st == p2 && (st ^ p1) == 1) r->sw_alt++;
+    int64_t p = (int64_t)zr * zr + (int64_t)zi * zi, tol = p * SW_TOL / 1000, e2, ep, em, dr, di;
+    dr = (int64_t)zr - r->sw_hr[1]; di = (int64_t)zi - r->sw_hi[1];
+    e2 = dr * dr + di * di;                                   /* against the point two before */
+    dr = (int64_t)zr + r->sw_hi[0]; di = (int64_t)zi - r->sw_hr[0];
+    ep = dr * dr + di * di;                                   /* against j times the one before */
+    dr = (int64_t)zr - r->sw_hi[0]; di = (int64_t)zi + r->sw_hr[0];
+    em = dr * dr + di * di;                                   /* against -j times it */
+    if (p >= (int64_t)10 * U * U && e2 <= tol && (ep <= tol || em <= tol)) r->sw_alt++;
     else r->sw_alt = 0;
-    r->sw_sh = ((r->sw_sh << 2) | (uint32_t)st) & 0xFu;
+    r->sw_hr[1] = r->sw_hr[0]; r->sw_hi[1] = r->sw_hi[0];
+    r->sw_hr[0] = zr; r->sw_hi[0] = zi;
     return r->sw_alt >= HST_SW_ALT;
 }
 
@@ -884,6 +907,7 @@ static void sw_watch(hst_frx_t *r, int label)
     v32_scr_t d0 = r->dscr;
     int y0 = (int)r->yprev, n0 = (int)r->nbits, ones = 1, k;
     data_bits(r, label);
+    if (r->sw_tonly) return;          /* a training alone: no marks */
     for (k = n0; k < r->nbits; k++) ones &= r->bits[k];
     if (r->sw_win) { r->nbits = n0; return; }
     if (ones) {
@@ -937,8 +961,22 @@ void hst_frx_arm_switch(hst_frx_t *r, int new_code)
     }
     if (new_code == r->code) { r->sw_code = 0; r->sw_win = 0; return; }
     r->sw_code = new_code;
+    r->sw_tonly = 0;
     r->sw_left = HST_SW_SYMS;
     r->sw_ones = r->sw_win = r->sw_run = 0;
-    r->sw_alt = 0; r->sw_sh = 0;
+    r->sw_alt = 0; r->sw_hr[0] = r->sw_hr[1] = r->sw_hi[0] = r->sw_hi[1] = 0;
 }
 int hst_frx_armed(const hst_frx_t *r) { return r->sw_code; }
+
+void hst_frx_arm_train(hst_frx_t *r, int code)
+{
+    code = code < 2 ? 2 : code > 6 ? 6 : code;
+    if (r->state != HST_FRX_DATA) {
+        hst_frx_set_code(r, code);
+        return;
+    }
+    r->sw_code = code;
+    r->sw_tonly = 1;
+    r->sw_ones = r->sw_win = r->sw_run = 0;
+    r->sw_alt = 0; r->sw_hr[0] = r->sw_hr[1] = r->sw_hi[0] = r->sw_hi[1] = 0;
+}

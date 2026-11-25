@@ -580,6 +580,7 @@ typedef struct {
     uint8_t    bits[8];               /* the bits of the last tick, the first sent first */
     /* a switch by marks (hst_frx_arm_switch) */
     int32_t    sw_code;               /* armed: the code switched to; 0 not armed */
+    int32_t    sw_tonly;              /* ... for a training alone (hst_frx_arm_train): no marks */
     int32_t    sw_left;               /* symbols left of the 2 s */
     int32_t    sw_ones;               /* the decoder's symbols of ones in a row, at the code in
                                        * force, up to HST_SW_IDLE */
@@ -587,8 +588,8 @@ typedef struct {
     int32_t    sw_run;                /* ... the new code's symbols of ones in a row */
     v32_scr_t  sw_dscr;               /* the new code's descrambler ... */
     int32_t    sw_y;                  /* ... and differential decoder's memory */
-    int32_t    sw_alt;                /* symbols of S or S-bar (an alternation on A..D) in a row */
-    uint32_t   sw_sh;                 /* ... the last two of A..D, 2 bits each */
+    int32_t    sw_alt;                /* symbols of S or S-bar (two points a quarter turn apart, in turn) in a row */
+    int32_t    sw_hr[2], sw_hi[2];    /* ... the last two points, the newest first */
     int32_t    sw_pos;                /* the ring's next place */
     int32_t    sw_zr[HST_SW_RING], sw_zi[HST_SW_RING];   /* the last points, armed */
     v32_vit_t  vit2;                  /* the new code's decoder */
@@ -606,7 +607,9 @@ int  hst_frx_state(const hst_frx_t *r);
 /* the equaliser (taps, carrier frequency) as it is now */
 void hst_frx_store(const hst_frx_t *r, hst_eqstore_t *s);
 /* back to listening for AB (IDLE); the next training starts from s's
- * equaliser (when s->valid) instead of the matched filter */
+ * equaliser (when s->valid) instead of the matched filter. A switch armed
+ * is off (Task 22b: a restore is a new direction or a retrain, the code
+ * the pump sets after it, never the armed one) */
 void hst_frx_restore(hst_frx_t *r, const hst_eqstore_t *s);
 /* the signal and error power over the last 64 symbols or so (training or
  * data); 0 before the first training and after hst_frx_restore */
@@ -641,6 +644,14 @@ void hst_frx_arm_switch(hst_frx_t *r, int new_code);
 /* armed: the code a switch goes to; 0 none (switched, or acquisition took
  * over: then hst_frx_t.code is new_code) */
 int  hst_frx_armed(const hst_frx_t *r);
+/* 0x2R (Task 22b): a training at `code` is coming, at any code, the one in
+ * force too. In data mode armed for it alone: S or S-bar for HST_SW_ALT
+ * symbols hand over to the generic acquisition at `code` (the equaliser
+ * stored, IDLE), as hst_frx_arm_switch's do, but no marks are watched for
+ * and there is no time-out (the pump bounds the wait, and disarms with
+ * hst_frx_set_code); data goes on at the code in force meanwhile. Outside
+ * data mode: hst_frx_set_code(code) */
+void hst_frx_arm_train(hst_frx_t *r, int code);
 
 /* ---------------- the answerer's HST engine (modem/ans_hst.c) ----------------
  * answer_t.u.hst, from ANS_HST_WAIT on (spec "The answering sequence",
@@ -674,6 +685,36 @@ int  hst_frx_armed(const hst_frx_t *r);
 #define HST_REV_BOUND_MS 3000         /* holder switched: no forward signal this long, the forward
                                          channel taken back [OURS] */
 
+/* rate changes (spec "Rate changes", decision 15; Task 22b). The policy,
+ * holding the back channel (we receive the forward one) [PUB, US
+ * 4,890,316]: every HST_UP_MS, the next agreed rate up to max_up (0x3R)
+ * when the forward receiver was "good" (hst_frx_mse under hst_good_mse of
+ * that rate, read at the rate in force: docs/limits.md) HST_UP_PCT % of
+ * the time, never within HST_UP_MS of a downshift; one agreed rate lower
+ * (0x2R) on HST_DOWN_ERRS frame errors within HST_DOWN_MS of the first,
+ * or HST_RC_FAILS failed retrains within HST_DOWN_MS of the first (a
+ * failed one is tried again at the same rate). A retrain fails when the
+ * receiver is not in data at its rate HST_RC_BOUND_MS after the request
+ * left (or the LNA came), when its training ends without data, or when
+ * the data mode it reached is lost within HST_RC_HOLD_MS [OURS] */
+#define HST_UP_MS        10000
+#define HST_UP_PCT          90
+#define HST_DOWN_ERRS       15
+#define HST_DOWN_MS      10000
+#define HST_RC_FAILS         3
+#define HST_RC_BOUND_MS   4000
+#define HST_RC_HOLD_MS    2000
+enum {
+    HST_RC_NONE,
+    HST_RC_WAIT,                      /* holding forward: a 0x2R/0x3R granted, our LNA gone: the
+                                         endpoint's frame finishing */
+    HST_RC_ONES,                      /* ... between frames: ones, HST_REV_DRAIN_MS, then the training */
+    HST_RC_MARKS,                     /* ... the switch by marks going out */
+    HST_RC_TRAIN,                     /* ... the short training at R going out (a retrain) */
+    HST_RC_ASK,                       /* holding back: our 0x2R/0x3R asked, its LNA awaited */
+    HST_RC_FOLLOW                     /* ... the holder's change: the forward receiver follows */
+};
+
 /* a channel reversal in progress (spec "Channel reversal"; Task 21) */
 enum {
     HST_REV_NONE,
@@ -700,8 +741,24 @@ typedef struct {
     uint32_t      reversals;          /* channel reversals this call (Task 21) */
     int32_t       rev;                /* HST_REV_* */
     int32_t       rt;                 /* samples in it */
-    int32_t       cut;                /* HST_REV_GRANT: the endpoint has been between frames since its
-                                         20 ms: ones until the switch; 1 + the symbols begun since */
+    int32_t       cut;                /* HST_REV_GRANT, HST_RC_WAIT: the endpoint has been between
+                                         frames since: ones until the switch; 1 + the symbols begun since */
+    /* rate changes (Task 22b) */
+    int32_t       rc;                 /* HST_RC_* */
+    int32_t       rc_order;           /* its 0x2R or 0x3R */
+    int32_t       rct;                /* samples in it (holding back: since the endpoint took the request) */
+    int32_t       rc_left;            /* holding back: the receiver has left data mode in it (a training) */
+    int32_t       rc_counted;         /* ... and that training is counted in retrains */
+    int32_t       rc_st;              /* ... the receiver's state at the last sample (an end entered from
+                                         training or data fails the change; listening does not) */
+    int32_t       up_t, up_all, up_good;   /* the upshift's window: samples; ms in it, ms good */
+    int32_t       since_down;         /* samples since our last downshift, to MS(HST_UP_MS) */
+    int32_t       fe_t, fe_n;         /* frame errors: samples since the window's first (-1 none); count */
+    int32_t       fl_t, fl_n;         /* failed retrains: likewise */
+    int32_t       hold_t;             /* samples a retrain's data mode is still on probation */
+    int32_t       rc_late;            /* our request done before its LNA came (the training seen, its
+                                         LNA lost): that LNA, when it comes, is not a change; 0 none */
+    uint32_t      rx_bad;             /* the endpoint's frame errors as last seen */
 } hst_t;
 
 #endif

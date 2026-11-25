@@ -490,6 +490,60 @@ Measured against `sim/hstcall` only; no real HST modem has called it yet.
   the receiver's error 3 dB above them within 0.04 dB (-17.80, -20.56,
   -23.79, -24.13 dB), so `hst_good_mse` stands. The thresholds' runs of
   20 s were chosen to keep the drift out; they are kept.
+- **"Good", read at the rate in force** (Task 22b; `test_hst_fwd
+  upshift`, which `make hst-thresh` runs after the sweep). The policy asks
+  for code c while running at c - 1, so it reads `hst_good_mse[c]`, a
+  figure measured at c, off a receiver at c - 1. On the line where c is
+  good (its SNR of BER 1e-5 + 3 dB), 4 runs of 20 s each, the receiver's
+  error at c - 1 and at c:
+
+  | up to | line | error at c - 1 | error at c | `hst_good_mse[c]` |
+  |---|---|---|---|---|
+  | 3 (from 4800) | 16.5 dB | 1075 (-17.85 dB) | 1090 | 1098 |
+  | 4 | 19.5 dB | 578 (-20.55 dB) | 577 | 579 |
+  | 5 | 24.0 dB | 276 (-23.75 dB) | 274 | 274 |
+  | 6 | 26.5 dB | 253 (-24.13 dB) | 253 | 253 |
+
+  The error is the line's, not the code's (within 0.06 dB), so the table
+  is used as it is, read at c - 1: no table per code. A code-5 receiver
+  on a 26.5 dB line reads 253, 14400's threshold exactly. But "good" is
+  90 % of the time, and the error over 256 symbols swings about its mean:
+  at the line of each threshold the receiver is under it 32 to 69 % of
+  the time, and 1 dB higher 99 to 100 % at codes 3..5; at code 6 it is 8 %
+  at 26.5 dB, 25 % at 27.5, 65 % at 28.5 and 100 % at 30.5. So the
+  upshift to 14400 comes on lines of about 29 to 30 dB, 3 dB more than
+  its definition, the others 1 dB more. Left so (it errs safe: 14400's
+  BER 1e-5 is at 23.5 dB); lowering 14400's threshold would need the
+  error's spread at 26.5 dB, not its mean.
+- **The rate policy** (`modem/ans_hst.c`; spec "Rate changes"; hst.h
+  `HST_UP_MS` ...). Holding the back channel: an upshift every 10 s at 90 %
+  good, none within 10 s of a downshift; one agreed rate lower on 15
+  frame errors (the endpoint's `rx_bad`: bad FCS, too long, not parsed)
+  within 10 s of the first, or on 3 failed retrains within 10 s of the
+  first. A retrain fails when the receiver is not in data at its rate 4 s
+  after the request left (`HST_RC_BOUND_MS`), when its training ends
+  without data (TRAINFAIL), or when it loses the data mode it reached
+  within 2 s (`HST_RC_HOLD_MS`); a failed one is asked again at the same
+  rate. The receiver losing data mode by itself with the carrier there
+  (UNLOCKED, TRAINFAIL) is a retrain at the rate in force. At 15 dB SNR
+  from 12000 (`test_answer_hst` `fallback`): three retrains at 12000 fail
+  (data, then the lock lost within 0.5 s), then at 9600 the same, then
+  7200 holds; 10 s from the noise to 7200, 7 retrains. At the lowest
+  agreed rate, after 3 failures in 10 s the policy asks nothing more
+  until that window has passed: ending the call there is Task 23's
+  (`V90M_END_RETRAIN_FAILED`). Untested against a real HST: what a
+  Courier counts as good, and whether it retrains or marks (R2).
+- **The armed receiver's S detection** (`hst_frx_arm_switch`,
+  `hst_frx_arm_train`; Task 22b, which found both limits of 22a's): a
+  training is seen in data mode as S or S-bar, 16 symbols each the point
+  two before and a quarter turn from the last, within 30 % of its power.
+  22a's test of A..D themselves, 1.2 units, missed it when data mode held
+  the carrier a quarter turn round (S showed as D A), when the data-mode
+  loops had pulled the points 15 degrees and 1.2 dB off A..D a dozen
+  symbols in, and on any line under some 20 dB (the difference of two
+  points carries twice the noise). A random point passes the test with a
+  chance of 1 in 8 at 4 points (TRN), 1 in 128 or less in data: 16 in a
+  row, 4e-15 or less.
 
 ## Included tables (x2)
 

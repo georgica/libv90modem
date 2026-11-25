@@ -360,7 +360,11 @@ static void hst_attn(mnp_t *m, int code)
         m->cap_due = 2;
         return;
     }
-    m->rate_order = code;                                 /* 0x2R, 0x3R: the pump's */
+    /* 0x2R, 0x3R: the pump's. Holding forward, once our LNA has gone
+     * (it goes at the old rate, ahead of the change); holding back, the
+     * holder's own change, at once */
+    if (m->hst_role == HST_ROLE_FWD) m->rate_grant = code;
+    else m->rate_order = code;
     hst_hold(m);
 }
 
@@ -393,6 +397,8 @@ static void on_lna(mnp_t *m, int nr)
         if (m->hst && (m->ln_code >> 4) == 1) {           /* our 0x1R granted */
             m->rev_rx = 1;
             m->rev_code = m->ln_code & 15;
+        } else if (m->hst && m->hst_role == HST_ROLE_BACK && ((m->ln_code >> 4) == 2 || (m->ln_code >> 4) == 3)) {
+            m->rate_order = m->ln_code;                   /* ours granted: the receiver follows */
         }
         m->vsa++;
         m->ln_code = -1;
@@ -591,7 +597,7 @@ int mnp_tx_frame(mnp_t *m, uint8_t *f)
         m->lna_due = 0;
         h.type = MNP_LNA;
         h.nr = m->lna_nr;
-        if (m->rev_grant) m->rev_lna_out = 1;     /* it grants a reversal */
+        if (m->rev_grant || m->rate_grant) m->rev_lna_out = 1;   /* it grants a reversal or a change */
         return build(f, m->layout, &h);
     }
     {
@@ -765,6 +771,7 @@ void mnp_hst_poll(mnp_t *m, hst_link_t *L, unsigned ms, size_t queued)
     int t = ms > 60000u ? 60000 : (int)ms, code = 0;
 
     if (!m->hst_offer || L == NULL) return;
+    L->rx_bad = m->rx_bad;
     if (m->state == MNP_S_CONNECTED && !m->la_told) { m->la_told = 1; L->la_rx = 1; }
     if (m->state == MNP_S_DISCONNECTED && m->reason == MNP_R_PEER_DISC) L->far_ld = 1;
     if (!m->hst || m->state != MNP_S_CONNECTED) return;
@@ -789,8 +796,27 @@ void mnp_hst_poll(mnp_t *m, hst_link_t *L, unsigned ms, size_t queued)
     /* what goes to the pump */
     if (m->rate_order) { L->rate_order = m->rate_order; m->rate_order = 0; }
     if (m->rev_rx) { m->rev_rx = 0; L->rev_lna_rx = 1; L->rev_code = m->rev_code; }
+    /* recovery's watch: holding forward, LTs out, credit given, N(R) still */
+    if (m->hst_role == HST_ROLE_FWD && stored(m) > 0 && m->credit > 0 && m->ack == m->rec_ack) {
+        if (!m->stopped) m->noack_ms += t;
+        if (m->noack_ms >= 2 * m->t401_ms) { m->noack_ms = 0; L->recover = 1; }
+    } else {
+        m->noack_ms = 0;
+        m->rec_ack = m->ack;
+    }
 
-    /* our attention, one LN at a time: the pump's, the cap, the policy */
+    /* our attention, one LN at a time: the pump's, the cap, the policy.
+     * Holding back, the pump's request supersedes our 0x2R/0x3R still
+     * waiting for its LNA: that LNA comes on the forward channel, whose
+     * receiver is what the pump is asking about again (a failed retrain);
+     * the far end has had it (sent at least once) and acted on it [OURS] */
+    if (m->ln_code >= 0 && L->ln_req && m->hst_role == HST_ROLE_BACK
+        && ((m->ln_code >> 4) == 2 || (m->ln_code >> 4) == 3) && ((L->ln_req >> 4) == 2 || (L->ln_req >> 4) == 3)) {
+        if (m->ln_tries > 0) m->vsa++;
+        m->ln_code = -1;
+        m->ln_send = 0;
+        m->ln_t = 0;
+    }
     if (m->ln_code >= 0) return;
     if (L->ln_req) {
         code = L->ln_req;

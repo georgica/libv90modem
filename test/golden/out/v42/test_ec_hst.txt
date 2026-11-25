@@ -11,4 +11,4 @@ max_up: cap code 4: LN 16 granted, then our 24 after the switch; its LN 36: a co
 far_ld: far_ld 1, peer_ld_reason 255
 t401: 14400/450 2932 ms, 9600/450 3088 ms, 450/9600 11027 ms, 9600/300 3887 ms
 throughput: clean >= 70 % at 14400/450 and 9600/300: yes; bit errors: >= 55 %, at most k sent again per LT lost: yes
-test_ec_hst: 135 checks, 0 failures
+test_ec_hst: 138 checks, 0 failures

@@ -37,7 +37,8 @@
 #   make hst-wsize       sizing W, HST's wait after ANSam: detection times over levels,
 #                        dropouts and a line's lower edge (rig/hst_wsize.c), for docs/limits.md
 #   make hst-thresh      HST's thresholds of "good": BER against SNR at codes 3..6
-#                        (test_hst_fwd thresholds, -DTEST_FULL), for docs/limits.md
+#                        (test_hst_fwd thresholds, -DTEST_FULL), and the error read a
+#                        rate lower (test_hst_fwd upshift), for docs/limits.md
 #   make hst-drift       HST's forward receiver in long calls: 300 s at codes 3..6, 1 and
 #                        3 dB over BER 1e-5 (test_hst_fwd long_drift, -DTEST_FULL)
 #   make cost-hst-fwd    ARM instructions a second of HST's forward receiver in 14400
@@ -969,6 +970,7 @@ cost-hst-fwd: $(BUILD)/bench_hst $(BUILD)/bench_hst.arm
 hst-thresh: $(BUILD)/libtest.a
 	$(CC) $(T_CFLAGS) -DTEST_FULL -o $(BUILD)/test_hst_fwd_full test/test_hst_fwd.c $(BUILD)/libtest.a $(LDLIBS)
 	$(BUILD)/test_hst_fwd_full thresholds
+	$(BUILD)/test_hst_fwd_full upshift
 # ---- HST's forward receiver in long calls: test_hst_fwd's long_drift, the
 # full set (300 s of data at codes 3..6, 1 and 3 dB over their SNR of BER
 # 1e-5; about 20 s on the host) ----

@@ -6064,3 +6064,70 @@ Sizes: `hstcall_t` 165712 octets (x86-64), test side only. Host run 33 s
 - **CPU** (`make cost-hst-fwd`, ARMv5): 14400 data mode 25 433 679 a second
   (25.40 M -> 25.43 M, budget 26 M); the switch window 636 939 in 20 ms.
 - `make check`: ALL HOST CHECKS PASS (x86-64).
+
+## hst 22b: rate changes, the policy half: 0x3R by marks, 0x2R by retrain, the rate policy, recovery (2026-11-25)
+
+- **Holding forward** (`modem/ans_hst.c`, `hst_t.rc`): the far end's 0x2R
+  or 0x3R reaches the pump (`rate_order`) only once our granting LNA and
+  its closing flag have gone (`mnp_t.rate_grant`, the reversal grant's
+  path in v42.c), so the LNA goes at the old rate ahead of the change.
+  From the endpoint's first bit between frames: 0x3R the switch by marks
+  (no retrain, RATES), 0x2R 20 ms of ones then the short training at R (a
+  retrain); then epoch. Under HST_3R_TRAINS (the BinModem profile) 0x3R
+  trains too. Recovery: the endpoint raises `recover` when, holding
+  forward with LTs out and credit given, N(R) has not moved for 2 x T401
+  of unstopped line; with a back receiver locked, the short training at
+  the rate in force.
+- **Holding back** (the policy, hst.h `HST_UP_MS` ...): every 10 s the
+  next agreed rate up to max_up at 90 % good, never within 10 s of a
+  downshift; 15 frame errors (the endpoint's `rx_bad`, now in the mailbox)
+  within 10 s of the first, or 3 failed retrains within 10 s of the first,
+  one agreed rate lower. A retrain fails: not in data at R 4 s after the
+  request left, its training ending without data, or the data mode lost
+  within 2 s; a failed one is asked again at R. The receiver losing data
+  by itself with the carrier there (UNLOCKED, TRAINFAIL) asks a retrain at
+  the rate in force; no carrier is Task 23's. The holder's change
+  (`rate_order`, by role: now also the LNA to our own 0x2R/0x3R) is
+  followed: marks by `hst_frx_arm_switch`, a training by the new
+  `hst_frx_arm_train` (armed already at the request: the LNA may be lost
+  where the training is not; no time-out of its own). Data stops only
+  once the training is under way, so that our request goes out. A newer
+  0x2R/0x3R of the pump supersedes ours still waiting for its LNA (the LNA
+  comes on the receiver that failed); an LNA arriving after its change
+  was done is ignored (`rc_late`).
+- **Carried items.** (1) rate_order read by role, epoch bumped after each
+  change done or given up. (2) `hst_good_mse` read at c - 1: `test_hst_fwd
+  upshift` (in `make hst-thresh`) measures the receiver's error at c - 1
+  and c on the line where c is good: 1075/1090, 578/577, 276/274, 253/253
+  (codes 3..6), so the table is used as it is; a code-5 receiver at 26.5
+  dB reads 253. The 90 % rule makes 14400 come only on 29-30 dB lines (8 %
+  good at 26.5, 65 % at 28.5, 100 % at 30.5), the others 1 dB over their
+  line: left so, written in limits.md. (3) `hst_frx_restore` disarms. (4)
+  `fallback`: 15 dB SNR from 12000: 3 failed retrains, 9600 the same,
+  7200 holds, 10 s, 7 retrains, then none. (5) HST_3R_TRAINS used: the
+  holder trains for a 0x3R, the receiver arms for a training.
+- **22a's S detection while armed fixed** (`hst_fwd.c` `sw_training`):
+  it tested A..D themselves within 1.2 units, and missed the training when
+  data mode held the carrier a quarter turn round, when the loops had
+  pulled S 15 degrees and 1.2 dB off a dozen symbols in, and under some
+  20 dB. Now: each point the one two before and a quarter turn from the
+  last, within 30 % of its power, 16 in a row (TRN 1/8 a symbol, data
+  1/128 or less). `test_hst_fwd` prints the same.
+- **sim/hstcall** `retrain_3r` (BinModem retrains on every rate change,
+  hst-facts `Rate changes` [BM]): it carries 0x3R out by a training and,
+  holding back, on the LNA to its 0x3R listens for one.
+- **Tests** (`test_answer_hst` cases 19-24, each seen failing first):
+  `up`, `down`, `retrain_by_2R` (T401 held: the endpoint stopped, T401 as
+  it stood or stopped by an LA, no expiry), `max_up`, `recovery` (the
+  training 6689 ms after the marks, 2 x T401 6354 ms), `fallback`.
+  `test_ec_hst`: the 0x2R grant's order not before the LNA is out; the LNA
+  to our 0x24 now gives `rate_order` (3 checks).
+- **Goldens re-recorded:** `api/test_answer_hst.txt` (the six cases'
+  lines appended, the count 513 -> 592; cases 1-18 print the same),
+  `v42/test_ec_hst.txt` (the count 135 -> 138 only).
+- **Memory:** `hst_t` 11000 -> 11096 octets (x86-64), `hst_frx_t` 4960 ->
+  4976, `mnp_t` 3368 -> 3376; the union and `v90m_mem_size()` unchanged.
+- `make check PAR=16`: ALL HOST CHECKS PASS (x86-64, 6 min 38 s, check-hst-bm
+  in it); `tools/golden.sh check build` after the re-record: 158 identical.
+  TEST_SHORT build of cases 19-24: pass. Owner rule: no check-arm, verify
+  or ports.

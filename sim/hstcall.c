@@ -897,6 +897,9 @@ void hstcall_defaults(hstcall_cfg *c)
     c->level_dbm0 = -12;
 }
 
+/* an 0x3R carried out with a training, not by marks: BinModem's way [BM] */
+static int by_training(const hstcall_t *c) { return c->cfg.bm_training || c->cfg.retrain_3r; }
+
 /* MNP's bit for whichever transmitter runs; our LNA watched */
 static int hc_bit(void *u)
 {
@@ -916,9 +919,9 @@ static int hc_bit(void *u)
      * loses what its decoder still holds (24 symbols at 3..6), the LNA's
      * end */
     if (c->rate_rx >= 0 && c->role == HC_ROLE_FWD && m->line_framing == 0 && !m->lna_due && !c->lna_going
-        && c->lna_done >= 0 && (((c->rate_rx & 0xF0) == 0x30 && !c->cfg.bm_training) || c->ms >= c->lna_done + 20)) {
+        && c->lna_done >= 0 && (((c->rate_rx & 0xF0) == 0x30 && !by_training(c)) || c->ms >= c->lna_done + 20)) {
         int r = c->rate_rx & 0x0F;
-        if ((c->rate_rx & 0xF0) == 0x30 && !c->cfg.bm_training) hc_ftx_marks(&c->ftx, r);
+        if ((c->rate_rx & 0xF0) == 0x30 && !by_training(c)) hc_ftx_marks(&c->ftx, r);
         else hc_ftx_train(&c->ftx, r, 0, c->cfg.bm_training);
         c->fwd_code = r;
         c->rate_rx = -1;
@@ -1040,8 +1043,14 @@ static void ln_done(hstcall_t *c, int code)
         hc_frx_set_code(&c->frx, r);
         c->fwd_code = r;
     } else if (kind == 0x30 && c->role == HC_ROLE_BACK) {
-        if (c->cfg.bm_training) hc_frx_set_code(&c->frx, r);
+        if (by_training(c)) hc_frx_set_code(&c->frx, r);
         else hc_frx_arm(&c->frx, r);
+        if (c->cfg.retrain_3r) {
+            /* the training expected: listening for it from now, the
+             * equaliser kept */
+            hc_frx_keep(&c->frx);
+            frx_listen(&c->frx);
+        }
         c->fwd_code = r;
     }
 }

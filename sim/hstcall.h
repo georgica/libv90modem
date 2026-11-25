@@ -43,7 +43,7 @@
  *  - Forced: at `force_rate_at_ms` (and each `force_more`) it sends LN
  *    (`force_kind` | code: 0x10, 0x20 or 0x30); on its LNA, for 0x2R it
  *    expects a training at the code, for 0x3R the marks (or, with
- *    `bm_training`, a training), for 0x1R it reverses.
+ *    `bm_training` or `retrain_3r`, a training), for 0x1R it reverses.
  *  - `ld_at_ms`: LD 255 then, and its carrier stops `ld_hold_ms` (1000
  *    [BM]) after the LD has gone; `drop_at_ms`: every transmitter stops
  *    then, at once.
@@ -334,6 +334,10 @@ typedef struct {
                               the line 1000 ms for its LD to get out, hst-facts `Cleardown` [BM]) */
     int     la_after_rev;  /* after each switch its first frame on the new channel is an LA (`Reversal`,
                               [OURS]; 0: not, as nothing says a Courier does) */
+    int     retrain_3r;    /* its 0x3R, either way, is carried out with a training, as BinModem retrains
+                              on every rate change (`Rate changes`, [BM]), the rest of the call ours:
+                              holding back, on the LNA to its 0x3R its receiver listens for a
+                              training at R (the equaliser kept), as one that restarts would */
 } hstcall_cfg;
 
 /* back 450, start 450, rates 0x7C (codes 2..6), flags 0x01, level -12 */

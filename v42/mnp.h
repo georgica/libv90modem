@@ -48,13 +48,22 @@
  *    others. A standard LD from a caller sending streamlined reads as an
  *    LT (the formats collide), so its LD is missed [OURS];
  *  - LN codes are attention codes, never breaks: as forward holder we
- *    grant 0x1R (a reversal: the LNA, and the endpoint reports when its
- *    closing flag has gone) and take 0x2R and 0x3R as orders for the pump;
- *    holding the back channel, the far holder's 0x2R/0x3R is passed on,
- *    or above max_up (cap_up_code) refused with a count and our own 0x2R
- *    at the cap, which also follows a reversal granted above it once the
- *    caller's training is in (the next epoch); a rate not agreed, or
+ *    grant 0x1R (a reversal), 0x2R and 0x3R (orders for the pump), each
+ *    with its LNA, and the endpoint reports when that LNA's closing flag
+ *    has gone (rev_lna_sent; rate_order); holding the back channel, the
+ *    far holder's 0x2R/0x3R is passed on (rate_order: the receiver
+ *    follows), or above max_up (cap_up_code) refused with a count and our
+ *    own 0x2R at the cap, which also follows a reversal granted above it
+ *    once the caller's training is in (the next epoch); the LNA to our own
+ *    0x2R/0x3R is passed on too (rate_order); a rate not agreed, or
  *    another class, an LNA and a count (`violations`) only;
+ *  - holding back, the pump's 0x2R/0x3R supersedes ours still waiting
+ *    for its LNA (sent at least once: V(SA) moves on as if it had come):
+ *    that LNA would come on the forward channel the pump asks about
+ *    again [OURS];
+ *  - holding forward, LTs out and credit given but N(R) still for 2 x
+ *    T401 (the line not stopped): `recover` in the mailbox, once per 2 x
+ *    T401 (the pump's recovery, spec "Rate changes") [OURS];
  *  - from an attention we send or grant until the pump's epoch changes
  *    (at most MNP_HST_HOLD_MAX_MS) no LT goes, the control frames do; at
  *    the epoch's change an LA goes first (the LAs in flight at a reversal's
@@ -196,13 +205,17 @@ typedef struct {
     int la_told;                 /* the mailbox has la_rx */
     int attn_hold, attn_hold_ms; /* no LT until the epoch changes; ms held */
     int rev_grant;               /* we granted a 0x1R: its LNA not yet out */
-    int rev_lna_out;             /* that LNA has just been framed (for the endpoint) */
+    int rate_grant;              /* we granted a 0x2R/0x3R (its code): its LNA not yet out */
+    int rev_lna_out;             /* that LNA (either grant's) has just been framed (for the endpoint) */
     int rev_wait;                /* the endpoint waits for that LNA's closing flag */
     unsigned long rev_frame0;    /* the HDLC frame count when it was framed */
     int rev_rx, rev_code;        /* our 0x1R's LNA came (for the mailbox); R */
-    int rate_order;              /* 0x2R/0x3R for the mailbox, 0 none */
+    int rate_order;              /* 0x2R/0x3R for the mailbox, 0 none (holding back: the holder's
+                                    own, or the LNA to ours) */
     int cap_due;                 /* our 0x2R at the cap: 1 at the next epoch, 2 now */
     int far_ms;                  /* holding back: ms the far end has held forward */
+    uint8_t rec_ack;             /* holding forward: N(R) as it stood ... */
+    int noack_ms;                /* ... and ms since, LTs out, the line not stopped (recover) */
 
     int ld_due, ld_reason, ld_layout;
 

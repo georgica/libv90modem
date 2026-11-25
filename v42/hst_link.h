@@ -40,11 +40,22 @@
  * agreed_rates and back300 once, la_rx when the link is up, rev_lna_sent
  * and rev_code after the last bit of the closing flag of an LNA that
  * grants a 0x1R, rev_lna_rx and rev_code when our 0x1R's LNA arrives,
- * rate_order for a 0x2R or 0x3R taken, far_ld on the far end's LD, and
- * ep_idle after every bit. It takes ln_req when no LN of its own is
- * outstanding (and clears it), and from an attention it sends or grants
- * sends no LT until epoch changes (at most 12 s); it reads role,
- * cap_up_code and fwd_code at every poll and the rates when they change.
+ * rate_order for a 0x2R or 0x3R (by role, below), far_ld on the far end's
+ * LD, ep_idle after every bit, and rx_bad and recover at every poll. It
+ * takes ln_req when no LN of its own is outstanding (and clears it), and
+ * from an attention it sends or grants sends no LT until epoch changes (at
+ * most 12 s); it reads role, cap_up_code and fwd_code at every poll and
+ * the rates when they change.
+ *
+ * rate_order by role (Task 22b). Holding forward: the far end's 0x2R or
+ * 0x3R we granted, written once that LNA and its closing flag have left
+ * (as rev_lna_sent), for the pump to carry out (0x2R the short training at
+ * R, 0x3R the switch by marks), between frames. Holding back: the change
+ * the holder is about to make, for the forward receiver to follow: the far
+ * holder's own 0x2R/0x3R at R <= cap_up_code, at once, or the LNA to our
+ * own 0x2R/0x3R (ln_req's, or the endpoint's at the cap) when it arrives.
+ * Either way the pump clears it and bumps epoch once the change is done
+ * (or given up), which lets the endpoint's LTs go again.
  *
  * The pre-connect ring: from ANS_HST until the modem is connected the pump
  * appends the back receiver's bits (hst_pre_put); the endpoint drains them
@@ -89,12 +100,17 @@ typedef struct {
     int      rev_lna_sent;    /* we granted a 0x1R and that LNA and its closing flag have left */
     int      rev_lna_rx;      /* our 0x1R was granted (its LNA arrived) */
     int      rev_code;        /* R of that reversal */
-    int      rate_order;      /* 0x2R or 0x3R for the holder to execute, 0 = none; the pump clears it.
-                                 Holding back: the far holder's own 0x2R/0x3R at R <= cap_up_code
-                                 (the receiver follows it) */
+    int      rate_order;      /* 0x2R or 0x3R, 0 = none; the pump clears it. Holding forward: ours to
+                                 carry out (our LNA has gone); holding back: the holder's, the receiver
+                                 follows it (above) */
     int      far_ld;          /* the far end sent LD */
     int      ep_idle;         /* after our last bit: between frames, at an octet boundary
                                  (a frame's closing flag is all out) */
+    unsigned long rx_bad;     /* frames received broken (bad FCS, too long, not parsed), counting
+                                 up: the rate policy's frame errors */
+    int      recover;         /* holding forward: LTs out, credit given, and nothing acknowledged
+                                 for 2 x T401 (the line not stopped); once per 2 x T401. The pump
+                                 clears it (recovery, spec "Rate changes") */
     int      ep_seen;         /* the endpoint has polled this mailbox ON: 0 in a new call's
                                  zeroed mailbox, which is how the endpoint knows it */
 } hst_link_t;

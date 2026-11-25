@@ -555,7 +555,8 @@ static void mnp_next(v42ec_t *e)
         (void)mnp2_tx_frame(&m->tx2, f, n);
     }
     if (m->rev_lna_out) {
-        /* an LNA granting a reversal: its closing flag is waited for */
+        /* an LNA granting a reversal or a rate change: its closing flag is
+         * waited for */
         m->rev_lna_out = 0;
         m->rev_wait = 1;
         m->rev_frame0 = e->htx.frames;
@@ -627,9 +628,15 @@ static void hst_tx_after(v42ec_t *e, hst_link_t *L)
         int done = e->hdlc_tx_on ? d >= 2 || (d == 1 && (e->htx.nbits == 0 || e->htx.in_frame)) : idle;
         if (done) {
             m->rev_wait = 0;
-            m->rev_grant = 0;
-            L->rev_lna_sent = 1;
-            L->rev_code = m->rev_code;
+            if (m->rev_grant) {
+                m->rev_grant = 0;
+                L->rev_lna_sent = 1;
+                L->rev_code = m->rev_code;
+            }
+            if (m->rate_grant) {
+                L->rate_order = m->rate_grant;   /* the pump carries it out now */
+                m->rate_grant = 0;
+            }
         }
     }
 }
