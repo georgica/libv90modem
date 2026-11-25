@@ -6148,3 +6148,22 @@ Sizes: `hstcall_t` 165712 octets (x86-64), test side only. Host run 33 s
   `bm/api_test_answer_hst.txt` (up's and recovery's lines, count 187 ->
   214); `api/test_answer_hst.txt` unchanged. `make check PAR=16`: ALL
   HOST CHECKS PASS (6 min 22 s).
+- **Fix round 2** (re-review). `ln_acted` was cleared only when the
+  endpoint took the pump's request, and set for any training seen: a
+  stale 1 let a later request supersede the endpoint's own 0x2R at the
+  cap after one send (round 1's desync again). Now cleared at every LN
+  sent (the pump's, the cap's, the reversal policy's) and set only for
+  the pump's own request (`rc` ASK). And a held request no longer waits
+  for T401, which holding back is our transmit's: 2.9 s at 14400/450 but
+  11.0 s at 450/9600 and 16.0 s at 300/9600, over the 4 s bound: an LN
+  sent once only goes again at once, ahead of the new request, and is
+  superseded when that copy has gone. `test_ec_hst` `attn_lost` at
+  14400/450, 450/9600 and 300/9600 (both LNs at the far end in order in
+  7, 215 and 323 ms) and `attn_stale` (the cap's 0x24 lost, a stale
+  ln_acted, then the pump's 0x23: 24 then 23, in step; 2 failures under
+  round 1's clearing). limits.md's rate-policy paragraph reflowed (a
+  sentence had gone in mid-paragraph), spec and hst-facts updated. Golden
+  `v42/test_ec_hst.txt` re-recorded (attn_lost's line rewritten,
+  attn_stale's added, count 148 -> 157). `make check PAR=16`: ALL HOST
+  CHECKS PASS (6 min 35 s); 157 of 158 goldens identical before the
+  re-record.

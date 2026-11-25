@@ -673,57 +673,111 @@ static void max_up(void)
            c1, c2);
 }
 
-/* holding back, our 0x2R lost on the line (Task 22b fix round, I1): a new
- * request of the pump does not supersede it until it has gone twice or
- * the pump saw the holder's training (ln_acted). So the far end gets the
- * LN again at T401 and then the new one, both acted on, V(SA) and its
- * V(RA) in step. With ln_acted the new request goes at once */
-static void attn_lost(void)
+/* holding back, our 0x2R lost on the line (Task 22b fix rounds 1 and 2):
+ * a new request of the pump does not supersede it until it has gone
+ * twice or the pump saw the holder's training (ln_acted). Sent once only,
+ * it goes again at once, ahead of the new request: the far end gets it,
+ * then the new one, in order, V(SA) and its V(RA) in step, well within
+ * HST_RC_BOUND_MS (4 s) at any rate, where our T401 holding back (our
+ * transmit at the back channel's rate) is 11 s and more. fb, bb: our
+ * transmit rate and the far end's */
+static void lost_one(int fb, int bb, int *ok_order, long *ms, int *t401)
 {
-    int got[4], n = 0, t, c, held, vsa_ok, n2 = 0, got2 = -1;
-    hst_setup(peer_bm(0x01), 14400, 450, 127, 0x7C, 6);
-    CHECK(connect(5000) > 0);
+    int got[4], n = 0, t, c;
+    long t0;
+    hst_setup(peer_bm(0x01), fb, bb, 127, 0x7C, 6);
+    CHECK(connect(8000) > 0);
     run(100);
     S.L.role = HST_ROLE_BACK;
     S.L.epoch++;
     run(100);
     fwd_err_ppm = 200000;                /* our LN lost */
     S.L.ln_req = 0x25;
-    for (t = 0; t < 1000 && !(E.l.mnp.ln_code == 0x25 && E.l.mnp.ln_tries >= 1); t++) step();
+    for (t = 0; t < 2000 && !(E.l.mnp.ln_code == 0x25 && E.l.mnp.ln_tries >= 1); t++) step();
+    for (t = 0; t < 1000 && v42hdlc_tx_need_frame(&E.htx) == 0; t++) step();   /* its frame out */
     run(20);
     fwd_err_ppm = 0;
     run(300);
     CHECK_EQ_I(mnppeer_get_ln(&P), -1);  /* the far end has not got it */
     S.L.ln_req = 0x24;                   /* the pump asks again, no training seen */
-    run(1000);
-    held = E.l.mnp.ln_code == 0x25 && S.L.ln_req == 0x24;
-    CHECK(held);
+    t0 = now;
     for (t = 0; t < 12000 && n < 2; t++) {
         step();
         while (n < 4 && (c = mnppeer_get_ln(&P)) >= 0) got[n++] = c;
     }
-    CHECK_EQ_I(n, 2);
-    CHECK_EQ_I(n > 0 ? got[0] : -1, 0x25);
-    CHECK_EQ_I(n > 1 ? got[1] : -1, 0x24);
+    *ms = now - t0;
+    *t401 = E.l.mnp.t401_ms;
     run(1000);
-    vsa_ok = E.l.mnp.vsa == P.vra && E.l.mnp.ln_code == -1;
-    CHECK(vsa_ok);
+    *ok_order = n == 2 && got[0] == 0x25 && got[1] == 0x24 && E.l.mnp.vsa == P.vra && E.l.mnp.ln_code == -1;
+    CHECK(*ok_order);
+    CHECK(*ms < 4000);
+}
+
+static void attn_lost(void)
+{
+    static const int fb[3] = { 14400, 450, 300 }, bb[3] = { 450, 9600, 9600 };
+    int ok[3], t401[3], k, t, c, n2 = 0, got2 = -1;
+    long ms[3];
+    for (k = 0; k < 3; k++) lost_one(fb[k], bb[k], &ok[k], &ms[k], &t401[k]);
     /* the training seen (ln_acted): the next request supersedes at once */
     S.L.epoch++;
     S.L.ln_req = 0x23;
-    for (t = 0; t < 1000 && !(E.l.mnp.ln_code == 0x23 && E.l.mnp.ln_tries >= 1); t++) step();
+    for (t = 0; t < 3000 && !(E.l.mnp.ln_code == 0x23 && E.l.mnp.ln_tries >= 1); t++) step();
     S.L.ln_acted = 1;
     S.L.ln_req = 0x22;
-    for (t = 0; t < 1500 && n2 < 2; t++) {
+    step();
+    CHECK_EQ_I(E.l.mnp.ln_code, 0x22);
+    for (t = 0; t < 3000 && n2 < 2; t++) {
         step();
         while ((c = mnppeer_get_ln(&P)) >= 0) { n2++; got2 = c; }
     }
     CHECK_EQ_I(n2, 2);
     CHECK_EQ_I(got2, 0x22);
     CHECK_EQ_I(S.L.ln_acted, 0);
-    printf("attn_lost: our LN 25 lost, the next request held %d; the far end then got %02X, %02X; V(SA) in step %d; "
-           "with ln_acted the next goes at once: %d LNs, the last %02X\n",
-           held, n > 0 ? got[0] : 0, n > 1 ? got[1] : 0, vsa_ok, n2, got2);
+    printf("attn_lost: our LN 25 lost, then the pump's 24: sent again at once, the far end gets 25 then 24, V(SA) in step: "
+           "%d %d %d (at %d/%d, %d/%d, %d/%d)\n", ok[0], ok[1], ok[2], fb[0], bb[0], fb[1], bb[1], fb[2], bb[2]);
+#ifdef HST_VERBOSE
+    printf("  (both in %ld, %ld, %ld ms; our T401 %d, %d, %d ms)\n", ms[0], ms[1], ms[2], t401[0], t401[1], t401[2]);
+#endif
+    printf("attn_lost: with ln_acted the next goes at once: %d LNs, the last %02X\n", n2, got2);
+}
+
+/* a stale ln_acted (fix round 2): set for an earlier change, it must not
+ * let the pump's request supersede an LN the endpoint sent on its own (our
+ * 0x2R at the cap after the far holder's 0x36): every LN we send clears
+ * it. The cap's 0x24 lost on the line, then the pump's 0x23: the far end
+ * gets 0x24 again, then 0x23, in order */
+static void attn_stale(void)
+{
+    int got[4], n = 0, t, c, ok, cleared;
+    hst_setup(peer_bm(0x01), 14400, 450, 127, 0x7C, 4);
+    CHECK(connect(5000) > 0);
+    run(100);
+    S.L.role = HST_ROLE_BACK;
+    S.L.epoch++;
+    run(100);
+    S.L.ln_acted = 1;                    /* stale, from an earlier change */
+    mnppeer_send_ln(&P, 0x36);           /* above the cap: our 0x24 */
+    for (t = 0; t < 3000 && E.l.mnp.ln_code != 0x24; t++) step();
+    fwd_err_ppm = 300000;                /* the cap's LN lost */
+    for (t = 0; t < 1000 && E.l.mnp.ln_tries < 1; t++) step();
+    for (t = 0; t < 1000 && v42hdlc_tx_need_frame(&E.htx) == 0; t++) step();
+    run(5);
+    fwd_err_ppm = 0;
+    cleared = S.L.ln_acted == 0;
+    CHECK(cleared);
+    run(300);
+    while ((c = mnppeer_get_ln(&P)) >= 0) CHECK(c != 0x24);
+    S.L.ln_req = 0x23;
+    for (t = 0; t < 4000 && n < 2; t++) {
+        step();
+        while (n < 4 && (c = mnppeer_get_ln(&P)) >= 0) got[n++] = c;
+    }
+    run(1000);
+    ok = n == 2 && got[0] == 0x24 && got[1] == 0x23 && E.l.mnp.vsa == P.vra;
+    CHECK(ok);
+    printf("attn_stale: ln_acted cleared by the cap's LN %d; it lost, then the pump's 23: the far end gets 24 then 23, in step %d\n",
+           cleared, ok);
 }
 
 /* the far end's LD into the mailbox */
@@ -837,6 +891,7 @@ int main(void)
     reversal_policy();
     max_up();
     attn_lost();
+    attn_stale();
     far_ld();
     t401();
     throughput();

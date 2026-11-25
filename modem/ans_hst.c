@@ -324,7 +324,7 @@ static void rate_back(answer_t *a)
              * data stops now, not before, so that our request goes out;
              * the far end has our LN (the endpoint's supersede) */
             h->rc_counted = 1;
-            h->link.ln_acted = 1;
+            if (h->rc == HST_RC_ASK) h->link.ln_acted = 1;   /* our own request's, not a follow's */
             a->retrains++;
             a->retraining = 1;
         }

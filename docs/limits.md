@@ -521,30 +521,36 @@ Measured against `sim/hstcall` only; no real HST modem has called it yet.
   frame errors (the endpoint's `rx_bad`: bad FCS, too long, not parsed)
   within 10 s of the first, or on 3 failed retrains within 10 s of the
   first. A retrain fails when the receiver is not in data at its rate 4 s
-  after the request left (`HST_RC_BOUND_MS`), when its training ends
-  without data (TRAINFAIL), or when it loses the data mode it reached
-  within 2 s (`HST_RC_HOLD_MS`); a failed one is asked again at the same
-  rate. Frame errors are the endpoint's broken frames alone: hst-facts
-  (P2:538) also counts 50 ms blocks of fill characters, which the spec
-  narrows to CRC failures. The receiver losing data mode by itself with the carrier there
-  (UNLOCKED, TRAINFAIL) is a retrain at the rate in force. At 15 dB SNR
-  from 12000 (`test_answer_hst` `fallback`): three retrains at 12000 fail
-  (data, then the lock lost within 0.5 s), then at 9600 the same, then
-  7200 holds; 10 s from the noise to 7200, 7 retrains. At the lowest
-  agreed rate, after 3 failures in 10 s the policy asks nothing more
-  until that window has passed: ending the call there is Task 23's
+  after the request left (`HST_RC_BOUND_MS`; not counted while the
+  request waits in the mailbox), when its training ends without data
+  (TRAINFAIL), or when it loses the data mode it reached within 2 s
+  (`HST_RC_HOLD_MS`); a failed one is asked again at the same rate. The
+  receiver losing data mode by itself with the carrier there (UNLOCKED,
+  TRAINFAIL) is a retrain at the rate in force. At 15 dB SNR from 12000
+  (`test_answer_hst` `fallback`): three retrains at 12000 fail (data, then
+  the lock lost within 0.5 s), then at 9600 the same, then 7200 holds;
+  10 s from the noise to 7200, 7 retrains. At the lowest agreed rate,
+  after 3 failures in 10 s the policy asks nothing more until that window
+  has passed: ending the call there is Task 23's
   (`V90M_END_RETRAIN_FAILED`). Untested against a real HST: what a
   Courier counts as good, and whether it retrains or marks (R2).
+- **Frame errors** are the endpoint's broken frames alone: hst-facts
+  (P2:538) also counts 50 ms blocks of fill characters, which the spec
+  narrows to CRC failures.
 - **An attention superseded** (v42/mnp.c, [OURS], a departure from Annex
   A's "sent again every T401 until its LNA"). Holding back, a failed
   retrain's next 0x2R/0x3R replaces ours still waiting for its LNA, V(SA)
   moving on without it: that LNA comes on the forward receiver that
   failed, and waiting for it ran to N400 and the link's end. It does so
   only on evidence that the far end has the LN: the pump saw the
-  holder's training for it (`ln_acted`), or it has gone twice (both lost
-  on the healthy back channel: p squared). Otherwise the new request
-  waits for the LNA or the next T401 (2.9 s at 14400/450, under the 4 s
-  bound). The failure mode if the guess is wrong: our N(SA) one ahead of
+  holder's training for it (`ln_acted`, set only for the pump's own
+  request and cleared at every LN sent, the endpoint's cap and reversal
+  requests included), or it has gone twice (both lost on the healthy back
+  channel: p squared). Sent once only, it is sent again at once, ahead of
+  the new request, and superseded once that copy has gone: not at its
+  T401, which holding back is 11 s at 450/9600 and more at 300 (our
+  transmit rate is the back channel's), well over the 4 s bound (that
+  bound does not run while the request waits). The failure mode if the guess is wrong: our N(SA) one ahead of
   the far V(RA), so the far end acknowledges every later LN, a 0x1R too,
   and acts on none, for the rest of the call (`v42/test/test_ec_hst`
   `attn_lost`: our LN lost, then a new request: both reach the far end in

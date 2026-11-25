@@ -90,9 +90,9 @@ typedef struct {
     int      trained;         /* our first training has gone out */
     int      role, tx_bps, rx_bps, fwd_code;   /* the endpoint recomputes T401 (mnp_set_rates) when they change */
     int      ln_req;          /* attention the pump wants sent (0x1R/0x2R/0x3R), 0 = none; endpoint clears it */
-    int      ln_acted;        /* holding back: the pump saw the holder's training for our 0x2R/0x3R
-                                 outstanding (the far end has it); the endpoint clears it when it
-                                 takes the next ln_req (mnp.h, the supersede) */
+    int      ln_acted;        /* holding back: the pump saw the holder's training for the 0x2R/0x3R it
+                                 asked (ln_req), outstanding: the far end has it; the endpoint clears
+                                 it at every LN it sends (mnp.h, the supersede) */
     unsigned epoch;           /* bumped when a reversal or rate change has completed */
     uint8_t  pre[HST_PRE_BITS / 8]; unsigned pre_w, pre_r; unsigned long pre_lost;
     /* the endpoint writes */

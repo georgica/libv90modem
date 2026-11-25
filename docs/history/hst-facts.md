@@ -559,8 +559,10 @@ As responder (we answer), from Annex A.7.1 (PS §3.1):
 - Ours, on HST holding the back channel: a new 0x2R/0x3R of the pump
   supersedes ours still waiting for its LNA, V(SA) moving on without it,
   only when the far end has it (the holder's training for it was seen, or
-  it has gone twice); else it waits for the LNA or the next T401. If the
-  far end did not have it, a wrong guess leaves our N(SA) one ahead of the far V(RA), so the far end acknowledges every later LN, a 0x1R too, and acts on none, for the rest of the call (spec "MNP endpoint",
+  it has gone twice: sent once only, it goes again at once, ahead of the
+  new request). If the far end did not have it, our N(SA) is left one
+  ahead of the far V(RA): the far end acknowledges every later LN, a 0x1R
+  too, and acts on none, for the rest of the call (spec "MNP endpoint";
   Task 22b review I1). [OURS]
 - Outside HST, LN types 1 to 3 map to `v90m_ec_send_break` and
   `v90m_ec_get_break`; on HST the octet carries the attention codes (spec

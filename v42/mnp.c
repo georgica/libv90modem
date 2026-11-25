@@ -811,24 +811,28 @@ void mnp_hst_poll(mnp_t *m, hst_link_t *L, unsigned ms, size_t queued)
      * receiver is what the pump is asking about again (a failed retrain).
      * V(SA) moves on (A.7.4.6 without the LNA) only on evidence that the
      * far end has the LN: the pump saw the holder's training for it
-     * (ln_acted), or it has gone twice (both lost: p^2). Without that the
-     * new request waits for the LN's LNA or its next T401. A wrong guess
-     * leaves our N(SA) one ahead of the far V(RA): it then acknowledges
-     * every later LN and acts on none (A.7.4.3), for the rest of the call
-     * [OURS; docs/limits.md] */
+     * (ln_acted, for this LN: cleared at every LN sent), or it has gone
+     * twice (both lost: p^2). Sent once only, it goes again now, ahead of
+     * the new request, rather than at its T401 (holding back T401 is 11 s
+     * at 450/9600, more at 300); the far end takes it if it lacked it, and
+     * the new one follows in order. A wrong guess leaves our N(SA) one
+     * ahead of the far V(RA): it then acknowledges every later LN and acts
+     * on none (A.7.4.3), for the rest of the call [OURS; docs/limits.md] */
     if (m->ln_code >= 0 && L->ln_req && m->hst_role == HST_ROLE_BACK
-        && ((m->ln_code >> 4) == 2 || (m->ln_code >> 4) == 3) && ((L->ln_req >> 4) == 2 || (L->ln_req >> 4) == 3)
-        && (m->ln_tries == 0 || m->ln_tries >= 2 || L->ln_acted)) {
-        if (m->ln_tries > 0) m->vsa++;
-        m->ln_code = -1;
-        m->ln_send = 0;
-        m->ln_t = 0;
+        && ((m->ln_code >> 4) == 2 || (m->ln_code >> 4) == 3) && ((L->ln_req >> 4) == 2 || (L->ln_req >> 4) == 3)) {
+        if (m->ln_tries == 0 || m->ln_tries >= 2 || L->ln_acted) {
+            if (m->ln_tries > 0) m->vsa++;
+            m->ln_code = -1;
+            m->ln_send = 0;
+            m->ln_t = 0;
+        } else {
+            m->ln_send = 1;
+        }
     }
     if (m->ln_code >= 0) return;
     if (L->ln_req) {
         code = L->ln_req;
         L->ln_req = 0;
-        L->ln_acted = 0;
     } else if (m->cap_due == 2) {
         code = 0x20 | cap_code(m);
         m->cap_due = 0;
@@ -837,5 +841,8 @@ void mnp_hst_poll(mnp_t *m, hst_link_t *L, unsigned ms, size_t queued)
                && queued > MNP_HST_BACKLOG) {
         code = 0x10 | L->fwd_code;           /* the reversal policy (D14, untransmitted octets only) */
     }
-    if (code != 0 && mnp_send_ln(m, code & 0xFF) == 0) hst_hold(m);
+    if (code != 0 && mnp_send_ln(m, code & 0xFF) == 0) {
+        hst_hold(m);
+        L->ln_acted = 0;                     /* evidence is for the LN it was seen for */
+    }
 }

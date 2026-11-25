@@ -325,11 +325,15 @@ is byte-identical to 0.6.0.
   departure, on HST holding the back channel: the pump's new 0x2R/0x3R
   supersedes ours still waiting for its LNA (V(SA) moves on without it)
   when the far end has it: the pump saw the holder's training for it, or
-  it has gone twice. That LNA would come on the forward receiver the pump
-  is asking about again, and waiting for it ran to N400. The failure
-  mode: a wrong guess leaves our N(SA) one ahead of the far V(RA), so the far end acknowledges every later LN, a 0x1R too, and acts on none, for the rest of the call (docs/limits.md, "The rate policy"). Outside HST, types 1–3
-  are the break kinds, mapped to `v90m_ec_send_break`/`get_break`; on HST
-  the octet carries the attention codes.
+  it has gone twice (sent once only, it goes again at once, ahead of the
+  new request). That LNA would come on the forward receiver the pump is
+  asking about again, and waiting for it ran to N400. The failure mode:
+  a wrong guess leaves our N(SA) one ahead of the far V(RA), so the far
+  end acknowledges every later LN, a 0x1R too, and acts on none, for the
+  rest of the call (docs/limits.md, "An attention superseded"). Outside
+  HST, types 1–3 are the break kinds, mapped to
+  `v90m_ec_send_break`/`get_break`; on HST the octet carries the
+  attention codes.
 - **LD:** reason 255 on `v90m_ec_release()`, as the Courier does (BF §6;
   **[FW]** layout, **[BM]** reason). Annex A's advice to stay silent was
   for its installed base; a Courier expects LD. Reason 4 when retries run
