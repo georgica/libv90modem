@@ -4307,3 +4307,46 @@ MNP paragraph, with the T400 hold) and `docs/api.md`.
     build/api_test_api; qemu-arm $A5              -> 1030 / 1020 checks, 0 failures
     re-recorded: v42/test_ec_mnp.txt (count line, two new lines); api/test_api.txt (count line, 1025 -> 1030)
     make verify                                   -> VERIFY PASS (458 s; golden 146 identical)
+
+**MNP through the public API** (the task proper): `test/api/test_mnp_call`,
+the answerer from the public API with a `v90m_ec_t` on its bit pump,
+`mnp.enable` 1, started as `docs/error-control.md` says: `v90m_ec_reset`
+and `v90m_ec_set_rates` from the `V90M_EV_CONNECTED` callback, the rates
+again on `V90M_EV_RATES` (none came in these calls). The callers carry
+`sim/mnppeer` on their bits once connected: `sim/v32call` after V.8 over
+`sim/v32line`, and `sim/callpeer` (V.8, then V.22bis or V.21) with
+`callpeer_set_pump`. A PRBS-23 each way, every octet checked; then our
+release once everything written is acknowledged, and the peer gets LD 255.
+Linked with the development archive alone (its own rule, host and ARM).
+
+- `v32bis_mode3`, `v32bis_mode2`: 14400/14400, MNP in framing 3 / 2,
+  32 KiB each way intact, no T401 expiry, no LT again.
+- `v22bis_mode3`, `v22bis_mode2`: 2400/2400, the same.
+- `v21_mode2` (the review's 300 bit/s case through the API): MNP after the
+  T400 hold (the endpoint still in DETECT at 750 ms), 2 KiB each way
+  intact, no T401 expiry (rates given). The V.21 caller's LR waits 500 ms
+  (`lr_delay_ms`): `sim/callpeer` counts as connected as soon as V.8 has
+  chosen V.21, about 100 ms before our CONNECTED, so its first LR started
+  before our endpoint and was cut (seen in the first run: start-stop).
+- `mnp_off`: MNP off, the same V.32bis and V.22bis callers. In framing 2
+  the LR is characters: start-stop at exactly 750 ms, as the brief says.
+  In framing 3 the LR comes with flags, which mean LAPM (V.42 7.2.1.3) in
+  0.6.0 as now: ESTABLISH from the flags, then `NO_SABME` after
+  `establish_ms` (30.1 s and 30.2 s). The brief's "ASYNC after 750 ms"
+  holds for framing 2 only; the test checks what 0.6.0 does in each.
+- `TEST_SHORT` (ARM under qemu): 4 KiB each way (256 at 300 bit/s), and the
+  framing 3 `mnp_off` cases stop at 750 ms. ARMv5 under qemu: 72 s (the
+  simulator's callers are double precision, soft float there); the host
+  short build prints the same.
+
+BinModem's `modem-sip`: its usage text (crates/modem/src/bin/modem-sip.rs,
+the `--help` string; the program is not built here) offers no MNP mode
+and no modulation option; the modem is driven by `--type` AT lines. So no
+second MNP peer from it for Task 10 on this evidence.
+
+    build/api_test_mnp_call, before registration     -> did not build (V32_RALL, from v32/, not on the API include path)
+    build/api_test_mnp_call, first run               -> 20 failures: tx_idle before release (harness), V.21 LR cut, mnp_off framing 3 (brief)
+    build/api_test_mnp_call                          -> test_mnp_call: 161 checks, 0 failures (1.9 s)
+    qemu-arm $A5 build/arm/api_test_mnp_call (short) -> 155 checks, 0 failures, identical to the host -DTEST_FORCE_SHORT build
+    new golden: api/test_mnp_call.txt
+    make verify                                      -> VERIFY PASS (439 s; golden 147 identical; ran in a7 short 155/0, big-endian 161/0, ubsan 161/0)

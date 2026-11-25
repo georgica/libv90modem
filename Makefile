@@ -138,7 +138,7 @@ TESTS    := test_g711 test_noise test_filt test_resamp test_channel test_v21 tes
 # runner (check-arm) runs each case as its own job
 SPLIT_TESTS := test_p34 test_orig_v92 test_orig_seeds test_orig_bell
 # the public API, against the library as it is installed
-API_TESTS := test_api test_ec_fields test_reneg test_diag
+API_TESTS := test_api test_ec_fields test_reneg test_diag test_mnp_call
 SUBS     := v34 v90 v92 v42 v32
 
 .PHONY: test-x2-courier test-k56-sm56 test-fixtures test-examples all lib dev install uninstall clean check check-arm check-ubsan test test-arm test-all test-times test-api test-interop examples bench-v90 bench-v34 bench-v90a bench-v90c bench-v92c replay
@@ -300,6 +300,10 @@ API_INC := -Iinclude -Itest -Isim -Imodem -Iv90 -Iv92 -Iv34
 # the renegotiation test reaches the engines' handles: the development archive alone
 $(BUILD)/api_test_reneg: test/api/test_reneg.c $(DEV) include/v90modem.h api/v90modem_priv.h
 	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -Iapi -o $@ $< $(DEV) $(LDLIBS)
+# MNP calls against the simulator's callers (sim/v32call, sim/callpeer,
+# sim/mnppeer): the development archive alone
+$(BUILD)/api_test_mnp_call: test/api/test_mnp_call.c $(DEV) include/v90modem.h
+	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -o $@ $< $(DEV) $(LDLIBS)
 # every error an engine's header defines has a name (tools/check-diag-names.sh)
 .PHONY: check-diag-names
 check-diag-names: $(BUILD)/api_test_diag tools/check-diag-names.sh
@@ -315,6 +319,8 @@ ARM_API_LIBS := $(BUILD)/arm/$(NAME).a $(BUILD)/arm/$(NAME)-dev.a
 $(ARM_API_LIBS): arm-api-libs ;
 $(BUILD)/arm/api_test_reneg: test/api/test_reneg.c include/v90modem.h api/v90modem_priv.h $(ARM_API_LIBS)
 	$(ARM_CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -Iapi -static -o $@ $< $(BUILD)/arm/$(NAME)-dev.a $(LDLIBS)
+$(BUILD)/arm/api_test_mnp_call: test/api/test_mnp_call.c include/v90modem.h $(ARM_API_LIBS)
+	$(ARM_CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -static -o $@ $< $(BUILD)/arm/$(NAME)-dev.a $(LDLIBS)
 $(BUILD)/api_test_%: test/api/test_%.c $(STATIC) $(DEV) include/v90modem.h api/v90modem_fields.h api/v90modem_diag.h
 	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -o $@ $< $(STATIC) $(DEV) $(LDLIBS)
 $(BUILD)/arm/api_test_%: test/api/test_%.c include/v90modem.h api/v90modem_fields.h api/v90modem_diag.h $(ARM_API_LIBS)

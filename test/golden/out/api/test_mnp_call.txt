@@ -1,0 +1,10 @@
+v32bis_mode3: V.32bis 14400/14400 bit/s, MNP framing 3 after 5.654 s; 32768 octets each way intact in 22.0 s; T401 expiries 0, retransmitted 0; LD 255 to the caller
+v32bis_mode2: V.32bis 14400/14400 bit/s, MNP framing 2 after 5.669 s; 32768 octets each way intact in 27.4 s; T401 expiries 0, retransmitted 0; LD 255 to the caller
+v22bis_mode3: V.22bis 2400/2400 bit/s, MNP framing 3 after 4.397 s; 32768 octets each way intact in 131.6 s; T401 expiries 0, retransmitted 0; LD 255 to the caller
+v22bis_mode2: V.22bis 2400/2400 bit/s, MNP framing 2 after 4.487 s; 32768 octets each way intact in 164.3 s; T401 expiries 0, retransmitted 0; LD 255 to the caller
+v21_mode2: V.21 300/300 bit/s, MNP framing 2 after 6.347 s (T400 held for the LR); 2048 octets each way intact in 128.3 s; T401 expiries 0, retransmitted 1; LD 255 to the caller
+mnp_off: V.32bis, the caller's LR in framing 3: LAPM's flags, state 1 at 750 ms; NO_SABME at 30.107 s
+mnp_off: V.32bis, the caller's LR in framing 2: state 0 at 749 ms, 3 (start-stop) at 750 ms
+mnp_off: V.22bis, the caller's LR in framing 3: LAPM's flags, state 1 at 750 ms; NO_SABME at 30.232 s
+mnp_off: V.22bis, the caller's LR in framing 2: state 0 at 749 ms, 3 (start-stop) at 750 ms
+test_mnp_call: 161 checks, 0 failures
