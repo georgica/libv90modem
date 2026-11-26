@@ -16,11 +16,16 @@ Changed:
   bits 30:33 for the symbol rate in use (INFO1a bits 30:33 of Table
   11/V.90), at start-up and at every retrain. A WebTV box asked for 31200
   in its MP although its INFO1c projected 28800, could not take our 31200
-  and fell back to async; it now gets 28800. No call in the 106 recorded
-  calls asked for more than its projection, so no rate there changes, but
-  our MP now offers the projection (31200 for all of them) where it
-  offered the engine's top (33600). The calling role is not capped (see
-  `docs/limits.md`).
+  and fell back to async; it now gets 28800. A later triage of a second
+  WebTV box confirmed the case: with its MP above its projection, error
+  control failed in 7 calls of 7; at or below it, it came up in 12 of 12
+  (6 of them at 31200). Of the 106 recorded calls only 6 reach a V.34 MP,
+  plus one V.90 caller that selected V.34 (x2b); none of those asked above
+  its projection, so no rate there changes, but in the 6 our MP now
+  offers the projection (31200) where it offered the engine's top
+  (33600). The risk: a caller that projects below what it can do (as
+  this library's own answerer does, 28800 against an MP offering 33600)
+  loses a step. The calling role is not capped (see `docs/limits.md`).
 
 Added:
 - `V90M_OPT_V34_NO_TX_CAP`, an option bit in `v90m_cfg.modulations` (not a

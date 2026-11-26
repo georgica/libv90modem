@@ -21,8 +21,9 @@
   INFO1c 31200, MP 26400         3200 sym/s  A->C 26400 bit/s  105600 bits   0 err   C->A 31200 bit/s  124800 bits   0 err  (data at 7.9 s)
   INFO1c 28800, our ceiling 24000 3200 sym/s  A->C 24000 bit/s   96000 bits   0 err   C->A 31200 bit/s  124800 bits   0 err  (data at 7.9 s)
   INFO1c 28800, MP 31200, cap off 3200 sym/s  A->C 31200 bit/s  124800 bits   0 err   C->A 31200 bit/s  124800 bits   0 err  (data at 7.9 s)
+  3000 chosen: INFO1c 24000 there 3000 sym/s  A->C 24000 bit/s   96000 bits   0 err   C->A 28800 bit/s  115200 bits   0 err  (data at 8.0 s)
   retrain: data again 5.6 s later;  after our retrain              3200 sym/s  A->C 28800 bit/s  115200 bits   0 err   C->A 28800 bit/s  115200 bits   0 err  (data at 18.5 s)
   retrain: data again 5.6 s later;  after the caller's retrain     3200 sym/s  A->C 28800 bit/s  115200 bits   0 err   C->A 28800 bit/s  115200 bits   0 err  (data at 18.5 s)
   retrain: data again 8.8 s later;  caller lost in Phase 3         3200 sym/s  A->C 28800 bit/s  115200 bits   0 err   C->A 28800 bit/s  115200 bits   0 err  (data at 17.3 s)
   after two renegotiations       3200 sym/s  A->C 28800 bit/s   85896 bits   0 err   C->A 16800 bit/s   50400 bits   0 err  (data at 12.6 s)
-v34call: 377 checks, 0 failures
+v34call: 397 checks, 0 failures

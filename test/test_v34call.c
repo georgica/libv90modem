@@ -286,15 +286,33 @@ int main(void)
         CHECK_EQ_I(A.m.p2.info1c.sr[4].max_rate, 12); CHECK_EQ_I(C.dx.mp.max_ac, 13);
         CHECK_EQ_I(A.m.dx.mp.max_ac, 14);
         CHECK_EQ_I(v34ans_tx_rate(&A.m), 31200); CHECK_EQ_I(C.dx.rx_rate, 31200);
-        capped.max_ac = 14;
-        CHECK_EQ_I(memcmp(&capped, &A.m.dx.mp, sizeof capped), 0);
+        capped.max_ac = 14;                                 /* the MP's bits, not the struct (padding) */
+        {
+            uint8_t b0[V34_MP_MAX_BITS], b1[V34_MP_MAX_BITS];
+            int n0 = v34_mp_build(&capped, b0), n1 = v34_mp_build(&A.m.dx.mp, b1);
+            CHECK_EQ_I(n0, n1); CHECK(n0 > 0);
+            CHECK_EQ_I(memcmp(b0, b1, (size_t)n0), 0);
+        }
         C.cfg.p2.max_rate[4] = 11;                          /* and after a retrain */
         CHECK_EQ_I(v34ans_retrain(&A.m), 0);
         call_run(2400);
         CHECK_EQ_I(call_to_data(25000), 1);
         CHECK_EQ_I(A.m.p2.info1c.sr[4].max_rate, 11); CHECK_EQ_I(A.m.dx.mp.max_ac, 14);
         CHECK_EQ_I(v34ans_tx_rate(&A.m), 2400 * C.dx.mp.max_ac);
-        ac.no_tx_cap = 0; ac.law = 1; ac.sr_mask = 0;
+        ac.no_tx_cap = 0;
+        /* the projection of the symbol rate chosen, not of a higher one the
+         * caller offers: it projects 31200 at 3200 and 24000 at 3000, and
+         * 3000 is the one we allow */
+        v34peer_default(&pc, 3000);
+        pc.p2.max_rate[4] = 13; pc.p2.max_rate[3] = 10; pc.dx.max_rx_rate = 31200;
+        ac.sr_mask = P2N_SR_3000;
+        good_call("3000 chosen: INFO1c 24000 there", &lc, &ac, &pc, 4, 24000, 0);
+        CHECK_EQ_I(A.m.dx.cfg.sym_rate, 3000); CHECK_EQ_I(A.m.p2.sym_idx, 3);
+        CHECK_EQ_I(A.m.p2.info1c.sr[4].max_rate, 13);
+        CHECK(C.dx.mp.max_ac > 10);                         /* its MP asks for more */
+        CHECK_EQ_I(A.m.dx.mp.max_ac, 10);
+        CHECK_EQ_I(v34ans_tx_rate(&A.m), 24000); CHECK_EQ_I(C.dx.rx_rate, 24000);
+        ac.law = 1; ac.sr_mask = 0;
     }
 
     /* ---- retrain (11.5), from either side, and when Phase 3 loses the caller ---- */

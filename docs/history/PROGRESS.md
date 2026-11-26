@@ -6326,7 +6326,7 @@ milestone gate (verify-phase, ports, ARM) is Task 26's.
   6 lines, count 114 -> 118). CPU path: one add at the restart (no ARM
   run). x86-64 only.
 
-## v34cap: our V.34 transmit capped at the caller's own INFO1 projection (2026-11-26)
+## v34cap: our V.34 transmit capped at the caller's own INFO1 projection (2026-11-25)
 
 - **Why.** A WebTV box asked for 31200 in its MP although its own INFO1c
   projected 28800 at 3200 Bd; it could not decode our 31200, missed our
@@ -6340,7 +6340,7 @@ milestone gate (verify-phase, ports, ARM) is Task 26's.
   `v34ans_cfg.no_tx_cap`, a `uint8_t` beside `k56`, now `uint8_t` too),
   turns it off. Memory unchanged (106320 x86-64; 105840 -m32 i386
   before and after). Calling side not capped: our own answerer projects
-  28800 on a clean line while its MP takes 33600, and the cap cut
+  28800 on a clean line while its MP offers 33600 (the call runs at 31200), and the cap cut
   `test_orig_v34`'s clean calls from 31200 to 28800.
 - **Corpus first.** 106 recordings x 7 sets, instrumented replay: no caller
   asked in its MP for more than its own projection (6 V.34 calls project 13

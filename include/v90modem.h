@@ -194,6 +194,8 @@ typedef enum {
  * V90M_END_CLEARDOWN_FAR once its carrier goes (2 s at most); ours is
  * v90m_ec_release, v90m_ec_tx_busy 0 (at most 1 s), then v90m_cleardown. */
 #define V90M_MOD_HST      0x0400u
+/* Bits 0-15 of .modulations are modulations (V90M_MOD_*); bits 16 and up
+ * are options (V90M_OPT_*), never modulations. */
 /* Not a modulation: an option bit in .modulations. Answering, V.34 (and
  * V.34 selected by a V.90 caller's INFO1a): by default our MP's maximum
  * transmit rate is the lower of max_down_bps and the caller's own

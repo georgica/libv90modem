@@ -119,14 +119,21 @@ Each item names where it is recorded.
 
 - **V.34 transmit capped at the far end's projection: answering only.**
   The answerer sends no faster than the caller's INFO1c projects (0.7.0,
-  on by default, `V90M_OPT_V34_NO_TX_CAP` turns it off; none of the 106
-  recorded calls asked for more than its projection, so no rate changed,
-  but our MP now offers 31200 to them where it offered 33600: replays of
-  recordings made before 0.7.0 need `v90m-replay -C`, since the echo they
-  hold is of the old MP). The calling side is not capped at the answerer's INFO1a:
-  this library's own answerer projects 28800 on a clean line while its MP
-  takes 31200 there (`test/test_orig_v34.c`, good line), and the cap would
-  have cost those calls a step. The V.90 analogue caller's upstream
+  on by default, `V90M_OPT_V34_NO_TX_CAP` turns it off). The evidence is
+  small: of the 106 recorded calls only 6 reach a V.34 MP, plus one V.90
+  caller that selected V.34 (x2b), and none of those asked above its
+  projection, so no rate changed; in the 6 our MP now offers 31200 where
+  it offered 33600, and replays of recordings made before 0.7.0 need
+  `v90m-replay -C`, since the echo they hold is of the old MP. The target
+  case is confirmed: a second WebTV box's error control failed in 7 calls
+  of 7 when its MP asked above its projection, and came up in 12 of 12
+  (6 of them at 31200) at or below it. **Risk, answering:** a caller that
+  projects below what it can do loses a step under the default cap, as a
+  caller like this library's own answerer would (it projects 28800 on a
+  clean line while its MP offers 33600 and the call runs at 31200). The
+  calling side is not capped at the answerer's INFO1a for that reason:
+  against this library's own answerer (`test/test_orig_v34.c`, good line)
+  the cap would have cost those calls a step. The V.90 analogue caller's upstream
   follows the digital modem's CP and is not capped at its INFO1d either;
   PCM has no such projection.
   Real answerers' INFO1a against their MP: not measured (no recordings of
