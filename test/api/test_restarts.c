@@ -11,7 +11,8 @@
  *    other (V.34, V.90, V.32bis).
  * Each time the split adds up to v90m_stats' counts, and the last one's
  * time is where the data stopped. HST's 0x2R / 0x3R are test_answer_hst's
- * (down, retrain_by_2R, retrain_back, up). Linked with the development
+ * (down, retrain_by_2R, retrain_back, up); the V.90 caller's watch on its
+ * receiver (down, up again) test_orig_retrain's (noise +15 dB). Linked with the development
  * archive alone, for the engine's handles (api/v90modem_priv.h). */
 #include <stdio.h>
 #include <string.h>

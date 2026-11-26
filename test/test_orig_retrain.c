@@ -58,6 +58,8 @@ typedef struct {
     int info0a;                 /* K_ANS_INFO0: the answerer's Phase 2 got our INFO0a */
     int down2, fd2, fu2;        /* K_NOISE, K_RENEG: after the second step */
     int32_t back2_ms;
+    int cev1, cev2;             /* K_NOISE: who began the first step's retrain (v90m_get_restarts' record),
+                                   and the second step's renegotiation (orig_reneg_cev) */
 } res_t;
 
 static void line(vl_cfg *c, int v92, uint32_t seed)
@@ -92,11 +94,16 @@ static void line_gain(vl_t *l, double db)
 
 /* after an event at t0: wait until data has stopped (a retrain or a
  * renegotiation; or not at all) and moves both ways again; ms, or -1 */
+static int back_cev;    /* the stop a renegotiation of ours or the far end's: who began it (orig_reneg_cev, CEV_*), else 0 */
 static int32_t back(vl_t *l, int64_t t0, int limit_ms)
 {
     int stopped = 0;
+    back_cev = 0;
     while (l->k < t0 + MS(limit_ms) && l->org.phase != ORIG_FAILED) {
         vl_tick(l);
+        /* as v90m_get_restarts reads it on the sample the data stops */
+        if (!stopped && !orig_moving(&l->org) && l->org.phase == ORIG_V90 && l->org.e.v90.state == V90A_RENEG)
+            back_cev = orig_reneg_cev(&l->org);
         if (!both(l)) stopped = 1;
         else if (stopped) return (int32_t)((l->k - t0) / 8);
     }
@@ -186,6 +193,7 @@ static void run(int v92, int kind, uint32_t seed, res_t *o)
     default: break;
     }
     o->back_ms = back(l, t0, 30000);
+    o->cev1 = l->org.ev.last;   /* (a retrain: orig_tick's count, ours for the receiver's errors) */
     o->down1 = l->org.rx_bitrate; o->up1 = l->org.bitrate; o->mod1 = l->org.modulation;
     o->info0a = l->ans.p2.got0a;
     count(l, &o->bd, &o->fd, &o->bu, &o->fu);
@@ -196,6 +204,7 @@ static void run(int v92, int kind, uint32_t seed, res_t *o)
         if (kind == K_NOISE) l->ch.nrms /= pow(10, 15 / 20.0);
         else CHECK_EQ_I(orig_renegotiate(&l->org, 56000), 0);
         o->back2_ms = back(l, t0, 40000);
+        o->cev2 = back_cev;
         o->down2 = l->org.rx_bitrate;
         { int64_t a, b; count(l, &a, &b, &a, &a); o->fd2 = (int)b; }
         o->ok = o->ok && still(l);
@@ -244,6 +253,11 @@ static void cases(int v92)
             CHECK(o.back_ms < 12000);
             break;
         case K_NOISE:
+            /* v90m_get_restarts: the retrain for the receiver's errors, the
+             * renegotiation up again ours (not the receiver's errors) */
+            printf("    the receiver's watch: the retrain %s, the renegotiation up %s\n",
+                   o.cev1 == CEV_OF(WHY_RX_ERRORS) ? "rx_errors" : "?", o.cev2 == CEV_OF(WHY_OURS) ? "ours" : "?");
+            CHECK_EQ_I(o.cev1, CEV_OF(WHY_RX_ERRORS)); CHECK_EQ_I(o.cev2, CEV_OF(WHY_OURS));
             CHECK(o.down1 < o.down0);                   /* a lower rate */
             CHECK(o.down2 > o.down1);                   /* and back up */
             CHECK(o.back2_ms > 0);

@@ -186,6 +186,7 @@ typedef struct {
      * V.22bis's retrain under way (WHY_* + 1, 0 none) */
     callev_t   ev;
     int        rt_seen, rt_ours_seen, rt_ours, v22_why;
+    uint32_t   v22_at;       /* ... and where it began (ev's clock) */
 } orig_t;
 
 void    orig_init(orig_t *o, const orig_cfg *cfg);

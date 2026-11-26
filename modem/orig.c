@@ -307,19 +307,20 @@ static int16_t tick_v21(orig_t *o, int16_t rx)
 /* v90m_get_restarts: the engine's retrains (total, ours of them) since last
  * seen, the far end's and ours (why: WHY_*). One engine a call, its counts
  * from 0 */
-static void ev_retrains(orig_t *o, int total, int ours, int why)
+static void ev_retrains_at(orig_t *o, int total, int ours, int why, uint32_t at)
 {
     int d = total - o->rt_seen, d_ours = ours - o->rt_ours_seen;
     if (d <= 0) return;
     o->rt_seen = total; o->rt_ours_seen = ours;
-    for (; d > d_ours; d--) callev_retrain(&o->ev, WHY_FAR);
-    for (; d > 0; d--) { callev_retrain(&o->ev, why); o->rt_ours++; }
+    for (; d > d_ours; d--) callev_retrain_at(&o->ev, WHY_FAR, at);
+    for (; d > 0; d--) { callev_retrain_at(&o->ev, why, at); o->rt_ours++; }
 }
-/* ... with one why for every new one (V.22bis, V.32bis) */
-static void ev_retrains_why(orig_t *o, int total, int why)
+static void ev_retrains(orig_t *o, int total, int ours, int why) { ev_retrains_at(o, total, ours, why, o->ev.now); }
+/* ... with one why for every new one (V.22bis, V.32bis), begun at the clock at */
+static void ev_retrains_why(orig_t *o, int total, int why, uint32_t at)
 {
     int d = total - o->rt_seen;
-    if (d > 0) ev_retrains(o, total, o->rt_ours_seen + (why != WHY_FAR ? d : 0), why);
+    if (d > 0) ev_retrains_at(o, total, o->rt_ours_seen + (why != WHY_FAR ? d : 0), why, at);
 }
 
 int16_t orig_tick(orig_t *o, int16_t rx)
@@ -427,10 +428,14 @@ int16_t orig_tick(orig_t *o, int16_t rx)
     case ORIG_V22:
         tx = v22m_tick(&o->e.leg.v22, rx);
         /* a retrain counts as it ends: who began it is the state that
-         * began it, our S1 (retrain_send) or the far end's heard */
-        if (o->e.leg.v22.retraining && !o->v22_why)
+         * began it, our S1 (retrain_send) or the far end's heard, and it
+         * began there */
+        if (o->e.leg.v22.retraining && !o->v22_why) {
             o->v22_why = 1 + (o->e.leg.v22.state == V22S_S1_RX ? WHY_FAR : WHY_OURS);
-        if (o->e.leg.v22.retrains != o->rt_seen) ev_retrains_why(o, o->e.leg.v22.retrains, o->v22_why ? o->v22_why - 1 : WHY_OURS);
+            o->v22_at = o->ev.now;
+        }
+        if (o->e.leg.v22.retrains != o->rt_seen)
+            ev_retrains_why(o, o->e.leg.v22.retrains, o->v22_why ? o->v22_why - 1 : WHY_OURS, o->v22_why ? o->v22_at : o->ev.now);
         if (!o->e.leg.v22.retraining) o->v22_why = 0;
         if (!o->connected) {
             if (o->e.leg.v22.tx_ready && o->e.leg.v22.rx_ready) {
@@ -459,7 +464,7 @@ int16_t orig_tick(orig_t *o, int16_t rx)
 
     case ORIG_V32:
         tx = v32_tick(&o->e.leg.v32, rx);
-        if (o->e.leg.v32.retrains != o->rt_seen) ev_retrains_why(o, o->e.leg.v32.retrains, o->e.leg.v32.rt_why);
+        if (o->e.leg.v32.retrains != o->rt_seen) ev_retrains_why(o, o->e.leg.v32.retrains, o->e.leg.v32.rt_why, o->ev.now);
         if (o->e.leg.v32.state == V32S_FAILED) { fail(o, v32_end(o)); tx = 0; break; }   /* carrier loss included */
         if (o->e.leg.v32.connected) {
             o->connected = 1; o->modulation = ORIG_MOD_V32BIS;
@@ -580,8 +585,8 @@ int orig_reneg_cev(const orig_t *o)
 {
     if (o->phase == ORIG_V34)       /* the answerer's S heard (DX_RN_S), else ours: rate_down's */
         return o->e.v34.dx.state == DX_RN_S ? CEV_FAR : CEV_OF(WHY_RX_ERRORS);
-    if (o->phase == ORIG_V90)       /* its Rd, ours asked for, or ours for the line */
-        return o->e.v90.reneg_ours == 0 ? CEV_FAR : o->e.v90.reneg_ours == 2 ? CEV_OF(WHY_RX_ERRORS) : CEV_OF(WHY_OURS);
+    if (o->phase == ORIG_V90)       /* its Rd, ours asked for, ours for the line: down, or up again */
+        return o->e.v90.reneg_ours == 0 ? CEV_FAR : o->e.v90.reneg_ours == 2 ? CEV_OF(WHY_RX_ERRORS) : CEV_OF(WHY_OURS);   /* 3: up */
     if (o->phase == ORIG_V32) return CEV_FAR;      /* only the answerer begins one (8.2) */
     return CEV_OF(WHY_OURS);
 }

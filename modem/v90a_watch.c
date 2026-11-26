@@ -2,7 +2,7 @@
  * renegotiation and retrain. See v90a.h, v90a_priv.h. */
 #include "v90a_priv.h"
 
-/* our rate renegotiation: 1 asked for, 2 for the line (see v90a.h) */
+/* our rate renegotiation: 1 asked for, 2 for the line down, 3 up again (see v90a.h) */
 int v90a__renegotiate(v90a_t *a, int kind)
 {
     if (a->state != V90A_DATA) return -1;
@@ -60,7 +60,7 @@ void v90a__line_watch(v90a_t *a)
     } else if (a->good_frames >= UP_FRAMES && a->auto_down && a->since_auto >= AUTO_GRACE && a->down_rate < a->best_rate
                && (a->cfg.max_rx_bps <= 0 || a->down_rate < a->cfg.max_rx_bps)) {
         /* what brought the rate down has gone again: once more, up */
-        if (v90a__renegotiate(a, 2) == 0) a->auto_down = 0;
+        if (v90a__renegotiate(a, 3) == 0) a->auto_down = 0;
     }
 }
 
@@ -93,7 +93,7 @@ void v90a__watch(v90a_t *a)
     if (a->state == V90A_RENEG && (int64_t)a->t > (a->pcm ? MS(T_RENEG92_MS) : MS(T_RENEG_MS)) + 2 * rtd) { v90a__end(a, V90A_ERR_CARRIER); return; }
     if ((a->state == V90A_P4 || a->state == V90A_RENEG) && a->rx_ready && a->tx_ready && !a->clearing) {
         if (a->state == V90A_RENEG) a->renegs++;
-        if (a->reneg_ours == 2) a->since_auto = 0;
+        if (a->reneg_ours >= 2) a->since_auto = 0;
         a->reneg_ours = 0;
         a->state = V90A_DATA; a->t = 0;
         if (a->t_data == CLK_NONE) a->t_data = a->now;

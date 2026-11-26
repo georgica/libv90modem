@@ -71,6 +71,8 @@ struct v90m {
     uint8_t  data_reached;      /* data moved both ways this call (v90m_get_diag) */
     v90m_ec_t *hst_ec;          /* the endpoint linked to us for HST (v90m_ec_link_hst), NULL none:
                                    the link is two-way, so either side can end it */
+    uint32_t reneg_at;          /* v90m_get_restarts' clock where reneg_pending's stop came (last
+                                   before u: on 32-bit targets in the pad before it) */
     union { answer_t a; orig_t o; } u;     /* by cfg.role */
 };
 
@@ -361,10 +363,10 @@ static inline void after(v90m_t *m, int orig)
         if (!moving) {
             m->reneg_pending = connected && !retraining_of(m, orig) && !failed
                                ? (uint8_t)(orig ? orig_reneg_cev(&m->u.o) : answer_reneg_cev(&m->u.a)) : 0;
-            ev->pend_at = ev->now;
+            m->reneg_at = ev->now - 1;  /* the clock the engines saw in this sample */
         } else if (m->reneg_pending) {
             m->renegotiations++;
-            callev_reneg(ev, m->reneg_pending);
+            callev_reneg(ev, m->reneg_pending, m->reneg_at);
             m->reneg_pending = 0;
         }
         m->was_moving = moving;
@@ -375,12 +377,12 @@ static inline void after(v90m_t *m, int orig)
             v90m_end e = end_of(m);
             if (e != V90M_END_CLEARDOWN_OURS && e != V90M_END_CLEARDOWN_FAR) {
                 m->renegotiations++;
-                callev_reneg(ev, m->reneg_pending);
+                callev_reneg(ev, m->reneg_pending, m->reneg_at);
             }
             m->reneg_pending = 0;
         } else if (retraining_of(m, orig)) {
             m->renegotiations++;     /* the renegotiation became a retrain: counted in both */
-            callev_reneg(ev, m->reneg_pending);
+            callev_reneg(ev, m->reneg_pending, m->reneg_at);
             m->reneg_pending = 0;
         }
     }
@@ -457,9 +459,9 @@ int v90m_retrain(v90m_t *m)
      * engines count it before they return; refused, as it was (one asked
      * for before may still be to count) */
     ev = ORIGINATING(m) ? &m->u.o.ev : &m->u.a.ev;
-    was = ev->host; ev->host = 1;
+    was = ev->flags; ev->flags |= CEV_HOST_DUE;
     r = ORIGINATING(m) ? orig_retrain(&m->u.o) : answer_retrain(&m->u.a);
-    if (r != 0) { ev->host = was; return V90M_ESTATE; }
+    if (r != 0) { ev->flags = (uint8_t)((ev->flags & ~CEV_HOST_DUE) | (was & CEV_HOST_DUE)); return V90M_ESTATE; }
     return V90M_OK;
 }
 
@@ -562,7 +564,7 @@ void v90m_get_restarts(const v90m_t *m, v90m_restarts *r)
     r->retrain_ours = rt_ours;
     r->retrain_host = ev->rt_host;
     r->last = (v90m_cause)ev->last;
-    r->last_retrain = ev->last_rt;
+    r->last_retrain = (ev->flags & CEV_LAST_RT) != 0;
     r->last_ms = ev->last != CEV_NONE ? ev->last_at / 8u : 0u;
 }
 

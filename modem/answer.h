@@ -178,7 +178,8 @@ struct ans_scheme;            /* modem/ans_scheme.h */
 
 typedef struct {
     /* the members are in an order that leaves no holes between them on
-     * a 64-bit host, for callev (at the end) */
+     * a 64-bit host nor on 32-bit ARM, for callev (at the end): answer_t
+     * and v90m_mem_size keep 0.7.0's sizes */
     answer_cfg cfg;
     ans_phase  phase;
     int        used_v8;      /* the caller spoke V.8 */
@@ -211,9 +212,9 @@ typedef struct {
     v21demod_t fdem; arx_t uart;
     int        fbit, fsk_mod, via_bell; int32_t cd_run; int64_t cd_thresh;
     int16_t    bpf[128];     /* V.21 / Bell 103 receive band-pass history (bpos above) */
-    const int16_t *bpf_taps;         /* v21_bpf or bell103_bpf */
     tonedet_t  bell;                 /* the Bell 103 caller's mark while we wait in ANS_V22 */
     tonedet_t  v21mark;              /* the V.21 caller's mark (980 Hz) while we wait in ANS_V22 */
+    const int16_t *bpf_taps;         /* v21_bpf or bell103_bpf */
     int        connected, modulation, bitrate;
     int        rx_bitrate;   /* receive direction, where it differs (V.90 upstream) */
     int        end;          /* ANS_END_*: why the call ended (ANS_FAILED) */
@@ -237,7 +238,7 @@ typedef struct {
     uint8_t    k56_agreed;   /* the client's MS carried the K56flex block (we sent ACK(1));
                                 x2 is then not offered in this call */
     callev_t   ev;           /* who began the retrains and renegotiations (v90m_get_restarts);
-                                in the holes the order above took away, v90m_mem_size unchanged */
+                                in the holes the order above took away (16 bytes) */
 } answer_t;
 
 /* the HST engine shares the union and fits in it (the spec's "HST pump":

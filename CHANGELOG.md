@@ -21,14 +21,15 @@ stays `libv90modem.so.0.7`, a program built against 0.7.0 runs on it):
   host's), whether it was a retrain, and where it began (`last_ms`, from
   the call's first sample). Either role, every modulation that has
   renegotiations or retrains (V.34, V.90, V.92, x2, K56flex, V.32bis,
-  V.22bis, HST's 0x2R and 0x3R). `v90m_cause_name` names a cause for a
+  V.22bis calling, HST's 0x2R and 0x3R). `v90m_cause_name` names a cause for a
   log line. A host no longer has to guess that a renegotiation with the
   rates unchanged was the far end's (a WebTV box's own modem renegotiates
   every 22 s). Simulation and own answerer only.
-- `v90m_mem_size()` is unchanged on x86-64 (106320): the answering modem's
-  members are in a new order that takes the new counts into what were
-  holes between them. On 32-bit targets, whose holes differ, it may grow
-  by some 30 bytes at most (i386: 24), under `V90M_MEM_SIZE` (unchanged).
+- `v90m_mem_size()` and `v90m_ec_mem_size()` are unchanged on every
+  pinned target (x86-64 106320 / 50448, 32-bit ARM 106016 / 50200): the
+  answering modem's members are in a new order that takes the new counts
+  (16 bytes) into what were holes between them. i386 Linux, not pinned,
+  grows 16 bytes (105844 to 105860), under `V90M_MEM_SIZE` (unchanged).
 
 Changed, behaviour: none. Every call is as in 0.7.0: the golden outputs,
 the replay proof and the bench hashes are 0.7.0's (the new test lines

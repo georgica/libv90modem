@@ -543,18 +543,26 @@ void     v90m_get_v34_cap(const v90m_t *m, v90m_v34_cap *c);
  * always), else ours. A retrain is the far end's when its signal began it
  * (Tone A or Tone B, V.32bis's 1800 Hz or AC, V.22bis's S1, K56flex's
  * tone B, HST: the far end's 0x2R or 0x3R carried out with training, ours
- * granted or its own), else ours. */
+ * granted or its own), else ours. V.22bis: calling only (answering, its
+ * retrains are in neither count). The far end's and the host's counts stop
+ * at 65535 (where the far end's would, the ours read too high). A
+ * v90m_retrain that is accepted makes the next retrain counted the host's
+ * when it is ours; any retrain counted after it settles it (a far end's
+ * that came first took its place). */
 typedef enum {
     V90M_CAUSE_NONE = 0,    /* none yet */
     V90M_CAUSE_FAR,         /* the far modem began it */
     V90M_CAUSE_OURS,        /* ours: a step of a start-up, retrain or renegotiation
                                failed or ran out of time, a failed V.92 start-up,
                                HST's training after MNP's agreement, its upshift,
-                               or a modulation that says no more */
+                               the V.90 / V.92 caller's renegotiation back up
+                               once the line is good again, or a modulation
+                               that says no more */
     V90M_CAUSE_RX_ERRORS,   /* ours: our receiver's errors too many for the rate
                                (V.34's, V.90's and V.92's rate drop, as a
                                renegotiation or, with no lower rate, a retrain;
-                               the V.90 / V.92 caller's watch on its receiver;
+                               the V.90 / V.92 caller's watch on its receiver,
+                               as a renegotiation down or a retrain;
                                V.32bis's; HST's frame errors) */
     V90M_CAUSE_RX_LOST,     /* ours: our receiver lost the far end's data or
                                signal (V.34's and V.90's dead receiver, HST's
@@ -571,7 +579,7 @@ typedef struct {
     int        last_retrain;    /* 1: that one is a retrain, 0: a renegotiation */
     unsigned   last_ms;         /* where it began (a renegotiation: where data
                                    stopped), ms from the first sample since
-                                   v90m_create or v90m_reset (it wraps after
+                                   v90m_create, v90m_init or v90m_reset (it wraps after
                                    2^32 samples, 6.2 days); 0 with _NONE */
 } v90m_restarts;
 void     v90m_get_restarts(const v90m_t *m, v90m_restarts *r);
