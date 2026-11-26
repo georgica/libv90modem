@@ -156,4 +156,22 @@ ignore_ln: 2024 of 2024 octets to hstcall, 9000 of 9000 to us, 0 wrong
   reversed first: pass
   our 0x35 acknowledged, ignored: hstcall and our receiver still at 6: pass
   the data both ways, intact: pass
-test_hstcall: 106 checks, 0 failures
+fwd_to_ours, high-pass 600 Hz 10th order, ours, code 6: data mode reached; 0 errors
+  our hst_frx reaches data: pass
+  no bit in error: pass
+fwd_to_ours, high-pass 600 Hz 10th order, V.17's roll-off, code 6: data mode reached; 0 errors
+  our hst_frx reaches data: pass
+  no bit in error: pass
+fwd_to_ours, high-pass 575 Hz 10th order, ours, V.17's train, code 4: data mode reached; 0 errors
+  our hst_frx reaches data: pass
+  no bit in error: pass
+fwd_to_ours, high-pass 600 Hz 10th order, ours, code 3: data mode reached; 0 errors
+  our hst_frx reaches data: pass
+  no bit in error: pass
+fwd_to_ours, high-pass 550 Hz 10th order, ours, -100 ppm, code 6: data mode reached; 0 errors
+  our hst_frx reaches data: pass
+  no bit in error: pass
+fwd_to_ours, high-pass 525 Hz 10th order, V.17's roll-off and train, +7 Hz -100 ppm, code 5: data mode reached; 0 errors
+  our hst_frx reaches data: pass
+  no bit in error: pass
+test_hstcall: 118 checks, 0 failures

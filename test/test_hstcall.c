@@ -27,6 +27,16 @@
  *                 high-pass, [BM]): our hst_frx reaches data from its first
  *                 training, no bit in error (the live reversal of
  *                 2026-11-25: our receiver never trained on BinModem's)
+ *   fwd_edge      the band's lower edge (v32line's edge_*: a 10th-order
+ *                 Butterworth high-pass at 575 or 600 Hz on the way to us),
+ *                 hstcall's long training (or V.17's) in our pulse or V.17's
+ *                 roll-off at codes 3, 4 and 6; and 550 Hz at -100 ppm, 525
+ *                 Hz at +7 Hz -100 ppm (codes 6, 5): our hst_frx reaches
+ *                 data, no bit in error in 2 x 10^4 (TEST_SHORT 2 x 10^3);
+ *                 from our pulse's matched filter alone its error stayed
+ *                 near -4 dB and it never trained, and the two with the
+ *                 clock offset failed from the second start until its
+ *                 timing took HST_FMF_AB_SHIFT (hst_fwd.c, mf_choose)
  *   marks_self    hstcall's forward transmitter and receiver, 6 -> 5 and
  *                 4 -> 6 by marks (0x3R), the receiver armed 36 ms after the
  *                 marks began (the line, and an LNA's decoding): it
@@ -72,6 +82,14 @@
  *
  * Under make check-hst-bm (HST_PROFILE_BM) only fwd_from_ours and
  * fwd_to_ours_bm run.
+ *
+ * `test_hstcall sweep [SEEDS [v17|long [HZ [PPM]]]]` (not a check; Task
+ * 23b's measure): our hst_frx's first training over a grid of band edges
+ * (no edge; Butterworth high-passes 300-650 Hz of order 4, 6 and 10; the
+ * all-pass's 0.5-3 ms), our pulse and V.17's roll-off, codes 2..6, SEEDS
+ * seeds a cell (3), hstcall's long training or V.17's, the line's carrier
+ * offset HZ and the caller's clock PPM (0): passes, the error at the
+ * training's end and the time to data.
  *
  * The output (the golden file) holds exact integers and one pass or fail
  * line per bound; the measured values, from floating-point arithmetic, only
@@ -183,6 +201,9 @@ static double band_gain(double lo, double hi)
 }
 static v32line_t L;
 static int mulaw = 1;              /* G.711 at our interface (coexist runs without it too) */
+/* the band's lower edge on the way to us (v32line's edge_*), for line() */
+typedef struct { const char *name; double hp; int order; double gd; } edge_t;
+static const edge_t *line_edge;
 static void line(double loss, double near, double cnear, double na, double nc, double hz, double ppm, uint32_t seed)
 {
     v32line_cfg c;
@@ -191,6 +212,7 @@ static void line(double loss, double near, double cnear, double na, double nc, d
     c.near_db = near; c.c_near_db = cnear; c.far_db = c.c_far_db = 300;
     c.noise_a_dbm0 = na; c.noise_c_dbm0 = nc;
     c.freq_offset = hz; c.ppm = ppm; c.seed = seed;
+    if (line_edge) { c.edge_hp_hz = line_edge->hp; c.edge_hp_order = line_edge->order; c.edge_gd_ms = line_edge->gd; }
     v32line_init(&L, &c);
 }
 
@@ -380,22 +402,28 @@ static void fwd_from_ours(void)
 typedef struct { hc_ftx t; src_t s; } hcf_peer_t;
 static double hcf_tx(void *u, double rx) { (void)rx; return hc_ftx_tick(&((hcf_peer_t *)u)->t); }
 
-static void fwd_to_ours_one(const char *what, int code, int long_form, int v17, int bm, uint32_t seed)
+/* hstcall's forward transmitter into our hst_frx: shape bm (1 BinModem's,
+ * 2 V.17's roll-off alone), the band's edge e (NULL none), the line's
+ * offsets hz and ppm, nb bits */
+static void fwd_to_ours_run(const char *what, int code, int long_form, int v17, int bm, const edge_t *e, double hz, double ppm, long nb, uint32_t seed)
 {
     static hcf_peer_t P;
     static hst_frx_t R;
     double arrive = FLEVEL * pow(10, -6 / 20.0) * band_gain(600, 3000);
-    long n, nmax = (NB_FWD + 4000) / (2400 * code) * FS + 4 * FS, data_at = -1;
+    long n, nmax = (nb + 4000) / (2400 * code) * FS + 4 * FS, data_at = -1;
     cmp_t o;
     memset(&P, 0, sizeof P);
     P.s.r = seed;
     hc_ftx_init(&P.t, FLEVEL, src_bit, &P.s);
-    if (bm) hc_ftx_bm(&P.t);
+    if (bm == 1) hc_ftx_bm(&P.t);
+    if (bm == 2) hc_ftx_rolloff(&P.t, 0.25);
     hst_frx_init(&R);
     hst_frx_set_code(&R, code);
-    line(6, 300, 300, dbm0_of(arrive) - 30, -300, 0, 0, seed);
+    line_edge = e;
+    line(6, 300, 300, dbm0_of(arrive) - 30, -300, hz, ppm, seed);
+    line_edge = NULL;
     nrx = 0;
-    for (n = 0; n < nmax && P.s.n < NB_FWD + 2000; n++) {
+    for (n = 0; n < nmax && P.s.n < nb + 2000; n++) {
         int k, nb, was = hst_frx_state(&R);
         int16_t x;
         if (n == FS / 5) hc_ftx_train(&P.t, code, long_form, v17);
@@ -413,7 +441,12 @@ static void fwd_to_ours_one(const char *what, int code, int long_form, int v17, 
                ok && den > 0 ? 10 * log10((double)num / den) : 0.0);
     }
     bound("our hst_frx reaches data", data_at >= 0);
-    bound("no bit in error", o.found && o.cmp >= NB_FWD && o.errs == 0);
+    bound("no bit in error", o.found && o.cmp >= nb && o.errs == 0);
+}
+
+static void fwd_to_ours_one(const char *what, int code, int long_form, int v17, int bm, uint32_t seed)
+{
+    fwd_to_ours_run(what, code, long_form, v17, bm, NULL, 0, 0, NB_FWD, seed);
 }
 
 static void fwd_to_ours(void)
@@ -430,6 +463,113 @@ static void fwd_to_ours_bm(void)
 {
     int code;
     for (code = 2; code <= 6; code++) fwd_to_ours_one("V.17, BinModem's shape", code, 1, 1, 1, 60u + (uint32_t)code);
+}
+
+/* ---- the sweep (`test_hstcall sweep [SEEDS]`; not in the checks): our
+ * hst_frx's first training (hstcall's long training, the matched filter
+ * our receiver starts from) against the band's lower edge (v32line's
+ * edge_*) and two transmit shapes (our pulse, RRC 1/12; V.17's roll-off,
+ * 0.25), codes 2..6, the line as fwd_to_ours'. For each: how many seeds
+ * reach data with no bit in error over the first 4000 or so, the error at
+ * the training's end (data mode's entry, or its failure) and the time to
+ * data ---- */
+typedef struct { int data, ok; long data_ms; int32_t mse_end; } sweep_res_t;
+static int sweep_v17;              /* the sweep's training: V.17's long train instead of hstcall's long one */
+static double sweep_hz, sweep_ppm; /* ... the line's carrier and clock offsets */
+static sweep_res_t sweep_one(int code, double rolloff, const edge_t *e, uint32_t seed)
+{
+    static hcf_peer_t P;
+    static hst_frx_t R;
+    double arrive = FLEVEL * pow(10, -6 / 20.0) * band_gain(600, 3000);
+    long n, nmax = FS / 5 + 5 * FS / 2 + 6000L * FS / (2400L * code), data_at = -1;
+    sweep_res_t o = { 0, 0, -1, 4 << 16 };
+    cmp_t c;
+    memset(&P, 0, sizeof P);
+    P.s.r = seed;
+    hc_ftx_init(&P.t, FLEVEL, src_bit, &P.s);
+    if (rolloff > 0) hc_ftx_rolloff(&P.t, rolloff);
+    hst_frx_init(&R);
+    hst_frx_set_code(&R, code);
+    line_edge = e;
+    line(6, 300, 300, dbm0_of(arrive) - 30, -300, sweep_hz, sweep_ppm, seed);
+    line_edge = NULL;
+    nrx = 0;
+    for (n = 0; n < nmax && P.s.n < 6000; n++) {
+        int k, nb, was = hst_frx_state(&R);
+        int32_t m = R.mse;
+        int16_t x;
+        if (n == FS / 5) hc_ftx_train(&P.t, code, 1, sweep_v17);
+        x = v32line_tick(&L, 0, hcf_tx, &P);
+        nb = hst_frx_tick(&R, x);
+        if (was == HST_FRX_TRAIN && hst_frx_state(&R) != HST_FRX_TRAIN) {
+            o.mse_end = hst_frx_state(&R) == HST_FRX_DATA ? R.mse0 : m;
+            if (hst_frx_state(&R) != HST_FRX_DATA) break;      /* one training only */
+        }
+        if (was != HST_FRX_DATA && hst_frx_state(&R) == HST_FRX_DATA && data_at < 0) data_at = n;
+        for (k = 0; k < nb; k++) rx_put(R.bits[k]);
+    }
+    c = compare(P.s.n, 300);
+    o.data = data_at >= 0;
+    o.ok = o.data && c.found && c.cmp >= 2000 && c.errs == 0;
+    o.data_ms = data_at >= 0 ? (data_at - FS / 5) / 8 : -1;
+    return o;
+}
+
+static void sweep(int nseed)
+{
+    static const edge_t edges[] = {
+        { "none", 0, 0, 0 },
+        { "hp 300/4", 300, 4, 0 }, { "hp 400/4", 400, 4, 0 }, { "hp 500/4", 500, 4, 0 },
+        { "hp 550/4", 550, 4, 0 }, { "hp 600/4", 600, 4, 0 }, { "hp 650/4", 650, 4, 0 },
+        { "hp 300/10", 300, 10, 0 }, { "hp 400/10", 400, 10, 0 }, { "hp 500/10", 500, 10, 0 },
+        { "hp 525/10", 525, 10, 0 }, { "hp 550/10", 550, 10, 0 }, { "hp 575/10", 575, 10, 0 },
+        { "hp 600/10", 600, 10, 0 }, { "hp 650/10", 650, 10, 0 },
+        { "hp 550/6", 550, 6, 0 }, { "hp 600/6", 600, 6, 0 }, { "hp 625/6", 625, 6, 0 },
+        { "gd 0.5", 0, 0, 0.5 }, { "gd 1.0", 0, 0, 1.0 }, { "gd 1.5", 0, 0, 1.5 },
+        { "gd 2.0", 0, 0, 2.0 }, { "gd 2.5", 0, 0, 2.5 }, { "gd 3.0", 0, 0, 3.0 },
+    };
+    static const double rolls[2] = { 0, 0.25 };
+    static const char *rname[2] = { "ours", "rrc25" };
+    int ei, si, code, k;
+    printf("sweep (%s, %+g Hz, %+g ppm): our hst_frx's first training, %d seeds a cell: pass/seeds, error at the training's end (dB, mean), time to data (ms, mean of those reaching it)\n",
+           sweep_v17 ? "V.17's long train" : "hstcall's long training", sweep_hz, sweep_ppm, nseed);
+    for (si = 0; si < 2; si++)
+        for (ei = 0; ei < (int)(sizeof edges / sizeof edges[0]); ei++) {
+            printf("%-5s %-9s", rname[si], edges[ei].name);
+            for (code = 2; code <= 6; code++) {
+                int pass = 0, nd = 0;
+                double mse = 0, ms = 0;
+                for (k = 0; k < nseed; k++) {
+                    sweep_res_t o = sweep_one(code, rolls[si], &edges[ei], 1000u + 97u * (uint32_t)k + (uint32_t)code);
+                    pass += o.ok;
+                    mse += 10 * log10(o.mse_end / 65536.0);
+                    if (o.data) { nd++; ms += (double)o.data_ms; }
+                }
+                printf(" | c%d %d/%d %6.1f %5.0f", code, pass, nseed, mse / nseed, nd ? ms / nd : -1.0);
+            }
+            printf("\n");
+            fflush(stdout);
+        }
+}
+
+/* the band's lower edge (v32line's edge_*): our first training against
+ * a 10th-order Butterworth high-pass at 575 and 600 Hz on the way to us,
+ * our pulse and V.17's roll-off, hstcall's long training and V.17's (the
+ * sweep, `test_hstcall sweep`: from our pulse's matched filter alone the
+ * error stayed near -4 dB and the training failed in most of these) */
+static void fwd_edge(void)
+{
+    static const edge_t e575 = { "hp 575/10", 575, 10, 0 }, e600 = { "hp 600/10", 600, 10, 0 };
+    static const edge_t e525 = { "hp 525/10", 525, 10, 0 }, e550 = { "hp 550/10", 550, 10, 0 };
+    fwd_to_ours_run("high-pass 600 Hz 10th order, ours", 6, 1, 0, 0, &e600, 0, 0, NB_OFF, 71u);
+    fwd_to_ours_run("high-pass 600 Hz 10th order, V.17's roll-off", 6, 1, 0, 2, &e600, 0, 0, NB_OFF, 72u);
+    fwd_to_ours_run("high-pass 575 Hz 10th order, ours, V.17's train", 4, 1, 1, 0, &e575, 0, 0, NB_OFF, 73u);
+    fwd_to_ours_run("high-pass 600 Hz 10th order, ours", 3, 1, 0, 0, &e600, 0, 0, NB_OFF, 74u);
+    /* the caller's clock 100 ppm slow (and the carrier 7 Hz off): from the
+     * second start, AB's timing read as it is failed these (the edge's
+     * phase at 600 Hz moves it early; the clock moves it further) */
+    fwd_to_ours_run("high-pass 550 Hz 10th order, ours, -100 ppm", 6, 1, 0, 0, &e550, 0, -100, NB_OFF, 81u);
+    fwd_to_ours_run("high-pass 525 Hz 10th order, V.17's roll-off and train, +7 Hz -100 ppm", 5, 1, 1, 2, &e525, 7, -100, NB_OFF, 96u);
 }
 
 /* 0x3R by marks, hstcall's transmitter to its own receiver: the old
@@ -1049,6 +1189,13 @@ static void stored_eq(void)
 
 int main(int argc, char **argv)
 {
+    if (argc >= 2 && strcmp(argv[1], "sweep") == 0) {
+        sweep_v17 = argc >= 4 && strcmp(argv[3], "v17") == 0;
+        sweep_hz = argc >= 5 ? atof(argv[4]) : 0;
+        sweep_ppm = argc >= 6 ? atof(argv[5]) : 0;
+        sweep(argc >= 3 ? atoi(argv[2]) : 3);
+        return 0;
+    }
 #ifdef HST_PROFILE_BM
     int only = t_case_arg(argc, argv, 2);
     verbose = getenv("HST_VERBOSE") != NULL;
@@ -1057,9 +1204,9 @@ int main(int argc, char **argv)
     /* the rest do not depend on the profile: run in the default build only */
     (void)tone; (void)back_to_ours; (void)back_from_ours; (void)fwd_to_ours;
     (void)marks_self; (void)coexist; (void)link_case; (void)reversal; (void)stored_eq;
-    (void)holder_rates; (void)turn_back; (void)forced_twice; (void)rev_lost; (void)knobs; (void)ignore_ln;
+    (void)holder_rates; (void)turn_back; (void)forced_twice; (void)rev_lost; (void)knobs; (void)ignore_ln; (void)fwd_edge;
 #else
-    int only = t_case_arg(argc, argv, 18);
+    int only = t_case_arg(argc, argv, 19);
     verbose = getenv("HST_VERBOSE") != NULL;
     (void)fwd_to_ours_bm;            /* the BinModem profile's (make check-hst-bm) */
     if (T_CASE(only, 1)) tone();
@@ -1080,6 +1227,7 @@ int main(int argc, char **argv)
     if (T_CASE(only, 16)) rev_lost();
     if (T_CASE(only, 17)) knobs();
     if (T_CASE(only, 18)) ignore_ln();
+    if (T_CASE(only, 19)) fwd_edge();
 #endif
     T_REPORT("test_hstcall");
 }

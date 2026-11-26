@@ -10,7 +10,23 @@
  *
  * With mulaw set, the network side (codec both ways, loop filters, noise and
  * the answerer's hybrid echo) is sim/channel.c; without it the same in linear
- * arithmetic with a dispersive hybrid. */
+ * arithmetic with a dispersive hybrid.
+ *
+ * The band's lower edge (optional; edge_* in the config): what long loops,
+ * channel banks and ATAs' high-pass filters do below about 1000 Hz, on the
+ * way to the answerer (before its codec), and with edge_both on the way to
+ * the caller too (on the network clock, after the frequency shift). From
+ * filter theory alone:
+ * - edge_hp_hz: a Butterworth high-pass of order edge_hp_order (even, 2..10;
+ *   0: 4) cornered there, by the bilinear transform at 8000 Hz with its
+ *   corner prewarped: sections s^2 / (s^2 + 2 zeta s + 1), zeta =
+ *   sin((2k + 1) pi / 2n). Its gain and its phase (group delay at the corner
+ *   and above it falling with the frequency);
+ * - edge_gd_ms: phase alone, a second-order all-pass with its poles at
+ *   550 Hz, radius r: group delay (1 - r^2) / |1 - r e^(j(th - w))|^2 for
+ *   each pole, r chosen so that the delay at 600 Hz is edge_gd_ms over the
+ *   delay at 1800 Hz; it falls to a few percent of that by 1000 Hz (at 3 ms:
+ *   700 Hz 0.85, 1000 Hz 0.12 ms; the gain is 1 everywhere). */
 #ifndef V90D_SIM_V32LINE_H
 #define V90D_SIM_V32LINE_H
 #include <stdint.h>
@@ -36,7 +52,18 @@ typedef struct {
     double   freq_offset;      /* Hz, carrier shift each way */
     double   ppm;              /* the caller's sample clock against the network's */
     uint32_t seed;
+    double   edge_hp_hz;       /* the band edge's high-pass corner, Hz (0: none) */
+    int      edge_hp_order;    /* its order: even, 2..10 (0: 4) */
+    double   edge_gd_ms;       /* the all-pass's group delay at 600 Hz over 1800's, ms (0: none) */
+    int      edge_both;        /* the edge on the way to the caller as well */
 } v32line_cfg;
+
+/* the band edge, one way: up to 5 high-pass sections and the all-pass */
+#define V32LINE_EDGE_SEC 6
+typedef struct {
+    int    n;
+    double b[V32LINE_EDGE_SEC][3], a[V32LINE_EDGE_SEC][2], z[V32LINE_EDGE_SEC][2];
+} v32line_edge;
 
 typedef double (*v32line_peer_fn)(void *user, double rx);
 
@@ -62,6 +89,7 @@ typedef struct {
      * far the caller's sample count trails the network's (the resampler's
      * start-up) */
     int        oneway, oneway_back, peer_lag;
+    v32line_edge e_ca, e_ac;                   /* the band edge, to the answerer and to the caller */
 } v32line_t;
 
 void    v32line_init(v32line_t *l, const v32line_cfg *cfg);

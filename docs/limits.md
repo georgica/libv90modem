@@ -490,6 +490,82 @@ Measured against `sim/hstcall` only; no real HST modem has called it yet.
   the receiver's error 3 dB above them within 0.04 dB (-17.80, -20.56,
   -23.79, -24.13 dB), so `hst_good_mse` stands. The thresholds' runs of
   20 s were chosen to keep the drift out; they are kept.
+- **The forward receiver's first training and the band's lower edge**
+  (Task 23b and its fix round; `test_hstcall fwd_edge`, `test_hstcall
+  sweep [SEEDS [v17|long [HZ [PPM]]]]`, `sim/v32line`'s `edge_*`). The
+  first training starts from a matched filter; a line's high-pass near 600
+  Hz (channel banks, ATAs) bends the phase where the forward band starts
+  (500-700 Hz). The edge model is Butterworth only (high-passes of even
+  order, and a second-order all-pass): elliptic or Chebyshev filters, with
+  more phase ripple near the corner, are not modelled, and neither are
+  real ATAs' or channel banks' filters, nor a real Courier's pulse (we
+  assume the sharp one).
+
+  Before (one start, our pulse's matched filter), codes 2..6, our pulse and
+  V.17's 25 % roll-off, hstcall's long training and V.17's, 5 seeds, a
+  mu-law line at 30 dB, no offset: phase alone (an all-pass, 0.5 to 3 ms at
+  600 Hz over 1800's) never failed; a high-pass of order 4 never failed
+  from 300 to 650 Hz; of order 10 it failed at 550 Hz (39 and 45 of 50
+  passing, our pulse and V.17's) and nearly always at 600 Hz (5 and 8 of
+  50), the error stuck near -4 dB.
+
+  Now the receiver measures, over the first 128 training symbols, its own
+  pulse's matched filter and that pulse's through a 550 Hz 6th-order
+  high-pass, by the spread of each one's point power, and starts again
+  from the second unless its spread is 1.25 times the first's or more
+  (`mf_choose`; the rule leans to the second start). The restart takes
+  AB's symbol timing later by `HST_FMF_AB_SHIFT` (0.45 symbol): the second
+  start's own high-pass reads AB's two tones that much early. Without it
+  (Task 23b as first committed) a caller's clock 100 ppm slow moved the
+  timing the rest of the way out: on steep edges 3 to 34 % of first
+  trainings failed (below). A scratch probe of the restart's timing
+  showed the failures on the early side: 0.12 to 0.38 sample earlier than
+  AB's reading failed up to 61 % of a cell at -100 ppm, while 0.12 to
+  1.75 samples later failed at most 2 of 80 at -100, 0 and +100 ppm
+  (the shift, 1.5 samples, sits inside that).
+
+  Failures out of 80 a cell (codes 2..6, both shapes, both trainings, 4
+  seeds; failure = no data, or a bit in error in the first 2000 or so;
+  scratch grid, the same `sweep_one`), before this round and now:
+
+  | Hz, ppm | hp 525/10 | 550/10 | 575/10 | 600/10 | 550/6 | 625/6 | 500/8 | 525/8 | gd 3 ms |
+  |---|---|---|---|---|---|---|---|---|---|
+  | 0, 0 | 0 / 0 | 1 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 1 / 1 | 2 / 1 | 0 / 0 |
+  | 0, +100 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 5 / 5 | 4 / 4 | 1 / 1 |
+  | 0, -100 | 11 / 0 | 7 / 0 | 8 / 0 | 2 / 0 | 0 / 0 | 32 / 0 | 1 / 1 | 0 / 0 | 0 / 0 |
+  | +7, -100 | 10 / 0 | 27 / 0 | 13 / 0 | 4 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+  | -7, +100 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 7 / 7 | 78 / 78 | 0 / 0 | 0 / 1 | 0 / 0 |
+  | +7, +100 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 3 / 3 | 0 / 0 | 0 / 0 | 0 / 0 | 2 / 2 |
+  | -7, -100 | 12 / 0 | 3 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 74 / 74 | 0 / 0 | 6 / 0 | 0 / 0 |
+
+  No edge, hp 500/4 and hp 300/10: 0 at every offset, before and now.
+  What is left:
+  - 550 Hz order 6 with the carrier 7 Hz off and the clock +100 ppm: 7
+    and 3 of 80. The rule keeps our pulse's start there (its spread
+    ratio 1.26 and up, the review's measure), and it fails as it did
+    before Task 23b.
+  - 625 Hz order 6 with the carrier -7 Hz off: AB is never heard (74, 78
+    of 80), and the same at 625-650 Hz of order 10 and 650 Hz of order 6
+    and 8 with no offset (a 3-seed scratch sweep: 240 of 240). The 600
+    Hz tone is too far down for the detector, so there the margin's edge
+    is AB, not the training; such a cut also takes the bottom of the
+    forward band.
+  - 500 and 525 Hz of order 8, and the all-pass at 3 ms: a few single
+    misses, none of them switching, the same before and now.
+  - Pure group delay is the closest call on a line with no high-pass: at
+    3 ms and 20-22 dB the second start's spread is 1.53 times the first's
+    (the review's sweep; the rule switches under 1.25). The 0.5-3 ms the
+    brief asked for are covered; more delay than that is not measured, and
+    there a switch would hurt: started from the second filter with AB's
+    timing as read, the 3 ms line failed 68 to 103 of 160 (the review's
+    control).
+  - Noise: the review swept 18-30 dB with offsets (11 200 runs); no line
+    without a steep edge ever switched (the largest spread ratio 3.3 at 18
+    dB with no edge), and on steep edges the choice held at 18-22 dB.
+
+  Lines with no edge, and every existing case, train exactly as before
+  (the second start is never chosen: only test_hstcall's golden output
+  changed, by fwd_edge's lines).
 - **"Good", read at the rate in force** (Task 22b; `test_hst_fwd
   upshift`, which `make hst-thresh` runs after the sweep). The policy asks
   for code c while running at c - 1, so it reads `hst_good_mse[c]`, a

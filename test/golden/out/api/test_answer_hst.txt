@@ -371,4 +371,6 @@ levels -33 dBm0, +100 ppm: reversals 25, rate changes 5 (the caller asked 5), re
 levels -33 dBm0, -100 ppm: reversals 25, rate changes 5 (the caller asked 5), retrains 3; data 7744 to the caller, 10944 to us, 0 wrong
   every octet delivered both ways, intact; the call up: pass
   reversals and rate changes on the way (2 each at least): pass
-test_answer_hst: 1091 checks, 0 failures
+back_silent_pending: the caller gone with a followed change pending at 1 s
+  no 0x2R of ours at 1 s over the pending change: pass
+test_answer_hst: 1099 checks, 0 failures

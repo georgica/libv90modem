@@ -76,6 +76,21 @@ The forward channel (hst-facts.md "Forward channel"):
                  it: starting from hst_fpulse's own matched filter the
                  receiver saw that pulse's symbols some 4 dB under the error
                  and never trained (the live reversal of 2026-11-25).
+  hst_fmf        the default forward receiver's first equalisers [OURS],
+                 as hst_fmf_bm: [0] hst_fpulse as mf_taps used to read it
+                 (linear between its thirds of a sample, before MF_GAIN:
+                 the same integers), [1] the matched filter of the same
+                 root-raised-cosine (1/12, no window) through an analog
+                 6th-order Butterworth high-pass at 550 Hz, with [0]'s turn
+                 and energy. A steep high-pass at the band's lower edge
+                 (550-600 Hz, the test_hstcall sweep) left [0]'s points some
+                 4 dB under the error. The receiver measures both starts
+                 over its first training's first symbols and starts again
+                 from [1] unless [1]'s spread is 1.25 times [0]'s or more
+                 (modem/hst_fwd.c, mf_choose), its symbol timing AB's plus
+                 HST_FMF_AB_SHIFT: on the line [1] assumes, the high-pass's
+                 phase at 600 Hz against 3000 Hz reads AB's timing about
+                 0.45 symbol early. Each tap under 2^16.
   hst_guard      the forward receiver's guard high-pass [OURS]: within
                  +-0.5 dB from 560 Hz up, at least 50 dB down at 480 Hz and
                  below (the spec's edges; the back channel's -20 dB band ends
@@ -567,55 +582,79 @@ BM_BETA = 0.25                # V.17's roll-off (binmodem-facts.md "Pulse shape"
 BM_GUARD_HZ, BM_GUARD_N = 560.0, 10   # its high-pass on the forward transmitter [BM]
 
 
-def bm_pulse(t):
-    """BinModem's forward pulse, analytic, t seconds from the symbol's
-    instant: V.17's root-raised-cosine spectrum on 1800 Hz times the
-    Butterworth high-pass, integrated over 300-3300 Hz in 1 Hz steps"""
+EDGE_HZ, EDGE_N = 550.0, 6     # the default receiver's second start's high-pass [OURS]
+
+
+def shaped_pulse(t, beta, hp_hz, hp_n):
+    """a forward pulse, analytic, t seconds from the symbol's instant: the
+    root-raised-cosine spectrum (roll-off beta) on 1800 Hz times an analog
+    Butterworth high-pass of order hp_n at hp_hz, integrated over
+    300-3300 Hz in 1 Hz steps"""
     T = 1 / 2400.0
     acc = 0j
     for i in range(3000):
         f = 300.5 + i
         v = abs(f - 1800.0) * T
-        if v <= (1 - BM_BETA) / 2:
+        if v <= (1 - beta) / 2:
             gs = 1.0
-        elif v <= (1 + BM_BETA) / 2:
-            gs = math.sqrt(0.5 * (1 + math.cos(math.pi / BM_BETA * (v - (1 - BM_BETA) / 2))))
+        elif v <= (1 + beta) / 2:
+            gs = math.sqrt(0.5 * (1 + math.cos(math.pi / beta * (v - (1 - beta) / 2))))
         else:
             continue
-        sn = 1j * f / BM_GUARD_HZ
+        sn = 1j * f / hp_hz
         h = 1 + 0j
-        for k in range(BM_GUARD_N // 2):
-            z = math.sin((2 * k + 1) * math.pi / (2 * BM_GUARD_N))
+        for k in range(hp_n // 2):
+            z = math.sin((2 * k + 1) * math.pi / (2 * hp_n))
             h *= sn * sn / (sn * sn + 2 * z * sn + 1)
         acc += gs * h * complex(math.cos(2 * math.pi * f * t), math.sin(2 * math.pi * f * t))
     return acc
 
 
-def tab_fmf_bm():
+def bm_pulse(t):
+    """BinModem's forward pulse: V.17's roll-off through its 560 Hz
+    Butterworth high-pass [BM]"""
+    return shaped_pulse(t, BM_BETA, BM_GUARD_HZ, BM_GUARD_N)
+
+
+def fmf_fit(what):
+    """hst_fpulse as mf_taps reads it (before MF_GAIN), in qamrx's tap
+    order: the integers, and the turn and size of the shape they hold"""
     L, wb = fpulse_design()
     qt = fpulse_q(L, wb)
     u = [(FMF_C - k) / 3.0 for k in range(FMF_N)]   # symbols before the on-time sample
-    # hst_fpulse as mf_taps reads it (before MF_GAIN), and the shape it holds
-    mf = []
+    mfi = []
     for k in range(FMF_N):
         n9 = L * 15 - (FMF_C - k) * 10
         n, f = n9 // 3, n9 % 3
         a, b = qt[n % 10][n // 10], qt[(n + 1) % 10][(n + 1) // 10]
-        mf.append(complex(a[0] * (3 - f) + b[0] * f, a[1] * (3 - f) + b[1] * f))
+        mfi.append((a[0] * (3 - f) + b[0] * f, a[1] * (3 - f) + b[1] * f))
+    mf = [complex(a, b) for a, b in mfi]
     shape = [rrc(x, F_BETA) * kaiser(x / (L / 2.0), wb) * complex(math.cos(F_WC * x * F_SPS), -math.sin(F_WC * x * F_SPS))
              for x in u]
     alpha = sum(m * s.conjugate() for m, s in zip(mf, shape)) / sum(abs(s) ** 2 for s in shape)
     resid = math.sqrt(sum(abs(m - alpha * s) ** 2 for m, s in zip(mf, shape)) / sum(abs(m) ** 2 for m in mf))
     if resid > 0.05:
-        die("fmf_bm: mf_taps is not hst_fpulse's matched filter (residual %.3f)" % resid)
-    p = [bm_pulse(x / 2400.0).conjugate() for x in u]
+        die("%s: mf_taps is not hst_fpulse's matched filter (residual %.3f)" % (what, resid))
+    return u, mfi, shape, alpha, resid
+
+
+def fmf_of(what, u, shape, alpha, pulse):
+    """the matched filter of pulse (a function of seconds), in mf_taps'
+    units: hst_fpulse's turn, and its energy"""
+    p = [pulse(x / 2400.0).conjugate() for x in u]
     scale = math.sqrt(sum(abs(s) ** 2 for s in shape) / sum(abs(v) ** 2 for v in p))
     taps = [alpha * scale * v for v in p]
     vals = []
     for t in taps:
         vals += [int(round(t.real)), int(round(t.imag))]
     if max(abs(v) for v in vals) >= 1 << 24:
-        die("fmf_bm: a tap past 2^24 (x MF_GAIN would leave int32)")
+        die("%s: a tap past 2^24 (x MF_GAIN would leave int32)" % what)
+    return vals
+
+
+def tab_fmf_bm():
+    u, mfi, shape, alpha, resid = fmf_fit("fmf_bm")
+    vals = fmf_of("fmf_bm", u, shape, alpha, bm_pulse)
     sys.stderr.write("gen_hst_tabs: fmf_bm: mf_taps' turn %.1f deg, residual %.3f; peak tap %d\n"
                      % (math.degrees(math.atan2(alpha.imag, alpha.real)), resid, max(abs(v) for v in vals)))
     h = [define("HST_FMF_N", FMF_N, "qamrx's taps (QRX_NTAP), a third of a symbol apart"),
@@ -627,6 +666,47 @@ def tab_fmf_bm():
     c = ["const int32_t hst_fmf_bm[HST_FMF_N][2] = {"]
     c += ["    " + " ".join("{%8d,%8d}," % (vals[2 * i], vals[2 * i + 1]) for i in range(k, min(k + 4, FMF_N)))
           for k in range(0, FMF_N, 4)]
+    c.append("};")
+    c.append("")
+    return h, c
+
+
+def tab_fmf():
+    u, mfi, shape, alpha, resid = fmf_fit("fmf")
+    ours = [v for t in mfi for v in t]
+    edge = fmf_of("fmf", u, shape, alpha, lambda t: shaped_pulse(t, F_BETA, EDGE_HZ, EDGE_N))
+    if max(abs(v) for v in ours + edge) >= 1 << 16:
+        die("fmf: a tap past 2^16 (hst_fwd.c's mf_choose: a tap times a sample must fit int32 before its int64 sum)")
+    sys.stderr.write("gen_hst_tabs: fmf: peak taps %d, %d\n" % (max(abs(v) for v in ours), max(abs(v) for v in edge)))
+    # AB's timing read through the second start's high-pass: the tones' phase
+    # 600 x conj(3000) is 2400 Hz times the delay, plus the high-pass's phase
+    # at 600 Hz less its phase at 3000 Hz; that extra, as a time, in
+    # 1/1536 sample (ab_delay's unit), within half a symbol either way
+    def hp_phase(f):
+        sn = 1j * f / EDGE_HZ
+        h = 1 + 0j
+        for k in range(EDGE_N // 2):
+            z = math.sin((2 * k + 1) * math.pi / (2 * EDGE_N))
+            h *= sn * sn / (sn * sn + 2 * z * sn + 1)
+        return math.atan2(h.imag, h.real)
+    sym = 5120.0
+    shift = (hp_phase(600.0) - hp_phase(3000.0)) / (2 * math.pi * 2400.0) * FS * 1536
+    shift = (shift + sym / 2) % sym - sym / 2
+    ab_shift = int(round(-shift))
+    sys.stderr.write("gen_hst_tabs: fmf: AB's timing through the second start's high-pass %.1f/1536 sample\n" % shift)
+    h = [define("HST_FMF_STARTS", 2, "the default receiver's first equalisers"),
+         define("HST_FMF_AB_SHIFT", ab_shift, "added to AB's timing for hst_fmf[1], 1/1536 sample"),
+         "/* the default receiver's first equalisers, as hst_fmf_bm: [0] mf_taps'",
+         " * reading of hst_fpulse (its matched filter), [1] the matched filter of",
+         " * the same root-raised-cosine (1/12) through a 6th-order Butterworth",
+         " * high-pass at 550 Hz (the band's lower edge at its worst) */",
+         "extern const int32_t hst_fmf[HST_FMF_STARTS][HST_FMF_N][2];"]
+    c = ["const int32_t hst_fmf[HST_FMF_STARTS][HST_FMF_N][2] = {"]
+    for vals in (ours, edge):
+        c.append("  {")
+        c += ["    " + " ".join("{%8d,%8d}," % (vals[2 * i], vals[2 * i + 1]) for i in range(k, min(k + 4, FMF_N)))
+              for k in range(0, FMF_N, 4)]
+        c.append("  },")
     c.append("};")
     c.append("")
     return h, c
@@ -691,7 +771,7 @@ def tab_guard():
     return h, c
 
 
-TABLES = (tab_bstep, tab_bpulse, tab_bpf, tab_fpulse, tab_fmf_bm, tab_guard)
+TABLES = (tab_bstep, tab_bpulse, tab_bpf, tab_fpulse, tab_fmf_bm, tab_fmf, tab_guard)
 
 
 def main():
