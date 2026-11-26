@@ -654,24 +654,30 @@ Measured against `sim/hstcall` only; no real HST modem has called it yet.
   more of the last 8 points are off and their power stays over 3 dB off
   A..D's for 8 symbols, the next 16 symbols' power sets the gain again
   (the equaliser's line and the points scaled by the root of the ratio; at
-  most 4 times a training); the carrier's level starts 6 dB under AB's (the
+  most 4 such measures a training, each taking the level or not); the carrier's level starts 6 dB under AB's (the
   relative clamp 16 dB under AB) and is taken again then. Before, the pass
   edge was AB 3 dB under to 5 dB over the rest: 6 to 9 dB over gave
   TRAINFAIL (every point off the 4, nothing adapted), 10 dB and more
   NOCARRIER (the clamp 10 dB under AB's level), 4 dB under TRAINFAIL. Now
   `test_hst_fwd ab_sweep` passes every cell from AB 8 dB under to 14 dB
   over, codes 2..6 (3 seeds, 30 dB; 2 seeds at +7 Hz -100 ppm). On a 20 dB
-  line (10 seeds) a re-taken training does as an equal-level one does
-  (code 5 5..8 of 10, 8 at 0 dB); with AB 2 to 5 dB over and no re-take
-  code 5 did better (10 of 10), the points starting smaller (a smaller
-  equaliser step): the training's own scale on a noisy line is untuned.
+  line, code 5 (the Task 23e review, 30 seeds): with AB 4 and 5 dB over
+  the data, 18/30 and 25/30 pass, against 30/30 for BASE (no re-take, the
+  points starting smaller: a smaller equaliser step) and 24/30 at equal
+  levels; a re-taken training matches an equal-level one only from about
+  6 dB off (10 seeds: 5..8 of 10 from 6 dB on, 8 at 0 dB). The training's
+  own scale on a noisy line is untuned. Unchanged from BASE: AB 2 to 3 dB
+  quieter than the data fails code 5 on a 20 dB line (10 seeds: 0/10 at
+  -2 and -3 dB, before and after).
   Limits: measured on our own caller only, a real Courier's AB level
   against its data is unknown; a level 3 to 5 dB off that leaves the points
   on the 4 is not taken (the equaliser takes it, a slower training at code
   2); a level step of 10 to 16 dB later in a training is not clamped (a cut
   under -48 dBm0 still is); its points are off and nothing adapts on them.
-- **The level-step residuals** (Task 16: about 5 in 96 level steps lose
-  the forward receiver's lock; 14400 recovering slowly from some 100 ms
+- **The level-step residuals** (a 6.5 dB drop at 14400 on a 30 dB line
+  loses the forward receiver's lock on about 15 % of calls: 6 of 40 seeds,
+  the Task 23e review; Task 16 had counted about 5 in 96 over a mix of
+  steps and rates; 14400 recovering slowly from some 100 ms
   dropouts): left as they are. An UNLOCKED is now a retrain at once (0x2R,
   counted as above), and a slow recovery keeps data mode while MNP
   resends. `levels` (`test_answer_hst`: -9 to -33 dBm0, +-100 ppm, 25 dB,

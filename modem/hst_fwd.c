@@ -300,8 +300,9 @@ static const int32_t lock_mse[7] = { 0, 0, 17238, 3439, 1724, 825, 423 };
  *   the ratio, the equaliser's line and the last 8 points scaled with it
  *   (the points at once at the new scale, not after the line's 24
  *   symbols), pref taken from the power now, the first start's measure
- *   begun again; nothing adapted on that symbol. At most LV_MAX times a
- *   training (a line of noise alone is bounded).
+ *   begun again; nothing adapted on that symbol. At most LV_MAX such
+ *   measures a training, whether or not each takes the level (a line of
+ *   noise alone is bounded).
  * Why each part (test_hst_fwd ab_sweep, test_hstcall sweep): on a steep
  * edge the first start's points drift 3 dB or more while its equaliser
  * adapts, and a re-take there lost a training at 500 Hz order 10: hence
@@ -628,7 +629,7 @@ static int level(hst_frx_t *r)
         p = r->lvp / LV_M;
         r->lvw = 0;
         r->lvp = 0;
-        r->lvn++;
+        r->lvn++;                     /* a measure, whether it takes the level or not */
         /* within 1 dB (5/4 either way), or no signal: nothing to take */
         if ((5 * p >= 4 * LV_PT && 4 * p <= 5 * LV_PT) || 64 * p < LV_PT) return 0;
         /* the gain by the root of LV_PT / p (Q14, within 1/4 .. 8), held to

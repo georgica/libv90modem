@@ -497,8 +497,8 @@ int16_t hst_gf_tick(hst_gf_t *g, int16_t in);
  *          its sweep). Every training: 5 or more of the last 8 points
  *          off and their power over 3 dB off A..D's for 8 symbols, the
  *          next 16 symbols' power takes the level again (qamrx's gain, its
- *          equaliser line and the points scaled; at most 4 times a
- *          training): AB may come louder or quieter than the rest
+ *          equaliser line and the points scaled; at most 4 such
+ *          measures a training): AB may come louder or quieter than the rest
  *          (test_hst_fwd ab_loud, ab_sweep; Task 23e)
  *   DATA   at code 3..6, once more than 3 of the last 8 points are off the
  *          4 points: the rate's set through v32_vit_t; at code 2, the 4
@@ -617,7 +617,8 @@ typedef struct {
     /* the training's level (TRAIN; AB may come louder or quieter than the rest) */
     int32_t    lvw;                   /* symbols the last 8 points' power has been over 3 dB
                                        * off A..D's */
-    int32_t    lvn;                   /* the level's re-takes this training */
+    int32_t    lvn;                   /* the level's measures this training (each may
+                                       * or may not take it again; LV_MAX) */
     int64_t    lvp;                   /* ... the points' power summed while measuring */
     /* TRN, Table 4 read directly under each quarter turn (code 2) */
     v32_scr_t  dir[4];

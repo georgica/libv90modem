@@ -6420,7 +6420,7 @@ milestone gate (verify-phase, ports, ARM) is Task 26's.
 - **Tests.** `ab_loud` (case 25) gains AB +6, +10, +12 and -6 dB, codes
   2..6, data mode and no error in 20000 bits: 20 failures before (TRAINFAIL
   at +6 and -6, NOCARRIER at +10 and +12). Its seeds move from 1300 + c to
-  1400 + c: at 1306 the 6.5 dB step at 14400 loses the lock with AB at
+  1400 + c: at 1301 the 6.5 dB step at 14400 loses the lock with AB at
   the data's level as well (3 of 12 seeds at 0 dB; 4 of 12 after a re-take;
   1 of 12 with AB 4 dB over and no re-take); its two lines are unchanged.
   `test_hst_fwd ab_sweep [SEEDS [SNR [HZ PPM]]]`: the sweep (not a check).

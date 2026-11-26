@@ -1977,7 +1977,7 @@ static void ab_sweep(int nseed, double hz, double ppm)
  * AB, the step is 10.5 dB under it: NOCARRIER). AB 6 dB over the rest
  * failed the training itself (TRAINFAIL), 10 dB over it NOCARRIER, 4 dB
  * under it TRAINFAIL, until the training took the level again (Task 23e).
- * Seeds 1400 + c (Task 23e; 1300 + c before): at 1306 the 6.5 dB step at
+ * Seeds 1400 + c (Task 23e; 1300 + c before): at 1301 the 6.5 dB step at
  * 14400 loses the lock with AB at the data's level too (the level-step
  * residual, docs/limits.md: 3 of 12 seeds at 0 dB, 4 of 12 after a
  * re-take, 1 of 12 with AB 4 dB over and no re-take, the points smaller);
