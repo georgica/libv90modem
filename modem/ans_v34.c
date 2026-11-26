@@ -57,7 +57,7 @@ static int16_t tick(answer_t *a, int16_t rx)
         /* the caller chose V.34 in INFO1a: a retrain is Phase 2 of V.90
          * again, whoever began it (V.90 9.2.1.1.8), with the silence and
          * the limit of the V.90 retrain */
-        if (a->v34.state == V34A_RETRAIN) { ans_v90_retrain(a); return 0; }
+        if (a->v34.state == V34A_RETRAIN) { ans_v90_retrain(a, a->v34.dx.retrain_ours); return 0; }
         if (a->v34.state == V34A_DATA) ans_rt_data_tick(a, &ans_rt_v90);
     }
     if (a->v34.state == V34A_X2) {           /* the client's x2 marker */
@@ -82,7 +82,15 @@ static int16_t tick(answer_t *a, int16_t rx)
         /* no data moves: a retrain, or a rate renegotiation (not a retrain) */
         a->retraining = a->v34.state != V34A_RENEG;
     }
-    if (!a->v34.from_v90) a->retrains = a->v34.retrains;
+    if (!a->v34.from_v90 && a->v34.retrains != a->retrains) {
+        /* the engine's new ones (v90m_get_restarts): its data mode's
+         * retrain, the far end's or ours as v34dx says, or Phase 2's own
+         * (p2ans's, ours), which come with the engine started anew */
+        int why = (a->v34.state == V34A_RETRAIN || a->v34.state == V34A_ENDED) && a->v34.dx.state == DX_RETRAIN
+                  ? a->v34.dx.retrain_ours : WHY_OURS;
+        while (a->retrains < a->v34.retrains) { a->retrains++; callev_retrain(&a->ev, why); }
+        a->retrains = a->v34.retrains;
+    }
     return tx;
 }
 

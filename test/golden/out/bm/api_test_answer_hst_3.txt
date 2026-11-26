@@ -57,6 +57,8 @@ up: our switch by training to 9600 as holder; then holding back, 10 s good: our 
   retrains 4, reversals 1; LNs ours 2, last 0x36, the caller's last 0x14, violations 0; data 2048 to the caller, 24192 to us, 0 wrong
   data stopped for each of the three changes (trainings), not otherwise: pass
   no more LNs (14400 is the top); the data both ways intact, ours all in: pass
+  restarts: retrains ours 3 (host 0), far 1; renegotiations 0; the last ours
+  restarts: ours 3, the far end's 1 (its 0x34); the last ours: pass
 recovery: the caller's receiver drops out of data; 2 x T401: our short training
   our switches by marks 0; then our trainings 1, code 6, S3 64
   no switch, no retrain until then: pass
@@ -64,4 +66,4 @@ recovery: the caller's receiver drops out of data; 2 x T401: our short training
   a retrain: DATA_STOPPED, DATA_MOVING; retrains 2; the caller's receiver at 14400: pass
   retrains 2, reversals 0; LNs ours 0, last 0x00, the caller's last 0x00, violations 0; data 4096 to the caller, 768 to us, 0 wrong
   the data both ways intact, and moving again: pass
-test_answer_hst: 116 checks, 0 failures
+test_answer_hst: 120 checks, 0 failures

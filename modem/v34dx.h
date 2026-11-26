@@ -27,6 +27,7 @@
 #include "ec.h"
 #include "ecdly.h"
 #include "tonedet.h"
+#include "callev.h"
 #include "v34up.h"
 #include "v34mod.h"
 #include "v34mp.h"
@@ -106,7 +107,7 @@ typedef struct {
     v34dx_state state;
     int         error;
     uint32_t    now, t;             /* sample clock; samples in this state (modem/clock.h) */
-    int         retrain_ours;       /* DX_RETRAIN: we asked for it */
+    int         retrain_ours;       /* DX_RETRAIN: we asked for it, why (WHY_* of callev.h; 0 the far end's) */
     uint32_t    t_neg;              /* when Phase 4 or the rate renegotiation began */
     /* ---- transmit ---- */
     v34mod_t    mod;

@@ -1,3 +1,4 @@
+#include <string.h>
 #include "ans_scheme.h"
 #include "clock.h"
 #include "pcmenc.h"
@@ -48,11 +49,13 @@ void ans_fail(answer_t *a, int why) { a->end = why; ans_enter(a, ANS_FAILED); a-
 int ans_lost_or(const answer_t *a, int why) { return a->connected ? ANS_END_LOST : why; }
 int ans_retrain_or(const answer_t *a, int why) { return a->connected && a->retraining ? ANS_END_RETRAIN_FAILED : ans_lost_or(a, why); }
 
-void ans_rt_begin(answer_t *a, const rt_policy_t *p)
+void ans_rt_begin(answer_t *a, const rt_policy_t *p, int why)
 {
     if (a->rt_recent >= p->limit) { ans_fail(a, ANS_END_RETRAIN_FAILED); return; }
-    a->retrains++; a->rt_recent++; a->retraining = 1;
+    ans_rt_count(a, why); a->rt_recent++; a->retraining = 1;
 }
+
+void ans_rt_count(answer_t *a, int why) { a->retrains++; callev_retrain(&a->ev, why); }
 
 void ans_rt_data_tick(answer_t *a, const rt_policy_t *p)
 {
@@ -157,6 +160,7 @@ void answer_init(answer_t *a, const answer_cfg *cfg)
      * there; Table 5/V.8 has one bit for "V.90 or V.92 digital modem"), so
      * nothing above depends on ANS_MODE_V92. Phase 2 says it. */
     a->v92_both = 0; a->v92_data = 0;
+    memset(&a->ev, 0, sizeof a->ev);
     a->pcm_up = local.has_pcm && (cfg->modes & ANS_MODE_V92) != 0;
     x2_offer(a);
     a->k56_agreed = 0;
@@ -286,6 +290,22 @@ int answer_moving(const answer_t *a)
 }
 
 int answer_end(const answer_t *a) { return a->phase == ANS_FAILED ? a->end : ANS_END_NONE; }
+
+int answer_reneg_cev(const answer_t *a)
+{
+    switch (a->phase) {
+    case ANS_V90:   /* the caller's S heard (P34_RENEG_S), else our Rd: rate_down's */
+        return a->p34.state == P34_RENEG_S ? CEV_FAR : CEV_OF(WHY_RX_ERRORS);
+    case ANS_V92:   /* its Ru, our Rd asked for, or ours to drop the upstream */
+        return a->u.v92.reneg_ours == 0 ? CEV_FAR : a->u.v92.reneg_ours == 2 ? CEV_OF(WHY_RX_ERRORS) : CEV_OF(WHY_OURS);
+    case ANS_V34:   /* the caller's S heard (DX_RN_S), else ours: rate_down's */
+        return a->v34.dx.state == DX_RN_S ? CEV_FAR : CEV_OF(WHY_RX_ERRORS);
+    case ANS_X2: case ANS_K56:      /* only the client renegotiates */
+        return CEV_FAR;
+    default:
+        return CEV_OF(WHY_OURS);
+    }
+}
 
 /* the engine of the phase (V.90, V.92, x2, K56flex); between engines (a
  * retrain: its silence, its Phase 2; the end) the modulation's */

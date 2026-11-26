@@ -254,9 +254,10 @@ static void rc_clear(hst_t *h)
 /* holding back, the policy's request: the endpoint sends it (ln_req) and
  * holds its LTs until the epoch. A training's: the receiver armed for it
  * at once, as the LNA may be lost where the training is not */
-static void ask(answer_t *a, int order)
+static void ask(answer_t *a, int order, int why)
 {
     hst_t *h = &a->u.hst;
+    h->ask_why = why;
     h->link.ln_req = order;
     h->rc = HST_RC_ASK; h->rc_order = order; h->rct = 0; h->rc_left = 0; h->rc_counted = 0;
     h->rc_late = 0; h->rc_wait = 0;
@@ -274,13 +275,13 @@ static void failed(answer_t *a, int r)
     int lower;
     h->hold_t = 0;
     if (h->fl_t < 0) { h->fl_t = 0; h->fl_n = 0; }
-    if (++h->fl_n < HST_RC_FAILS) { ask(a, 0x20 | r); return; }
+    if (++h->fl_n < HST_RC_FAILS) { ask(a, 0x20 | r, WHY_OURS); return; }
     lower = code_below(h, r);
     if (lower) {
         h->fl_t = -1;
         h->cy_t = -1;
         h->since_down = 0;
-        ask(a, 0x20 | lower);
+        ask(a, 0x20 | lower, WHY_OURS);
     } else {
         ans_fail(a, ANS_END_RETRAIN_FAILED);
     }
@@ -295,13 +296,13 @@ static void unlock_cycle(answer_t *a)
     hst_t *h = &a->u.hst;
     int lower;
     if (h->cy_t < 0) { h->cy_t = 0; h->cy_n = 0; }
-    if (++h->cy_n < HST_CY_N) { ask(a, 0x20 | h->code); return; }
+    if (++h->cy_n < HST_CY_N) { ask(a, 0x20 | h->code, WHY_RX_LOST); return; }
     h->cy_t = -1;
     lower = code_below(h, h->code);
     if (!lower) { ans_fail(a, ANS_END_RETRAIN_FAILED); return; }
     h->fl_t = -1;
     h->since_down = 0;
-    ask(a, 0x20 | lower);
+    ask(a, 0x20 | lower, WHY_RX_LOST);
 }
 
 /* holding back, the change pending given up: the endpoint's LTs go again,
@@ -356,9 +357,10 @@ static void rc_not_made(answer_t *a)
 static void follow(answer_t *a, int order)
 {
     hst_t *h = &a->u.hst;
-    int r = order & 15;
+    int r = order & 15, ours;
     if (h->rc == HST_RC_FOLLOW && h->rc_order == order) return;   /* the same again (an LNA repeated) */
-    if (h->rc != HST_RC_ASK || (h->rc_order & 15) != r) {
+    ours = h->rc == HST_RC_ASK && (h->rc_order & 15) == r;        /* the grant of ours */
+    if (!ours) {
         h->rc_left = 0; h->rc_counted = 0;
         h->rc_st = hst_frx_state(&h->frx);
     }
@@ -368,7 +370,7 @@ static void follow(answer_t *a, int order)
         if (hst_frx_state(&h->frx) != HST_FRX_DATA || hst_frx_armed(&h->frx) != r || !h->frx.sw_tonly)
             hst_frx_arm_train(&h->frx, r);
         a->retraining = 1;
-        if (!h->rc_counted) { h->rc_counted = 1; a->retrains++; }
+        if (!h->rc_counted) { h->rc_counted = 1; ans_rt_count(a, ours ? h->ask_why : WHY_FAR); }
     } else {
         hst_frx_arm_switch(&h->frx, r);
     }
@@ -406,7 +408,7 @@ static void rate_back(answer_t *a)
              * the far end has our LN (the endpoint's supersede) */
             h->rc_counted = 1;
             if (h->rc == HST_RC_ASK) h->link.ln_acted = 1;   /* our own request's, not a follow's */
-            a->retrains++;
+            ans_rt_count(a, h->rc == HST_RC_ASK ? h->ask_why : WHY_FAR);
             a->retraining = 1;
         }
         if (st == HST_FRX_DATA && !hst_frx_armed(&h->frx) && h->frx.code == r && (h->rc == HST_RC_FOLLOW || h->rc_left)) {
@@ -463,27 +465,28 @@ static void rate_back(answer_t *a)
         if (lower) {
             h->since_down = 0;
             h->cy_t = -1;
-            ask(a, 0x20 | lower);
+            ask(a, 0x20 | lower, WHY_RX_ERRORS);
             return;
         }
     }
     if (h->up_t >= MS(HST_UP_MS)) {
         if (nxt && h->since_down >= MS(HST_UP_MS) && h->up_good * 100 >= h->up_all * HST_UP_PCT) {
-            ask(a, 0x30 | nxt);
+            ask(a, 0x30 | nxt, WHY_OURS);
             return;
         }
         h->up_t = h->up_all = h->up_good = 0;
     }
 }
 
-/* holding forward, our short training at the code in force (a retrain) */
-static void fwd_retrain(answer_t *a)
+/* holding forward, our short training at the code in force (a retrain;
+ * why: WHY_*) */
+static void fwd_retrain(answer_t *a, int why)
 {
     hst_t *h = &a->u.hst;
     h->next = h->code;
     h->ones = 0;
     hst_ftx_train(&h->ftx, h->code, 0);
-    a->retraining = 1; a->retrains++;
+    a->retraining = 1; ans_rt_count(a, why);
 }
 
 /* holding forward, connected, no reversal in progress: the far end's
@@ -505,7 +508,7 @@ static void rate_fwd(answer_t *a)
             /* nothing acknowledged for 2 x T401, the far end's back channel
              * there: the short training at the code in force [OURS] */
             h->link.recover = 0;
-            if (!a->retraining && (hst_brx_locked(&h->det.rx[0]) || hst_brx_locked(&h->det.rx[1]))) fwd_retrain(a);
+            if (!a->retraining && (hst_brx_locked(&h->det.rx[0]) || hst_brx_locked(&h->det.rx[1]))) fwd_retrain(a, WHY_OURS);
         }
         break;
     case HST_RC_WAIT:
@@ -528,7 +531,7 @@ static void rate_fwd(answer_t *a)
             h->next = r;
             h->ones = 0;
             hst_ftx_train(&h->ftx, r, 0);
-            a->retraining = 1; a->retrains++;
+            a->retraining = 1; ans_rt_count(a, WHY_FAR);  /* the far end's 0x2R / 0x3R */
             h->cut = 0;
             h->rc = HST_RC_TRAIN;
         }
@@ -662,7 +665,7 @@ static void reversal(answer_t *a)
         if (hst_frx_state(&h->frx) == HST_FRX_DATA) { h->link.epoch++; h->rev = HST_REV_NONE; }
         else if ((h->rt >= MS(HST_REV_BOUND_MS) && hst_frx_state(&h->frx) != HST_FRX_TRAIN)
                  || h->rt >= MS(HST_REV_BOUND_MS + 2000)) {
-            a->retraining = 1; a->retrains++;
+            a->retraining = 1; ans_rt_count(a, WHY_OURS);
             to_fwd(a, HST_REV_TRAIN);
         }
         break;
@@ -704,13 +707,13 @@ static void back_watch(answer_t *a)
     if (++h->fq >= MS(HST_SILENT_BACK_MS)) {
         /* the forward channel taken back, as a retrain (the far end never
          * switched); the watchdog of holding forward from here */
-        a->retraining = 1; a->retrains++;
+        a->retraining = 1; ans_rt_count(a, WHY_RX_LOST);
         to_fwd(a, HST_REV_TRAIN);
     } else if (h->fq == MS(HST_SILENT_ASK_MS) && h->link.agreed_rates
                && h->rc == HST_RC_NONE && !h->link.ln_req && !h->link.rate_order) {
         /* only with nothing pending: a change asked or followed is not
          * replaced (the carrier may be back within HST_SILENT_BACK_MS) */
-        ask(a, 0x20 | h->code);
+        ask(a, 0x20 | h->code, WHY_RX_LOST);
     }
 }
 
@@ -764,7 +767,7 @@ static int16_t tick_hst(answer_t *a, int16_t rx)
                     h->next = best;
                     h->ones = 0;
                     hst_ftx_train(&h->ftx, best, 0);
-                    a->retraining = 1; a->retrains++;
+                    a->retraining = 1; ans_rt_count(a, WHY_OURS);
                 }
             }
             if (a->retraining && h->ones >= HST_ONES_N) {
@@ -832,10 +835,10 @@ static int retrain(answer_t *a)
         || h->rev != HST_REV_NONE || h->rc != HST_RC_NONE) return -1;
     if (h->link.role == HST_ROLE_BACK) {
         if (!h->link.agreed_rates) return -1;
-        ask(a, 0x20 | h->code);
+        ask(a, 0x20 | h->code, WHY_OURS);              /* the host's (v90m_get_restarts) */
         return 0;
     }
-    fwd_retrain(a);
+    fwd_retrain(a, WHY_OURS);                       /* the host's (v90m_get_restarts) */
     return 0;
 }
 

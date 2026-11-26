@@ -55,10 +55,10 @@ void v32c_start(v32_t *m)
     m->bad_run = 0; m->lost_run = 0; m->carrier = 0;
 }
 
-/* 7.1 from data mode or a renegotiation: retrain */
-static void retrain(v32_t *m)
+/* 7.1 from data mode or a renegotiation: retrain (why: v32_t.rt_why) */
+static void retrain(v32_t *m, int why)
 {
-    m->retrains++; m->retraining = 1; m->rn = 0;
+    m->retrains++; m->retraining = 1; m->rn = 0; m->rt_why = why;
     m->seg_len[m->state] = m->seg;
     v32c_start(m);
 }
@@ -298,12 +298,12 @@ void v32c_rx_control(v32_t *m)
     case V32S_DATA:
         /* 7.1: the answerer's AC for more than 128 symbol intervals asks for
          * a retrain */
-        if (r->ac_pure > 2 * 128 + 16) { retrain(m); break; }
+        if (r->ac_pure > 2 * 128 + 16) { retrain(m, 0); break; }
         if (!m->connected || m->retraining) break;
         if (m->rn) {
             /* our part of a renegotiation is done; the answerer's E and
              * its 24 T are still to come */
-            if (m->t_state > T_RN) retrain(m);
+            if (m->t_state > T_RN) retrain(m, 1);
             break;
         }
         /* 8.2: the answerer's preamble, AC 56 T and CA 8 T (a retrain's
@@ -330,7 +330,7 @@ void v32c_rx_control(v32_t *m)
             if (++m->bad_run > (int32_t)MS(RT_BAD_MS)) {
                 if (m->auto_rt >= RT_MAX) { fail(m, V32_ERR_CARRIER); break; }
                 m->auto_rt++; m->good_run = 0;
-                retrain(m);
+                retrain(m, 2);
             }
         } else {
             if (m->bad_run > 0) m->bad_run--;
@@ -339,7 +339,7 @@ void v32c_rx_control(v32_t *m)
         break;
     /* ---- 8.2 ---- */
     case V32S_C_RN_R4:
-        if (r->ac_pure > 2 * 128 + 16) { retrain(m); break; }
+        if (r->ac_pure > 2 * 128 + 16) { retrain(m, 0); break; }
         if (r->mode == V32_RX_DD4 && r->rate_seen >= 2) {
             /* R4: 106 OFF, our preamble, then R5: the rate our receiver
              * wants (by its error in data mode) and those below it that we
@@ -353,10 +353,10 @@ void v32c_rx_control(v32_t *m)
             m->tx_ready = 0;
             go(m, V32S_C_RN_AA);
             v32tx_set_mode(&m->tx, V32_TX_AA);
-        } else if (m->t_state > T_RN) retrain(m);
+        } else if (m->t_state > T_RN) retrain(m, 1);
         break;
     case V32S_C_RN_AA: case V32S_C_RN_CC: case V32S_C_RN_R5: case V32S_C_RN_E: case V32S_C_RN_B1:
-        if (m->t_state > T_RN) retrain(m);
+        if (m->t_state > T_RN) retrain(m, 1);
         break;
     default:
         break;

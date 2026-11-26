@@ -336,6 +336,9 @@ typedef struct {
     int32_t   mse_data;        /* the receiver's error in data mode before the preamble came */
     /* timing record for tests: symbols sent in each state the last time through */
     uint32_t  seg_len[V32S_NSTATES];
+    int       rt_why;          /* the last retrain begun: 0 the far end's (its 1800 Hz or AC),
+                                  1 ours (v32_retrain, a renegotiation step unanswered),
+                                  2 ours for the receiver's error (modem/callev.h WHY_*) */
 } v32_t;
 
 /* answer mode (6.2): AC first */

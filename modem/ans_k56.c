@@ -70,7 +70,7 @@ static int16_t tick_k56(answer_t *a, int16_t rx)
          * is checked, the end is K56flex's, and data mode forgets them all
          * at once after K56_RT_DATA_MS on a clock that runs only while
          * there are any */
-        a->retrains++; a->retraining = 1; a->rt_clock = 0;
+        ans_rt_count(a, WHY_FAR); a->retraining = 1; a->rt_clock = 0;
         if (++a->rt_recent >= K56_MAX_RETRAINS) { ans_fail(a, ANS_END_K56_FAILED); return 0; }
         ans_enter(a, ANS_K56RT); a->t = 0; tx = 0;
     } else if (d->state == K56D_DATA) {

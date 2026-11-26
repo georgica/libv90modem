@@ -1,0 +1,29 @@
+restarts: who began the renegotiations and retrains, and why
+  V.34: the caller's renegotiation asked at 9455 ms; data stopped at 9455 ms (caller), 9473 ms (answerer); data again both ways
+    caller    renegotiations ours 1 far 0, retrains ours 0 (host 0) far 0; last renegotiation rx_errors
+    answerer  renegotiations ours 0 far 1, retrains ours 0 (host 0) far 0; last renegotiation far
+  V.90: the caller's renegotiation asked at 10814 ms; data stopped at 10814 ms (caller), 10831 ms (answerer); data again both ways
+    caller    renegotiations ours 1 far 0, retrains ours 0 (host 0) far 0; last renegotiation ours
+    answerer  renegotiations ours 0 far 1, retrains ours 0 (host 0) far 0; last renegotiation far
+  V.92: the caller's renegotiation asked at 13598 ms; data stopped at 13598 ms (caller), 13607 ms (answerer); data again both ways
+    caller    renegotiations ours 1 far 0, retrains ours 0 (host 0) far 0; last renegotiation ours
+    answerer  renegotiations ours 0 far 1, retrains ours 0 (host 0) far 0; last renegotiation far
+  V.34: noise into the answerer at 9455 ms; data stopped at 10493 ms (caller), 10476 ms (answerer); data again both ways
+    caller    renegotiations ours 0 far 1, retrains ours 0 (host 0) far 0; last renegotiation far
+    answerer  renegotiations ours 1 far 0, retrains ours 0 (host 0) far 0; last renegotiation rx_errors
+  V.34: v90m_retrain on the answerer at 9455 ms; data stopped at 9587 ms (caller), 9455 ms (answerer); data again both ways
+    caller    renegotiations ours 0 far 0, retrains ours 0 (host 0) far 1; last retrain far
+    answerer  renegotiations ours 0 far 0, retrains ours 1 (host 1) far 0; last retrain host
+  V.34: v90m_retrain on the caller at 9455 ms; data stopped at 9455 ms (caller), 9591 ms (answerer); data again both ways
+    caller    renegotiations ours 0 far 0, retrains ours 1 (host 1) far 0; last retrain host
+    answerer  renegotiations ours 0 far 0, retrains ours 0 (host 0) far 1; last retrain far
+  V.90: v90m_retrain on the caller at 10814 ms; data stopped at 10814 ms (caller), 10950 ms (answerer); data again both ways
+    caller    renegotiations ours 0 far 0, retrains ours 1 (host 1) far 0; last retrain host
+    answerer  renegotiations ours 0 far 0, retrains ours 0 (host 0) far 1; last retrain far
+  V.90: v90m_retrain on the answerer at 10814 ms; data stopped at 10945 ms (caller), 10814 ms (answerer); data again both ways
+    caller    renegotiations ours 0 far 0, retrains ours 0 (host 0) far 1; last retrain far
+    answerer  renegotiations ours 0 far 0, retrains ours 1 (host 1) far 0; last retrain host
+  V.32bis: v90m_retrain on the caller at 9565 ms; data stopped at 9565 ms (caller), 9631 ms (answerer); data again both ways
+    caller    renegotiations ours 0 far 0, retrains ours 1 (host 1) far 0; last retrain host
+    answerer  renegotiations ours 0 far 0, retrains ours 0 (host 0) far 1; last retrain far
+restarts: 178 checks, 0 failures

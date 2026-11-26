@@ -53,6 +53,7 @@
 #define V90D_MODEM_V90A_H
 #include <stdint.h>
 #include "seqhunt.h"
+#include "callev.h"
 #include "p2call.h"
 #include "v90arx.h"
 #include "v90adec.h"
@@ -239,7 +240,8 @@ typedef struct {
     int32_t    rt_clock;            /* data frames towards that minute */
     int        rt_due;              /* at the end of this tick: 1 our retrain, 2 the digital modem's */
     int        rt_check;            /* ended in Phase 3 / 4 or a renegotiation, after data: retrain */
-    int        reneg_ours;          /* our renegotiation under way: 1 asked for, 2 for the line */
+    int        reneg_ours;          /* our renegotiation under way: 1 asked for, 2 for the line (down),
+                                       3 for the line (up again) */
     int        clear_err;           /* a cleardown of ours ends with this error, not V90A_ERR_HANGUP */
     int        max_rx0;             /* cfg.max_rx_bps as configured */
     uint32_t   dsn[6];              /* the noise CP was designed for, by interval (as v90arx_mse_slot) */
@@ -249,6 +251,8 @@ typedef struct {
     int32_t    since_auto;          /* data frames since a renegotiation for the line ended */
     int        auto_down;           /* the receiver's watch took the rate down (or retrained) */
     int        best_rate;           /* the highest downstream of this call */
+    int        rt_why;              /* the last retrain begun: 0 the digital modem's, else ours,
+                                       why (WHY_* of callev.h) */
 } v90a_t;
 
 void    v90a_init(v90a_t *a, const v90a_cfg *cfg);

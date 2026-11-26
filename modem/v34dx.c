@@ -401,7 +401,7 @@ static void rate_down(v34dx_t *p)
     int32_t b10 = (snr - V34UP_SNR0_DB10) * 10 / 30;
     int n = (int)(((int64_t)p->cfg.sym_rate * b10) / 10) / 2400, cur = p->rx_rate / 2400;
     if (n >= cur) n = cur - 1;
-    if (n < (p->cfg.sym_rate == 2400 ? 1 : 2)) { retrain(p, 1); return; }
+    if (n < (p->cfg.sym_rate == 2400 ? 1 : 2)) { retrain(p, WHY_RX_ERRORS); return; }
     p->line_n = n;
     set_mp_limits(p, 0);
     p->rate_drops++;
@@ -512,7 +512,7 @@ static void rx_symbol(v34dx_t *p)
 #endif
         switch (ev) {
         case V34UP_B1_BAD: fail(p, DX_ERR_B1); break;
-        case V34UP_DEAD:   retrain(p, 1); break;
+        case V34UP_DEAD:   retrain(p, WHY_RX_LOST); break;
         case V34UP_SLOW:   rate_down(p); break;
         case V34UP_LOST:   fail(p, DX_ERR_CARRIER); break;
         default: break;

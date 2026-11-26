@@ -1022,7 +1022,7 @@ uint8_t v92d_tick(v92d_t *p, int16_t rxs)
             p->q_bad = nb >= 4 ? p->q_bad + 1 : 0;
             if (p->q_bad >= 2) {
                 p->rate_drops++;
-                if (p->up_rate - 4000 < 24000) { retrain(p, 1); p->up_floor = 1; }
+                if (p->up_rate - 4000 < 24000) { retrain(p, WHY_RX_ERRORS); p->up_floor = 1; }
                 else reneg_begin(p, RENEG_DROP);
             }
         }

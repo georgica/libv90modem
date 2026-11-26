@@ -8,6 +8,33 @@ change is listed here. Rebuild against the new header with every version;
 "Simulation and own answerer only" means: tried against simulated lines and
 this library's own answering modem, never against a real modem or server.
 
+## 0.7.1 (2026-11-26)
+
+Added, the API (the ABI of 0.7.0 kept: no struct changes size, the SONAME
+stays `libv90modem.so.0.7`, a program built against 0.7.0 runs on it):
+- `v90m_get_restarts(m, &r)` fills a new `v90m_restarts`: of
+  `v90m_stats.renegotiations` and `retrains`, those the far modem began
+  (`reneg_far`, `retrain_far`) and ours (`reneg_ours`, `retrain_ours`, of
+  them `retrain_host`, `v90m_retrain`'s), and the cause of the one begun
+  last (`last`, a `v90m_cause`: the far end's, or ours for a step that
+  failed or timed out, our receiver's errors, our receiver lost, the
+  host's), whether it was a retrain, and where it began (`last_ms`, from
+  the call's first sample). Either role, every modulation that has
+  renegotiations or retrains (V.34, V.90, V.92, x2, K56flex, V.32bis,
+  V.22bis calling, HST's 0x2R and 0x3R). `v90m_cause_name` names a cause for a
+  log line. A host no longer has to guess that a renegotiation with the
+  rates unchanged was the far end's (a WebTV box's own modem renegotiates
+  every 22 s). Simulation and own answerer only.
+- `v90m_mem_size()` and `v90m_ec_mem_size()` are unchanged on every
+  pinned target (x86-64 106320 / 50448, 32-bit ARM 106016 / 50200): the
+  answering modem's members are in a new order that takes the new counts
+  (16 bytes) into what were holes between them. i386 Linux, not pinned,
+  grows 16 bytes (105844 to 105860), under `V90M_MEM_SIZE` (unchanged).
+
+Changed, behaviour: none. Every call is as in 0.7.0: the golden outputs,
+the replay proof and the bench hashes are 0.7.0's (the new test lines
+aside).
+
 ## 0.7.0 (2026-11-26)
 
 Includes the changes of 0.6.2-rc1 (below: the opt-in V.34 transmit cap

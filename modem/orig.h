@@ -74,6 +74,7 @@
 #include "belltone.h"
 #include "tonedet.h"
 #include "../v32/v32.h"
+#include "callev.h"
 
 typedef enum {
     ORIG_V8,          /* V.8: waiting for the answer tone, CM / JM */
@@ -180,6 +181,12 @@ typedef struct {
     int        connected, modulation, bitrate;
     int        rx_bitrate;   /* what we receive, where it may differ (V.34); 0 = as bitrate */
     int        end;          /* ORIG_END_* once phase is ORIG_FAILED */
+    /* who began the retrains and renegotiations (v90m_get_restarts): the
+     * engine's counts as last seen (orig_tick), ours of the retrains, and
+     * V.22bis's retrain under way (WHY_* + 1, 0 none) */
+    callev_t   ev;
+    int        rt_seen, rt_ours_seen, rt_ours, v22_why;
+    uint32_t   v22_at;       /* ... and where it began (ev's clock) */
 } orig_t;
 
 void    orig_init(orig_t *o, const orig_cfg *cfg);
@@ -198,6 +205,9 @@ int     orig_retrain(orig_t *o);
 int     orig_retraining(const orig_t *o);
 /* retrains begun this call, by either end */
 int     orig_retrains(const orig_t *o);
+/* v90m_get_restarts: on the sample data stops for a rate renegotiation, who
+ * began it and why (CEV_* of callev.h) */
+int     orig_reneg_cev(const orig_t *o);
 /* V.34, V.90, V.92 data mode: rate renegotiation (V.34 11.6, V.90 9.6.2.1,
  * V.92 9.8.2.1), max_rx_bps > 0 a new ceiling for what we receive (V.90 /
  * V.92: never above the configured one; 0 keeps the ceiling and designs the

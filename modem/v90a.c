@@ -150,7 +150,9 @@ int16_t v90a_tick(v90a_t *a, int16_t rx)
      * digital modem does meanwhile: its Tone B is not a retrain then */
     if (a->clearing) a->rt_due = 0;
     if (a->rt_due || (a->state == V90A_ENDED && a->rt_check)) {
-        v90a__begin_retrain(a, a->rt_due != 2);
+        /* the digital modem's Tone B, our receiver's watch, or a Phase 3,
+         * 4 or renegotiation of ours that failed */
+        v90a__begin_retrain(a, a->rt_due == 2 ? 0 : a->rt_due ? WHY_RX_ERRORS : WHY_OURS);
         return 0;
     }
     return y;

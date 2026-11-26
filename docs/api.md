@@ -15,7 +15,7 @@ inside `v90m_process_*()` on the calling thread.
 
 What a callback may do to the modem that calls it: `v90m_retrain`,
 `v90m_cleardown`, `v90m_get_state`, `v90m_get_stats`, `v90m_get_diag`,
-`v90m_get_v34_cap` (and anything on another object: every `v90m_ec_*` and `v90m_async_*` function).
+`v90m_get_v34_cap`, `v90m_get_restarts` (and anything on another object: every `v90m_ec_*` and `v90m_async_*` function).
 `v90m_reset` returns `V90M_ESTATE` and changes nothing. `v90m_destroy`
 takes effect at the end of the sample under way: no event after it, the
 rest of the block is silence (linear 0, mu-law 0xFF, A-law 0xD5), the
@@ -27,8 +27,8 @@ only after `v90m_process_*` returns, and never from a callback of a modem
 that goes on. `v90m_init` on the modem's own memory is not allowed.
 
 NULL: every function checks the object it is given (and the struct that
-`v90m_get_state`, `v90m_get_stats`, `v90m_get_diag`, `v90m_get_v34_cap` and
-`v90m_ec_get_status` fill): with
+`v90m_get_state`, `v90m_get_stats`, `v90m_get_diag`, `v90m_get_v34_cap`,
+`v90m_get_restarts` and `v90m_ec_get_status` fill): with
 NULL a function returning `int` returns `V90M_EINVAL`, one returning
 `size_t` or `unsigned long` 0, a `void` one does nothing. Except the four
 called for every bit, `v90m_ec_tx_bit`, `v90m_ec_rx_bit`,
@@ -43,8 +43,8 @@ the object first.
 
 | | |
 |---|---|
-| `V90M_VERSION_MAJOR`, `V90M_VERSION_MINOR`, `V90M_VERSION_PATCH` | the header's version: 0, 7, 0 |
-| `const char *v90m_version(void)` | "0.7.0": the version of the library linked in (may differ from the header) |
+| `V90M_VERSION_MAJOR`, `V90M_VERSION_MINOR`, `V90M_VERSION_PATCH` | the header's version: 0, 7, 1 |
+| `const char *v90m_version(void)` | "0.7.1": the version of the library linked in (may differ from the header) |
 
 ## Error codes
 
@@ -326,6 +326,49 @@ before V.34 training began. A struct and a function of their own, as
 
 A caller that "asked above its own projection" is `c.ask_bps > c.proj_bps
 && c.proj_bps > 0`.
+
+## Who began a renegotiation or retrain
+
+Added in 0.7.1. `void v90m_get_restarts(const v90m_t *m, v90m_restarts
+*r)`: of `v90m_stats.renegotiations` and `retrains`, those the far modem
+began and ours, with the cause of the last one and where it began; either
+role, every modulation that has them. Cheap, fine after every sample, kept
+after the end until `v90m_reset`. A struct and a function of their own, as
+`v90m_get_v34_cap`: `v90m_stats` keeps its size within 0.7, and so does
+`v90m_restarts` from 0.7.1 on. For a host that logs, say, "renegotiation
+(far) at 22.4 s": a WebTV box's own modem renegotiating every 22 s reads
+`reneg_far` rising, with the rates unchanged.
+
+| `v90m_restarts` | |
+|---|---|
+| `reneg_ours`, `reneg_far` | rate renegotiations, counted as `v90m_stats.renegotiations` is (they add up to it): the far end's when its signal stopped the data (its S, its Rd or Ru; x2's and K56flex's clients and a V.32bis answerer, which alone begin them, always), else ours |
+| `retrain_ours`, `retrain_far` | retrains begun (they add up to `v90m_stats.retrains`; calling, after a V.22bis or V.32bis call has ended, where that reads 0, these still read the call's): the far end's when its signal began it (Tone A or Tone B, V.32bis's 1800 Hz or AC, V.22bis's S1, K56flex's tone B; HST: its 0x2R or 0x3R carried out with a training, our grant of its request or the training it holds forward for ours), else ours |
+| `retrain_host` | of `retrain_ours`, those `v90m_retrain` asked for |
+| `last` | `v90m_cause` of the one begun last (a renegotiation once it counts); `V90M_CAUSE_NONE` before the first |
+| `last_retrain` | 1: that one is a retrain; 0: a renegotiation |
+| `last_ms` | where it began (a renegotiation: where the data stopped), ms from the first sample since `v90m_create`, `v90m_init` or `v90m_reset` (it wraps after 2^32 samples, 6.2 days); 0 with `V90M_CAUSE_NONE` |
+
+`v90m_cause` (its `v90m_cause_name` in brackets):
+
+| | |
+|---|---|
+| `V90M_CAUSE_NONE` (0, `none`) | none yet |
+| `V90M_CAUSE_FAR` (`far`) | the far modem began it |
+| `V90M_CAUSE_OURS` (`ours`) | ours: a step of a start-up, retrain or renegotiation failed or ran out of time (Phase 2's own retrains, a time limit of Phases 3 and 4 or of a renegotiation, a failed V.92 start-up, a calling V.90's failed Phase 3, 4 or renegotiation), HST's training after MNP's agreement and its upshifts, the calling V.90 / V.92 receiver's watch taking the rate back up once the line is good again, or an engine that says no more |
+| `V90M_CAUSE_RX_ERRORS` (`rx_errors`) | ours: our receiver's errors too many for the rate. V.34 and answering V.90: the rate drop (a renegotiation, or a retrain with no lower rate; the only renegotiation of ours these begin); V.92's upstream drop; the calling V.90 / V.92 receiver's watch (a renegotiation down, or a retrain); V.32bis's; HST's frame errors (our 0x2R one rate lower) |
+| `V90M_CAUSE_RX_LOST` (`rx_lost`) | ours: our receiver lost the far end's data or signal (V.34's and answering V.90's dead receiver; HST holding back: the receiver out of data, or the forward carrier gone) |
+| `V90M_CAUSE_HOST` (`host`) | ours: `v90m_retrain` |
+
+V.22bis's retrains are counted calling only (answering, `v90m_stats.retrains`
+has none either). The far end's and the host's counts stop at 65535 (where
+the far end's would, the ours, the totals less them, read too high). An
+accepted `v90m_retrain` makes the next retrain counted the host's when it is
+ours; any retrain counted after it settles the request (a far end's that came
+first took its place). V.22bis (calling) counts a retrain once it is done;
+`last_ms` is still where it began.
+
+`const char *v90m_cause_name(v90m_cause c)`: never NULL, `"?"` outside the
+enum, the same within 0.7.x.
 
 ## Control calls
 
