@@ -118,7 +118,7 @@ Each item names where it is recorded.
   is clean at every one. Not investigated (0.6.0 audit, ISP-1 follow-up).
 
 - **V.34 transmit cap: opt-in, answering only.** `V90M_OPT_V34_TX_CAP`
-  (0.7.0, off by default) caps our V.34 transmit at the caller's own
+  (0.6.2, off by default) caps our V.34 transmit at the caller's own
   INFO1c / INFO1a projection; the host sets it per caller from its own
   count of calls that asked above their projection and failed error
   control (`docs/answering.md`). The evidence is small: of the 106
@@ -224,7 +224,7 @@ delivered).
   is inverted after each JM for the first 2 s (`V8A_X2_FLIP_MS`), then
   plain, and an INFO0a with max_sr_diff 4 and cme 1, as from a U.S.
   Robotics server. Live, a strict V.8 receiver (two WebTV boxes) never
-  took the inverted JM and failed V.8 (0.6.1: 14 of 21 calls); since 0.7.0
+  took the inverted JM and failed V.8 (0.6.1: 14 of 21 calls); since 0.6.2
   it gets the plain JM after 2 s and loses those 2 s only (simulation).
 - **No way back to V.34.** Once the client's marker has come, a start-up
   or rate change that does not complete, or a request we cannot serve

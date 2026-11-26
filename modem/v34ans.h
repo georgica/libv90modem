@@ -72,7 +72,11 @@ typedef struct {
     int          retrains_now;      /* in a row, without data in between */
     int          retrains_ours;     /* ... of all, those we began */
     int          connects;          /* times data mode was reached (start-up, retrains) */
-    int          from_v90;          /* started by v34ans_init_call: no Phase 2 of ours */
+    uint8_t      from_v90;          /* started by v34ans_init_call: no Phase 2 of ours */
+    uint8_t      far_ask;           /* the caller's MP's maximum for our transmit, units of
+                                       2400 bit/s, as data mode last began (kept through a
+                                       renegotiation's or cleardown's MP exchange, which
+                                       clears dx.got_far_mp); 0 = none yet */
 } v34ans_t;
 
 void    v34ans_init(v34ans_t *a, const v34ans_cfg *cfg);

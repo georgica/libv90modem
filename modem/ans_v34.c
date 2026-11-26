@@ -29,7 +29,9 @@ void answer_v34_tx_cap(const answer_t *a, int *proj_bps, int *ask_bps, int *capp
     if (v->from_v90) { proj = a->p2.info1a.max_rate; ask = v->dx.far_mp.max_ca; }   /* we are the call modem */
     else             { proj = v->p2.info1c.sr[v->p2.sym_idx].max_rate; ask = v->dx.far_mp.max_ac; }
     *proj_bps = 2400 * proj;
-    *ask_bps = v->dx.got_far_mp ? 2400 * ask : 0;
+    /* live while an MP exchange stands; after a cleardown's (or during a
+     * renegotiation's) the one data mode last began with */
+    *ask_bps = 2400 * (v->dx.got_far_mp && !v->dx.far_clear ? ask : v->far_ask);
     /* our MP's offer without the cap: what set_mp_limits makes of max_tx_rate */
     top = d->peer_1664 ? 14 : 12; low = d->sym_rate == 2400 ? 1 : 2;
     off = v->cfg.max_tx_rate ? v->cfg.max_tx_rate / 2400 : 14;

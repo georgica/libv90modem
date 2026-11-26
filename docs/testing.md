@@ -24,7 +24,7 @@ The host suite:
   internals renamed `v90m__i_*`) and the compiler's helpers;
 - `check-version`: the Makefile's `VERSION` is the header's
   `V90M_VERSION_*`, README's "This is X" and the `.so` names of
-  [getting-started.md](getting-started.md) (`version: 0.6.1 everywhere`);
+  [getting-started.md](getting-started.md) (`version: 0.6.2 everywhere`);
 - `check-soname`: the shared library's SONAME is
   `libv90modem.so.MAJOR.MINOR` while MAJOR is 0 (`soname:
   libv90modem.so.0.6`);

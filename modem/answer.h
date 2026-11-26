@@ -313,7 +313,8 @@ int     answer_echo_delay(const answer_t *a);
  * direction, from the last Phase 2 and Phase 4 of the call (kept after the
  * end, until the next answer_init): *proj_bps the caller's own projection
  * at the symbol rate in use (2400 x INFO1c / INFO1a bits 30:33), *ask_bps
- * its MP's maximum (0 until its MP came), *capped 1 when ANS_MODE_V34_TX_CAP
+ * its MP's maximum (0 until its MP came; after our or its cleardown, the
+ * one data mode last began with), *capped 1 when ANS_MODE_V34_TX_CAP
  * lowered our MP's offer below what it would have been without it. All 0
  * when no V.34 training began this call (x2 and K56flex included). */
 void    answer_v34_tx_cap(const answer_t *a, int *proj_bps, int *ask_bps, int *capped);

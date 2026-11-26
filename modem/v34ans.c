@@ -86,7 +86,10 @@ int16_t v34ans_tick(v34ans_t *a, int16_t rx)
     case V34A_RENEG:
         out = v34dx_tick(&a->dx, rx);
         if (a->dx.state == DX_DATA) {
-            if (a->state == V34A_TRAINING) { a->connects++; a->retrains_now = 0; }
+            if (a->state != V34A_DATA) {        /* data mode begins: the MP agreed */
+                if (a->state == V34A_TRAINING) { a->connects++; a->retrains_now = 0; }
+                a->far_ask = (uint8_t)(a->from_v90 ? a->dx.far_mp.max_ca : a->dx.far_mp.max_ac);
+            }
             a->state = V34A_DATA;
         } else if (a->dx.state == DX_RETRAIN) {
             a->retrains++; a->retrains_now++;

@@ -327,13 +327,13 @@ library's own answerer projects 28800 on a clean line while its MP offers
 33600 and the call runs at 31200).
 
 The intended host policy: answer with the cap off; after each V.34 call,
-read `v90m_stats.v34_proj_bps` and `v34_ask_bps` (the caller's projection
+read `v90m_get_v34_cap`'s `proj_bps` and `ask_bps` (the caller's projection
 and its MP's ask for our transmit direction, bit/s, 0 = none). When the
 ask was above the projection and error control failed (no V.42 link came
 up, or it fell back to start-stop), count it against the member (or the
 calling number). After repeated such calls (the server uses 3), set
 `V90M_OPT_V34_TX_CAP` on that member's calls (`v90m_reset` with it, at
 the start of the call). The host keeps the count; the library keeps
-nothing between calls. `v90m_stats.v34_capped` says whether the cap
-lowered our MP's offer on a call.
+nothing between calls. Its `capped` says whether the cap lowered our
+MP's offer on a call ([api.md](api.md), "The V.34 transmit cap").
 

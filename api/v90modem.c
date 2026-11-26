@@ -489,8 +489,6 @@ void v90m_get_stats(const v90m_t *m, v90m_stats *st)
         st->echo_delay = answer_echo_delay(a);
         st->retrains = (unsigned)a->retrains;
     }
-    st->v34_proj_bps = st->v34_ask_bps = st->v34_capped = 0;
-    if (!orig) answer_v34_tx_cap(&m->u.a, &st->v34_proj_bps, &st->v34_ask_bps, &st->v34_capped);
     if (st->snr_db10 < 0) st->snr_db10 = m->last_snr;
     if (st->rtd < 0) st->rtd = m->last_rtd;
 }
@@ -508,6 +506,13 @@ void v90m_get_diag(const v90m_t *m, v90m_diag *d)
     e = end_of(m);
     if (m->data_reached && (e == V90M_END_CLEARDOWN_OURS || e == V90M_END_CLEARDOWN_FAR)) d->error = 0;
     else d->error = ORIGINATING(m) ? diag_err_orig(&m->u.o, &m->diag) : diag_err_answer(&m->u.a, &m->diag);
+}
+
+void v90m_get_v34_cap(const v90m_t *m, v90m_v34_cap *c)
+{
+    if (!m || !c) return;
+    c->proj_bps = c->ask_bps = c->capped = 0;
+    if (!ORIGINATING(m)) answer_v34_tx_cap(&m->u.a, &c->proj_bps, &c->ask_bps, &c->capped);
 }
 
 answer_t *v90m__answer(v90m_t *m) { return &m->u.a; }

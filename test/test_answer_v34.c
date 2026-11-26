@@ -125,7 +125,7 @@ int main(void)
     CHECK_EQ_I(A.modulation, ANS_MOD_V34);
     CHECK_EQ_I(A.bitrate, 14400); CHECK_EQ_I(A.rx_bitrate, 9600);
 
-    /* the status of our V.34 transmit direction (v90m_stats.v34_*), box B's
+    /* the status of our V.34 transmit direction (v90m_get_v34_cap), box B's
      * shape: its INFO1c projects 28800 at 3200, its MP asks for 31200. By
      * default our MP offers all we can and the call runs at 31200, not
      * capped; with ANS_MODE_V34_TX_CAP it runs at 28800, capped. The

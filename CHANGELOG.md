@@ -10,6 +10,31 @@ this library's own answering modem, never against a real modem or server.
 
 ## 0.7.0 (unreleased)
 
+Includes 0.6.2 (below: the opt-in V.34 transmit cap with
+`v90m_get_v34_cap`, x2's plain JM after 2 s, the V.34 Phase 3/4 time
+limits, `v90m_ec_tx_busy` and the closing flag).
+
+Added (work in progress; simulation, own answerer and the replay corpus):
+- Answering role: HST, U.S. Robotics' asymmetric modem, as its answering
+  side: `V90M_MOD_HST` (0x0400, not in the defaults; calling:
+  `V90M_ENOTSUP`), offered only with an MNP endpoint linked by
+  `v90m_ec_link_hst`; `V90M_CONN_HST`, `V90M_END_HST_FAILED`,
+  `ANS_ERR_HST_LINK`, `ANS_ERR_HST_CARRIER`; channel reversals, rate
+  changes by marks and retrains (include/v90modem.h, `V90M_MOD_HST`).
+- Error control: MNP (V.42 Annex A) in the endpoint, off by default
+  (`v90m_ec_cfg.mnp`); `v90m_ec_status.protocol` and the MNP / HST fields;
+  `v90m_ec_set_rates`. With MNP, `v90m_ec_tx_busy` also counts an LD owed.
+- `v90m_stats.reversals` (appended; `v90m_stats` grows): HST channel
+  reversals, this call.
+
+## 0.6.2-rc1 (2026-11-25)
+
+A release candidate, for the ISP's WebTV calls: checked on x86-64 only
+(`make golden`, the replay proof). The all-platform verification (ARMv5,
+the port matrix, riscv64, Windows, the costs) is deferred to the final
+0.6.2 or 0.7.0. The library's version is 0.6.2 (`v90m_version()`), its
+SONAME `libv90modem.so.0.6`.
+
 Added:
 - Answering role, V.34 (and V.34 selected by a V.90 caller's INFO1a): an
   opt-in cap of our transmit rate at the caller's own projection for it,
@@ -30,12 +55,15 @@ Added:
   would lose a step; of the 106 recorded calls only 6 reach a V.34 MP
   (plus x2b, a V.90 caller that selected V.34), none asked above its
   projection. `V90M_MEM_SIZE` and `v90m_mem_size()` are unchanged.
-- `v90m_stats.v34_proj_bps`, `v34_ask_bps`, `v34_capped` (appended;
-  `v90m_stats` grows by 12 octets): answering V.34, our transmit
-  direction: the caller's projection, its MP's ask (both bit/s, 0 = none)
-  and whether the cap lowered our MP's offer. The host's count of
-  "asked above its own projection and error control failed" comes from
-  these.
+- `v90m_get_v34_cap(m, &c)` fills a new `v90m_v34_cap` (`proj_bps`,
+  `ask_bps`, `capped`): answering V.34, our transmit direction, the
+  caller's projection, its MP's ask (both bit/s, 0 = none) and whether the
+  cap lowered our MP's offer; kept after the end until `v90m_reset`; all
+  0 calling, on any other call and before V.34 training. The host's count of "asked above its own projection and
+  error control failed" comes from these. A function and a struct of
+  their own, as `v90m_get_diag`: `v90m_state`, `v90m_stats` and
+  `v90m_diag` keep their size, and a program built against 0.6.0 or 0.6.1
+  runs on 0.6.2's shared library (SONAME `libv90modem.so.0.6`).
 
 Fixed:
 - Answering role, x2 offered: a caller whose CM offers V.34 and no PCM got
@@ -61,6 +89,14 @@ Fixed:
   noticed up to one, two or three echo delays later. Simulation: a caller
   that sends S 470 ms after our J, our echo 150 ms late: data at the first
   training (four retrains, no data, before).
+- V.42 (LAPM), either role, every modulation: `v90m_ec_tx_busy` read 0
+  from the first bit of a frame's closing flag, 7 bits before the frame
+  was out, against its contract (include/v90modem.h,
+  docs/error-control.md). A host that stops the line the moment it reads 0
+  (after `v90m_ec_release`, before `v90m_cleardown`) cut the DISC's
+  closing flag, and the far end never took the DISC. It now stays 1 until
+  the flag's last bit has gone. No bit on the line changes;
+  `v90m_ec_mem_size()` is unchanged.
 
 ## 0.6.1 (2026-11-24)
 
