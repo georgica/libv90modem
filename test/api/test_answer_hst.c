@@ -2501,7 +2501,9 @@ int main(int argc, char **argv)
     (void)order_bm;
 #endif
     printf("test_answer_hst: the HST answering branch through the API (W %d ms)\n", HST_W_MS);
-    if (!only && HST_PART) printf("  (part %d of 6)\n", HST_PART);
+#if HST_PART
+    if (!only) printf("  (part %d of 6)\n", HST_PART);
+#endif
     CHECK_EQ_I(V90M_END_HST_FAILED, V90M_END_K56_FAILED + 1);
     if (only) run_case(only);
     else for (i = 0; i < sizeof order / sizeof order[0]; i++) if (in_part(order[i])) run_case(order[i]);
