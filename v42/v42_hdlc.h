@@ -36,6 +36,7 @@ typedef struct {
     int      pos;            /* next octet of buf to send */
     int      in_frame;       /* currently between opening and closing flag */
     uint8_t  cur;            /* octet being shifted out */
+    uint8_t  closing;        /* cur is a frame's closing flag (busy till it is out) */
     int      nbits;          /* bits of cur still to send */
     int      raw;            /* cur is a flag or abort: no zero insertion */
     int      ones;           /* run of ones sent inside the frame */
@@ -52,7 +53,8 @@ static inline int v42hdlc_tx_need_frame(const v42hdlc_tx_t *t)
 {
     return t->len == 0 && !t->in_frame && t->nbits == 0;
 }
-/* True while a loaded frame has not been completely sent. */
+/* True while a loaded frame has not been completely sent: its zero
+ * insertion and its closing flag's last bit included. */
 int  v42hdlc_tx_busy(const v42hdlc_tx_t *t);
 /* Load one frame (address, control, information); the FCS is appended here.
  * Returns 0, or -1 if a frame is still loaded or len is out of range. */

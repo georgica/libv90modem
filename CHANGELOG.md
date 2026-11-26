@@ -64,6 +64,14 @@ Fixed:
   noticed up to one, two or three echo delays later. Simulation: a caller
   that sends S 470 ms after our J, our echo 150 ms late: data at the first
   training (four retrains, no data, before).
+- V.42 (LAPM), either role, every modulation: `v90m_ec_tx_busy` read 0
+  from the first bit of a frame's closing flag, 7 bits before the frame
+  was out, against its contract (include/v90modem.h,
+  docs/error-control.md). A host that stops the line the moment it reads 0
+  (after `v90m_ec_release`, before `v90m_cleardown`) cut the DISC's
+  closing flag, and the far end never took the DISC. It now stays 1 until
+  the flag's last bit has gone. No bit on the line changes;
+  `v90m_ec_mem_size()` is unchanged.
 
 ## 0.6.1 (2026-11-24)
 

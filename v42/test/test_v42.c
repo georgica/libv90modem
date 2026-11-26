@@ -857,7 +857,7 @@ static int detect_case(uint8_t addr)
     v42hdlc_tx_frame(&t, f, 12, 0); v42hdlc_tx_flags(&t, 1);
     for (i = 0; i < 8; i++) (void)v42hdlc_tx_bit(&t);             /* its flag: lost */
     while (v42hdlc_tx_busy(&t)) v42ec_rx_bit(&B, v42hdlc_tx_bit(&t));
-    for (i = 0; i < 16; i++) v42ec_rx_bit(&B, v42hdlc_tx_bit(&t));  /* its last bits, the closing flag */
+    for (i = 0; i < 9; i++) v42ec_rx_bit(&B, v42hdlc_tx_bit(&t));   /* flags after the closing one */
     for (i = 0; i < 40; i++) v42ec_rx_bit(&B, 1);                  /* mark again */
     return B.want_hdlc;
 }
@@ -892,6 +892,34 @@ static void test_release(int from_a)
     CHECK_EQ_I(tap_count(ty, cmd, 0x73), 1 + from_a);   /* UA, F = 1 (B also sent the SABME one) */
     CHECK_EQ_I(v42ec_write(x, (const uint8_t *)"x", 1), 0);
     CHECK_EQ_I(v42ec_write(y, (const uint8_t *)"x", 1), 0);
+}
+
+/* busy lasts until the DISC's closing flag has gone, so a host that stops
+ * the line the moment v90m_ec_tx_busy reads 0 (docs/error-control.md) still
+ * delivers the DISC: the far end takes it whole and goes down as asked */
+static int ec_busy(const v42ec_t *e) { return e->hdlc_tx_on && v42hdlc_tx_busy(&e->htx); }   /* v90m_ec_tx_busy */
+static void test_release_busy(void)
+{
+    v42ec_status_t s; int bits = 0, i;
+    setup(); connect_pair();
+    run(300);
+    CHECK_EQ_I(ec_busy(&A), 0);
+    v42ec_release(&A);
+    for (i = 0; i < 1000 && !ec_busy(&A); i++) { v42ec_rx_bit(&B, v42ec_tx_bit(&A)); (void)v42ec_tx_bit(&B); }
+    CHECK_EQ_I(ec_busy(&A), 1);                        /* the DISC is loaded */
+    while (ec_busy(&A) && bits < 10000) {
+        v42ec_rx_bit(&B, v42ec_tx_bit(&A));
+        (void)v42ec_tx_bit(&B);
+        bits++;
+    }
+    for (i = 0; i < 50; i++) {                          /* the line stopped: mark */
+        int k;
+        for (k = 0; k < BITS_PER_MS; k++) { v42ec_rx_bit(&B, 1); (void)v42ec_tx_bit(&B); }
+        v42ec_tick(&B, 1);
+    }
+    CHECK_EQ_I(v42ec_state(&B), V42EC_DISCONNECTED);
+    v42ec_get_status(&B, &s); CHECK_EQ_I(s.reason, V42LAPM_R_PEER_DISC);
+    printf("release_busy: busy for %d bits, the peer's state %d, reason %d\n", bits, v42ec_state(&B), s.reason);
 }
 
 /* release while the far end is gone: DISC repeated N400 times, then done */
@@ -1457,6 +1485,7 @@ int main(void)
     test_release(1);
     test_release(0);
     test_release_unanswered();
+    test_release_busy();
     test_detection_off();
     test_detection_mirror();
     test_abort_states();
