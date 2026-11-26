@@ -6904,3 +6904,10 @@ measured figures.
   CHANGELOG names the one hst-wsize cell that moved (1040 to 1510 ms);
   hstcall.h says the 4-symbol marker is not sent; hst-facts' [FW]
   training row "Not seen in REC".
+
+## release 0.7.3
+
+- Version 0.7.3 in the Makefile, the header (0, 7, 3), test_api (703),
+  README, docs/api.md, getting-started.md (`.so.0.7.3`, SONAME unchanged
+  `.so.0.7`), testing.md and call_loop's golden.
+- CHANGELOG 0.7.3 (2026-11-26): content as written under unreleased.

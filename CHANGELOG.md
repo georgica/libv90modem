@@ -8,7 +8,7 @@ change is listed here. Rebuild against the new header with every version;
 "Simulation and own answerer only" means: tried against simulated lines and
 this library's own answering modem, never against a real modem or server.
 
-## 0.7.3 (unreleased)
+## 0.7.3 (2026-11-26)
 
 HST fixes from a public recording of a real call (a Courier V.Everything
 calling a Courier I-Modem at 16800 HST, Retrocet 2024; docs/history/
