@@ -742,6 +742,39 @@ Measured against `sim/hstcall` only; no real HST modem has called it yet.
   to our 0x1R by 3 s or more (an LNA lost, resent at T401) while our
   receiver asks for a retrain steps the rate down for nothing; never
   seen in simulation.
+- **Receive throughput while the caller holds the fast channel** (Task 24
+  run 4: some 700 B/s from BinModem at 14400 after its reversals, no
+  frame lost or sent again). MNP's window, not a fault: the far sender
+  may have k LTs of N401 octets unacknowledged, k 8 and N401 64 by default
+  (`mnp.k`, `mnp.n401`, `mnp.opt` 2), 512 octets, and every
+  acknowledgement (LA) crosses the 450 or 300 bit/s back channel: 11
+  octets with flags in the standard layout, 195 ms at 450 bit/s; 6, 107
+  ms, streamlined. Simulated (`sim/hstcall` holding the fast channel at
+  14400 after its reversal, a full backlog, we send nothing; 20 s; a
+  scratch harness over `test_answer_hst`'s line, not a committed test;
+  hstcall sends no parameter 8, so these LAs are the standard layout's):
+  867 octets/s with the 450 bit/s back channel, 726 with 300, against
+  some 1640 the line carries (64 data octets in about 71 on the line,
+  bit stuffing). Our LAs go back to back (102 in 20 s, every one moving
+  N(R) on), and the sender is blocked by its window 65 % of the time: it
+  sends its 8 LTs in some 310 ms and the LA covering the last of them
+  reaches it some 280 ms later (the LA's length plus both receivers'
+  delays), 8 LTs every 586 ms. Our acknowledging changes little: an LA
+  on a 450 bit/s channel takes longer than the window's 8 LTs leave room
+  for; holding each LA until k/2 LTs wait (A.7.3.3's other trigger), not
+  sending it at once when we have nothing else to send, gave 947 and 762
+  octets/s in the same runs, +9 and +5 %, not worth leaving the rule for.
+  What does: N401 256, parameter 8 bit 0 (`mnp.opt` 3, `mnp.n401`
+  256), when the caller's LR offers it (BinModem's does, parameter 8 = 3,
+  [BM]): 1728 octets/s in the same run at 450 and at 300 bit/s. Not the
+  default, because it is both ways (A.6.4.1.8): our own LTs on the back
+  channel then carry up to 256 octets, 4.6 s each at 450 bit/s (7 s at
+  300), and an LA waits behind the one going out; T401 grows with N401.
+  For an ISP whose callers mostly download, `mnp.opt` 3 is the setting to
+  try. k is at most 8 (`MNP_MAX_K`). BinModem's LR carries parameter 8 =
+  3, so with our default (2) its calls agree the streamlined layout, LAs
+  of some 107 ms, and still gave about 700 octets/s: its own delays (its
+  back receiver, its turnaround) are longer than hstcall's.
 - **The armed receiver's S detection** (`hst_frx_arm_switch`,
   `hst_frx_arm_train`; Task 22b, which found both limits of 22a's): a
   training is seen in data mode as S or S-bar, 16 symbols each the point

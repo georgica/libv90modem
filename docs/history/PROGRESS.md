@@ -6640,3 +6640,29 @@ printed line changed by the fields' removal. test_v42 5708 and call_loop
 0.6.2 came in with the merge and match. `make golden` 158 programs
 identical; replay manifest hst's (742 runs identical, no line changed);
 bench hashes 19 identical; `v90m_mem_size()` 106320 (x86-64).
+
+## hst: the final review's fix wave (2026-11-26)
+
+- I3 (8bba11e): HST not offered under max_down_bps 1..4799; header and
+  api.md say what HST does with max_down / max_up. test_answer_hst case
+  35 max_down_low.
+- Minors (165426a): m1 rc_late cleared at a switch of role (case 36);
+  m2 the pump's request untaken behind our own 0x1R bounded at
+  HST_RC_UNTAKEN_MS 3000 (case 37 retrain_untaken: failed at 3001 ms,
+  END_RETRAIN_FAILED at 45 s; sim drop_ln); m4 nsym wraps; m5 rate-0
+  guard; m6 hst_fmf_bm under HST_PROFILE_BM.
+- Docs (a4e3d65): CHANGELOG 0.7.0 (ABI, behaviour, evidence, 0.6.2-rc1),
+  api.md for every HST/MNP symbol, error-control.md host patterns,
+  limits.md ledger 140 and 211.
+- m7 (25af56d): test_answer_hst as api_test_answer_hst_1..6 (BinModem
+  profile 1..3), none over 32 s on x86-64; bodies byte-identical to the
+  old golden files.
+- Throughput: while the caller holds the fast channel at 14400, MNP's
+  window (k 8 x N401 64) against 195 ms LAs at 450 bit/s gives 867
+  octets/s (726 at 300) of some 1640; caller window-blocked 65 %; LAs at
+  k/2 +9 %; mnp.opt 3 (N401 256) 1728. Documented in limits.md; no code
+  change.
+
+Commands: `make golden` (165 programs identical, ALL HOST CHECKS PASS,
+check-hst-bm included); `tools/replay-proof.sh check` 742 identical;
+`tools/bench-hashes.sh check` 19 identical. x86-64 only.

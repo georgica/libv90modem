@@ -78,6 +78,11 @@ Added (simulation, own answerer, the replay corpus and BinModem as above):
   `v90m_ec_tx_busy` also counts an LD owed.
 - `v90m_stats.reversals` (appended): HST channel reversals, this call.
 
+Known limits (docs/limits.md, "HST (answering)"): the receive throughput
+while the caller holds the fast channel is bounded by MNP's window (k 8
+LTs of 64 octets by default) against the back channel's acknowledgements:
+about half the line rate at 14400.
+
 ## 0.6.2-rc1 (2026-11-25)
 
 A release candidate, for the ISP's WebTV calls: checked on x86-64 only
