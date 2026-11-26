@@ -221,11 +221,11 @@ delivered).
   errors. The pad (none, 3 dB, 6 dB) the client reports is handled.
 - **A non-x2 V.34 caller sees an x2 server's JM and INFO0a.** With x2
   offered, a caller whose CM offers V.34 and no PCM gets a JM whose carrier
-  is inverted after each JM, and an INFO0a with max_sr_diff 4 and cme 1, as
-  from a U.S. Robotics server. It still connects at V.34 in simulation and
-  on recordings. Not tried on a live non-x2 V.34 call: a V.8 receiver that
-  cannot take the inverted JM would fail V.8, as this library's 0.3.0
-  calling side did. Check one before x2 is offered by default.
+  is inverted after each JM for the first 2 s (`V8A_X2_FLIP_MS`), then
+  plain, and an INFO0a with max_sr_diff 4 and cme 1, as from a U.S.
+  Robotics server. Live, a strict V.8 receiver (two WebTV boxes) never
+  took the inverted JM and failed V.8 (0.6.1: 14 of 21 calls); since 0.7.0
+  it gets the plain JM after 2 s and loses those 2 s only (simulation).
 - **No way back to V.34.** Once the client's marker has come, a start-up
   or rate change that does not complete, or a request we cannot serve
   (rate index 0, a pad other than none / 3 / 6 dB, MD other than 5),

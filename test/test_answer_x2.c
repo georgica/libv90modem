@@ -118,6 +118,10 @@ static int16_t c_tick(void *u, int16_t rx)
     return t;
 }
 
+/* the caller's CM modes (0: V.34 only), and 1: its V.8 receiver cannot take
+ * an inverted JM (a strict hardware V.34 modem, v8rx jm_flip 0) */
+static uint16_t g_cm_modes; static int g_strict;
+
 static void start(unsigned modes, int law, int cm_access)
 {
     answer_cfg ac; v34peer_cfg pc; line34_cfg lc;
@@ -127,12 +131,13 @@ static void start(unsigned modes, int law, int cm_access)
     memset(&ac, 0, sizeof ac);
     ac.level = 3000; ac.modes = modes; ac.getbit = p_get; ac.putbit = p_put; ac.user = &UA;
     v34peer_default(&pc, 3000);
-    pc.cm_access = cm_access;
+    pc.cm_access = cm_access; pc.modes = g_cm_modes;
     pc.dx.getbit = p_get; pc.dx.putbit = p_put; pc.dx.user = &UC;
     answer_init(&A, &ac);
     if (law == 2) { p2d_cfg p = A.p2cfg; p.alaw = 1; answer_v90_cfg(&A, &p); }
     answer_v90_line(&A, 0, 0, 0);
     v34peer_init(&C, &pc); line34_init(&L, &lc);
+    if (g_strict) C.v8.rx.jm_flip = 0;
     ntx = 0; l1_at = -1; mk_off = 0;
 }
 
@@ -745,7 +750,23 @@ int main(void)
     CHECK_EQ_I(A.modulation, ANS_MOD_V34); CHECK_EQ_I(A.phase, ANS_V34);
     CHECK_EQ_I(o1.tx, o0.tx); CHECK_EQ_I(o1.rx, o0.rx); CHECK_EQ_I(o1.sym, o0.sym);
     CHECK_EQ_I(o0.bad, 0); CHECK_EQ_I(o1.bad, 0);
+
 #ifndef TEST_SHORT     /* on ARM under qemu (test.h): cases 1, 3 and 4 */
+    /* 1b. WebTV's CM (V.34, V.32bis, V.22bis, V.23, V.21; no PCM, no access
+     *     octet) from a strict V.8 receiver that cannot take the inverted JM:
+     *     the JM is inverted only for V8A_X2_FLIP_MS, then plain; the caller
+     *     sends CJ and the call connects V.34 as without x2 */
+    {
+        g_cm_modes = V8_MOD_V34 | V8_MOD_V32 | V8_MOD_V22 | V8_MOD_V23 | V8_MOD_V21; g_strict = 1;
+        slot = 1; v34_call(base | ANS_MODE_X2, 1, 0, &o1);
+        g_cm_modes = 0; g_strict = 0;
+        printf("  strict V.34 caller, x2 offered: V.8 result %d, %s %d / %d bit/s, %ld bad\n",
+               A.v8.result, o1.ok ? "V.34" : "NO DATA", o1.tx, o1.rx, o1.bad);
+        CHECK_EQ_I(A.v8.result, V8A_RES_OK); CHECK_EQ_I(A.v8.selected, V8_SEL_V34);
+        CHECK_EQ_I(o1.ok, 1); CHECK_EQ_I(o1.x2, 1);
+        CHECK_EQ_I(A.modulation, ANS_MOD_V34);
+        CHECK_EQ_I(o1.tx, o0.tx); CHECK_EQ_I(o1.rx, o0.rx); CHECK_EQ_I(o1.bad, 0);
+    }
     /* its CM carries the PSTN access octet: the JM gives it back with the
      * digital-network bit; still V.34 */
     slot = 1; v34_call(base | ANS_MODE_X2, 1, 1, &o1);

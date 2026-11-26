@@ -5,7 +5,8 @@
  * mu-law line, the JM of an x2 server (docs/history/x2-facts.md "Phase 1"):
  * the octets as V.34's, the PSTN access octet returned with "DCE on digital
  * network" when the CM has one, and the carrier inverted after each
- * complete JM.
+ * complete JM for the first V8A_X2_FLIP_MS, then plain (a strict V.8
+ * receiver never takes the inverted JM and goes on sending CM).
  * Sample-driven, fixed-point, no allocation. */
 #ifndef V90D_MODEM_V8ANS_H
 #define V90D_MODEM_V8ANS_H
@@ -24,6 +25,7 @@ typedef enum { V8A_SILENCE, V8A_ANSAM, V8A_JM, V8A_POST, V8A_DONE } v8a_state;
 #define V8A_SILENCE_MS 200
 #define V8A_ANSAM_MS   5000
 #define V8A_JM_MS      5000    /* our bound on JM (V.8 8.2.3 leaves it open) */
+#define V8A_X2_FLIP_MS 2000    /* x2: the JM inverted only this long (see V8A_JM) */
 #define V8A_POST_MS    75
 #define V8A_MAXBITS    (20 + 10 * V8_MAX_OCTETS)
 

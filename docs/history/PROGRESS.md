@@ -6510,3 +6510,71 @@ milestone gate (verify-phase, ports, ARM) is Task 26's.
   (`test_v34call`, `test_answer_v90_v34`, `test_answer_v34`, `api/test_api`
   re-recorded; `test_orig_v34` back to 8568967's). Replay proof: 742
   identical; bench hashes: 19 identical. x86-64 only.
+
+## 0.7.0: x2's inverted JM only at first; a plain JM to a caller still sending CM (2026-11-25)
+
+- **Cause (WebTV report, finding 1; measurements only).** With x2 offered,
+  a CM with V.34 and no PCM got a JM whose carrier was inverted after
+  every JM, for the whole of V.8. Two WebTV boxes (hardware V.34 modems,
+  strict V.8 receivers) never decoded it: no CJ, CM until they hung up; we
+  left V.8 after `V8A_JM_MS` (5 s) and Phase 2 failed after its 10 s
+  (`P2N_ERR_INFO0`). 14 of 21 inverted-JM calls failed, 0 of 31 plain.
+- **In simulation.** `test_v8ans` case 6: the library's own caller with
+  `v8rx.jm_flip` 0 and WebTV's CM (V.34, V.32bis, V.22bis, V.23, V.21, no
+  PCM, no access octet), x2 offered on mu-law: before, `V8A_RES_NO_CJ`
+  after 5.000 s, 25 JMs, the caller never got JM (the production
+  signature); 4 checks failing. `test_answer_x2` case 1b, the whole call
+  (sim/v34peer over line34, its V.8 receiver strict): before, V.8 result 3,
+  no data; 5 checks failing.
+- **Fix (modem/v8ans.c, `V8A_JM`).** The sign flips at the end of a JM
+  only while `t < V8A_X2_FLIP_MS` (2000 ms); a JM that begins later is
+  sent with sign +. x2 (`v8ans_x2`) and the access octet are unchanged, so
+  Phase 2 still offers x2. After: CJ 2.74 s after the JM began (13 JMs),
+  V.34 28800 / 28800, no bit errors, the same rates as without x2.
+- **x2 kept.** The x2 client answers well inside 2 s: the live USR x2
+  client's CJ came 0.773 s after the JM began (live-x2 ppp1 and ppp2), the
+  recorded corpus 0.606-0.641 s, the simulated callers 0.74 s. Non-x2
+  callers that did take the inversion live were slow (WebTV 1.47-3.87 s);
+  the plain JM after 2 s helps them too. The live x2 call (ppp1) replays
+  byte-identical with the old and the new code. test_v8ans case 5
+  (each JM's sign checked sample by sample), test_answer_x2, test_x2rec
+  unchanged. Replay proof: 742 runs identical; in the x2 set, the 6
+  recordings whose CM has no PCM all had CJ within 0.64 s of the JM.
+- **Golden.** test_v8ans and test_answer_x2: one new line each (the new
+  cases) and the check counts (50 -> 60, 518 -> 526). test_answer_x2's case
+  1b, a whole call, runs only where TEST_SHORT is not set (not on ARM). Bench hashes 19
+  identical.
+
+## 0.7.0: V.34 Phase 3/4 time limits keep the whole round trip when the echo comes late (2026-11-25)
+
+- **Cause (WebTV report, finding 2).** `v34dx.c` `ec_schedule`, with
+  `rtd_has_io` (our own path's delay unknown, `io_delay` -1): at the start
+  of the fast echo step it overwrote `cfg.rtd` with `rtd - ecd.delay - 8`,
+  the far echo's lag past the near one. The same `cfg.rtd` sets the limits
+  of `DX_P3_J` (600 ms + rtd + MD), `DX_P3_RX` (2800 ms + 2 rtd) and Phase 4
+  (2500 ms + 3 rtd). Live (#21): 1569 -> 357, the J limit 645 ms, the
+  caller's S at 649 ms: five retrains, call lost.
+- **In simulation.** `sim/v34peer` gains `s_after_j_ms`: the call-side
+  engine waits, silent, that long after it heard J before its S (the boxes:
+  S 649-970 ms after our J began). `test_v34call`: line34 `io_delay` 1200
+  (echo 150 ms late), `d_ca = d_ac = 184` (round trip 1569, as #21), our
+  delay unknown, `s_after_j_ms` 470. Before: rtd 1569 -> 369, 4 retrains
+  of ours, 3 of the caller's, no data in 25 s (5 checks failing).
+- **Fix.** v34dx_t gains `far_rtd` (int32_t, in the 4-octet hole after
+  `pw_res`: `sizeof (v34dx_t)` 23032 as before, v90m_mem_size 106320).
+  `v34dx_init` sets it to `cfg.rtd`; `ec_schedule` takes our delay off it
+  (as it did off `cfg.rtd`) and `far_on` and the far canceller's reference
+  read it. `cfg.rtd` stays whole for the limits. After: data at 10.5 s,
+  no retrain; `far_rtd` = rtd - echo delay - 8 and `far_on` as before.
+  test_v34dx's far-echo lag check reads `far_rtd`.
+- **Replay proof.** 2 recordings x 7 sets, .txt only (their .bits files
+  are empty: these replays decide no bits, so the evidence is the trace):
+  ab_cc_v34, our retrain from `DX_P3_J` 12.229 -> 12.262 s (its round
+  trip 263 samples, all taken off before since the echo delay was longer:
+  the limit + 33 ms); x1, our retrain from Phase 4 16.812 -> 16.911 s (the
+  3-round-trip limit, + 99 ms). The same retrain in
+  each, everything after it identical but for the count of transmit
+  samples that differ from the recording (the recordings were made with
+  the old limits). Re-recorded: test/golden/replay.sha256 (14 lines).
+- **Golden.** test_v34call: one new line (the case) and its count 296 ->
+  304; every other program identical. Bench hashes 19 identical.

@@ -37,6 +37,31 @@ Added:
   "asked above its own projection and error control failed" comes from
   these.
 
+Fixed:
+- Answering role, x2 offered: a caller whose CM offers V.34 and no PCM got
+  a JM whose carrier was inverted after every JM for the whole of V.8. A
+  strict V.8 receiver (two WebTV boxes, hardware V.34 modems) never
+  decoded it, went on sending CM and never sent CJ; we went on to Phase 2
+  after 5 s and the call failed there (`P2N_ERR_INFO0`). 14 of 21 such
+  live calls failed, none of 31 with a plain JM. The JM is now inverted
+  only for its first 2 s (`V8A_X2_FLIP_MS`); the JMs that begin later are
+  plain. An x2 client still sees the inverted JMs first (the live USR x2
+  client sent CJ 0.773 s after the JM began; the recorded corpus 0.606 to
+  0.641 s), and x2 is still offered in Phase 2. Non-x2 callers that did
+  take the inversion live took 1.47 to 3.87 s; the plain JM helps them too.
+  Simulation and the replay corpus: every recorded call identical.
+- V.34, either role, our own sample path's delay unknown (`io_delay` -1):
+  once the echo delay was found in Phase 3, the round trip used for the
+  Phase 3 and 4 time limits was replaced by the round trip less that
+  delay. Over a VoIP leg whose echo came back 150 ms late, the wait for the
+  caller's S after our J fell from 796 to 645 ms while the caller's S began
+  at 649 ms: five retrains and the call lost (WebTV). The limits now keep
+  the whole round trip from Phase 2; only the far echo canceller's lag
+  takes our own delay off, as before. A caller lost in Phase 3 or 4 is
+  noticed up to one, two or three echo delays later. Simulation: a caller
+  that sends S 470 ms after our J, our echo 150 ms late: data at the first
+  training (four retrains, no data, before).
+
 ## 0.6.1 (2026-11-24)
 
 Added:

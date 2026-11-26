@@ -48,7 +48,8 @@ typedef struct {
                                the echo canceller's reference is exact */
     int rtd;                /* round-trip delay from Phase 2, samples */
     int rtd_has_io;         /* ... which still contains our own path's delay (Phase 2 did
-                               not know it either): taken off once echo_delay is found */
+                               not know it either): taken off far_rtd once echo_delay is
+                               found */
     int echo_delay;         /* our own sample path, as p34d_cfg: samples until the echo
                                starts to come back; -1 = find it during TRN */
     int md_len;             /* the far modem's MD, units of 35 ms */
@@ -130,6 +131,9 @@ typedef struct {
     ecdly_t     ecd;                /* what we sent; ecd.delay is our own path's delay in use */
     int32_t     trn_t;              /* samples of Phase 3 TRN sent */
     int32_t     pw_in, pw_res;      /* smoothed power into and out of the cancellers */
+    int32_t     far_rtd;            /* the far echo's lag past the near one, samples: cfg.rtd,
+                                       less our own path's delay when cfg.rtd_has_io (from
+                                       Phase 3's TRN on). cfg.rtd stays whole: the time limits */
     /* ---- receive ---- */
     sdet_t      sdet;
     v34up_t     up;                 /* the receiver; up.rx_ready: data */
