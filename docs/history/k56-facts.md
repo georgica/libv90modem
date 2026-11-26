@@ -315,6 +315,49 @@ not by D-Modem's fixed block skip. **Ruling C6:** NAK(1) only for an
 invalid frame (bad FCS, or a field that does not parse); ACK(1) to every
 valid MS carrying our block (conditions 1 to 5).
 
+## Versions
+
+Added 2026-11-26 for 0.7.2, from the analysis "K56flex version 1
+differences" (`~/modem-research/reports/`) and the WebTV firmware findings
+(`~/modem-research/ext/webtv-modem-fw/work/findings.md` section 4).
+
+- The NS block's `o[7]` is a version bitmask: bit 6 (`0x40`) set by a
+  digital modem; bits 0 to 4 the K56flex versions, bit 0 version 1, bit 1
+  version 2; bit 5 (`0x20`) a flag of the sender's, not a version. [RE:
+  ours, the WebTV Plus K.Flex controller V1.101, disassembled]: it takes a
+  CL's version as `o[7] & 0x1f & mask` (`o[7]` must have `0x40`), drops a
+  CL with a zero result without MS or NAK, and otherwise selects the
+  highest common bit; its mask always holds bit 0, and bit 1 only when its
+  DSP says so. In its MS `o[7]` is the selected version (1 or 2), plus
+  `0x20` when an internal flag is set.
+- Values seen: servers `0x42` (the real server; we, before 0.7.2), `0x43`
+  (the Telenetics manual's example `9481814347C4`, a real server's), `0x61`
+  (D-Modem's server); clients `0x02` (the real client), `0x21` (SM56,
+  echoing D-Modem's `0x61`). [doc] (Telenetics), [RE: ours, the
+  recording], [RE: D-Modem, notes 1].
+- SM56 echoes the CL's block with `0x40` cleared and chooses nothing; its
+  CL test is `(o[7] & 0x2f) >= 2` and `o[7] & 0x40`, which `0x43` passes
+  and `0x41` would not. [RE: D-Modem, notes 1].
+- Versions 1 and 2 are most likely "K56flex 1.0" and "1.1" (the only two
+  releases period sources name; Cisco MICA's CSCdk08302: a "Flex 1.0
+  version request" in the CL and MS). [inf], weak: no source decodes the
+  octet. No source describes what differs on the line between them [unk].
+- The early WebTV Plus (V1.001_WEBTV-K56_DLP) answered our `0x42` CL with
+  silence and then V.34: its pump reports version 1 alone. [RE: ours, live
+  calls], the mask rule inferred from V1.101.
+
+**Ruling V1 (0.7.2):** our CL offers versions 1 and 2 (`o[7]` `0x43`), the
+9-octet block otherwise unchanged (FCS `ff 0a`). An MS whose block's
+`o[7] & 0x1f` has bit 0 as its highest bit (version 1 selected) gets
+NAK(3), V.8bis 9.5's "does not support or has disabled the mode
+requested" [doc], and V.8 follows as for no MS; every other MS that passes
+the MS test gets ACK(1) as before (a client that selects version 2, SM56's
+echo `0x03`, an `o[7]` with no version bit). `V90M_OPT_K56_V1`
+(experimental) acknowledges version 1 too and runs the version-2 start-up;
+`V90M_OPT_K56_V2_ONLY` sends `0x42` and acknowledges every MS, 0.7.1's
+exchange. (MS test condition 6 still holds: `o[7]` decides only ACK(1)
+against NAK(3), never whether the MS is K56flex's.)
+
 ## Phase 2
 
 Phase 1 continues as plain V.8 after ACK(1): our ANSam, its CM, our JM, its

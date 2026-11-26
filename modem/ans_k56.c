@@ -17,11 +17,21 @@ static int16_t tick_v8bis(answer_t *a, int16_t rx)
 {
     int16_t tx = 0;
     /* K56flex's V.8bis; V.8 follows from its own silence, whatever came
-     * of it. An agreement turns x2 off for the call (k56 design,
-     * decision 5): no x2 JM, no x2 INFO0a. */
+     * of it (a version 1 declined with NAK(3) as well). An agreement turns
+     * x2 off for the call (k56 design, decision 5): no x2 JM, no x2
+     * INFO0a. */
+    const v8bis_t *b = &a->u.v8b;
+    int res, k = 0;
     if (v8bis_tick(&a->u.v8b, rx, &tx) != V8B_DONE) return tx;
-    a->k56_agreed = v8bis_result(&a->u.v8b) == V8B_RES_AGREED;
-    if (a->k56_agreed) a->v8.x2_offer = 0;
+    /* what came of it, for the report (v90m_get_k56): u.v8b is gone after
+     * this sample */
+    res = v8bis_result(b);
+    if (b->cl_sent) k |= ANS_K56_CL;
+    if (b->ms_ver >= 0) k |= ANS_K56_MS | (v8bis_version_of(b->ms_ver) << ANS_K56_VER_SHIFT);
+    if (res == V8B_RES_AGREED) k |= ANS_K56_AGREED;
+    if (res == V8B_RES_DECLINED) k |= ANS_K56_DECLINED;
+    a->k56 = (uint8_t)k;
+    if (ANS_K56_AGREED_OF(a)) a->v8.x2_offer = 0;
     ans_enter(a, ANS_V8); a->t = 0;
     return tx;
 }

@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | `v90m_replay.c` (`make replay`, installed as `v90m-replay`) | plays a recorded call into the answering modem and reports what it made of it; `-H`: HST offered and the V.42 endpoint linked (MNP on), as a host offering HST runs them; a caller without CM or AA then meets the HST wait, and the report ends with `HST:` lines (the wait and what the detector heard, our forward training's segments and codes, the back receivers' locks, the rates and MNP's agreed ones, the reversals, the end); a caller with CM or AA gets the report it gets without `-H` |
-| `replay-proof.sh` (`make replay-proof`) | the private recordings (`RECS`, default `/home/georgica/sync-build/live-050`, 106 of them, never in the repository) through `v90m-replay` in seven flag sets (`""`, `-9`, `-x`, `-x -9`, `-k`, `-k -9`, `-H`): trace, decided bits (`-b FILE`) and exit code of each run hashed against `test/golden/replay.sha256`; `check` stops at once on a set the manifest has no lines for (`record` it first); `record` writes it, `diff REF` compares this tree's outputs with the tool built from git REF's, in the sets REF's own proof has; `V90M_NO_RECS=1` skips |
+| `replay-proof.sh` (`make replay-proof`) | the private recordings (`RECS`, default `/home/georgica/sync-build/live-050`, 106 of them, never in the repository) through `v90m-replay` in seven flag sets (`""`, `-9`, `-x`, `-x -9`, `-K`, `-K -9`, `-H`; `-K` is 0.7.1's K56flex CL, as the recordings were answered: the sets are still named `k56`, and `diff REF` gives a REF from before 0.7.2 `-k`): trace, decided bits (`-b FILE`) and exit code of each run hashed against `test/golden/replay.sha256`; `check` stops at once on a set the manifest has no lines for (`record` it first); `record` writes it, `diff REF` compares this tree's outputs with the tool built from git REF's, in the sets REF's own proof has; `V90M_NO_RECS=1` skips |
 | `verify.sh` (`make verify`) | per commit, seven stages at once, one line each: host `check`, `golden.sh check` and `split-check.sh`, `replay-proof.sh check`, `bench-hashes.sh check`, `check-ubsan`, the armv7hf short suite (less `ports-slow.txt`) and the same for aarch64be (big-endian) against the host's `-DTEST_FORCE_SHORT` set (`short-cmp.sh`), `check-fixed` and `check-symbols`; then `VERIFY PASS (S s)`; logs in `build/verify/log` |
 | `verify-phase.sh` (`make verify-phase RECS=...`) | the release proof (hours; `docs/history/audit-0.6.md`): armv5 `check-arm`, `check-ports.sh` over every target (whole suites on host gcc, armv5, s390x, riscv64, QUICK on the rest; every target gates, m68k included), the armv7hf short suite in full, the benches' hashes host against qemu, the `cost-*` counts into `build/costs.txt`, `crd-scan`; then `VERIFY-PHASE PASS` |
 | `golden.sh check\|record BUILD` (`make golden`, `make golden-record`) | every test program's output (`make check PAR=N`'s logs, filtered by `out-filter.sh`) against `test/golden/out/<dir>/<program>.txt`; a golden file is re-recorded only when a change explains it, and the commit says which and why (`docs/testing.md`) |
@@ -51,6 +51,14 @@ starts at that sample (0-based, in samples of the heard stream) and the
 times in the report stay the recording's (with `-k`, the alignment after
 V.8bis is skipped). `-l` takes decimals (`-14.4`), to 0.01 dB; a bad value
 for either exits 2 with the usage message.
+
+K56flex: `-k` offers it as the library does from 0.7.2 on (our CL's
+version octet 0x43, versions 1 and 2; a version-1 selection declined),
+`-K` as 0.7.1 did (0x42, version 2 alone, every selection acknowledged:
+`V90M_OPT_K56_V2_ONLY`), and `-1` acknowledges a version-1 selection
+(`V90M_OPT_K56_V1`). A call recorded from a host running 0.7.1 or earlier
+replays with `-K`: with `-k` the replay's CL is one bit longer and its
+transmit parts from the recording there.
 
 For the replay to follow the call, the modem must be set up as the recording
 modem was (level, modulations offered, rate ceilings, V.92): what it hears

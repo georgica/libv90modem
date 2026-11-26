@@ -4,13 +4,18 @@
  *   - 400 ms of silence, CRe: 290 ms of 1375 + 2002 Hz, 100 ms of 400 Hz,
  *     each tone within 1 %, 14.6 dB below our CL;
  *   - CRd 175 ms after CRe: our CL 120 ms (+-10) after CRd ends, decoding
- *     to v8bis_cl_octets(V8B_NS_DEFAULT); SM56's MS 10 ms after it: ACK(1)
- *     180 ms (+-10) after the MS, V8B_RES_AGREED;
+ *     to v8bis_cl_octets(V8B_NS_DEFAULT, V8B_VERS_BOTH) (version octet
+ *     0x43); SM56's MS (its echo of our version octet, 0x03) 10 ms after
+ *     it: ACK(1) 180 ms (+-10) after the MS, V8B_RES_AGREED;
  *   - no CRd: V8B_RES_NO_CRD, done 1000 ms after CRe; a CRd that starts at
  *     990 ms is received to its end; one at 1050 ms is not;
  *   - CRd, no MS: V8B_RES_NO_MS 1500 ms after our CL; an MS without the
  *     block: V8B_RES_NO_MS, nothing sent; an MS with a bad FCS:
  *     V8B_RES_NO_MS, NAK(1), no ACK(1);
+ *   - versions: an MS selecting version 1 (0x01, 0x21): NAK(3) 180 ms
+ *     after it, V8B_RES_DECLINED; with accept_v1: ACK(1); 0x02 and 0x40
+ *     (no version bit): ACK(1); version 2 alone offered (0x42, 0.7.1's
+ *     CL): ACK(1) to 0x21 and to 0x01, as in 0.7.1;
  *   - the MS with its clock 0.1 % off and noise 40 dB down: received.
  * And the CRd detector alone: the pair held 150 ms, its 1900 Hz end. */
 #include <string.h>
@@ -38,6 +43,10 @@ typedef struct {
     int ms_gap_ms;          /* after our CL */
     int fs_far;             /* the far end's clock: FS, or 0.1 % off */
     double noise;           /* RMS */
+    int vers;               /* the versions we offer (V8B_VERS_*); 0: V8B_VERS_BOTH */
+    int accept_v1;
+    int ms_ver;             /* the version octet of its MS; 0: SM56's echo of our CL's
+                               (ours less 0x40) */
 } script_t;
 
 typedef struct {
@@ -59,11 +68,15 @@ static void run(const script_t *s, events_t *e)
     memset(txs, 0, sizeof txs);
     rng_seed(&rng, 7);
     v21mod_init(&fm, V21H_MARK, V21H_SPACE, s->fs_far ? s->fs_far : FS, 300, 3000);
-    if (s->ms == MS_SM56 || s->ms == MS_BADFCS) nms = v8bis_frame(sm56_ms, 13, msbits);
+    int vers = s->vers ? s->vers : V8B_VERS_BOTH;
+    uint8_t ms[13];
+    memcpy(ms, sm56_ms, 13);
+    ms[12] = (uint8_t)(s->ms_ver ? s->ms_ver : vers);
+    if (s->ms == MS_SM56 || s->ms == MS_BADFCS) nms = v8bis_frame(ms, 13, msbits);
     if (s->ms == MS_PLAIN) nms = v8bis_frame(plain_ms, 5, msbits);
     /* a bad FCS: octet 0's first bit (a one) sent as a zero, nothing else changed */
     if (s->ms == MS_BADFCS) msbits[32 + 24] = 0;
-    v8bis_init(&B, 4243, V8B_NS_DEFAULT);
+    v8bis_init(&B, 4243, V8B_NS_DEFAULT, vers, s->accept_v1);
     for (n = 0; n < NMAX; n++) {
         double far = 0;
         int16_t rx, tx;
@@ -229,7 +242,9 @@ int main(void)
     CHECK_NEAR(e.cl_start - e.crd_end, 8 * V8B_CL_GAP_MS, 80);
     printf("  CL begins %.1f ms after CRd ends; ACK(1) %.1f ms after the MS ends\n", (e.cl_start - e.crd_end) / 8.0,
            (e.ack_start - e.ms_end) / 8.0);
-    ncl = v8bis_cl_octets(V8B_NS_DEFAULT, cl);
+    ncl = v8bis_cl_octets(V8B_NS_DEFAULT, V8B_VERS_BOTH, cl);
+    CHECK_EQ_I(cl[13], 0x43);               /* versions 1 and 2 */
+    CHECK_EQ_I(B.ms_ver, 0x03); CHECK_EQ_I(B.cl_sent, 1);
     nf = decode(e.cl_start, e.cl_end, fr, len, 4);
     CHECK_EQ_I(nf, 1);
     CHECK_EQ_I(len[0], ncl);
@@ -285,6 +300,54 @@ int main(void)
     nf = decode(e.ack_start, e.ack_end, fr, len, 4);
     CHECK_EQ_I(nf, 1);
     CHECK(nf == 1 && len[0] == 1 && fr[0][0] == 0x18);
+
+    /* K56flex versions (docs/history/k56-facts.md "Versions"). Its MS
+     * selecting version 1 alone (0x01; 0x21 with the client's flag, as the
+     * WebTV Plus would send it): NAK(3), ACK_GAP after it, then done */
+    {
+        static const int v1[2] = { 0x01, 0x21 };
+        int j;
+        s.ms = MS_SM56; s.ms_gap_ms = 10;
+        for (j = 0; j < 2; j++) {
+            s.ms_ver = v1[j];
+            run(&s, &e);
+            CHECK_EQ_I(e.result, V8B_RES_DECLINED); CHECK_EQ_I(B.ms_ver, v1[j]);
+            CHECK_NEAR(e.ack_start - e.ms_end, 8 * V8B_ACK_GAP_MS, 80);
+            nf = decode(e.ack_start, e.ack_end, fr, len, 4);
+            CHECK_EQ_I(nf, 1);
+            CHECK(nf == 1 && len[0] == 1 && fr[0][0] == 0x1a);
+            CHECK_EQ_I(e.done, e.ack_end);
+        }
+        printf("  version 1 selected: NAK(3) %.1f ms after the MS ends\n", (e.ack_start - e.ms_end) / 8.0);
+        /* accept_v1: ACK(1) */
+        s.ms_ver = 0x01; s.accept_v1 = 1;
+        run(&s, &e);
+        CHECK_EQ_I(e.result, V8B_RES_AGREED);
+        nf = decode(e.ack_start, e.ack_end, fr, len, 4);
+        CHECK(nf == 1 && len[0] == 1 && fr[0][0] == 0x14);
+        s.accept_v1 = 0;
+        /* version 2 (0x02, the real client's), no version bit (0x00 as 0x40
+         * alone): ACK(1), as before 0.7.2 */
+        s.ms_ver = 0x02;
+        run(&s, &e);
+        CHECK_EQ_I(e.result, V8B_RES_AGREED);
+        s.ms_ver = 0x40;
+        run(&s, &e);
+        CHECK_EQ_I(e.result, V8B_RES_AGREED); CHECK_EQ_I(v8bis_version_of(B.ms_ver), 0);
+        /* version 2 alone offered (0.7.1's CL, 0x42): SM56's own MS (0x21)
+         * acknowledged as it was */
+        s.vers = V8B_VERS_2; s.ms_ver = 0x21;
+        run(&s, &e);
+        CHECK_EQ_I(e.result, V8B_RES_AGREED);
+        nf = decode(e.cl_start, e.cl_end, fr, len, 4);
+        CHECK(nf == 1 && len[0] == 16 && fr[0][13] == 0x42);
+        nf = decode(e.ack_start, e.ack_end, fr, len, 4);
+        CHECK(nf == 1 && len[0] == 1 && fr[0][0] == 0x14);
+        s.ms_ver = 0x01;
+        run(&s, &e);
+        CHECK_EQ_I(e.result, V8B_RES_AGREED);
+        s.vers = 0; s.ms_ver = 0;
+    }
 
     /* the MS on a clock 0.1 % off, noise 40 dB below it */
     s.ms = MS_SM56; s.fs_far = FS * 1000 / 1001; s.noise = 3000 / sqrt(2.0) / 100;

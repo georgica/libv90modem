@@ -6711,3 +6711,73 @@ its fixes into 0.7.1.
 - CHANGELOG 0.7.1 (2026-11-26): v90m_get_restarts, v90m_restarts,
   v90m_cause and v90m_cause_name; sizes unchanged on every pinned target;
   no rebuild needed for 0.7.0 builds.
+
+## 0.7.2 (unreleased): K56flex versions offered, version 1 declined and reported (2026-11-26)
+
+From the analysis "K56flex version 1 differences" and the WebTV firmware
+findings (section 4): the version octet of our CL's K56flex block is a
+version mask, and the early WebTV Plus (version 1 alone) dropped our 0x42
+(version 2 alone) without a word. Design owner-approved; facts in
+`docs/history/k56-facts.md`, "Versions" (ruling V1).
+
+- `modem/v8bismsg`: `v8bis_cl_octets` takes the versions (9-octet block,
+  `o[7]` = 0x40 | vers; 0x43 FCS `ff 0a`); `v8bis_ms_version`,
+  `v8bis_version_of` (the highest of bits 0..4; 0x20, 0x40 not versions).
+- `modem/v8bis`: `v8bis_init(.., vers, accept_v1)`; an MS that selects
+  version 1 alone, with version 1 offered among others and accept_v1 clear,
+  gets NAK(3) 180 ms after it (V.8bis 9.5) and `V8B_RES_DECLINED`; V.8
+  follows from its own silence as for no MS. Every other MS with the block:
+  ACK(1), as before (0x02, SM56's echo 0x03, no version bit).
+- `answer_t.k56_agreed` became `answer_t.k56`, the same octet as flags
+  (agreed, CL sent, MS with the block, declined, the chosen version in bits
+  4..6; `ANS_K56_AGREED_OF`): no size change. `ANS_MODE_K56_V2_ONLY`,
+  `ANS_MODE_K56_V1`.
+- API: `V90M_OPT_K56_V2_ONLY` (0x20000), `V90M_OPT_K56_V1` (0x40000,
+  experimental), `v90m_get_k56` / `v90m_k56` (offered, exchanged, chosen,
+  declined, agreed); compile-time checks on the octet's layout and the
+  option bits. `v90m_mem_size` 106320 (x86-64, gcc and clang), 106016
+  (armv5 uclibc, armv7hf musl), 105860 (i686): 0.7.1's. test_api under
+  qemu-arm-static on both ARM toolchains: the size checks and the new
+  version table pass.
+- sim/k56call: SM56 now echoes our CL's version octet less 0x40 (was the
+  fixed 0x21 of D-Modem's CL; same frame length); `cfg.vers`, a Rockwell
+  controller's mask, written in the sim (the highest common version; none:
+  the CL dropped, no MS); `cl_ver`, `ms_ver`, `got_nak3`.
+- Tests: test_v8bismsg (0x43, its FCS, SM56's test on it, 0x41 failing it,
+  the version of an octet, the MS's octet); test_v8bis (NAK(3) to 0x01 and
+  0x21, ACK(1) with accept_v1, to 0x02 and 0x40, and with 0x42 to 0x21 and
+  0x01); test_answer_k56 `k56_version_tests` (a) to (d) below; test_api
+  `test_k56_versions` (seven client / option pairs through the API, kept
+  to the end, gone at reset, calling and NULL) and the option bits.
+  - (a) a client of versions 1 and 2: 0x42 and 0x43 both select 2, K56flex
+    32000 / 31200, 0 bad each way, no training octet wrong; with 0x43
+    data mode comes 0.220 s later on that simulated line (our ANSam 3 to 4
+    ms later from the longer CL, the rest from V.8's and Phase 2's
+    exchanges falling later). SM56 against 0x43: MS 0x03, agreed.
+  - (b) version 1 alone against 0x43: MS 0x01, NAK(3), not agreed, V.34
+    28800 / 28800 as without K56flex; k56 0x1E (chosen 1, declined).
+  - (c) the same with `ANS_MODE_K56_V1`: ACK(1), our start-up runs to
+    data, K56flex 32000 / 31200, 0 bad (the simulated pump is version 2's:
+    this pins only that the path is taken).
+  - (d) version 1 alone against 0x42: the CL dropped, no MS, V.34 28800
+    (the WebTV's call before 0.7.2); SM56 against 0x42: MS 0x02, agreed.
+- The tests written before 0.7.2 (test_answer_k56's k_call / kd_call,
+  test_api's three K56flex calls) run with 0.7.1's CL: with 0x43 every
+  later sample of their calls moves (one more stuffed bit), their golden
+  outputs with it, and one Review Focus 3 case lost a rate step (28800 to
+  26400 down on the simulated line, noise drawn per sample). Benches
+  (tools/rec_k56, rig/bench_v90 -k) likewise: the bench hashes are 0.7.1's.
+- Replay: `v90m-replay -K` (0.7.1's CL) and `-1`; replay-proof's k56 sets
+  use `-K` (and `-k` for a `diff` REF from before 0.7.2). None of the 106
+  recordings has a CRd (`make crd-scan`: 0 detections; every k56 trace
+  reads V.8bis result 2), so our replayed V.8bis never sends a CL: the
+  proof is identical with `-k` too (`RP_K=-k`, 742 identical). The
+  fixtures offer no K56flex. v90m-fields never offers it.
+- SM56 (D-Modem's half_sm56, `make test-k56-sm56 MODS=k56`) against 0x43:
+  K56flex 52000 / 31200, LAPM, 4096 octets each way identical.
+
+Gates (x86-64): make golden 162 of 166 identical before recording, the
+four that differ only by the new tests' lines and check counts
+(test_v8bismsg, test_v8bis, test_answer_k56, api/test_api; none prints our
+CL otherwise); replay proof 742 identical; bench hashes 19 identical;
+check-hst-bm pass; check-fixed pass.

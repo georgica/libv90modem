@@ -267,6 +267,15 @@ static void test_errors(void)
         m = v90m_create(&bad, &err); CHECK(m != NULL); CHECK_EQ_I(err, V90M_OK); v90m_destroy(m);
         bad.role = V90M_ROLE_ORIGINATE; bad.modulations = V90M_MOD_V34 | V90M_OPT_V34_TX_CAP;     /* calling: ignored */
         m = v90m_create(&bad, &err); CHECK(m != NULL); CHECK_EQ_I(err, V90M_OK); v90m_destroy(m);
+        /* the K56flex version options (0.7.2): option bits too; calling: ignored;
+         * the next bit up is nothing */
+        CHECK_EQ_I(V90M_OPT_K56_V2_ONLY, 0x20000); CHECK_EQ_I(V90M_OPT_K56_V1, 0x40000);
+        bad = c; bad.modulations = V90M_OPT_K56_V2_ONLY | V90M_OPT_K56_V1; CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
+        bad = c; bad.role = V90M_ROLE_ANSWER; bad.modulations |= V90M_MOD_K56 | V90M_MOD_V34 | V90M_OPT_K56_V2_ONLY | V90M_OPT_K56_V1;
+        m = v90m_create(&bad, &err); CHECK(m != NULL); CHECK_EQ_I(err, V90M_OK); v90m_destroy(m);
+        bad.role = V90M_ROLE_ORIGINATE; bad.modulations = V90M_MOD_V34 | V90M_OPT_K56_V2_ONLY | V90M_OPT_K56_V1;
+        m = v90m_create(&bad, &err); CHECK(m != NULL); CHECK_EQ_I(err, V90M_OK); v90m_destroy(m);
+        bad = c; bad.modulations |= 0x80000u; CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
 
         m = v90m_init(mem.b, sizeof mem.b, &c, &err);
         CHECK(m != NULL); CHECK_EQ_I(err, V90M_OK);
@@ -1304,7 +1313,7 @@ static void k56_call(int silent, long *data_at, v90m_state *st, v90m_stats *sx, 
     uint8_t rx = 0xff, tx;
 
     v90m_cfg_default(&c);
-    c.modulations |= V90M_MOD_K56;
+    c.modulations |= V90M_MOD_K56 | V90M_OPT_K56_V2_ONLY;     /* 0.7.1's CL: the outputs as written (test_k56_versions: 0x43) */
     c.getbit = ones_get; c.putbit = bits_put; c.on_event = x2_on_event;
     x2_nev = 0; *data_at = -1; *rt = 0;
     memset(sx, 0, sizeof *sx);
@@ -1368,6 +1377,97 @@ static void test_k56(void)
     CHECK_EQ_I(st.end, V90M_END_LOST);
 }
 
+/* K56flex's versions (0.7.2, v90m_get_k56): the simulated client, SM56's
+ * V.8bis (it echoes our version octet less 0x40) or a Rockwell controller's
+ * of version mask vers, against our CL with the options given, until data
+ * mode (K56flex or V.34) or 30 s; what v90m_get_k56 says, and the
+ * modulation. ---- */
+static void k56_ver_call(int vers, unsigned opts, v90m_k56 *k, v90m_conn *conn)
+{
+    v90m_state st0, *st = &st0;
+    static k56call_t kc_;
+    static uint8_t down[64];
+    k56call_cfg kc; v90m_cfg c;
+    v90m_t *m; int err;
+    long n;
+    uint8_t rx = 0xff, tx;
+
+    memset(k, 0x55, sizeof *k);
+    memset(st, 0, sizeof *st);
+    *conn = V90M_CONN_NONE;
+    v90m_cfg_default(&c);
+    c.modulations |= V90M_MOD_K56 | opts;
+    c.getbit = ones_get; c.putbit = bits_put;
+    m = v90m_create(&c, &err);
+    CHECK(m != NULL);
+    if (!m) return;
+    k56call_default(&kc, 3000);
+    kc.rate = 1; kc.vers = vers;
+    kc.getbit = ones_get; kc.putbit = bits_put;
+    k56call_init(&kc_, &kc);
+    memset(down, 0xff, sizeof down);
+    v90m_get_k56(m, k);                                 /* before V.8bis has ended: all 0 */
+    CHECK(k->offered == 0 && k->exchanged == 0 && k->chosen == 0 && k->declined == 0 && k->agreed == 0);
+    for (n = 0; n < 8000L * 30; n++) {
+        int16_t s;
+        v90m_process_g711(m, &rx, &tx, 1);
+        down[n & 63] = tx;
+        s = k56call_tick(&kc_, down[(n - 30) & 63]);
+        rx = v90m_g711_encode(0, (int16_t)(s / 2));
+        v90m_get_state(m, st);
+        if (st->connected || st->end != V90M_END_NONE) break;
+    }
+    v90m_get_k56(m, k);
+    if (st->connected) *conn = st->modulation;
+    /* kept to the end, gone at v90m_reset */
+    {
+        v90m_k56 z;
+        CHECK_EQ_I(v90m_cleardown(m), V90M_OK);
+        for (n = 0; n < 8000L * 5 && st->end == V90M_END_NONE; n++) { v90m_process_g711(m, &rx, &tx, 1); v90m_get_state(m, st); }
+        v90m_get_k56(m, &z);
+        CHECK(memcmp(&z, k, sizeof z) == 0);
+        CHECK_EQ_I(v90m_reset(m, &c), V90M_OK);
+        v90m_get_k56(m, &z);
+        CHECK(z.offered == 0 && z.exchanged == 0 && z.chosen == 0 && z.declined == 0 && z.agreed == 0);
+    }
+    v90m_destroy(m);
+}
+
+static void test_k56_versions(void)
+{
+    static const struct { int vers; unsigned opts; int offered, exchanged, chosen, declined, agreed; v90m_conn conn; const char *what; } t[] = {
+        { 0, 0, 3, 1, 2, 0, 1, V90M_CONN_K56FLEX, "SM56, our CL 0x43" },
+        { 3, 0, 3, 1, 2, 0, 1, V90M_CONN_K56FLEX, "versions 1 and 2, our CL 0x43" },
+        { 1, 0, 3, 1, 1, 1, 0, V90M_CONN_V34, "version 1 alone, our CL 0x43" },
+        { 1, V90M_OPT_K56_V2_ONLY, 2, 0, 0, 0, 0, V90M_CONN_V34, "version 1 alone, our CL 0x42" },
+        { 0, V90M_OPT_K56_V2_ONLY, 2, 1, 2, 0, 1, V90M_CONN_K56FLEX, "SM56, our CL 0x42" },
+        { 1, V90M_OPT_K56_V1, 3, 1, 1, 0, 1, V90M_CONN_K56FLEX, "version 1 alone, V90M_OPT_K56_V1" },
+        { 1, V90M_OPT_K56_V1 | V90M_OPT_K56_V2_ONLY, 2, 0, 0, 0, 0, V90M_CONN_V34, "version 1 alone, both options" },
+    };
+    v90m_k56 k;
+    unsigned j;
+    for (j = 0; j < sizeof t / sizeof t[0]; j++) {
+        v90m_conn mod;
+        k56_ver_call(t[j].vers, t[j].opts, &k, &mod);
+        printf("  API K56flex versions, %s: offered %d, exchanged %d, chosen %d, declined %d, agreed %d; %s\n",
+               t[j].what, k.offered, k.exchanged, k.chosen, k.declined, k.agreed, v90m_conn_name(mod));
+        CHECK_EQ_I(k.offered, t[j].offered); CHECK_EQ_I(k.exchanged, t[j].exchanged); CHECK_EQ_I(k.chosen, t[j].chosen);
+        CHECK_EQ_I(k.declined, t[j].declined); CHECK_EQ_I(k.agreed, t[j].agreed);
+        CHECK_EQ_I(mod, t[j].conn);
+    }
+    /* calling, NULL */
+    {
+        v90m_cfg c; v90m_t *m; int err;
+        v90m_cfg_default(&c); c.role = V90M_ROLE_ORIGINATE;
+        m = v90m_create(&c, &err);
+        memset(&k, 0x55, sizeof k); v90m_get_k56(m, &k);
+        CHECK(k.offered == 0 && k.exchanged == 0 && k.chosen == 0 && k.declined == 0 && k.agreed == 0);
+        memset(&k, 0x55, sizeof k); v90m_get_k56(NULL, &k);           /* NULL: nothing */
+        CHECK_EQ_I(k.offered, 0x55555555); v90m_get_k56(m, NULL);
+        v90m_destroy(m);
+    }
+}
+
 /* K56flex: the client's renegotiations (sim/k56call), 1 s into data mode
  * from r = 13 to 10, 1 s into that data to 12: each gives DATA_STOPPED,
  * RATES (tx_bps 50000, then 54000), DATA_MOVING; then our cleardown. Its
@@ -1390,7 +1490,7 @@ static void k56_reneg_call(int mode, v90m_state *st, int *bps, int *nbps, unsign
     uint8_t rx = 0xff, tx;
 
     v90m_cfg_default(&c);
-    c.modulations |= V90M_MOD_K56;
+    c.modulations |= V90M_MOD_K56 | V90M_OPT_K56_V2_ONLY;     /* 0.7.1's CL: the outputs as written (test_k56_versions: 0x43) */
     c.getbit = ones_get; c.putbit = bits_put; c.on_event = x2_on_event;
     x2_nev = 0; *nbps = 0;
     m = v90m_create(&c, &err);
@@ -1484,7 +1584,7 @@ static void k56_retrain_call(int three, v90m_state *st, v90m_stats *sx, int *rt_
     uint8_t rx = 0xff, tx;
 
     v90m_cfg_default(&c);
-    c.modulations |= V90M_MOD_K56;
+    c.modulations |= V90M_MOD_K56 | V90M_OPT_K56_V2_ONLY;     /* 0.7.1's CL: the outputs as written (test_k56_versions: 0x43) */
     c.getbit = ones_get; c.putbit = bits_put; c.on_event = x2_on_event;
     x2_nev = 0; *rt_ret = 1; *rt_seen = 0;
     m = v90m_create(&c, &err);
@@ -2356,6 +2456,7 @@ int main(void)
     test_k56();
     test_k56_reneg();
     test_k56_retrain();
+    test_k56_versions();
     test_v34_cap();
     test_end_codes();
     test_callbacks();

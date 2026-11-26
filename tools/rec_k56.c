@@ -60,7 +60,9 @@ int main(int argc0, char **argv0)
     dsrc.s = asink.s = 5; asrc.s = dsink.s = 9;
     dio[0] = &dsrc; dio[1] = &dsink; aio[0] = &asrc; aio[1] = &asink;
     memset(&ac, 0, sizeof ac);
-    ac.level = 3000; ac.modes = ANS_MODE_V90 | V8_MOD_V34 | V8_MOD_V22 | V8_MOD_V21 | ANS_MODE_K56;
+    /* 0.7.1's CL (version 2 alone): the bench's hashes (test/golden/bench.txt)
+     * stay those of 0.7.1; bench_v90 -k answers with the same */
+    ac.level = 3000; ac.modes = ANS_MODE_V90 | V8_MOD_V34 | V8_MOD_V22 | V8_MOD_V21 | ANS_MODE_K56 | ANS_MODE_K56_V2_ONLY;
     ac.getbit = get; ac.putbit = put; ac.user = dio;
     answer_init(&a, &ac);
     answer_v90_line(&a, -1, 0, 0);

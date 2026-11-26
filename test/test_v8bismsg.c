@@ -50,12 +50,29 @@ int main(void)
     fcs_of(sm56_ms, 13, &lo, &hi); CHECK(lo == 0x25 && hi == 0x7a);
 
     /* our CL, both forms; the default is the real server's */
-    n = v8bis_cl_octets(V8B_NS9, o);
+    n = v8bis_cl_octets(V8B_NS9, V8B_VERS_2, o);
     CHECK_EQ_I(n, 16); CHECK(memcmp(o, cl9, 16) == 0);
     CHECK(v8bis_cl_is_k56(o + 6, n - 6));
-    n = v8bis_cl_octets(V8B_NS7, o);
+    n = v8bis_cl_octets(V8B_NS7, V8B_VERS_BOTH, o);
     CHECK_EQ_I(n, 13); CHECK(memcmp(o, cl7, 13) == 0);
     CHECK(v8bis_cl_is_k56(o + 5, n - 5));
+    /* versions 1 and 2 (0.7.2's default): the same block but its version
+     * octet, 0x43; FCS ff 0a (the analysis' worked frame); SM56's test
+     * passes it; version 1 alone (0x41) it would not */
+    n = v8bis_cl_octets(V8B_NS9, V8B_VERS_BOTH, o);
+    CHECK_EQ_I(n, 16); CHECK(memcmp(o, cl9, 13) == 0 && o[13] == 0x43 && memcmp(o + 14, cl9 + 14, 2) == 0);
+    fcs_of(o, 16, &lo, &hi); CHECK(lo == 0xff && hi == 0x0a);
+    CHECK(v8bis_cl_is_k56(o + 6, n - 6));
+    n = v8bis_cl_octets(V8B_NS9, V8B_VERS_1, o);
+    CHECK_EQ_I(o[13], 0x41); CHECK(!v8bis_cl_is_k56(o + 6, n - 6));
+    n = v8bis_cl_octets(V8B_NS7, V8B_VERS_2, o);
+    CHECK_EQ_I(n, 13); CHECK(memcmp(o, cl7, 13) == 0);         /* the 7-octet form keeps 0x61 */
+    /* the version an octet selects: its highest version bit, 0x20 and 0x40 not */
+    CHECK_EQ_I(v8bis_version_of(0x02), 2); CHECK_EQ_I(v8bis_version_of(0x03), 2);
+    CHECK_EQ_I(v8bis_version_of(0x01), 1); CHECK_EQ_I(v8bis_version_of(0x21), 1);
+    CHECK_EQ_I(v8bis_version_of(0x61), 1); CHECK_EQ_I(v8bis_version_of(0x60), 0);
+    CHECK_EQ_I(v8bis_version_of(0x00), 0); CHECK_EQ_I(v8bis_version_of(0x10), 5);
+    CHECK_EQ_I(v8bis_version_of(0x42), 2); CHECK_EQ_I(v8bis_version_of(0xff), 5);
 #ifndef V8B_NS_DEFAULT_OVERRIDDEN
     CHECK_EQ_I(V8B_NS_DEFAULT, V8B_NS9);   /* -DV8B_NS_DEFAULT=V8B_NS7 builds say so with -DV8B_NS_DEFAULT_OVERRIDDEN */
 #endif
@@ -88,6 +105,12 @@ int main(void)
     CHECK_EQ_I(v8bis_ms_is_k56(sm56_ms, 12), 0);                                    /* block cut short */
     CHECK_EQ_I(v8bis_ms_is_k56(real_ms, 5), 0);                                     /* tree cut short */
     CHECK_EQ_I(v8bis_ms_is_k56(sm56_ms, 0), 0);
+    /* the MS's version octet: SM56's 0x21, the real client's 0x02; none
+     * where the MS test fails */
+    CHECK_EQ_I(v8bis_ms_version(sm56_ms, 13), 0x21);
+    CHECK_EQ_I(v8bis_ms_version(real_ms, 16), 0x02);
+    CHECK_EQ_I(v8bis_ms_version(sm56_ms, 12), -1);
+    memcpy(m, sm56_ms, 13); m[1] = 0x89;   CHECK_EQ_I(v8bis_ms_version(m, 13), -1);
     memcpy(m, sm56_ms, 13); m[3] = 0x01;   CHECK_EQ_I(v8bis_ms_is_k56(m, 13), 0);   /* S NPar not closed */
     /* a three-level S Par(2) block: I SPar(1) bit 1 with its block (NPar(2) 0xc1,
      * bit 8 set: NPar(2) only), S SPar(1) data, NPar(2) 0x41 (delimiter, bit 8
@@ -105,7 +128,7 @@ int main(void)
     }
 
     /* framing: preamble, flags, stuffing; then back through the receiver */
-    n = v8bis_cl_octets(V8B_NS9, o);
+    n = v8bis_cl_octets(V8B_NS9, V8B_VERS_2, o);
     nb = v8bis_frame(o, n, b);
     CHECK(nb > 0 && nb <= V8B_MAXBITS);
     for (i = 0; i < 32; i++) CHECK_EQ_I(b[i], 1);                 /* ones preamble */
@@ -177,7 +200,7 @@ int main(void)
     CHECK(neg > 150);
 
     /* a flipped bit well away from any run: -1 */
-    n = v8bis_cl_octets(V8B_NS9, o);
+    n = v8bis_cl_octets(V8B_NS9, V8B_VERS_2, o);
     nb = v8bis_frame(o, n, b);
     b[32 + 24 + 20] ^= 1;
     v8bis_rx_init(&r);
@@ -209,7 +232,7 @@ int main(void)
       CHECK_EQ_I(feed(&r, b, p, back), -1); }
 
     /* the abort: seven ones inside a frame end it, once, as invalid */
-    n = v8bis_cl_octets(V8B_NS9, o);
+    n = v8bis_cl_octets(V8B_NS9, V8B_VERS_2, o);
     nb = v8bis_frame(o, n, b);
     { uint8_t ab[V8B_MAXBITS + 16]; int p = 32 + 24 + 40, res2 = 0;
       memcpy(ab, b, (size_t)p);

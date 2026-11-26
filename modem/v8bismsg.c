@@ -27,13 +27,14 @@ uint16_t v8bis_fcs16(const uint8_t *o, int n)
     return (uint16_t)(~crc & 0xffff);
 }
 
-int v8bis_cl_octets(int ns_form, uint8_t *o)
+int v8bis_cl_octets(int ns_form, int vers, uint8_t *o)
 {
     if (ns_form == V8B_NS7) {
         memcpy(o, cl_ns7, sizeof cl_ns7);
         return (int)sizeof cl_ns7;
     }
     memcpy(o, cl_ns9, sizeof cl_ns9);
+    o[13] = (uint8_t)(V8B_VER_DIGITAL | (vers & V8B_VER_MASK));
     return (int)sizeof cl_ns9;
 }
 
@@ -219,22 +220,39 @@ static int skip_field(const uint8_t *o, int n, int p, int *first)
     return q;
 }
 
-int v8bis_ms_is_k56(const uint8_t *o, int n)
+/* where the MS's K56flex block begins (its length octet), -1 none */
+static int ms_block(const uint8_t *o, int n)
 {
     int p, first, sfirst;
 
-    if (n < 1 || (o[0] & 0x0f) != V8B_MSG_MS) return 0;
+    if (n < 1 || (o[0] & 0x0f) != V8B_MSG_MS) return -1;
     p = skip_field(o, n, 1, &first);          /* identification field */
-    if (p < 0) return 0;
+    if (p < 0) return -1;
     p = skip_field(o, n, p, &sfirst);         /* standard information field */
-    if (p < 0) return 0;
-    if (!(first & 0x40)) return 0;            /* no NS field */
+    if (p < 0) return -1;
+    if (!(first & 0x40)) return -1;           /* no NS field */
     while (p < n) {                           /* the NS blocks */
         int len = o[p];
         if (p + 1 + len > n) break;           /* not whole: nor those after it */
         if (len > 6 && o[p + 1] == 0xb5 && o[p + 2] == 0x02 && (o[p + 6] & 1))
-            return 1;
+            return p;
         p += 1 + len;
     }
-    return 0;
+    return -1;
+}
+
+int v8bis_ms_is_k56(const uint8_t *o, int n) { return ms_block(o, n) >= 0; }
+
+/* len > 6: blk[7] is in the block */
+int v8bis_ms_version(const uint8_t *o, int n)
+{
+    int p = ms_block(o, n);
+    return p < 0 ? -1 : o[p + 7];
+}
+
+int v8bis_version_of(int octet)
+{
+    int v = 0, m = octet & V8B_VER_MASK;
+    while (m) { v++; m >>= 1; }
+    return v;
 }

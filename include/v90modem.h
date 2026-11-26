@@ -26,7 +26,7 @@
  *
  * What a callback may do to the modem that calls it: v90m_retrain,
  * v90m_cleardown, v90m_get_state, v90m_get_stats, v90m_get_diag,
- * v90m_get_v34_cap, v90m_get_restarts (and anything on another object: every v90m_ec_* and
+ * v90m_get_v34_cap, v90m_get_restarts, v90m_get_k56 (and anything on another object: every v90m_ec_* and
  * v90m_async_* function).
  * v90m_reset returns V90M_ESTATE and changes nothing. v90m_destroy takes effect at the end of
  * the sample under way: no event after it, the rest of the block is
@@ -40,7 +40,7 @@
  *
  * NULL: every function checks the object it is given (and the struct that
  * v90m_get_state, v90m_get_stats, v90m_get_diag, v90m_get_v34_cap,
- * v90m_get_restarts and v90m_ec_get_status fill): with NULL a function returning int returns V90M_EINVAL, one
+ * v90m_get_restarts, v90m_get_k56 and v90m_ec_get_status fill): with NULL a function returning int returns V90M_EINVAL, one
  * returning size_t or unsigned long 0, a void one does nothing. Except the four called for
  * every bit, v90m_ec_tx_bit, v90m_ec_rx_bit, v90m_async_getbit and
  * v90m_async_putbit: their object must not be NULL. */
@@ -210,6 +210,26 @@ typedef enum {
  * seen a caller's box ask above its own projection and fail error control
  * (v90m_get_v34_cap; docs/answering.md). Calling: ignored. */
 #define V90M_OPT_V34_TX_CAP 0x10000u
+/* Not a modulation (added in 0.7.2): an option bit, off by default.
+ * Answering, with V90M_MOD_K56: our V.8bis CL offers K56flex version 2
+ * alone (the version octet 0x42, as 0.7.1 did) instead of versions 1 and
+ * 2 (0x43, the default from 0.7.2 on), and every K56flex selection is
+ * acknowledged, as in 0.7.1: the whole of 0.7.1's K56flex exchange. For a
+ * host that must answer as 0.7.1 did (a recording of a K56flex call made
+ * with 0.7.1, replayed; a client that turns out to dislike 0x43).
+ * V90M_OPT_K56_V1 then changes nothing. Calling: ignored. */
+#define V90M_OPT_K56_V2_ONLY 0x20000u
+/* Not a modulation (added in 0.7.2): an option bit, off by default, and
+ * EXPERIMENTAL. Answering, with V90M_MOD_K56: a client that selects
+ * K56flex version 1 (an early Rockwell pump: the WebTV Plus) is
+ * acknowledged and K56flex's start-up runs as it does for version 2. Our
+ * start-up and data mode are version 2's; what version 1 differs in on
+ * the line is not known (docs/answering.md), and such a call may fail in
+ * training (V90M_END_K56_FAILED, past the point where V.34 could still be
+ * had). Without it a version-1 selection is declined (V.8bis NAK(3)) and
+ * the call goes on as without K56flex, V.8 then V.34 or V.90
+ * (v90m_get_k56). Meant for a test number only. Calling: ignored. */
+#define V90M_OPT_K56_V1 0x40000u
 
 /* the modulation of a connection (v90m_state.modulation) */
 typedef enum {
@@ -586,6 +606,34 @@ void     v90m_get_restarts(const v90m_t *m, v90m_restarts *r);
 /* "none", "far", "ours", "rx_errors", "rx_lost", "host"; "?" outside the
  * enum; never NULL, and they do not change within 0.7.x */
 const char *v90m_cause_name(v90m_cause c);
+
+/* K56flex's V.8bis exchange (added in 0.7.2): what our CL offered and what
+ * the client's MS chose, answering with V90M_MOD_K56; settled when V.8bis
+ * ends (some 2 to 4 s into the call), kept after the end until v90m_reset.
+ * All 0 when calling, without V90M_MOD_K56, on an A-law line (no V.8bis)
+ * and before V.8bis ended. A struct and a function of their own, as
+ * v90m_restarts: v90m_stats keeps its size within 0.7, and so does
+ * v90m_k56 from 0.7.2 on. Cheap; fine to read after every sample. For the
+ * host's log: a client declined is one that would have run K56flex
+ * version 1 (docs/answering.md, "K56flex versions"). */
+typedef struct {
+    int        offered;     /* the versions our CL offered, a mask: bit 0
+                               version 1, bit 1 version 2; 3 (both) by
+                               default, 2 with V90M_OPT_K56_V2_ONLY; 0 when
+                               no CL went out (no CRd from the caller) */
+    int        exchanged;   /* 1: the client's MS selected K56flex (it
+                               carried the K56flex block) */
+    int        chosen;      /* the version that MS selected: its highest
+                               version bit, 1 or 2 (3..5 for bits not yet
+                               defined); 0 with no such MS, or none set */
+    int        declined;    /* 1: we declined that choice (version 1 without
+                               V90M_OPT_K56_V1: V.8bis NAK(3)); the call went
+                               on as without K56flex */
+    int        agreed;      /* 1: we acknowledged it (ACK(1)): K56flex's
+                               Phase 2 follows (V90M_CONN_K56FLEX once the
+                               client's INFO1c and our INFO1a agree) */
+} v90m_k56;
+void     v90m_get_k56(const v90m_t *m, v90m_k56 *k);
 
 /* ------------------------------------- start-stop characters (V.14 basic)
  * Characters (1 start, 8 data LSB first, 1 stop, mark idle) on the bit pump

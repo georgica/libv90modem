@@ -18,7 +18,8 @@
 /* the responder's steps */
 enum { B_CRE, B_CRE_IN, B_CRD, B_CL, B_MS, B_ACK, B_OFF };
 
-/* SM56's MS (k56-facts.md "V.8bis messages") */
+/* SM56's MS (k56-facts.md "V.8bis messages"); its version octet (0x21
+ * there, its echo of D-Modem's 0x61) is set per CL */
 static const uint8_t sm56_ms[13] = { 0x11, 0xc9, 0x80, 0x80, 0x80, 0x07, 0xb5, 0x02, 0x00, 0x94, 0x81, 0x83, 0x21 };
 
 void k56call_default(k56call_cfg *cfg, int level)
@@ -43,6 +44,7 @@ void k56call_init(k56call_t *c, const k56call_cfg *cfg)
     c->data_at = -1; c->j24_at = -1; c->quiet_at = -1; c->e_at = -1;
     c->rn_at = -1; c->rate_now = cfg->rate; c->nb = 1;
     c->rt_at = -1;
+    c->cl_ver = c->ms_ver = -1;
     /* the CM of v34peer's own V.8; with cm_pcm, an analogue modem's PCM octet too */
     memset(&cm, 0, sizeof cm);
     cm.call_function = V8_CALLF_DATA;
@@ -74,13 +76,35 @@ static int listen_tick(k56call_t *c, int16_t x)
     return v8bis_rx_bit(&c->rx, level, c->msg);
 }
 
-/* our CL's NS block, after the S field's data Par(2) block if there is one */
-static int cl_ok(const uint8_t *o, int n)
+/* where our CL's NS block begins, after the S field's data Par(2) block if
+ * there is one; -1 none */
+static int cl_block(const uint8_t *o, int n)
 {
     int i = 5;
-    if (n < 6 || (o[0] & 15) != V8B_MSG_CL) return 0;
+    if (n < 6 || (o[0] & 15) != V8B_MSG_CL) return -1;
     if (o[4] & 1) { while (i < n && !(o[i] & 0x40)) i++; i++; }
-    return i < n && v8bis_cl_is_k56(o + i, n - i);
+    return i < n ? i : -1;
+}
+
+/* SM56's test of it; with cfg.vers, a Rockwell controller's (k56-facts.md
+ * "Versions"): its block whole, b5 02, the version octet with 0x40 and a
+ * version in common with vers. *ver: the version octet of the MS, SM56's
+ * echo of ours less 0x40 or the highest version in common */
+static int cl_ok(const k56call_t *c, const uint8_t *o, int n, int *ver)
+{
+    int i = cl_block(o, n), common, v;
+    if (i < 0) return 0;
+    if (!c->cfg.vers) {
+        if (!v8bis_cl_is_k56(o + i, n - i)) return 0;
+        *ver = o[i + 7] & ~0x40;
+        return 1;
+    }
+    if (o[i] < 7 || n < i + 1 + o[i] || o[i + 1] != 0xb5 || o[i + 2] != 0x02 || !(o[i + 7] & 0x40)) return 0;
+    common = o[i + 7] & 0x1f & c->cfg.vers;
+    if (!common) return 0;
+    for (v = 0; common > 1; common >>= 1) v++;
+    *ver = 1 << v;
+    return 1;
 }
 
 /* the initiator's dual tone (1375 + 2002 Hz) in 10 ms blocks; 1 at a
@@ -140,10 +164,16 @@ static int16_t responder(k56call_t *c, int16_t x)
     case B_CL:
         r = listen_tick(c, x);
         if (r > 0 && (c->msg[0] & 15) == V8B_MSG_CL) {
-            c->got_cl = 1; c->cl_ok = cl_ok(c->msg, r);
+            uint8_t ms[13];
+            int ver = 0, i = cl_block(c->msg, r);
+            c->got_cl = 1; c->cl_ok = cl_ok(c, c->msg, r, &ver);
+            if (i >= 0 && c->msg[i] >= 7 && i + 7 < r) c->cl_ver = c->msg[i + 7];
             listen_ch1(c);
             if (c->cfg.v8bis == K56C_V8BIS_NO_MS || !c->cl_ok) { c->bst = B_ACK; break; }
-            c->nbits = v8bis_frame(sm56_ms, 13, c->bits);
+            memcpy(ms, sm56_ms, sizeof ms);
+            ms[12] = (uint8_t)ver;
+            c->ms_ver = ver;
+            c->nbits = v8bis_frame(ms, 13, c->bits);
             /* a bad FCS: octet 0's first bit (a one) sent as a zero */
             if (c->cfg.v8bis == K56C_V8BIS_BAD_FCS) c->bits[32 + 24] = 0;
             c->pos = 0; c->ms_at = c->now + MS(10);
@@ -160,6 +190,7 @@ static int16_t responder(k56call_t *c, int16_t x)
         r = listen_tick(c, x);
         if (r == 1 && c->msg[0] == 0x14) c->got_ack = 1;
         if (r == 1 && c->msg[0] == 0x18) c->got_nak = 1;
+        if (r == 1 && c->msg[0] == 0x1a) c->got_nak3 = 1;
         if (r != 0) c->bst = B_OFF;
         break;
     default:

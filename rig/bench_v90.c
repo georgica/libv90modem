@@ -70,7 +70,7 @@ int main(int argc, char **argv)
     memset(&ac, 0, sizeof ac);
     ac.level = 3000; ac.modes = V8_MOD_V22 | V8_MOD_V21 | ANS_MODE_V90; ac.getbit = ecm == EC_OFF ? get : ec_get; ac.putbit = ecm == EC_OFF ? put : ec_put; ac.user = io;
     if (x2) ac.modes |= V8_MOD_V34 | ANS_MODE_X2;
-    if (k56) ac.modes |= V8_MOD_V34 | ANS_MODE_K56;
+    if (k56) ac.modes |= V8_MOD_V34 | ANS_MODE_K56 | ANS_MODE_K56_V2_ONLY;   /* tools/rec_k56's CL */
     answer_init(&a, &ac);
     if (x2 || k56) answer_v90_line(&a, -1, 0, 0);     /* as tools/rec_x2, tools/rec_k56 */
 

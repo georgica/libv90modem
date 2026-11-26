@@ -86,6 +86,8 @@ struct v90m {
 /* what the calling side can do: all but x2, K56flex and HST (V.90 and V.92
  * as their analogue modem) */
 #define V90M_MOD_ORIG (V90M_MOD_ALL & ~(V90M_MOD_X2 | V90M_MOD_K56 | V90M_MOD_HST))
+/* the option bits (bits 16 and up) */
+#define V90M_OPTS (V90M_OPT_V34_TX_CAP | V90M_OPT_K56_V2_ONLY | V90M_OPT_K56_V1)
 
 typedef char v90m_check_orig[(SAME(ORIG_MOD_V21, ANS_MOD_V21) && SAME(ORIG_MOD_V22, ANS_MOD_V22) && SAME(ORIG_MOD_V22BIS, ANS_MOD_V22BIS)
                               && SAME(ORIG_MOD_V32BIS, ANS_MOD_V32BIS) && SAME(ORIG_MOD_V34, ANS_MOD_V34)
@@ -107,7 +109,7 @@ void v90m_cfg_default(v90m_cfg *cfg)
 static int check_cfg(const v90m_cfg *c)
 {
     if (c->role != V90M_ROLE_ANSWER && c->role != V90M_ROLE_ORIGINATE) return V90M_EINVAL;
-    if (c->modulations & ~(V90M_MOD_ALL | V90M_OPT_V34_TX_CAP)) return V90M_EINVAL;
+    if (c->modulations & ~(V90M_MOD_ALL | V90M_OPTS)) return V90M_EINVAL;
     if (c->max_tx_code < 0 || c->max_tx_code > 31 || c->tx_level < 0 || c->tx_level > V90M_TX_LEVEL_MAX
         || c->max_down_bps < 0 || c->max_up_bps < 0 || c->echo_delay < -1)
         return V90M_EINVAL;
@@ -120,7 +122,7 @@ static int check_cfg(const v90m_cfg *c)
     if ((c->modulations & V90M_MOD_K56) && !(c->modulations & V90M_MOD_V34)) return V90M_ENOTSUP;
     if (c->role == V90M_ROLE_ORIGINATE) {
         if (!(c->modulations & V90M_MOD_ORIG)) return V90M_ENOTSUP;
-        if (c->modulations & ~(V90M_MOD_ORIG | V90M_OPT_V34_TX_CAP)) return V90M_ENOTSUP;     /* the option: ignored */
+        if (c->modulations & ~(V90M_MOD_ORIG | V90M_OPTS)) return V90M_ENOTSUP;     /* the options: ignored */
         /* V.92 is V.90's start-up with PCM upstream on top */
         if ((c->modulations & V90M_MOD_V92) && !(c->modulations & V90M_MOD_V90)) return V90M_ENOTSUP;
     } else {
@@ -187,6 +189,8 @@ static void setup(v90m_t *m, const v90m_cfg *cfg)
          * the modem answers as without it (include/v90modem.h) */
         if (cfg->max_down_bps > 0 && cfg->max_down_bps < 4800) ac.modes &= ~ANS_MODE_HST;
         if (cfg->modulations & V90M_OPT_V34_TX_CAP) ac.modes |= ANS_MODE_V34_TX_CAP;
+        if (cfg->modulations & V90M_OPT_K56_V2_ONLY) ac.modes |= ANS_MODE_K56_V2_ONLY;
+        if (cfg->modulations & V90M_OPT_K56_V1) ac.modes |= ANS_MODE_K56_V1;
         ac.getbit = cfg->getbit;
         ac.putbit = cfg->putbit;
         ac.user = cfg->user;
@@ -566,6 +570,31 @@ void v90m_get_restarts(const v90m_t *m, v90m_restarts *r)
     r->last = (v90m_cause)ev->last;
     r->last_retrain = (ev->flags & CEV_LAST_RT) != 0;
     r->last_ms = ev->last != CEV_NONE ? ev->last_at / 8u : 0u;
+}
+
+/* v90m_k56 from answer_t.k56, one octet (answer_t and v90m_mem_size keep
+ * 0.7.1's sizes): every version v8bis_version_of gives fits its field, the
+ * flags below it; offered is V.8bis's own mask; the option bits are
+ * options (bits 16 and up), apart */
+typedef char v90m_check_k56[(sizeof(((answer_t *)0)->k56) == 1
+                             && (ANS_K56_VER_MASK >> ANS_K56_VER_SHIFT) >= 5 && (ANS_K56_VER_MASK & 0x8fu) == 0
+                             && ((ANS_K56_AGREED | ANS_K56_CL | ANS_K56_MS | ANS_K56_DECLINED) & ANS_K56_VER_MASK) == 0
+                             && V8B_VERS_1 == 1 && V8B_VERS_2 == 2 && V8B_VER_MASK == 0x1f
+                             && (V90M_OPTS & V90M_MOD_ALL) == 0 && (V90M_OPTS & 0xffffu) == 0
+                             && (ANS_MODE_K56_V2_ONLY & ANS_MODE_K56_V1) == 0) ? 1 : -1];
+
+void v90m_get_k56(const v90m_t *m, v90m_k56 *k)
+{
+    unsigned f;
+    if (!m || !k) return;
+    k->offered = k->exchanged = k->chosen = k->declined = k->agreed = 0;
+    if (ORIGINATING(m)) return;
+    f = m->u.a.k56;
+    if (f & ANS_K56_CL) k->offered = (m->u.a.cfg.modes & ANS_MODE_K56_V2_ONLY) ? V8B_VERS_2 : V8B_VERS_BOTH;
+    k->exchanged = (f & ANS_K56_MS) != 0;
+    k->chosen = (int)((f & ANS_K56_VER_MASK) >> ANS_K56_VER_SHIFT);
+    k->declined = (f & ANS_K56_DECLINED) != 0;
+    k->agreed = (f & ANS_K56_AGREED) != 0;
 }
 
 const char *v90m_cause_name(v90m_cause c)

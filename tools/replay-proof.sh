@@ -1,5 +1,6 @@
 #!/bin/sh
-# Replay proof: every private recording through v90m-replay in seven flag sets;
+# Replay proof: every private recording through v90m-replay in seven flag sets
+# (the K56flex ones with -K: 0.7.1's CL, as the recordings were answered);
 # what the tool prints, the bits it decides and its exit code, hashed against
 # test/golden/replay.sha256.
 #
@@ -26,7 +27,9 @@ if [ "${1:-}" = --job ]; then
     case $set in
     base) o="" ;;       v92) o="-9" ;;
     x2) o="-x" ;;       x2-v92) o="-x -9" ;;
-    k56) o="-k" ;;      k56-v92) o="-k -9" ;;
+    # -K: 0.7.1's CL (0x42), as the recordings were answered; RP_K=-k for
+    # a tool from before 0.7.2 (diff), whose -k was that CL
+    k56) o="${RP_K:--K}" ;;      k56-v92) o="${RP_K:--K} -9" ;;
     hst) o="-H" ;;
     *) exit 2 ;;
     esac
@@ -139,6 +142,8 @@ diff)
     SETS=$rs
     NRUNS=$(( $(echo "$RECLIST" | wc -l) * $(echo $SETS | wc -w) ))
     ROUT=$rd/out
+    # a tool from before 0.7.2 has no -K: its -k sent 0.7.1's CL
+    grep -q -- '"-K"' "$rd/tools/v90m_replay.c" 2>/dev/null || { RP_K=-k; export RP_K; }
     run_all "$rd/build/v90m-replay" "$ROUT" 0
     hashes "$ROUT" > "$rd/hashes"
     nd=0

@@ -120,7 +120,9 @@ static void k56_offer(answer_t *a)
     a->k56_offered = (a->cfg.modes & ANS_MODE_K56) && (a->cfg.modes & V8_MOD_V34) && !a->p2cfg.alaw;
     if (a->t != 0 || (a->phase != ANS_V8 && a->phase != ANS_V8BIS)) return;
     if (a->k56_offered) {
-        v8bis_init(&a->u.v8b, (int16_t)(a->cfg.level * 181 / 128), V8B_NS_DEFAULT);
+        v8bis_init(&a->u.v8b, (int16_t)(a->cfg.level * 181 / 128), V8B_NS_DEFAULT,
+                   (a->cfg.modes & ANS_MODE_K56_V2_ONLY) ? V8B_VERS_2 : V8B_VERS_BOTH,
+                   (a->cfg.modes & ANS_MODE_K56_V1) != 0);
         ans_enter(a, ANS_V8BIS);
     } else {
         ans_enter(a, ANS_V8);
@@ -163,7 +165,7 @@ void answer_init(answer_t *a, const answer_cfg *cfg)
     memset(&a->ev, 0, sizeof a->ev);
     a->pcm_up = local.has_pcm && (cfg->modes & ANS_MODE_V92) != 0;
     x2_offer(a);
-    a->k56_agreed = 0;
+    a->k56 = 0;
     k56_offer(a);
 }
 

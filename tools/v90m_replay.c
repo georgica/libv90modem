@@ -2,7 +2,7 @@
  * it made of it, phase by phase. The tool to run on a recording that comes
  * with a bug report (README: "Reporting a bug").
  *
- *   v90m-replay [-a] [-9] [-x] [-k] [-B] [-H] [-M] [-F] [-u BPS] [-d BPS] [-l DBM0 | -r RMS] [-e SAMPLES] [-P CODE] [-s SAMPLE] [-b FILE] RECORDING
+ *   v90m-replay [-a] [-9] [-x] [-k | -K] [-1] [-B] [-H] [-M] [-F] [-u BPS] [-d BPS] [-l DBM0 | -r RMS] [-e SAMPLES] [-P CODE] [-s SAMPLE] [-b FILE] RECORDING
  *
  *   -a          A-law line (mu-law otherwise)
  *   -9          V.92 offered (PCM upstream up to 48000 bit/s unless -u)
@@ -10,6 +10,15 @@
  *   -k          K56flex offered: V.8bis comes first, and what the recording
  *               holds is lined up with our answer tone after it (V.8bis
  *               then hears silence and gives up)
+ *   -K          K56flex offered as 0.7.1 offered it (-k with
+ *               V90M_OPT_K56_V2_ONLY): our CL offers version 2 alone (0x42)
+ *               and every selection is acknowledged. The replay proof's
+ *               K56flex sets: their recordings were answered so, and an
+ *               open-loop replay with 0.7.2's CL (0x43) would part from them
+ *               at the CL
+ *   -1          with -k: a client's selection of K56flex version 1 is
+ *               acknowledged (V90M_OPT_K56_V1, experimental), as a host's
+ *               test number may be set up
  *   -B          Bell 103 and Bell 212A offered too (V90M_MOD_BELL103,
  *               V90M_MOD_BELL212A), as a host may offer them (nsdiald's
  *               sidecar lists them as bell103, bell212): without them a
@@ -324,7 +333,7 @@ static void hst_report(const v90m_state *st)
     if (H.det) printf("HST: reversals %u; the end %d\n", H.reversals, (int)st->end);
 }
 
-static int opt_alaw, opt_v92, opt_x2, opt_k56, opt_bell, opt_hst, opt_hund = -1200, opt_up, opt_down = 56000, opt_echo = -1, opt_code;
+static int opt_alaw, opt_v92, opt_x2, opt_k56, opt_k56_v2, opt_k56_v1, opt_bell, opt_hst, opt_hund = -1200, opt_up, opt_down = 56000, opt_echo = -1, opt_code;
 static long opt_rms;    /* -r, 0 = from opt_hund */
 
 static void configure(v90m_cfg *c, int lin)
@@ -332,7 +341,8 @@ static void configure(v90m_cfg *c, int lin)
     v90m_cfg_default(c);
     c->modulations = V90M_MOD_V21 | V90M_MOD_V22 | V90M_MOD_V32BIS | V90M_MOD_V34 | V90M_MOD_V90 | (opt_v92 ? V90M_MOD_V92 : 0)
                      | (opt_x2 ? V90M_MOD_X2 : 0) | (opt_k56 ? V90M_MOD_K56 : 0)
-                     | (opt_bell ? V90M_MOD_BELL103 | V90M_MOD_BELL212A : 0) | (opt_hst ? V90M_MOD_HST : 0);
+                     | (opt_bell ? V90M_MOD_BELL103 | V90M_MOD_BELL212A : 0) | (opt_hst ? V90M_MOD_HST : 0)
+                     | (opt_k56_v2 ? V90M_OPT_K56_V2_ONLY : 0) | (opt_k56_v1 ? V90M_OPT_K56_V1 : 0);
     c->tx_level = opt_rms ? (int)opt_rms : level_rms(opt_hund);
     c->max_down_bps = opt_down;
     c->max_up_bps = opt_up ? opt_up : opt_v92 ? 48000 : 33600;
@@ -362,6 +372,8 @@ int main(int argc, char **argv)
         else if (!strcmp(o, "-9")) opt_v92 = 1;
         else if (!strcmp(o, "-x")) opt_x2 = 1;
         else if (!strcmp(o, "-k")) opt_k56 = 1;
+        else if (!strcmp(o, "-K")) opt_k56 = opt_k56_v2 = 1;
+        else if (!strcmp(o, "-1")) opt_k56_v1 = 1;
         else if (!strcmp(o, "-B")) opt_bell = 1;
         else if (!strcmp(o, "-H")) opt_hst = 1;
         else if (!strcmp(o, "-M")) opt_mark = 1;
@@ -379,9 +391,10 @@ int main(int argc, char **argv)
         else break;
     }
     if (bad || arg >= argc || !(f = fopen(argv[arg], "rb"))) {
-        fprintf(stderr, "usage: v90m-replay [-a] [-9] [-x] [-k] [-B] [-H] [-M] [-F] [-u BPS] [-d BPS] [-l DBM0 | -r RMS] [-e SAMPLES] [-P CODE] [-s SAMPLE] [-b FILE] RECORDING\n"
+        fprintf(stderr, "usage: v90m-replay [-a] [-9] [-x] [-k | -K] [-1] [-B] [-H] [-M] [-F] [-u BPS] [-d BPS] [-l DBM0 | -r RMS] [-e SAMPLES] [-P CODE] [-s SAMPLE] [-b FILE] RECORDING\n"
                         "  -l: a number with up to two decimals, e.g. -14.4; -r: the transmit rms, 1..16384;\n"
                         "  -s: a sample index, 0 or more; -B: Bell 103 and 212A offered too;\n"
+                        "  -K: K56flex as 0.7.1 offered it (version 2 alone); -1: K56flex version 1 accepted;\n"
                         "  -H: HST offered, the V.42 endpoint linked (MNP on);\n"
                         "  -M: mark only in data mode; -F: print the caller's V.42 frames\n");
         return 2;
