@@ -14,8 +14,8 @@ time). Callbacks (`getbit`, `putbit`, `on_event`) are only ever made from
 inside `v90m_process_*()` on the calling thread.
 
 What a callback may do to the modem that calls it: `v90m_retrain`,
-`v90m_cleardown`, `v90m_get_state`, `v90m_get_stats`, `v90m_get_diag` (and
-anything on another object: every `v90m_ec_*` and `v90m_async_*` function).
+`v90m_cleardown`, `v90m_get_state`, `v90m_get_stats`, `v90m_get_diag`,
+`v90m_get_v34_cap` (and anything on another object: every `v90m_ec_*` and `v90m_async_*` function).
 `v90m_reset` returns `V90M_ESTATE` and changes nothing. `v90m_destroy`
 takes effect at the end of the sample under way: no event after it, the
 rest of the block is silence (linear 0, mu-law 0xFF, A-law 0xD5), the
@@ -27,7 +27,8 @@ only after `v90m_process_*` returns, and never from a callback of a modem
 that goes on. `v90m_init` on the modem's own memory is not allowed.
 
 NULL: every function checks the object it is given (and the struct that
-`v90m_get_state`, `v90m_get_stats`, `v90m_get_diag` and `v90m_ec_get_status` fill): with
+`v90m_get_state`, `v90m_get_stats`, `v90m_get_diag`, `v90m_get_v34_cap` and
+`v90m_ec_get_status` fill): with
 NULL a function returning `int` returns `V90M_EINVAL`, one returning
 `size_t` or `unsigned long` 0, a `void` one does nothing. Except the four
 called for every bit, `v90m_ec_tx_bit`, `v90m_ec_rx_bit`,
@@ -110,6 +111,7 @@ version; the init functions check the length given):
 | `V90M_MOD_BELL212A` | 0x0080 | not in the defaults, either role; answering only with `V90M_MOD_V22` (without: `V90M_ENOTSUP`) |
 | `V90M_MOD_X2` | 0x0100 | answering only (calling: `V90M_ENOTSUP`), with `V90M_MOD_V34` (without: `V90M_ENOTSUP`), not in the defaults: x2 as its server, offered on a mu-law line to a caller whose CM offers V.34 and no PCM; see [answering.md](answering.md), "x2" |
 | `V90M_MOD_K56` | 0x0200 | answering only (calling: `V90M_ENOTSUP`), with `V90M_MOD_V34` (without: `V90M_ENOTSUP`), not in the defaults; experimental: K56flex as its server, offered on a mu-law line in V.8bis before V.8 (every caller then hears our answer tone later: 1.790 s without V.8bis, 3.807 s for a V.8bis caller without K56flex, 3.413 s for a K56flex client); see [answering.md](answering.md), "K56flex" |
+| `V90M_OPT_V34_TX_CAP` | 0x10000 | not a modulation (alone: `V90M_EINVAL`; bits 16 and up are options); off by default. Answering, V.34: cap our V.34 transmit at the caller's own INFO1c / INFO1a projection (our MP offers the lower of `max_down_bps` and the projection); for a host to set per call, see [answering.md](answering.md), "The V.34 transmit cap"; calling: ignored |
 
 What each does in each role: [answering.md](answering.md),
 [calling.md](calling.md), and the header's comments above `v90m_role` and
@@ -289,6 +291,28 @@ engine's header has an error without its name here
 | `V90A_ERR_` | calling V.90 / V.92 (modem/v90a.h) | `PHASE2` (as above), `SD`, `TRAIN`, `JD`, `JDP`, `DIL`, `RI`, `PHASE4`, `B1D`, `RATE`, `CLEARDOWN`, `HANGUP`, `CARRIER`, `JP`, `CPD`, `RETRAINS` |
 | `ANS_ERR_` | the answering modem's own | `TIMEOUT` (a phase ran past its limit: the backstop of Phases 2, 3 and 4, a K56flex retrain's time), `RETRAINS` (one more retrain was due past the limit), `START` (the next engine could not start with what was agreed), `K56_RETRAIN` (the K56flex client's retrain did not take K56flex up again) |
 | `ORIG_ERR_` | the calling modem's own | `TIMEOUT` (the start-up ran past the calling modem's limit for its phase: no modulation after ANS, no Bell answerer, V.32bis, V.34, V.90) |
+
+## The V.34 transmit cap
+
+Added in 0.6.2. `void v90m_get_v34_cap(const v90m_t *m, v90m_v34_cap *c)`:
+answering, V.34 (and V.34 selected by a V.90 caller's INFO1a), what the
+caller said of our transmit direction and whether `V90M_OPT_V34_TX_CAP`
+acted on it, for the host's count in [answering.md](answering.md), "The
+V.34 transmit cap". From the last Phase 2 and Phase 4 of the call, kept
+after the end until `v90m_reset`; cheap, fine after every sample. All
+three are 0 when calling, on any other call (x2 and K56flex included) and
+before V.34 training began. A struct and a function of their own, as
+`v90m_get_diag`: `v90m_stats` keeps its size within 0.6, and so does
+`v90m_v34_cap` from 0.6.2 on.
+
+| `v90m_v34_cap` | |
+|---|---|
+| `proj_bps` | the caller's own projection for our transmit direction at the symbol rate in use, bit/s (2400 x INFO1c bits 30:33, or INFO1a bits 30:33 of Table 11/V.90 when a V.90 caller selected V.34), from the last Phase 2; 0 = none |
+| `ask_bps` | the maximum the caller's MP asks of our transmit direction, bit/s, from the last Phase 4; 0 until its MP came; after a cleardown (ours or the caller's, whose MPs carry no rate), and in a renegotiation until the new MP comes, the one data mode last began with |
+| `capped` | 1 when `V90M_OPT_V34_TX_CAP` lowered our MP's offer below what it would have been without it (`proj_bps` below our ceiling); 0 otherwise, and always without the option |
+
+A caller that "asked above its own projection" is `c.ask_bps > c.proj_bps
+&& c.proj_bps > 0`.
 
 ## Control calls
 

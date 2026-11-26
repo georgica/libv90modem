@@ -34,6 +34,12 @@ static answer_t A; static v34peer_t C; static line34_t L; static prbs_t UA, UC;
 static int16_t a_tick(void *u, int16_t rx) { return answer_tick((answer_t *)u, rx); }
 static int16_t c_tick(void *u, int16_t rx) { return v34peer_tick((v34peer_t *)u, rx); }
 
+/* the caller's INFO1c projection at 3200 (2400 bit/s units, -1 = from its
+ * probing; with one, 3000 is not offered); g_asks: its MP asks for 16-point
+ * training, trellis, non-linear encoding, shaping and a precoder, which lift
+ * its line estimate on a mu-law line to 31200; its MP's ceiling */
+static int g_proj = -1, g_asks, g_max_rx;
+
 static void start(unsigned modes, int max_down, int max_up)
 {
     answer_cfg ac; v34peer_cfg pc; line34_cfg lc;
@@ -44,6 +50,12 @@ static void start(unsigned modes, int max_down, int max_up)
     ac.level = 3000; ac.modes = modes; ac.getbit = p_get; ac.putbit = p_put; ac.user = &UA;
     v34peer_default(&pc, 3000);
     pc.dx.getbit = p_get; pc.dx.putbit = p_put; pc.dx.user = &UC;
+    pc.p2.max_rate[4] = g_proj; pc.dx.max_rx_rate = g_max_rx;
+    if (g_proj >= 0) pc.p2.max_rate[3] = 0;        /* 3200 its rate, as box B's */
+    if (g_asks) {
+        pc.dx.ask_16pt = 1; pc.dx.ask_trellis = 2; pc.dx.ask_nonlinear = 1; pc.dx.ask_shaping = 1;
+        pc.dx.ask_h[0][0] = 3277; pc.dx.ask_h[0][1] = -1638; pc.dx.ask_h[1][0] = -819;
+    }
     answer_init(&A, &ac);
     answer_v90_line(&A, 0, max_down, max_up);
     v34peer_init(&C, &pc); line34_init(&L, &lc);
@@ -112,6 +124,29 @@ int main(void)
     CHECK_EQ_I(to_data(25000), 1);
     CHECK_EQ_I(A.modulation, ANS_MOD_V34);
     CHECK_EQ_I(A.bitrate, 14400); CHECK_EQ_I(A.rx_bitrate, 9600);
+
+    /* the status of our V.34 transmit direction (v90m_get_v34_cap), box B's
+     * shape: its INFO1c projects 28800 at 3200, its MP asks for 31200. By
+     * default our MP offers all we can and the call runs at 31200, not
+     * capped; with ANS_MODE_V34_TX_CAP it runs at 28800, capped. The
+     * projection and the ask are reported either way */
+    {
+        int proj, ask, capped, k;
+        g_proj = 12; g_asks = 1; g_max_rx = 31200;
+        for (k = 0; k < 2; k++) {
+            start((k ? ANS_MODE_V34_TX_CAP : 0) | ANS_MODE_V90 | V8_MOD_V34 | V8_MOD_V22 | V8_MOD_V21, 0, 0);
+            CHECK_EQ_I(to_data(25000), 1);
+            CHECK_EQ_I(A.modulation, ANS_MOD_V34); CHECK_EQ_I(A.v34.dx.cfg.sym_rate, 3200);
+            CHECK_EQ_I(C.dx.mp.max_ac, 13);
+            answer_v34_tx_cap(&A, &proj, &ask, &capped);
+            printf("  box B's shape, cap %s: %d bit/s to it; projection %d, its MP %d, capped %d\n",
+                   k ? "on" : "off", A.bitrate, proj, ask, capped);
+            CHECK_EQ_I(proj, 28800); CHECK_EQ_I(ask, 31200); CHECK_EQ_I(capped, k);
+            CHECK_EQ_I(A.v34.dx.mp.max_ac, k ? 12 : 14);
+            CHECK_EQ_I(A.bitrate, k ? 28800 : 31200);
+        }
+        g_proj = -1; g_asks = 0; g_max_rx = 0;
+    }
 
     /* V.34 without V.90 */
     start(V8_MOD_V34 | V8_MOD_V21, 0, 0);

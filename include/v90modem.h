@@ -25,8 +25,9 @@
  * calling thread.
  *
  * What a callback may do to the modem that calls it: v90m_retrain,
- * v90m_cleardown, v90m_get_state, v90m_get_stats, v90m_get_diag (and
- * anything on another object: every v90m_ec_* and v90m_async_* function).
+ * v90m_cleardown, v90m_get_state, v90m_get_stats, v90m_get_diag,
+ * v90m_get_v34_cap (and anything on another object: every v90m_ec_* and
+ * v90m_async_* function).
  * v90m_reset returns V90M_ESTATE and changes nothing. v90m_destroy takes effect at the end of
  * the sample under way: no event after it, the rest of the block is
  * silence (linear 0, mu-law 0xFF, A-law 0xD5), the modem is freed (when it
@@ -38,8 +39,8 @@
  * own memory is not allowed.
  *
  * NULL: every function checks the object it is given (and the struct that
- * v90m_get_state, v90m_get_stats, v90m_get_diag and v90m_ec_get_status
- * fill): with NULL a function returning int returns V90M_EINVAL, one
+ * v90m_get_state, v90m_get_stats, v90m_get_diag, v90m_get_v34_cap and
+ * v90m_ec_get_status fill): with NULL a function returning int returns V90M_EINVAL, one
  * returning size_t or unsigned long 0, a void one does nothing. Except the four called for
  * every bit, v90m_ec_tx_bit, v90m_ec_rx_bit, v90m_async_getbit and
  * v90m_async_putbit: their object must not be NULL. */
@@ -176,6 +177,20 @@ typedef enum {
  * (32000 to 56000 in steps of 2000, the figure a Rockwell modem prints)
  * and rx_bps the client's V.34 upstream. */
 #define V90M_MOD_K56      0x0200u
+/* Bits 0-15 of .modulations are modulations (V90M_MOD_*); bits 16 and up
+ * are options (V90M_OPT_*), never modulations. */
+/* Not a modulation (added in 0.6.2): an option bit in .modulations, off by
+ * default. Answering, V.34 (and V.34 selected by a V.90 caller's INFO1a):
+ * cap our V.34 transmit at the caller's own INFO1 projection. Our MP's
+ * maximum transmit rate is then the lower of max_down_bps and the caller's
+ * projection for it (INFO1c, or INFO1a bits 30:33, at the symbol rate in
+ * use), at start-up and at every retrain; V.34 takes the lower of the two
+ * MPs, so a caller whose MP asks for more than its own line probe gets
+ * what the probe said. Without it our MP offers max_down_bps (or all the
+ * engine can), as in 0.6.1. Meant to be set per call by a host that has
+ * seen a caller's box ask above its own projection and fail error control
+ * (v90m_get_v34_cap; docs/answering.md). Calling: ignored. */
+#define V90M_OPT_V34_TX_CAP 0x10000u
 
 /* the modulation of a connection (v90m_state.modulation) */
 typedef enum {
@@ -446,6 +461,30 @@ const char *v90m_err_name(int code);
  * "Bell 212A", "x2", "K56flex". */
 const char *v90m_phase_name(v90m_phase p);
 const char *v90m_conn_name(v90m_conn c);
+
+/* The V.34 transmit cap's status (added in 0.6.2; V90M_OPT_V34_TX_CAP):
+ * answering, V.34 (and V.34 selected by a V.90 caller's INFO1a), our
+ * transmit direction, from the last Phase 2 and Phase 4 of the call, kept
+ * after the end until v90m_reset. All three are 0 when calling, on any
+ * other call (x2 and K56flex included), and before V.34 training began. A
+ * struct and a function of their own, as v90m_diag: v90m_stats keeps its
+ * size within 0.6, and so does v90m_v34_cap from 0.6.2 on. Cheap; fine to
+ * read after every sample. For the host's count: a caller whose ask_bps is
+ * above its proj_bps and whose error control failed (docs/answering.md). */
+typedef struct {
+    int        proj_bps;    /* the caller's own projection for our transmit,
+                               bit/s (2400 x INFO1c / INFO1a bits 30:33 at
+                               the symbol rate in use); 0 = none */
+    int        ask_bps;     /* the maximum the caller's MP asks of our
+                               transmit, bit/s; 0 until its MP came; after
+                               a cleardown (ours or the caller's), the one
+                               data mode last began with */
+    int        capped;      /* 1: V90M_OPT_V34_TX_CAP lowered our MP's offer
+                               below what it would have been without it
+                               (proj_bps below our ceiling); 0 otherwise, and
+                               always without the option */
+} v90m_v34_cap;
+void     v90m_get_v34_cap(const v90m_t *m, v90m_v34_cap *c);
 
 /* ------------------------------------- start-stop characters (V.14 basic)
  * Characters (1 start, 8 data LSB first, 1 stop, mark idle) on the bit pump

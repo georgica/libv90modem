@@ -117,6 +117,28 @@ Each item names where it is recorded.
   at a 100 ms round trip, 28800 at 300 ms, 12000 at 400 ms. The answer side
   is clean at every one. Not investigated (0.6.0 audit, ISP-1 follow-up).
 
+- **V.34 transmit cap: opt-in, answering only.** `V90M_OPT_V34_TX_CAP`
+  (0.6.2, off by default) caps our V.34 transmit at the caller's own
+  INFO1c / INFO1a projection; the host sets it per caller from its own
+  count of calls that asked above their projection and failed error
+  control (`docs/answering.md`). The evidence is small: of the 106
+  recorded calls only 6 reach a V.34 MP, plus one V.90 caller that
+  selected V.34 (x2b), and none of those asked above its projection; with
+  the cap our MP would offer them 31200 where it offers 33600, and the
+  recordings, which hold the echo of the MP really sent, no longer replay
+  with it. The target case is confirmed: a second WebTV box's error
+  control failed in 7 calls of 7 when its MP asked above its projection,
+  and came up in 12 of 12 (6 of them at 31200) at or below it. **Risk
+  with the cap on:** a caller that projects below what it can do loses a
+  step, as a caller like this library's own answerer would (it projects
+  28800 on a clean line while its MP offers 33600 and the call runs at
+  31200). The calling side has no cap at all, for that reason: against
+  this library's own answerer (`test/test_orig_v34.c`, good line) it would
+  have cost those calls a step. The V.90 analogue caller's upstream
+  follows the digital modem's CP and is not capped at its INFO1d either;
+  PCM has no such projection. Real answerers' INFO1a against their MP:
+  not measured (no recordings of the calling side).
+
 ## Not checked against a specification
 
 - **The Bell 212A calling handshake** follows V.22 and what this library's

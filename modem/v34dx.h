@@ -172,4 +172,16 @@ int     v34dx_cleardown(v34dx_t *p);
 /* From Phase 4 on: give up and ask for a retrain; the state goes to DX_RETRAIN. */
 int     v34dx_retrain(v34dx_t *p);
 
+/* Our transmit ceiling (bit/s, 0 = none) given the far receiver's own
+ * projection for it at the symbol rate in use (INFO1 bits 30:33, x 2400
+ * bit/s; 0 = none given): the lower of the two. V.34 11.4.1.1.3 takes the
+ * lower of the two MPs; a caller whose MP asks for more than its own probe
+ * projected (seen: INFO1c 28800, MP 31200) then gets the projection. */
+static inline int v34_tx_ceiling(int max_tx_rate, int projected)
+{
+    int p = projected > 0 ? 2400 * projected : 0;
+    if (p == 0 || (max_tx_rate > 0 && max_tx_rate < p)) return max_tx_rate;
+    return p;
+}
+
 #endif

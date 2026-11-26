@@ -8,6 +8,38 @@ change is listed here. Rebuild against the new header with every version;
 "Simulation and own answerer only" means: tried against simulated lines and
 this library's own answering modem, never against a real modem or server.
 
+## 0.6.2 (unreleased)
+
+Added:
+- Answering role, V.34 (and V.34 selected by a V.90 caller's INFO1a): an
+  opt-in cap of our transmit rate at the caller's own projection for it,
+  `V90M_OPT_V34_TX_CAP` (0x10000), an option bit in `v90m_cfg.modulations`
+  (bits 16 and up are options, not modulations; the bit alone is
+  `V90M_EINVAL`; ignored calling). Off by default: without it the modem
+  behaves as 0.6.1. With it our MP's maximum transmit rate is the lower of
+  `max_down_bps` and the caller's projection (INFO1c bits 30:33 for the
+  symbol rate in use; INFO1a bits 30:33 of Table 11/V.90), at start-up
+  and at every retrain. For a host that sets it per call, for a caller
+  whose box has asked above its own projection and failed error control
+  more than once (`docs/answering.md`). Why: WebTV boxes asked for 31200
+  in their MP against their own INFO1c's 28800; a triage of one found
+  error control failing in 7 calls of 7 when its MP asked above its
+  projection and coming up in 12 of 12 (6 at 31200) at or below it. Not
+  the default because a caller that projects below what it can do (as
+  this library's own answerer does: 28800 against an MP offering 33600)
+  would lose a step; of the 106 recorded calls only 6 reach a V.34 MP
+  (plus x2b, a V.90 caller that selected V.34), none asked above its
+  projection. `V90M_MEM_SIZE` and `v90m_mem_size()` are unchanged.
+- `v90m_get_v34_cap(m, &c)` fills a new `v90m_v34_cap` (`proj_bps`,
+  `ask_bps`, `capped`): answering V.34, our transmit direction, the
+  caller's projection, its MP's ask (both bit/s, 0 = none) and whether the
+  cap lowered our MP's offer; kept after the end until `v90m_reset`; all
+  0 calling, on any other call and before V.34 training. The host's count of "asked above its own projection and
+  error control failed" comes from these. A function and a struct of
+  their own, as `v90m_get_diag`: `v90m_state`, `v90m_stats` and
+  `v90m_diag` keep their size, and a program built against 0.6.0 or 0.6.1
+  runs on 0.6.2's shared library (SONAME `libv90modem.so.0.6`).
+
 ## 0.6.1 (2026-11-24)
 
 Added:

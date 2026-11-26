@@ -98,6 +98,9 @@ typedef enum {
 /* with V8_MOD_V34: offer K56flex as its server in V.8bis before V.8
  * (modem/v8bis); only on a mu-law line */
 #define ANS_MODE_K56 0x200000u
+/* V.34: our MP's transmit ceiling capped at the caller's INFO1c / INFO1a
+ * projection (v34ans_cfg.tx_cap) */
+#define ANS_MODE_V34_TX_CAP 0x1000000u
 
 #define ANS_MOD_NONE   0
 #define ANS_MOD_V21    1
@@ -261,5 +264,14 @@ int     answer_end(const answer_t *a);
  * V.92, x2, K56flex): the engine of the phase; between engines (a retrain,
  * the end) the modulation's. -1 where there is none. */
 int     answer_echo_delay(const answer_t *a);
+/* V.34 (and V.34 selected by a V.90 caller's INFO1a), our transmit
+ * direction, from the last Phase 2 and Phase 4 of the call (kept after the
+ * end, until the next answer_init): *proj_bps the caller's own projection
+ * at the symbol rate in use (2400 x INFO1c / INFO1a bits 30:33), *ask_bps
+ * its MP's maximum (0 until its MP came; after our or its cleardown, the
+ * one data mode last began with), *capped 1 when ANS_MODE_V34_TX_CAP
+ * lowered our MP's offer below what it would have been without it. All 0
+ * when no V.34 training began this call (x2 and K56flex included). */
+void    answer_v34_tx_cap(const answer_t *a, int *proj_bps, int *ask_bps, int *capped);
 
 #endif

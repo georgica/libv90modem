@@ -13,6 +13,7 @@
 #include "callpeer.h"
 #include "x2call.h"
 #include "k56call.h"
+#include "v34peer.h"
 
 static uint32_t fnv(uint32_t h, const void *p, size_t n)
 {
@@ -235,6 +236,12 @@ static void test_errors(void)
         bad = c; bad.max_up_bps = -1;      CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
         bad = c; bad.echo_delay = -2;      CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
         bad = c; bad.modulations |= 0x400; CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);   /* 0x100 is x2, 0x200 K56flex now */
+        /* the V.34 transmit cap (opt-in): an option bit, not a modulation */
+        bad = c; bad.modulations = V90M_OPT_V34_TX_CAP; CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
+        bad = c; bad.modulations |= V90M_OPT_V34_TX_CAP;
+        m = v90m_create(&bad, &err); CHECK(m != NULL); CHECK_EQ_I(err, V90M_OK); v90m_destroy(m);
+        bad.role = V90M_ROLE_ORIGINATE; bad.modulations = V90M_MOD_V34 | V90M_OPT_V34_TX_CAP;     /* calling: ignored */
+        m = v90m_create(&bad, &err); CHECK(m != NULL); CHECK_EQ_I(err, V90M_OK); v90m_destroy(m);
 
         m = v90m_init(mem.b, sizeof mem.b, &c, &err);
         CHECK(m != NULL); CHECK_EQ_I(err, V90M_OK);
@@ -259,6 +266,10 @@ static void test_errors(void)
         v90m_get_stats(m, &sx);
         CHECK_EQ_I(sx.snr_db10, -1); CHECK_EQ_I(sx.rtd, -1); CHECK_EQ_I(sx.echo_delay, -1);
         CHECK_EQ_I(sx.retrains, 0); CHECK_EQ_I(sx.renegotiations, 0);
+        { v90m_v34_cap vc; memset(&vc, 0x55, sizeof vc); v90m_get_v34_cap(m, &vc);
+          CHECK_EQ_I(vc.proj_bps, 0); CHECK_EQ_I(vc.ask_bps, 0); CHECK_EQ_I(vc.capped, 0);
+          memset(&vc, 0x55, sizeof vc); v90m_get_v34_cap(NULL, &vc);   /* NULL: nothing */
+          CHECK_EQ_I(vc.proj_bps, 0x55555555); v90m_get_v34_cap(m, NULL); }
         v90m_destroy(m);
     }
     v90m_destroy(NULL);
@@ -638,6 +649,8 @@ static void test_originate(void)
                 CHECK(strcmp(got_c, "from the answerer") == 0);
                 CHECK(strcmp(got_a, "from the caller") == 0);
                 CHECK(st.snr_db10 > 300); CHECK(st.rtd >= 0 && st.rtd < 40); CHECK_EQ_I(st.retrains, 0);
+                { v90m_v34_cap vc; v90m_get_v34_cap(an.m, &vc);     /* not V.34: none */
+                  CHECK_EQ_I(vc.proj_bps, 0); CHECK_EQ_I(vc.ask_bps, 0); CHECK_EQ_I(vc.capped, 0); }
                 CHECK_EQ_I(cl.ev[0], V90M_EV_CONNECTED);
                 CHECK_EQ_I(v90m_cleardown(cl.m), V90M_ESTATE);     /* V.32bis has no cleardown in data mode */
                 CHECK_EQ_I(v90m_retrain(cl.m), V90M_OK);            /* 7.1 */
@@ -705,6 +718,12 @@ static void test_originate(void)
                 CHECK(strcmp(got_c, "from the answerer") == 0);
                 CHECK(strcmp(got_a, "from the caller") == 0);
                 CHECK(st.snr_db10 > 300); CHECK(st.rtd >= 0 && st.rtd < 40); CHECK_EQ_I(st.retrains, 0);
+                /* our V.34 transmit direction: the caller's projection and its
+                 * MP's ask, answering only; the cap is off by default */
+                { v90m_v34_cap v1, v2; v90m_get_v34_cap(cl.m, &v1); v90m_get_v34_cap(an.m, &v2);
+                  CHECK_EQ_I(v1.proj_bps, 0); CHECK_EQ_I(v1.ask_bps, 0); CHECK_EQ_I(v1.capped, 0);
+                  CHECK(v2.proj_bps >= 24000 && v2.proj_bps <= 33600 && v2.proj_bps % 2400 == 0);
+                  CHECK(v2.ask_bps >= sa.tx_bps); CHECK_EQ_I(v2.capped, 0); }
                 CHECK_EQ_I(cl.ev[0], V90M_EV_CONNECTED);
                 CHECK_EQ_I(v90m_retrain(cl.m), V90M_OK);            /* 11.5.1.1 */
                 nc = na = 0;
@@ -1578,6 +1597,74 @@ static void end_x2(int cut_ms, int reneg_ms, int secs, v90m_state *st, v90m_stat
     v90m_destroy(m);
 }
 
+/* ---- the V.34 transmit cap's status (v90m_get_v34_cap), box B's shape:
+ * a simulated V.34 caller (sim/v34peer) on a mu-law line whose INFO1c
+ * projects 28800 at 3200 and whose MP asks for 31200 (16-point, trellis,
+ * non-linear, shaping and a precoder). Without V90M_OPT_V34_TX_CAP the
+ * call runs at its ask, not capped; with it at the projection, capped.
+ * Either way the projection and the ask are reported, and kept after the
+ * end ---- */
+static void test_v34_cap(void)
+{
+    int on;
+    for (on = 0; on < 2; on++) {
+        static v34peer_t p;
+        static uint8_t down[64];
+        v34peer_cfg pc; v90m_cfg c; v90m_state st; v90m_v34_cap vc, ve;
+        v90m_t *m; int err;
+        long n, data_at = -1;
+        uint8_t rx = 0xff, tx;
+
+        v90m_cfg_default(&c);
+        if (on) c.modulations |= V90M_OPT_V34_TX_CAP;
+        c.tx_level = 4000;          /* the caller's line estimate: 31200 (38.6-39.1 dB) */
+        c.getbit = ones_get; c.putbit = bits_put;
+        m = v90m_create(&c, &err);
+        CHECK(m != NULL);
+        if (!m) return;
+        memset(&vc, 0, sizeof vc);
+        v34peer_default(&pc, 3000);
+        pc.dx.getbit = ones_get; pc.dx.putbit = bits_put;
+        pc.p2.max_rate[4] = 12; pc.p2.max_rate[3] = 0;      /* INFO1c: 28800 at 3200, its rate */
+        pc.dx.max_rx_rate = 31200;
+        pc.dx.ask_16pt = 1; pc.dx.ask_trellis = 2; pc.dx.ask_nonlinear = 1; pc.dx.ask_shaping = 1;
+        pc.dx.ask_h[0][0] = 3277; pc.dx.ask_h[0][1] = -1638; pc.dx.ask_h[1][0] = -819;
+        v34peer_init(&p, &pc);
+        memset(down, 0xff, sizeof down);
+        for (n = 0; n < 8000L * 30; n++) {
+            int16_t s;
+            v90m_process_g711(m, &rx, &tx, 1);
+            down[n & 63] = tx;
+            s = v34peer_tick(&p, (int16_t)(v90m_g711_decode(0, down[(n - 30) & 63]) / 2));
+            rx = v90m_g711_encode(0, (int16_t)(s / 2));
+            if ((n & 63) == 0) {
+                v90m_get_state(m, &st);
+                if (st.moving && data_at < 0) data_at = n;
+                if (data_at >= 0 && n >= data_at + 8000) {
+                    v90m_get_v34_cap(m, &vc);
+                    CHECK_EQ_I(v90m_cleardown(m), V90M_OK);
+                    data_at = -2;
+                }
+                if (st.end != V90M_END_NONE) break;
+            }
+        }
+        v90m_get_state(m, &st);
+        v90m_get_v34_cap(m, &ve);
+        printf("  V.34 cap %s, box B's shape: %s %d bit/s to it; projection %d, its MP %d, capped %d\n",
+               on ? "on" : "off", st.modulation == V90M_CONN_V34 ? "V.34" : "?", st.tx_bps,
+               vc.proj_bps, vc.ask_bps, vc.capped);
+        CHECK_EQ_I(data_at, -2);
+        CHECK_EQ_I(st.modulation, V90M_CONN_V34); CHECK_EQ_I(st.tx_bps, on ? 28800 : 31200);
+        CHECK_EQ_I(vc.proj_bps, 28800); CHECK_EQ_I(vc.ask_bps, 31200); CHECK_EQ_I(vc.capped, on);
+        CHECK_EQ_I(st.end, V90M_END_CLEARDOWN_OURS);
+        CHECK_EQ_I(ve.proj_bps, vc.proj_bps); CHECK_EQ_I(ve.ask_bps, vc.ask_bps); CHECK_EQ_I(ve.capped, vc.capped);
+        CHECK_EQ_I(v90m_reset(m, &c), V90M_OK);               /* until v90m_reset */
+        v90m_get_v34_cap(m, &ve);
+        CHECK_EQ_I(ve.proj_bps, 0); CHECK_EQ_I(ve.ask_bps, 0); CHECK_EQ_I(ve.capped, 0);
+        v90m_destroy(m);
+    }
+}
+
 static void test_end_codes(void)
 {
     static const struct { unsigned mods; const char *what; } lost[] = {
@@ -2128,6 +2215,7 @@ int main(void)
     test_k56();
     test_k56_reneg();
     test_k56_retrain();
+    test_v34_cap();
     test_end_codes();
     test_callbacks();
     test_destroy_calling();
