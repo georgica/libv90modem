@@ -6799,3 +6799,11 @@ check-hst-bm pass; check-fixed pass.
   disassembly; CHANGELOG's behaviour change tagged simulation only.
 - A declined client hears ANSam 3.420 s later than without K56flex
   (measured; 3.807 s before, when it sent no MS).
+
+## release 0.7.2
+
+- Version 0.7.2 in the Makefile, the header (0, 7, 2), test_api (702),
+  README, docs/api.md, getting-started.md (`.so.0.7.2`, SONAME unchanged
+  `.so.0.7`), testing.md and call_loop's golden.
+- CHANGELOG 0.7.2 (2026-11-26): K56flex versions 1 and 2 offered (0x43),
+  version 1 declined and reported, `V90M_OPT_K56_V2_ONLY`, v90m_get_k56.

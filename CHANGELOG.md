@@ -8,7 +8,7 @@ change is listed here. Rebuild against the new header with every version;
 "Simulation and own answerer only" means: tried against simulated lines and
 this library's own answering modem, never against a real modem or server.
 
-## 0.7.2 (unreleased)
+## 0.7.2 (2026-11-26)
 
 Changed, behaviour (answering with `V90M_MOD_K56` only):
 - Our V.8bis CL now offers K56flex versions 1 and 2 (the NS block's version
