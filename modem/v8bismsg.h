@@ -49,6 +49,10 @@ uint16_t v8bis_fcs16(const uint8_t *o, int n);
  * 0x61 whatever vers says */
 int v8bis_cl_octets(int ns_form, int vers, uint8_t *o);
 
+/* the versions that CL offers in fact (its version octet's bits 0..4):
+ * vers for the 9-octet block, version 1 alone for the 7-octet one (0x61) */
+int v8bis_cl_versions(int ns_form, int vers);
+
 /* ACK(1): one octet; returns 1 */
 int v8bis_ack1_octets(uint8_t *o);
 

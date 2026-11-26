@@ -1472,7 +1472,7 @@ static void k56_version_tests(void)
 {
     kd_opts ko; kd_out o42, o43;
     k_outcome r0, r1;
-    long dn42, dn43, un42, un43;
+    long dn42, dn43, un42, un43, ansam_r0;
     int ver;
 
     /* (a) versions 1 and 2, against 0.7.1's CL and against 0.7.2's */
@@ -1496,10 +1496,15 @@ static void k56_version_tests(void)
     CHECK(dn43 >= DBITS); CHECK(un43 >= DBITS); CHECK(dn42 >= DBITS); CHECK(un42 >= DBITS);
     CHECK_EQ_I(DA.bad, 0); CHECK_EQ_I(DC.bad, 0); CHECK_EQ_I(seg_bad_sum(), 0);
     CHECK_EQ_I(K.js_ok, 1); CHECK_EQ_I(K.mp_good, 16); CHECK_EQ_I(K.mpa_good, 16);
-    /* the CL one bit longer (its FCS stuffs one zero more): our ANSam 3 to 4
-     * ms later, and on this simulated line data mode 0.220 s later (V.8's
-     * and Phase 2's exchanges fall that much later from there) */
-    CHECK(o43.data_at > o42.data_at && o43.data_at - o42.data_at <= MS(500));
+    /* the CL one bit longer (its FCS stuffs one zero more): our ANSam 3.4
+     * ms later. Data mode moves more, either way by line delay: the
+     * simulated caller detects ANSam in 20 ms blocks (sim/v8call), and at
+     * the ANSam-to-JM cut its V.21 receiver may end on a garbage octet that
+     * is not mark (0xFE here) and drop our first JM, a JM period (200 ms)
+     * more. Here 0.220 s later; at other delays 0x43 is the earlier (the
+     * 0.7.2 review's sweep). An alignment artefact of the simulator: within
+     * 0.5 s either way */
+    CHECK(labs(o43.data_at - o42.data_at) <= MS(500));
     /* SM56 against 0x43: its echo, 0x03, selects version 2 */
     kd_default(&ko); ko.rate = 1; ko.modes = CL43;
     kd_call(&ko, 60, &o43);
@@ -1512,11 +1517,13 @@ static void k56_version_tests(void)
     /* (b) version 1 alone against 0x43: declined, V.34 as without K56flex */
     K_VERS = 1;
     k_call(BASE, K56C_V8BIS_FULL, 0, 40, &r0);
+    ansam_r0 = P1.ansam_at;
     k_call(BASE | ANS_MODE_K56 | CL43, K56C_V8BIS_FULL, 0, 40, &r1);
     k_report("K56flex client of version 1 alone, our CL 0x43", &r1);
     ver = (int)((A.k56 & ANS_K56_VER_MASK) >> ANS_K56_VER_SHIFT);
-    printf("     CL %02X, its MS %02X, NAK(3) %d, k56 %02X (chosen %d); without K56flex %d / %d bit/s\n",
-           K.cl_ver, K.ms_ver, K.got_nak3, A.k56, ver, r0.down, r0.up);
+    printf("     CL %02X, its MS %02X, NAK(3) %d, k56 %02X (chosen %d); without K56flex %d / %d bit/s;"
+           " our ANSam %.3f s later than without K56flex\n",
+           K.cl_ver, K.ms_ver, K.got_nak3, A.k56, ver, r0.down, r0.up, (P1.ansam_at - ansam_r0) / 8000.0);
     CHECK(r0.ok); CHECK_EQ_I(r0.bad, 0);
     CHECK_EQ_I(K.cl_ok, 1); CHECK_EQ_I(K.cl_ver, 0x43); CHECK_EQ_I(K.sent_ms, 1); CHECK_EQ_I(K.ms_ver, 0x01);
     CHECK_EQ_I(K.got_ack, 0); CHECK_EQ_I(K.got_nak, 0); CHECK_EQ_I(K.got_nak3, 1);

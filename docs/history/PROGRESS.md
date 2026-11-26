@@ -6751,9 +6751,12 @@ version mask, and the early WebTV Plus (version 1 alone) dropped our 0x42
   to the end, gone at reset, calling and NULL) and the option bits.
   - (a) a client of versions 1 and 2: 0x42 and 0x43 both select 2, K56flex
     32000 / 31200, 0 bad each way, no training octet wrong; with 0x43
-    data mode comes 0.220 s later on that simulated line (our ANSam 3 to 4
-    ms later from the longer CL, the rest from V.8's and Phase 2's
-    exchanges falling later). SM56 against 0x43: MS 0x03, agreed.
+    data mode comes 0.220 s later on that simulated line: our ANSam 3.4 ms
+    later from the longer CL; the simulated caller's ANSam detector, in
+    20 ms blocks, then sees it a block later (+20 ms), and at the
+    ANSam-to-JM cut its V.21 receiver ends on 0xFE (not mark) and drops our
+    first JM (+200 ms). An alignment artefact: over line delays 0x43 is as
+    often the earlier (the 0.7.2 review's sweep). SM56 against 0x43: MS 0x03, agreed.
   - (b) version 1 alone against 0x43: MS 0x01, NAK(3), not agreed, V.34
     28800 / 28800 as without K56flex; k56 0x1E (chosen 1, declined).
   - (c) the same with `ANS_MODE_K56_V1`: ACK(1), our start-up runs to
@@ -6765,7 +6768,8 @@ version mask, and the early WebTV Plus (version 1 alone) dropped our 0x42
   test_api's three K56flex calls) run with 0.7.1's CL: with 0x43 every
   later sample of their calls moves (one more stuffed bit), their golden
   outputs with it, and one Review Focus 3 case lost a rate step (28800 to
-  26400 down on the simulated line, noise drawn per sample). Benches
+  26400 down on the simulated line: the simulated V.34 rate choice is
+  sensitive to sample alignment, at some line delays with 0x42 as well). Benches
   (tools/rec_k56, rig/bench_v90 -k) likewise: the bench hashes are 0.7.1's.
 - Replay: `v90m-replay -K` (0.7.1's CL) and `-1`; replay-proof's k56 sets
   use `-K` (and `-k` for a `diff` REF from before 0.7.2). None of the 106
@@ -6781,3 +6785,17 @@ four that differ only by the new tests' lines and check counts
 (test_v8bismsg, test_v8bis, test_answer_k56, api/test_api; none prints our
 CL otherwise); replay proof 742 identical; bench hashes 19 identical;
 check-hst-bm pass; check-fixed pass.
+
+### 0.7.2 review fixes (Minors 1-4)
+
+- The 0.220 s and 26400 shifts: the simulated caller's alignment (its
+  20 ms ANSam blocks, a first JM dropped at the ANSam-to-JM cut), not
+  noise; test_answer_k56's check now bounds the difference either way.
+- `v8bis_cl_versions`: the decline rule and `v90m_get_k56.offered` follow
+  the octet actually sent; a `-DV8B_NS_DEFAULT=V8B_NS7` build (0x61,
+  version 1 alone) declines nothing and reports `offered 1`
+  (test_v8bis and test_v8bismsg pass in that build too).
+- The WebTV's NAK(3) outcome worded as expected from the V1.101
+  disassembly; CHANGELOG's behaviour change tagged simulation only.
+- A declined client hears ANSam 3.420 s later than without K56flex
+  (measured; 3.807 s before, when it sent no MS).

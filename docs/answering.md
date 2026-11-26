@@ -186,7 +186,10 @@ answering, on a mu-law line: never with `alaw` set.
   than without K56flex for a caller without V.8bis, 3.807 s later for a
   V.8bis caller without K56flex (CRd, no MS), and 3.413 s later for a
   K56flex client (measured in the simulator with 0.7.1's CL; 0.7.2's,
-  one bit longer, adds 3 to 4 ms to the last two). A caller that gives up in
+  one bit longer, adds 3 to 4 ms to the last two). A client declined for
+  version 1 (below, "K56flex versions") is on the agreed client's timing,
+  3.420 s later with 0.7.2's CL: NAK(3) ends V.8bis where an ACK(1) would (with 0.7.1's CL
+  such a client sent no MS and was on the 3.807 s one). A caller that gives up in
   that time is not known; the live calls before v90d offers K56flex check
   it.
 - **The point of no return.** In the V.34 Phase 2 of an agreed call, a
@@ -274,8 +277,12 @@ version 1 alone) dropped it so, and connected in V.34 at 28800 at best
   its CM and our offer decide. Our start-up and data mode are version 2's,
   and what version 1 differs in on the line is not known: not one public
   source describes it, and such a client failing in training would end
-  past the point where V.34 could still be had. Nothing is worse for it
-  than before 0.7.2: it got V.34 then too, without having been asked.
+  past the point where V.34 could still be had. It is expected to be no
+  worse off than before 0.7.2, when it got V.34 too: the WebTV Plus
+  controller's disassembly (V1.101; the box reports V1.001) takes NAK(3)
+  as it takes NAK(1), clears its K56flex state and goes on to V.8, at once
+  or after its own timer. No such call has been made yet (simulation
+  only).
 - **`V90M_OPT_K56_V1` (experimental, off by default):** a version-1
   selection gets ACK(1) and our version-2 start-up runs as it is. Meant for
   a test number, to see where a real version-1 pump stops (INFO1c's

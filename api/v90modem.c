@@ -590,7 +590,9 @@ void v90m_get_k56(const v90m_t *m, v90m_k56 *k)
     k->offered = k->exchanged = k->chosen = k->declined = k->agreed = 0;
     if (ORIGINATING(m)) return;
     f = m->u.a.k56;
-    if (f & ANS_K56_CL) k->offered = (m->u.a.cfg.modes & ANS_MODE_K56_V2_ONLY) ? V8B_VERS_2 : V8B_VERS_BOTH;
+    /* the mask the CL carried (modem/answer.c's k56_offer and V8B_NS_DEFAULT) */
+    if (f & ANS_K56_CL)
+        k->offered = v8bis_cl_versions(V8B_NS_DEFAULT, (m->u.a.cfg.modes & ANS_MODE_K56_V2_ONLY) ? V8B_VERS_2 : V8B_VERS_BOTH);
     k->exchanged = (f & ANS_K56_MS) != 0;
     k->chosen = (int)((f & ANS_K56_VER_MASK) >> ANS_K56_VER_SHIFT);
     k->declined = (f & ANS_K56_DECLINED) != 0;

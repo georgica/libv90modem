@@ -67,6 +67,9 @@ int main(void)
     CHECK_EQ_I(o[13], 0x41); CHECK(!v8bis_cl_is_k56(o + 6, n - 6));
     n = v8bis_cl_octets(V8B_NS7, V8B_VERS_2, o);
     CHECK_EQ_I(n, 13); CHECK(memcmp(o, cl7, 13) == 0);         /* the 7-octet form keeps 0x61 */
+    CHECK_EQ_I(v8bis_cl_versions(V8B_NS7, V8B_VERS_BOTH), V8B_VERS_1);  /* ... version 1 alone */
+    CHECK_EQ_I(v8bis_cl_versions(V8B_NS9, V8B_VERS_BOTH), V8B_VERS_BOTH);
+    CHECK_EQ_I(v8bis_cl_versions(V8B_NS9, V8B_VERS_2), V8B_VERS_2);
     /* the version an octet selects: its highest version bit, 0x20 and 0x40 not */
     CHECK_EQ_I(v8bis_version_of(0x02), 2); CHECK_EQ_I(v8bis_version_of(0x03), 2);
     CHECK_EQ_I(v8bis_version_of(0x01), 1); CHECK_EQ_I(v8bis_version_of(0x21), 1);

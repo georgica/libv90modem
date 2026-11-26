@@ -16,7 +16,7 @@
      CL 43, its MS 02, k56 27; against 0x42: 32000 / 31200 bit/s, data mode 0.220 s later with 0x43
   SM56 against our CL 0x43: its MS 03, k56 27, K56flex 32000 / 31200 bit/s, 0 / 0 bad
   K56flex client of version 1 alone, our CL 0x43: V.34 28800 / 28800 bit/s, 0 bad; agreed 0, JM 1, x2 0 (flipped 0), CL 1 (ok 1), MS 1, ACK 0, NAK 0
-     CL 43, its MS 01, NAK(3) 1, k56 1E (chosen 1); without K56flex 28800 / 28800 bit/s
+     CL 43, its MS 01, NAK(3) 1, k56 1E (chosen 1); without K56flex 28800 / 28800 bit/s; our ANSam 3.420 s later than without K56flex
   K56flex client of version 1 alone, our CL 0x42: V.34 28800 / 28800 bit/s, 0 bad; agreed 0, JM 1, x2 0 (flipped 0), CL 1 (ok 0), MS 0, ACK 0, NAK 0
   K56flex client of version 1 alone, ANS_MODE_K56_V1: K56flex 32000 / 31200 bit/s (client 32000 / 31200), data 102057 bits 0 bad down, 100065 bits 0 bad up; client: 0 bad training octets, Js 1, MP 16 MP' 16 (0 wrong), E 1, B1 bad 0, frames 3192 lost 0; end: phase 15 error 0 k56_failed 0 lost 0
      CL 43, its MS 01, ACK(1) 1, k56 17

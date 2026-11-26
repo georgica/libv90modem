@@ -309,7 +309,9 @@ a Rockwell or Lucent modem.
   3.807 s later for a V.8bis caller without K56flex (CRd, no MS), 3.413 s
   later for an agreed K56flex client (measured in the simulator with
   0.7.1's CL; 0.7.2's 0x43 CL is one bit longer and adds 3 to 4 ms to the
-  last two). A caller
+  last two); a client declined for version 1 is on the agreed timing, 3.420 s
+  with 0.7.2's CL (NAK(3) ends V.8bis where ACK(1) would; with 0.7.1's CL it sent
+  no MS and was on the 3.807 s one). A caller
   that gives up in that time is not known; the live calls with K56flex
   offered, before v90d offers it, are to show it.
 - **A line that answers with no ringing may meet SM56's blind-dial wait.**

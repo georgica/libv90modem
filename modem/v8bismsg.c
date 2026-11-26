@@ -38,6 +38,11 @@ int v8bis_cl_octets(int ns_form, int vers, uint8_t *o)
     return (int)sizeof cl_ns9;
 }
 
+int v8bis_cl_versions(int ns_form, int vers)
+{
+    return ns_form == V8B_NS7 ? (cl_ns7[12] & V8B_VER_MASK) : (vers & V8B_VER_MASK);
+}
+
 int v8bis_ack1_octets(uint8_t *o)
 {
     o[0] = 0x14;   /* revision 1, ACK(1) */

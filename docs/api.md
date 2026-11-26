@@ -110,7 +110,7 @@ version; the init functions check the length given):
 | `V90M_MOD_BELL103` | 0x0040 | not in the defaults, either role |
 | `V90M_MOD_BELL212A` | 0x0080 | not in the defaults, either role; answering only with `V90M_MOD_V22` (without: `V90M_ENOTSUP`) |
 | `V90M_MOD_X2` | 0x0100 | answering only (calling: `V90M_ENOTSUP`), with `V90M_MOD_V34` (without: `V90M_ENOTSUP`), not in the defaults: x2 as its server, offered on a mu-law line to a caller whose CM offers V.34 and no PCM; see [answering.md](answering.md), "x2" |
-| `V90M_MOD_K56` | 0x0200 | answering only (calling: `V90M_ENOTSUP`), with `V90M_MOD_V34` (without: `V90M_ENOTSUP`), not in the defaults; experimental: K56flex as its server, offered on a mu-law line in V.8bis before V.8 (every caller then hears our answer tone later: 1.790 s without V.8bis, 3.807 s for a V.8bis caller without K56flex, 3.413 s for a K56flex client); see [answering.md](answering.md), "K56flex" |
+| `V90M_MOD_K56` | 0x0200 | answering only (calling: `V90M_ENOTSUP`), with `V90M_MOD_V34` (without: `V90M_ENOTSUP`), not in the defaults; experimental: K56flex as its server, offered on a mu-law line in V.8bis before V.8 (every caller then hears our answer tone later: 1.790 s without V.8bis, 3.807 s for a V.8bis caller without K56flex, 3.413 s for a K56flex client, as measured with 0.7.1's CL; 0.7.2's adds 3 to 4 ms to the last two, and a client declined for version 1 hears it 3.420 s later); see [answering.md](answering.md), "K56flex" |
 | `V90M_MOD_HST` | 0x0400 | answering only (calling: `V90M_ENOTSUP`), needs no other bit, not in the defaults: HST, U.S. Robotics' asymmetric modem (a fast forward channel and a 450 or 300 bit/s back channel, MNP error control), as its answering side. Offered only when an MNP endpoint is linked with `v90m_ec_link_hst` before the modem decides (the end of ANSam), and `max_down_bps` is 0 or 4800 and up. A caller that sends neither CM nor AA is listened to for its back channel for 650 ms after ANSam (up to 2 s while 250-500 Hz energy is there): heard, HST (`V90M_CONN_HST`); not heard, V.22bis or V.21 as without HST, that much later. Callers that send CM or AA are answered exactly as without HST. No MNP link within 15 s: `V90M_END_HST_FAILED`. See [error-control.md](error-control.md) for the host's side |
 | `V90M_OPT_V34_TX_CAP` | 0x10000 | not a modulation (alone: `V90M_EINVAL`; bits 16 and up are options); off by default. Answering, V.34: cap our V.34 transmit at the caller's own INFO1c / INFO1a projection (our MP offers the lower of `max_down_bps` and the projection); for a host to set per call, see [answering.md](answering.md), "The V.34 transmit cap"; calling: ignored |
 | `V90M_OPT_K56_V2_ONLY` | 0x20000 | an option (added in 0.7.2), off by default. Answering, with `V90M_MOD_K56`: our V.8bis CL offers K56flex version 2 alone (version octet 0x42) instead of versions 1 and 2 (0x43, the default from 0.7.2 on), and every K56flex selection is acknowledged: 0.7.1's exchange, for a replay of a call 0.7.1 answered or a client that dislikes 0x43; `V90M_OPT_K56_V1` then changes nothing; see [answering.md](answering.md), "K56flex versions"; calling: ignored |
@@ -392,8 +392,10 @@ keeps its size within 0.7, and so does `v90m_k56` from 0.7.2 on.
 | `declined` | 1: we declined it (version 1 without `V90M_OPT_K56_V1`: V.8bis NAK(3)); V.8 followed as without K56flex |
 | `agreed` | 1: we acknowledged it (ACK(1)); K56flex's Phase 2 follows, and the call is `V90M_CONN_K56FLEX` once the client's INFO1c takes it up |
 
-A WebTV Plus of early flash (version 1 alone) reads `offered 3, exchanged
-1, chosen 1, declined 1, agreed 0` and connects in V.34; a version-2 client
+A WebTV Plus of early flash (version 1 alone) is expected to read `offered
+3, exchanged 1, chosen 1, declined 1, agreed 0` and connect in V.34 (from
+the disassembly of its controller, V1.101, and the simulator; not yet seen
+on a live call); a version-2 client
 `3, 1, 2, 0, 1`; before 0.7.2 (or with `V90M_OPT_K56_V2_ONLY`) the WebTV
 read `2, 0, 0, 0, 0`: it dropped our CL without a word.
 

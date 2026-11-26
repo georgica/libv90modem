@@ -102,7 +102,7 @@ void v8bis_init(v8bis_t *b, int16_t amp, int ns_form, int vers, int accept_v1)
     b->a_dual = (int16_t)((amp * CRE_DUAL_Q15) >> 15);
     b->a_tone = (int16_t)((amp * CRE_TONE_Q15) >> 15);
     b->ns_form = ns_form;
-    b->vers = vers & V8B_VER_MASK;
+    b->vers = v8bis_cl_versions(ns_form, vers);    /* as sent: NS7's 0x61 is version 1 alone */
     b->accept_v1 = accept_v1 != 0;
     b->ms_ver = -1;
     b->result = V8B_RES_NONE;

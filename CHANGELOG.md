@@ -20,7 +20,12 @@ Changed, behaviour (answering with `V90M_MOD_K56` only):
   version 1 alone and which dropped our 0x42 CL without a word) is now
   declined with V.8bis NAK(3) and answered as without K56flex (V.8, then
   V.90 or V.34, as it got before 0.7.2). Our K56flex start-up is version
-  2's; what version 1 differs in on the line is not known.
+  2's; what version 1 differs in on the line is not known. Such a client
+  now hears our answer tone about 0.39 s sooner (3.420 s later than without K56flex,
+  on the agreed timing, against 3.807 s when it sent no MS).
+- Simulation only (and SM56 under emulation against 0x43): the WebTV Plus's
+  answer to NAK(3) is expected, from the disassembly of its controller
+  (V1.101), to be V.8 as before; no live call has been made.
 
 Added, the API (the ABI of 0.7.1 kept: no struct changes size, the SONAME
 stays `libv90modem.so.0.7`):

@@ -95,7 +95,8 @@ typedef struct {
     int         nbits, pos;
     uint8_t     msg[V8B_MAXOCT];
     int         ns_form;
-    int         vers;           /* the versions our CL offers (V8B_VERS_*) */
+    int         vers;           /* the versions our CL offers (V8B_VERS_*), as sent
+                                   (v8bis_cl_versions: the 7-octet block, version 1) */
     int         accept_v1;      /* an MS selecting version 1 is acknowledged too */
     int         cl_sent;        /* our CL went out */
     int         ms_ver;         /* the version octet of its MS's K56flex block, -1 none */
@@ -104,8 +105,9 @@ typedef struct {
 
 /* amp: the peak of our messages (as v8ans' JM); ns_form: V8B_NS9 or
  * V8B_NS7; vers: the versions our CL offers (V8B_VERS_BOTH, or V8B_VERS_2
- * as the real server and 0.7.1 did); accept_v1: acknowledge an MS that
- * selects version 1 (else, with version 1 in vers, it gets NAK(3)) */
+ * as the real server and 0.7.1 did; the 7-octet block offers version 1
+ * alone whatever vers says); accept_v1: acknowledge an MS that selects
+ * version 1 (else, with version 1 offered among others, it gets NAK(3)) */
 void      v8bis_init(v8bis_t *b, int16_t amp, int ns_form, int vers, int accept_v1);
 /* one sample in, one out; the state after this sample */
 v8b_state v8bis_tick(v8bis_t *b, int16_t rx, int16_t *tx);
