@@ -48,8 +48,10 @@ Fixed:
   after 5 s and the call failed there (`P2N_ERR_INFO0`). 14 of 21 such
   live calls failed, none of 31 with a plain JM. The JM is now inverted
   only for its first 2 s (`V8A_X2_FLIP_MS`); the JMs that begin later are
-  plain. An x2 client still sees the inverted JMs first (the clients on
-  record answer within about 1.1 s), and x2 is still offered in Phase 2.
+  plain. An x2 client still sees the inverted JMs first (the live USR x2
+  client sent CJ 0.773 s after the JM began; the recorded corpus 0.606 to
+  0.641 s), and x2 is still offered in Phase 2. Non-x2 callers that did
+  take the inversion live took 1.47 to 3.87 s; the plain JM helps them too.
   Simulation and the replay corpus: every recorded call identical.
 - V.34, either role, our own sample path's delay unknown (`io_delay` -1):
   once the echo delay was found in Phase 3, the round trip used for the

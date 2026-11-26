@@ -77,10 +77,11 @@ v8a_state v8ans_tick(v8ans_t *v, int16_t rx, int16_t *tx)
          * degree step; the octets are not changed by it (x2-facts.md
          * "Phase 1": RE (D-Modem), RE (courier-emu); our disassembly of
          * Ie030002, DSP dd62-dd64). The amplitude is far below full scale.
-         * Only for V8A_X2_FLIP_MS: a caller that takes the inversion has sent
-         * CJ by then (WebTV boxB 1.07 s, our callers 0.74 s); a strict V.8 receiver (a hardware
-         * V.34 modem) never decodes it and goes on sending CM, so the JMs
-         * that begin later are plain, of one sign. */
+         * Only for V8A_X2_FLIP_MS: the live USR x2 client sent CJ 0.773 s
+         * after the JM began (the recorded corpus 0.606-0.641 s); a strict
+         * V.8 receiver (a hardware V.34 modem) never decodes it and goes on
+         * sending CM, and non-x2 callers that do take it were slow (WebTV
+         * 1.47-3.87 s), so the JMs that begin later are plain, of one sign. */
         if (v->jm_sign < 0) *tx = (int16_t)-*tx;
         if (done && ++v->jmpos >= v->njm) {
             v->jmpos = 0;
