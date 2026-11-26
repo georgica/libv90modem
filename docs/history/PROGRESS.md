@@ -6439,3 +6439,74 @@ milestone gate (verify-phase, ports, ARM) is Task 26's.
   742 identical; `tools/bench-hashes.sh check` 19 identical. TEST_SHORT
   (-DTEST_FORCE_SHORT) case 25 passes; clang -pedantic and gcc -Wconversion
   compile hst_fwd.c cleanly.
+
+## v34cap: our V.34 transmit capped at the caller's own INFO1 projection (2026-11-25)
+
+- **Why.** A WebTV box asked for 31200 in its MP although its own INFO1c
+  projected 28800 at 3200 Bd; it could not decode our 31200, missed our
+  ADP and fell back to async (`/home/georgica/v34-dbg/build/webtv-report.md`).
+  V.34 takes the lower of the two MPs, so ours now carries the projection.
+- **What.** Answering only: `v34ans_dx_cfg` (start-up and every retrain's
+  Phase 2) and `v34_call_cfg_from_v90` (a V.90 caller selecting V.34, INFO1a
+  bits 30:33) set `max_tx_rate` to `v34_tx_ceiling(cfg, projection)`;
+  renegotiation keeps it. On by default; `V90M_OPT_V34_NO_TX_CAP`, an option
+  bit in `v90m_cfg.modulations` (-> `ANS_MODE_V34_NO_TX_CAP` ->
+  `v34ans_cfg.no_tx_cap`, a `uint8_t` beside `k56`, now `uint8_t` too),
+  turns it off. Memory unchanged (106320 x86-64; 105840 -m32 i386
+  before and after). Calling side not capped: our own answerer projects
+  28800 on a clean line while its MP offers 33600 (the call runs at 31200), and the cap cut
+  `test_orig_v34`'s clean calls from 31200 to 28800.
+- **Corpus first.** 106 recordings x 7 sets, instrumented replay: no caller
+  asked in its MP for more than its own projection (6 V.34 calls project 13
+  and ask 13 or 12; x2b's V.90-to-V.34 INFO1a 12, MP 12). No rate changes;
+  but our MP offered 14 (33600) and now offers 13, so with the cap the 6
+  V.34 replays no longer connect (the recording's echo is of the old MP;
+  HEAD with `-d 31200` gives byte-identical output). Hence `v90m-replay -C`
+  / `v90m-fields -C` (cap off), used by `tools/replay-proof.sh` (every set)
+  and `test/fixtures/fixtures.txt` (every line).
+- **Tests.** `test_v34call`: INFO1c 28800 / MP 31200 -> 28800, kept over a
+  renegotiation; retrain with INFO1c 26400 -> 26400; MP below projection
+  unchanged; our ceiling below it wins; cap off -> MP max 14 and 31200, the
+  rest of our MP byte-equal to the capped one, also after a retrain.
+  `test_answer_v90_v34`: INFO1a 24000 -> 24000 at start-up and after a
+  retrain (sim/p2a `v34_max_rate`). `test_api`: the option bit alone is
+  EINVAL, accepted answering, ignored calling.
+- **Checks.** `make golden`: ALL HOST CHECKS PASS, fixtures all pass with
+  traces identical; 154 of 158 identical, 4 re-recorded: `test_v34call`
+  and `test_answer_v90_v34` (new cases and counts; one SNR 38.1->37.7 in the
+  latter's existing retrain line), `test_orig_v34` (4 SNR readings, 0.1-0.5
+  dB) and `api/test_api` (2 SNR readings, count). Every rate unchanged; with
+  the cap forced off the old lines come back byte for byte. Replay proof:
+  742 runs identical; bench hashes: 19 identical. x86-64 only.
+
+## v34cap, policy change: the cap is opt-in, with status for the host's count (2026-11-25)
+
+- **Owner's ruling.** The cap is off by default; the server turns it on per
+  call for members whose box has shown the problem 3 times, and keeps the
+  count itself.
+- **Switch inverted.** `V90M_OPT_V34_TX_CAP` (0x10000, the same bit)
+  replaces `V90M_OPT_V34_NO_TX_CAP`; `ANS_MODE_V34_TX_CAP`,
+  `v34ans_cfg.tx_cap`. Without it the modem is 0.6.1's: our MP offers the
+  ceiling. `v90m-replay -C` / `v90m-fields -C` removed (the default is the
+  recordings' behaviour again); `tools/replay-proof.sh`,
+  `test/fixtures/fixtures.txt` and `tools/README.md` back to 8568967's.
+- **Status.** `v90m_stats.v34_proj_bps`, `v34_ask_bps`, `v34_capped`
+  (appended, +12 octets), filled by `answer_v34_tx_cap()`: answering V.34
+  (and V.90 -> V.34: INFO1a bits 30:33 and the MP's max_ca), our transmit
+  direction, from the last Phase 2 / 4; 0 for any other call, calling, or
+  before V.34 training; `capped` when the option lowered our MP's offer
+  below what it would be without it. `v90m_mem_size()` unchanged (106320
+  x86-64; 105840 -m32), `V90M_MEM_SIZE` unchanged.
+- **Tests.** `test_v34call`: the cap cases with `tx_cap` 1; the default
+  case gives MP max 14 and 31200, the MP's bits equal to the capped one's
+  but for the maximum. `test_answer_v34`: box B's shape (INFO1c 28800 at
+  3200, MP 31200): off: 31200, projection 28800, ask 31200, capped 0; on:
+  28800, capped 1. `test_answer_v90_v34`: INFO1a 24000, MP more: off
+  28800 (MP max 14), on 24000, status both ways. `test_api`: zeros before
+  a call, calling and on V.32bis; on our own V.34 call a projection and an
+  ask, capped 0.
+- **Checks.** `make golden`: ALL HOST CHECKS PASS, fixtures identical;
+  goldens back to the pre-cap bytes but for new lines and check counts
+  (`test_v34call`, `test_answer_v90_v34`, `test_answer_v34`, `api/test_api`
+  re-recorded; `test_orig_v34` back to 8568967's). Replay proof: 742
+  identical; bench hashes: 19 identical. x86-64 only.

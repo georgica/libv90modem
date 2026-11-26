@@ -17,6 +17,7 @@ typedef struct {
      * transmitter. The symbol rate is the same in both directions. */
     int v34_hi_carrier; /* bit 25 */
     int v34_preemph;    /* bits 26:29 */
+    int v34_max_rate;   /* bits 30:33, x 2400 bit/s; 0 = 12 (28800) */
     /* V.92: INFO0a bit 26 is info0a.v92. pcm_up: select PCM upstream with
      * the INFO1a of Table 18/V.92 when INFO0d and INFO1d allow it (else what
      * v90 says); pcm_force: send that INFO1a whatever they say */

@@ -45,6 +45,10 @@ void v34orig_dx_cfg(const p2call_t *p2, const v34orig_cfg *cfg, int peer_1664, v
     dx->md_len = p2->md_len;
     dx->peer_1664 = peer_1664;
     dx->max_rx_rate = cfg->max_rx_rate;
+    /* Not capped at INFO1a's projection (bits 30:33), unlike the answering
+     * side (v34_tx_ceiling): this library's own answerer projects 28800 on
+     * a clean line while its MP offers 33600 (the call runs at 31200), and
+     * the cap would cost those calls a step. */
     dx->max_tx_rate = cfg->max_tx_rate;
     dx->getbit = cfg->getbit; dx->putbit = cfg->putbit; dx->user = cfg->user;
 }

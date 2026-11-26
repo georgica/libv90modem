@@ -124,6 +124,7 @@ int main(void)
     line34_cfg lc, base;
     v34ans_cfg ac; v34peer_cfg pc;
     int k;
+    v34_mp_t capped;
 
     memset(&base, 0, sizeof base);
     base.law = 1; base.d_ca = 24; base.d_ac = 20; base.gain = 0.5; base.echo_a = 0.3; base.echo_c = 0.3;
@@ -227,6 +228,93 @@ int main(void)
         good_call("2400 symbols/s only", &base, &ac, &pc, 4, 14400, 0);
         CHECK_EQ_I(A.m.dx.cfg.sym_rate, 2400);
         ac.sr_mask = 0;
+    }
+
+    /* ---- with tx_cap (V90M_OPT_V34_TX_CAP, off by default), our transmit
+     * ceiling is the caller's own INFO1c projection (the WebTV case:
+     * INFO1c 28800 at 3200, MP 31200; V.34 11.4.1.1.3 takes the lower MP,
+     * so ours carries the projection) ---- */
+    {
+        lc = base; lc.law = 0; ac.law = 0; ac.sr_mask = P2N_SR_3200;    /* WebTV's 3200 (its 3429: 0) */
+        ac.tx_cap = 1;
+        v34peer_default(&pc, 3000);
+        pc.p2.max_rate[4] = 12; pc.dx.max_rx_rate = 31200;
+        good_call("INFO1c 28800, MP 31200", &lc, &ac, &pc, 4, 28800, 0);
+        CHECK_EQ_I(A.m.dx.cfg.sym_rate, 3200);
+        CHECK_EQ_I(A.m.p2.info1c.sr[4].max_rate, 12);
+        CHECK_EQ_I(C.dx.mp.max_ac, 13);                     /* the caller asked for 31200 */
+        CHECK_EQ_I(A.m.dx.mp.max_ac, 12);
+        CHECK_EQ_I(v34ans_tx_rate(&A.m), 28800); CHECK_EQ_I(C.dx.rx_rate, 28800);
+        capped = A.m.dx.mp;
+        /* a renegotiation keeps the ceiling */
+        CHECK_EQ_I(v34ans_renegotiate(&A.m, 0), 0);
+        call_run(80); CHECK_EQ_I(call_to_data(3000), 1);
+        CHECK_EQ_I(v34ans_tx_rate(&A.m), 28800);
+        /* and a retrain takes the projection of the INFO1c that comes with
+         * it: the caller's retrain Phase 2 now projects 26400 */
+        C.cfg.p2.max_rate[4] = 11;
+        CHECK_EQ_I(v34ans_retrain(&A.m), 0);
+        call_run(2400);
+        CHECK_EQ_I(call_to_data(25000), 1);
+        CHECK_EQ_I(A.m.retrains, 1); CHECK_EQ_I(A.m.connects, 2);
+        CHECK_EQ_I(A.m.dx.cfg.sym_rate, 3200);
+        CHECK_EQ_I(A.m.p2.info1c.sr[4].max_rate, 11);
+        CHECK(C.dx.mp.max_ac >= 12);                        /* its MP still asks for more */
+        CHECK_EQ_I(A.m.dx.mp.max_ac, 11);
+        CHECK_EQ_I(v34ans_tx_rate(&A.m), 26400); CHECK_EQ_I(C.dx.rx_rate, 26400);
+        sinks_reset(); call_run(8000L * 3);
+        CHECK_EQ_I(UC.sink.errs, 0); CHECK(UC.sink.n > 2L * 26400);
+        report("INFO1c 26400 after our retrain");
+        /* the caller's MP below its projection: its MP decides, as before */
+        v34peer_default(&pc, 3000);
+        pc.p2.max_rate[4] = 13; pc.dx.max_rx_rate = 26400;
+        good_call("INFO1c 31200, MP 26400", &lc, &ac, &pc, 4, 26400, 0);
+        CHECK_EQ_I(A.m.p2.info1c.sr[4].max_rate, 13);
+        CHECK_EQ_I(C.dx.mp.max_ac, 11);
+        CHECK_EQ_I(v34ans_tx_rate(&A.m), 26400);
+        /* our own ceiling below the projection: ours decides */
+        v34peer_default(&pc, 3000);
+        pc.p2.max_rate[4] = 12; ac.max_tx_rate = 24000;
+        good_call("INFO1c 28800, our ceiling 24000", &lc, &ac, &pc, 4, 24000, 0);
+        CHECK_EQ_I(A.m.dx.mp.max_ac, 10); CHECK_EQ_I(v34ans_tx_rate(&A.m), 24000);
+        ac.max_tx_rate = 0;
+        /* the default, tx_cap 0: the MP as in 0.6, the engine's ceiling (14
+         * with the caller's 1664-point bit), and the caller's 31200;
+         * everything else in our MP the same as capped */
+        v34peer_default(&pc, 3000);
+        pc.p2.max_rate[4] = 12; pc.dx.max_rx_rate = 31200;
+        ac.tx_cap = 0;
+        good_call("INFO1c 28800, MP 31200, cap off", &lc, &ac, &pc, 4, 31200, 0);
+        CHECK_EQ_I(A.m.p2.info1c.sr[4].max_rate, 12); CHECK_EQ_I(C.dx.mp.max_ac, 13);
+        CHECK_EQ_I(A.m.dx.mp.max_ac, 14);
+        CHECK_EQ_I(v34ans_tx_rate(&A.m), 31200); CHECK_EQ_I(C.dx.rx_rate, 31200);
+        capped.max_ac = 14;                                 /* the MP's bits, not the struct (padding) */
+        {
+            uint8_t b0[V34_MP_MAX_BITS], b1[V34_MP_MAX_BITS];
+            int n0 = v34_mp_build(&capped, b0), n1 = v34_mp_build(&A.m.dx.mp, b1);
+            CHECK_EQ_I(n0, n1); CHECK(n0 > 0);
+            CHECK_EQ_I(memcmp(b0, b1, (size_t)n0), 0);
+        }
+        C.cfg.p2.max_rate[4] = 11;                          /* and after a retrain */
+        CHECK_EQ_I(v34ans_retrain(&A.m), 0);
+        call_run(2400);
+        CHECK_EQ_I(call_to_data(25000), 1);
+        CHECK_EQ_I(A.m.p2.info1c.sr[4].max_rate, 11); CHECK_EQ_I(A.m.dx.mp.max_ac, 14);
+        CHECK_EQ_I(v34ans_tx_rate(&A.m), 2400 * C.dx.mp.max_ac);
+        ac.tx_cap = 1;
+        /* the projection of the symbol rate chosen, not of a higher one the
+         * caller offers: it projects 31200 at 3200 and 24000 at 3000, and
+         * 3000 is the one we allow */
+        v34peer_default(&pc, 3000);
+        pc.p2.max_rate[4] = 13; pc.p2.max_rate[3] = 10; pc.dx.max_rx_rate = 31200;
+        ac.sr_mask = P2N_SR_3000;
+        good_call("3000 chosen: INFO1c 24000 there", &lc, &ac, &pc, 4, 24000, 0);
+        CHECK_EQ_I(A.m.dx.cfg.sym_rate, 3000); CHECK_EQ_I(A.m.p2.sym_idx, 3);
+        CHECK_EQ_I(A.m.p2.info1c.sr[4].max_rate, 13);
+        CHECK(C.dx.mp.max_ac > 10);                         /* its MP asks for more */
+        CHECK_EQ_I(A.m.dx.mp.max_ac, 10);
+        CHECK_EQ_I(v34ans_tx_rate(&A.m), 24000); CHECK_EQ_I(C.dx.rx_rate, 24000);
+        ac.tx_cap = 0; ac.law = 1; ac.sr_mask = 0;
     }
 
     /* ---- retrain (11.5), from either side, and when Phase 3 loses the caller ---- */

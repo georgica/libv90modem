@@ -239,6 +239,42 @@ int main(void)
     for (t = 0; t < 2000 && A.phase != ANS_FAILED; t += 10) run(80);
     CHECK_EQ_I(A.phase, ANS_FAILED); CHECK_EQ_I(answer_end(&A), ANS_END_CLEARDOWN_FAR); CHECK_EQ_I(A.connected, 0);
 
+    /* ---- the caller's INFO1a projects 24000 (bits 30:33), its MP asks for
+     * more: by default our MP offers all we can and the MP decides; with
+     * ANS_MODE_V34_TX_CAP ours carries the projection, at start-up and
+     * after a retrain. The status reports both either way ---- */
+    {
+        int proj, ask, capped;
+        start(ALL, 0, 0, 0, 0, 0, 0);
+        C.pc.v34_max_rate = 10;
+        CHECK_EQ_I(to_data(25000), 1);
+        CHECK_EQ_I(A.p2.info1a.max_rate, 10);
+        CHECK_EQ_I(A.v34.dx.mp.max_ca, 14);
+        CHECK_EQ_I(A.bitrate, 2400 * C.dx.mp.max_ca);
+        answer_v34_tx_cap(&A, &proj, &ask, &capped);
+        CHECK_EQ_I(proj, 24000); CHECK_EQ_I(ask, 2400 * C.dx.mp.max_ca); CHECK_EQ_I(capped, 0);
+        CHECK(ask > proj);
+        data_ok("INFO1a 24000, MP more, no cap");
+        start(ALL | ANS_MODE_V34_TX_CAP, 0, 0, 0, 0, 0, 0);
+        C.pc.v34_max_rate = 10;
+        CHECK_EQ_I(to_data(25000), 1);
+        CHECK_EQ_I(A.modulation, ANS_MOD_V34);
+        CHECK_EQ_I(A.p2.info1a.max_rate, 10);
+        CHECK(C.dx.mp.max_ca > 10);                     /* its MP asks for more */
+        CHECK_EQ_I(A.v34.dx.mp.max_ca, 10);
+        CHECK_EQ_I(A.bitrate, 24000); CHECK_EQ_I(C.dx.rx_rate, 24000);
+        answer_v34_tx_cap(&A, &proj, &ask, &capped);
+        CHECK_EQ_I(proj, 24000); CHECK_EQ_I(ask, 2400 * C.dx.mp.max_ca); CHECK_EQ_I(capped, 1);
+    }
+    data_ok("INFO1a 24000, MP more");
+    CHECK_EQ_I(answer_retrain(&A), 0);
+    run(8000);
+    CHECK_EQ_I(to_data(15000), 1);
+    CHECK_EQ_I(C.connects, 2); CHECK_EQ_I(A.p2.info1a.max_rate, 10);
+    CHECK(C.dx.mp.max_ca > 10);
+    CHECK_EQ_I(A.bitrate, 24000);
+    data_ok("the same after our retrain");
+
     /* ---- a retrain after which the caller wants V.90: Phase 3 of V.90 begins ---- */
     start(ALL, 0, 0, 0, 0, 0, 0);
     CHECK_EQ_I(to_data(25000), 1);

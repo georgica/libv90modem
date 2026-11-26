@@ -110,6 +110,7 @@ version; the init functions check the length given):
 | `V90M_MOD_BELL212A` | 0x0080 | not in the defaults, either role; answering only with `V90M_MOD_V22` (without: `V90M_ENOTSUP`) |
 | `V90M_MOD_X2` | 0x0100 | answering only (calling: `V90M_ENOTSUP`), with `V90M_MOD_V34` (without: `V90M_ENOTSUP`), not in the defaults: x2 as its server, offered on a mu-law line to a caller whose CM offers V.34 and no PCM; see [answering.md](answering.md), "x2" |
 | `V90M_MOD_K56` | 0x0200 | answering only (calling: `V90M_ENOTSUP`), with `V90M_MOD_V34` (without: `V90M_ENOTSUP`), not in the defaults; experimental: K56flex as its server, offered on a mu-law line in V.8bis before V.8 (every caller then hears our answer tone later: 1.790 s without V.8bis, 3.807 s for a V.8bis caller without K56flex, 3.413 s for a K56flex client); see [answering.md](answering.md), "K56flex" |
+| `V90M_OPT_V34_TX_CAP` | 0x10000 | not a modulation (alone: `V90M_EINVAL`; bits 16 and up are options); off by default. Answering, V.34: cap our V.34 transmit at the caller's own INFO1c / INFO1a projection (our MP offers the lower of `max_down_bps` and the projection); for a host to set per call, see [answering.md](answering.md), "The V.34 transmit cap"; calling: ignored |
 
 What each does in each role: [answering.md](answering.md),
 [calling.md](calling.md), and the header's comments above `v90m_role` and
@@ -211,6 +212,12 @@ stay as they were.
 | `echo_delay` | answering V.90 / V.92 / x2 / K56flex: in use (configured or measured) by the engine running now, during a retrain or after the end the call's; samples; -1 = none, and always -1 calling |
 | `retrains` | begun, this call |
 | `renegotiations` | rate renegotiations that stopped the data, this call: counted when data moves again, when it becomes a retrain, or when the call ends in it; a cleardown's stop, ours or the far end's, is not one (answering: V.34, V.90, V.92, x2, K56flex; calling: V.32bis, V.34, V.90, V.92) |
+| `v34_proj_bps` | (0.7.0) answering, V.34 (and V.34 selected by a V.90 caller's INFO1a): the caller's own projection for our transmit direction at the symbol rate in use, bit/s (2400 x INFO1c / INFO1a bits 30:33), from the last Phase 2; kept after the end until `v90m_reset`; 0 on any other call, calling, before V.34 training, or with no projection |
+| `v34_ask_bps` | (0.7.0) the same call: the maximum the caller's MP asks of our transmit direction, bit/s, from the last Phase 4; 0 until its MP came |
+| `v34_capped` | (0.7.0) 1 when `V90M_OPT_V34_TX_CAP` lowered our MP's offer below what it would have been without it; 0 otherwise (and always without the option) |
+
+`v90m_stats` grew in 0.7.0 (`reversals`, then the three `v34_*` fields,
+appended): rebuild against the new header.
 
 ## Start-up diagnostics
 
