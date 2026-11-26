@@ -1,0 +1,37 @@
+fwd_from_ours, code 2, +0 Hz +0 ppm: data mode reached; 0 errors
+  hstcall's receiver reaches data: pass
+  no bit in error: pass
+fwd_from_ours, code 3, +0 Hz +0 ppm: data mode reached; 0 errors
+  hstcall's receiver reaches data: pass
+  no bit in error: pass
+fwd_from_ours, code 4, +0 Hz +0 ppm: data mode reached; 0 errors
+  hstcall's receiver reaches data: pass
+  no bit in error: pass
+fwd_from_ours, code 5, +0 Hz +0 ppm: data mode reached; 0 errors
+  hstcall's receiver reaches data: pass
+  no bit in error: pass
+fwd_from_ours, code 6, +0 Hz +0 ppm: data mode reached; 0 errors
+  hstcall's receiver reaches data: pass
+  no bit in error: pass
+fwd_from_ours, code 6, +7 Hz +100 ppm: data mode reached; 0 errors
+  hstcall's receiver reaches data: pass
+  no bit in error: pass
+fwd_from_ours, code 6, -7 Hz -100 ppm: data mode reached; 0 errors
+  hstcall's receiver reaches data: pass
+  no bit in error: pass
+fwd_to_ours, V.17, BinModem's shape, code 2: data mode reached; 0 errors
+  our hst_frx reaches data: pass
+  no bit in error: pass
+fwd_to_ours, V.17, BinModem's shape, code 3: data mode reached; 0 errors
+  our hst_frx reaches data: pass
+  no bit in error: pass
+fwd_to_ours, V.17, BinModem's shape, code 4: data mode reached; 0 errors
+  our hst_frx reaches data: pass
+  no bit in error: pass
+fwd_to_ours, V.17, BinModem's shape, code 5: data mode reached; 0 errors
+  our hst_frx reaches data: pass
+  no bit in error: pass
+fwd_to_ours, V.17, BinModem's shape, code 6: data mode reached; 0 errors
+  our hst_frx reaches data: pass
+  no bit in error: pass
+test_hstcall: 24 checks, 0 failures

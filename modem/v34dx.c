@@ -80,6 +80,7 @@ int v34dx_init(v34dx_t *p, const v34dx_cfg *cfg)
         return -1;
     }
     ec_init(&p->ec); ec_init(&p->fec); p->ec_mu = -1;
+    p->far_rtd = cfg->rtd;
     if (cfg->echo_delay > DX_MAX_ECHO_DELAY) p->cfg.echo_delay = DX_MAX_ECHO_DELAY;
     ecdly_init(&p->ecd, p->cfg.echo_delay);
     sdet_init(&p->sdet, cfg->sym_rate, cfg->rx_car_num, cfg->rx_car_den);
@@ -431,14 +432,18 @@ static void ec_schedule(v34dx_t *p, int16_t rxs)
      * would be one filter at twice the step NLMS can take */
     p->ec_mu = v34up_ec_schedule(&p->ec, &p->ecd, p->cfg.echo_delay < 0, 0, rxs, n, &from, EC_FAST, p->far_on ? 1 : 0);
     if (n == from) {
-        /* the far end's echo of our signal, a round trip later */
+        /* the far end's echo of our signal, a round trip later: past the
+         * near echo by the round trip less our own path. Only the far
+         * canceller takes that off; the time limits keep the whole round
+         * trip (an echo 150 ms late took 1569 down to 357 and the wait for
+         * the far S after our J under the 649 ms its S took: WebTV) */
         int lag;
         if (p->cfg.rtd_has_io) {
             p->cfg.rtd_has_io = 0;
-            p->cfg.rtd = p->cfg.rtd > p->ecd.delay + 8 ? p->cfg.rtd - p->ecd.delay - 8 : 0;
+            p->far_rtd = p->far_rtd > p->ecd.delay + 8 ? p->far_rtd - p->ecd.delay - 8 : 0;
         }
-        lag = p->ecd.delay + p->cfg.rtd - FAR_LEAD;
-        p->far_on = p->cfg.rtd > FAR_MIN_RTD && lag + EC_NTAP < ECDLY_HIST - 8;
+        lag = p->ecd.delay + p->far_rtd - FAR_LEAD;
+        p->far_on = p->far_rtd > FAR_MIN_RTD && lag + EC_NTAP < ECDLY_HIST - 8;
         /* (its first sample of the fast step: v34up_ec_schedule's mu came
          * from far_on as it was before this sample) */
         p->ec_mu = p->far_on ? 1 : 0;
@@ -547,7 +552,7 @@ int16_t v34dx_tick(v34dx_t *p, int16_t rxs)
     if (p->far_on) {
         /* both learn from what is left after both */
         x = ec_tick(&p->ec, ecdly_ref(&p->ecd, 0), rxs, -1);
-        x = ec_tick(&p->fec, ecdly_ref(&p->ecd, p->cfg.rtd - FAR_LEAD), x, p->ec_mu);
+        x = ec_tick(&p->fec, ecdly_ref(&p->ecd, p->far_rtd - FAR_LEAD), x, p->ec_mu);
         ec_adapt(&p->ec, x, p->ec_mu);
     } else {
         x = ec_tick(&p->ec, ecdly_ref(&p->ecd, 0), rxs, p->ec_mu);

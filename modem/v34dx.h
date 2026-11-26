@@ -48,7 +48,8 @@ typedef struct {
                                the echo canceller's reference is exact */
     int rtd;                /* round-trip delay from Phase 2, samples */
     int rtd_has_io;         /* ... which still contains our own path's delay (Phase 2 did
-                               not know it either): taken off once echo_delay is found */
+                               not know it either): taken off far_rtd once echo_delay is
+                               found */
     int echo_delay;         /* our own sample path, as p34d_cfg: samples until the echo
                                starts to come back; -1 = find it during TRN */
     int md_len;             /* the far modem's MD, units of 35 ms */
@@ -130,6 +131,9 @@ typedef struct {
     ecdly_t     ecd;                /* what we sent; ecd.delay is our own path's delay in use */
     int32_t     trn_t;              /* samples of Phase 3 TRN sent */
     int32_t     pw_in, pw_res;      /* smoothed power into and out of the cancellers */
+    int32_t     far_rtd;            /* the far echo's lag past the near one, samples: cfg.rtd,
+                                       less our own path's delay when cfg.rtd_has_io (from
+                                       Phase 3's TRN on). cfg.rtd stays whole: the time limits */
     /* ---- receive ---- */
     sdet_t      sdet;
     v34up_t     up;                 /* the receiver; up.rx_ready: data */
@@ -171,5 +175,17 @@ int     v34dx_renegotiate(v34dx_t *p, int max_rx_rate);
 int     v34dx_cleardown(v34dx_t *p);
 /* From Phase 4 on: give up and ask for a retrain; the state goes to DX_RETRAIN. */
 int     v34dx_retrain(v34dx_t *p);
+
+/* Our transmit ceiling (bit/s, 0 = none) given the far receiver's own
+ * projection for it at the symbol rate in use (INFO1 bits 30:33, x 2400
+ * bit/s; 0 = none given): the lower of the two. V.34 11.4.1.1.3 takes the
+ * lower of the two MPs; a caller whose MP asks for more than its own probe
+ * projected (seen: INFO1c 28800, MP 31200) then gets the projection. */
+static inline int v34_tx_ceiling(int max_tx_rate, int projected)
+{
+    int p = projected > 0 ? 2400 * projected : 0;
+    if (p == 0 || (max_tx_rate > 0 && max_tx_rate < p)) return max_tx_rate;
+    return p;
+}
 
 #endif

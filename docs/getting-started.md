@@ -11,8 +11,8 @@ make check              # the test suite on the host (see testing.md)
 ```
 
 `make` builds, in `build/`, the static library `libv90modem.a`, the shared
-library `libv90modem.so.0.6.1` (with its `.so.0.6` and `.so` links; the
-SONAME is `libv90modem.so.0.6`: before 1.0 each 0.x version has its own),
+library `libv90modem.so.0.7.0` (with its `.so.0.7` and `.so` links; the
+SONAME is `libv90modem.so.0.7`: before 1.0 each 0.x version has its own),
 the pkg-config file `libv90modem.pc`, and the two examples
 `build/answer_file` and `build/call_loop`. `CC`, `CFLAGS` and `BUILD`
 can be set on the command line; the default flags are
@@ -133,6 +133,20 @@ It uses the `on_event` callback; the events are reported from inside
   `v90m_ec_line_restored`, from the callback, so within the sample they
   happen ([error-control.md](error-control.md)).
 - `v90m_ec_tick` gets the milliseconds that went by (10 per block here).
+- `v90m_ec_set_rates` gives the endpoint the line's rates after the reset
+  at `V90M_EV_CONNECTED` (a reset forgets them) and again at
+  `V90M_EV_RATES`: MNP's timers come from them, when `mnp.enable` is set
+  ([error-control.md](error-control.md)); LAPM does not use them.
+- HST (`V90M_MOD_HST`, which needs MNP): link before the first sample;
+  resetting at `CONNECTED` is harmless. Set `ecc.mnp.enable = 1` and
+  `cfg.modulations |= V90M_MOD_HST`, and after both objects are created
+  call `v90m_ec_link_hst(ec, modem)` before the first `v90m_process_g711`.
+  The reset at `V90M_EV_CONNECTED` and `v90m_ec_set_rates` there and at
+  `V90M_EV_RATES` stay as they are; the reset keeps the link and an LR
+  the caller sent during our training. For the next call, link again
+  after `v90m_reset` of the modem, or after creating a new one. The link
+  is two-way: destroying either object first is safe, as the example
+  does ([error-control.md](error-control.md), "When to start it").
 
 ```c
 /* answer_min.c: answer one call, V.42 on the bit pump, echo every octet back.
@@ -164,10 +178,14 @@ static void on_event(void *u, v90m_event ev)
         v90m_ec_cfg_default(&c, 0);     /* 0: the answering end */
         c.detect = !st.odp_bypass;      /* V.92 9.3.1: no ODP / ADP */
         v90m_ec_reset(ec, &c);
+        v90m_ec_set_rates(ec, st.tx_bps, st.rx_bps);   /* after the reset */
         ec_on = 1;
         fprintf(stderr, "CONNECT %d/%d\n", st.tx_bps, st.rx_bps);
         break;
     }
+    case V90M_EV_RATES:
+        if (ec_on) v90m_ec_set_rates(ec, st.tx_bps, st.rx_bps);
+        break;
     case V90M_EV_DATA_STOPPED:
         if (ec_on) v90m_ec_line_stopped(ec);
         break;

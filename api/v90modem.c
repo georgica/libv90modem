@@ -22,7 +22,7 @@ typedef char v90m_check_conn[(SAME(V90M_CONN_V21, ANS_MOD_V21) && SAME(V90M_CONN
                               && SAME(V90M_CONN_V90, ANS_MOD_V90) && SAME(V90M_CONN_V34, ANS_MOD_V34) && SAME(V90M_CONN_V32BIS, ANS_MOD_V32BIS)
                               && SAME(V90M_CONN_V92, ANS_MOD_V92) && SAME(V90M_CONN_BELL103, ANS_MOD_BELL103)
                               && SAME(V90M_CONN_BELL212A, ANS_MOD_BELL212A) && SAME(V90M_CONN_X2, ANS_MOD_X2)
-                              && SAME(V90M_CONN_K56FLEX, ANS_MOD_K56)) ? 1 : -1];
+                              && SAME(V90M_CONN_K56FLEX, ANS_MOD_K56) && SAME(V90M_CONN_HST, ANS_MOD_HST)) ? 1 : -1];
 typedef char v90m_check_ec[(SAME(V90M_EC_DETECT, V42EC_DETECT) && SAME(V90M_EC_ESTABLISH, V42EC_ESTABLISH) && SAME(V90M_EC_CONNECTED, V42EC_CONNECTED)
                             && SAME(V90M_EC_ASYNC, V42EC_ASYNC) && SAME(V90M_EC_RELEASING, V42EC_RELEASING) && SAME(V90M_EC_DISCONNECTED, V42EC_DISCONNECTED)
                             && SAME(V90M_EC_R_LOCAL, V42LAPM_R_LOCAL) && SAME(V90M_EC_R_NEGOTIATION, V42LAPM_R_NEGOTIATION)
@@ -68,18 +68,21 @@ struct v90m {
     int16_t  last_snr, last_rtd;    /* the last measured while data moves; -1 before the first */
     diag_track_t diag;          /* v90m_get_diag: as the last sample before the end left it */
     uint8_t  data_reached;      /* data moved both ways this call (v90m_get_diag) */
+    v90m_ec_t *hst_ec;          /* the endpoint linked to us for HST (v90m_ec_link_hst), NULL none:
+                                   the link is two-way, so either side can end it */
     union { answer_t a; orig_t o; } u;     /* by cfg.role */
 };
 
 #define ORIGINATING(m) ((m)->cfg.role == V90M_ROLE_ORIGINATE)
 #define V90M_MOD_ALL  (V90M_MOD_V21 | V90M_MOD_V22 | V90M_MOD_V32BIS | V90M_MOD_V34 | V90M_MOD_V90 | V90M_MOD_V92 \
-                       | V90M_MOD_BELL103 | V90M_MOD_BELL212A | V90M_MOD_X2 | V90M_MOD_K56)
+                       | V90M_MOD_BELL103 | V90M_MOD_BELL212A | V90M_MOD_X2 | V90M_MOD_K56 | V90M_MOD_HST)
 /* the defaults: all but V.92, Bell (which would change what a caller
- * without V.8 hears from us after 4 s), x2 and K56flex */
-#define V90M_MOD_DEFAULT (V90M_MOD_ALL & ~(V90M_MOD_V92 | V90M_MOD_BELL103 | V90M_MOD_BELL212A | V90M_MOD_X2 | V90M_MOD_K56))
-/* what the calling side can do: all but x2 and K56flex (V.90 and V.92 as
- * their analogue modem) */
-#define V90M_MOD_ORIG (V90M_MOD_ALL & ~(V90M_MOD_X2 | V90M_MOD_K56))
+ * without V.8 hears from us after 4 s), x2, K56flex and HST */
+#define V90M_MOD_DEFAULT (V90M_MOD_ALL & ~(V90M_MOD_V92 | V90M_MOD_BELL103 | V90M_MOD_BELL212A | V90M_MOD_X2 | V90M_MOD_K56 \
+                                          | V90M_MOD_HST))
+/* what the calling side can do: all but x2, K56flex and HST (V.90 and V.92
+ * as their analogue modem) */
+#define V90M_MOD_ORIG (V90M_MOD_ALL & ~(V90M_MOD_X2 | V90M_MOD_K56 | V90M_MOD_HST))
 
 typedef char v90m_check_orig[(SAME(ORIG_MOD_V21, ANS_MOD_V21) && SAME(ORIG_MOD_V22, ANS_MOD_V22) && SAME(ORIG_MOD_V22BIS, ANS_MOD_V22BIS)
                               && SAME(ORIG_MOD_V32BIS, ANS_MOD_V32BIS) && SAME(ORIG_MOD_V34, ANS_MOD_V34)
@@ -101,11 +104,11 @@ void v90m_cfg_default(v90m_cfg *cfg)
 static int check_cfg(const v90m_cfg *c)
 {
     if (c->role != V90M_ROLE_ANSWER && c->role != V90M_ROLE_ORIGINATE) return V90M_EINVAL;
-    if (c->modulations & ~V90M_MOD_ALL) return V90M_EINVAL;
+    if (c->modulations & ~(V90M_MOD_ALL | V90M_OPT_V34_TX_CAP)) return V90M_EINVAL;
     if (c->max_tx_code < 0 || c->max_tx_code > 31 || c->tx_level < 0 || c->tx_level > V90M_TX_LEVEL_MAX
         || c->max_down_bps < 0 || c->max_up_bps < 0 || c->echo_delay < -1)
         return V90M_EINVAL;
-    if (!c->modulations) return V90M_EINVAL;
+    if (!(c->modulations & V90M_MOD_ALL)) return V90M_EINVAL;
     /* V.92 is V.90's start-up with PCM upstream on top, in either role */
     if ((c->modulations & V90M_MOD_V92) && !(c->modulations & V90M_MOD_V90)) return V90M_ENOTSUP;
     /* x2's upstream is V.34, and only its server (answering) side is here */
@@ -113,8 +116,8 @@ static int check_cfg(const v90m_cfg *c)
     /* K56flex's upstream is V.34 too, and only its server side is here */
     if ((c->modulations & V90M_MOD_K56) && !(c->modulations & V90M_MOD_V34)) return V90M_ENOTSUP;
     if (c->role == V90M_ROLE_ORIGINATE) {
-        if (!(c->modulations & V90M_MOD_ORIG)) return (c->modulations ? V90M_ENOTSUP : V90M_EINVAL);
-        if (c->modulations & ~V90M_MOD_ORIG) return V90M_ENOTSUP;
+        if (!(c->modulations & V90M_MOD_ORIG)) return V90M_ENOTSUP;
+        if (c->modulations & ~(V90M_MOD_ORIG | V90M_OPT_V34_TX_CAP)) return V90M_ENOTSUP;     /* the option: ignored */
         /* V.92 is V.90's start-up with PCM upstream on top */
         if ((c->modulations & V90M_MOD_V92) && !(c->modulations & V90M_MOD_V90)) return V90M_ENOTSUP;
     } else {
@@ -140,6 +143,7 @@ static unsigned modes_of(unsigned mods)
     if (mods & V90M_MOD_BELL212A) m |= ANS_MODE_BELL212A;
     if (mods & V90M_MOD_X2) m |= ANS_MODE_X2;
     if (mods & V90M_MOD_K56) m |= ANS_MODE_K56;
+    if (mods & V90M_MOD_HST) m |= ANS_MODE_HST;
     return m;
 }
 
@@ -176,6 +180,10 @@ static void setup(v90m_t *m, const v90m_cfg *cfg)
         memset(&ac, 0, sizeof ac);
         ac.level = cfg->tx_level;
         ac.modes = modes_of(cfg->modulations);
+        /* HST under a ceiling below its lowest rate (4800): not offered,
+         * the modem answers as without it (include/v90modem.h) */
+        if (cfg->max_down_bps > 0 && cfg->max_down_bps < 4800) ac.modes &= ~ANS_MODE_HST;
+        if (cfg->modulations & V90M_OPT_V34_TX_CAP) ac.modes |= ANS_MODE_V34_TX_CAP;
         ac.getbit = cfg->getbit;
         ac.putbit = cfg->putbit;
         ac.user = cfg->user;
@@ -192,6 +200,8 @@ static void setup(v90m_t *m, const v90m_cfg *cfg)
     }
 }
 
+static void hst_drop_ec(v90m_t *m);
+
 int v90m_reset(v90m_t *m, const v90m_cfg *cfg)
 {
     int r;
@@ -199,6 +209,7 @@ int v90m_reset(v90m_t *m, const v90m_cfg *cfg)
     /* from a callback: the block under way runs on the modem as it is */
     if (m->busy) return V90M_ESTATE;
     if ((r = check_cfg(cfg)) != V90M_OK) return r;
+    hst_drop_ec(m);             /* a new call: the endpoint links again */
     setup(m, cfg);
     return V90M_OK;
 }
@@ -234,6 +245,7 @@ v90m_t *v90m_create(const v90m_cfg *cfg, int *err)
 void v90m_destroy(v90m_t *m)
 {
     if (!m) return;
+    hst_drop_ec(m);             /* the endpoint keeps no address of ours */
     /* from a callback: v90m_process_* ends the block and frees it */
     if (m->busy) { m->dead = 1; return; }
     if (m->owned) free(m);
@@ -275,7 +287,8 @@ static v90m_end end_of(const v90m_t *m)
         /* ANS_END_* in order */
         static const v90m_end ans_end[] = {
             V90M_END_NONE, V90M_END_FAILED, V90M_END_LOST, V90M_END_CLEARDOWN_FAR, V90M_END_CLEARDOWN_OURS,
-            V90M_END_NO_COMMON, V90M_END_RETRAIN_FAILED, V90M_END_X2_FAILED, V90M_END_K56_FAILED
+            V90M_END_NO_COMMON, V90M_END_RETRAIN_FAILED, V90M_END_X2_FAILED, V90M_END_K56_FAILED,
+            V90M_END_HST_FAILED
         };
         int e = answer_end(&m->u.a);
         return e >= 0 && e < (int)(sizeof ans_end / sizeof ans_end[0]) ? ans_end[e] : V90M_END_FAILED;
@@ -464,6 +477,7 @@ void v90m_get_stats(const v90m_t *m, v90m_stats *st)
     st->tx_bps = tx_of(m, orig);
     st->rx_bps = rx_of(m, orig);
     st->renegotiations = m->renegotiations;
+    st->reversals = ORIGINATING(m) ? 0u : answer_hst_reversals(&m->u.a);
     /* the last measured while connected stays after the call, until the next one */
     if (orig) {
         const orig_t *o = &m->u.o;
@@ -495,6 +509,13 @@ void v90m_get_diag(const v90m_t *m, v90m_diag *d)
     e = end_of(m);
     if (m->data_reached && (e == V90M_END_CLEARDOWN_OURS || e == V90M_END_CLEARDOWN_FAR)) d->error = 0;
     else d->error = ORIGINATING(m) ? diag_err_orig(&m->u.o, &m->diag) : diag_err_answer(&m->u.a, &m->diag);
+}
+
+void v90m_get_v34_cap(const v90m_t *m, v90m_v34_cap *c)
+{
+    if (!m || !c) return;
+    c->proj_bps = c->ask_bps = c->capped = 0;
+    if (!ORIGINATING(m)) answer_v34_tx_cap(&m->u.a, &c->proj_bps, &c->ask_bps, &c->capped);
 }
 
 answer_t *v90m__answer(v90m_t *m) { return &m->u.a; }
@@ -550,17 +571,71 @@ void v90m_ec_cfg_default(v90m_ec_cfg *c, int originator)
     cfg_out(c, &i);
 }
 
+/* ---- the HST link (v90m_ec_link_hst), two-way: the endpoint's get has
+ * the modem as its context, and the modem has the endpoint in hst_ec.
+ * Every change goes through hst_pair and hst_unpair, which keep the two
+ * consistent, so neither side ever holds the address of an object that
+ * is gone: the modem's destroy and reset end the link from its side. */
+static hst_link_t *api_hst_get(void *ctx, int *state)
+{
+    v90m_t *m = ctx;
+    if (ORIGINATING(m)) { *state = HST_LINK_NONE; return NULL; }   /* not reached: a reset unlinks */
+    return answer_hst_link(&m->u.a, state);
+}
+
+/* the modem e is linked to, NULL for none */
+static v90m_t *linked_modem(const v90m_ec_t *e)
+{
+    return v42ec_linked(&e->e) && e->e.link_get == api_hst_get ? (v90m_t *)e->e.link_ctx : NULL;
+}
+
+/* end e's link, from either side: the modem's bit goes while it has not
+ * decided (it would offer HST with nobody to answer the caller's LR);
+ * after that the decision is made and the call keeps it */
+static void hst_release(v90m_t *m, const v90m_ec_t *e)
+{
+    if (!m) return;
+    if (m->hst_ec == e) m->hst_ec = NULL;
+    if (!ORIGINATING(m) && !answer_hst_decided(&m->u.a)) m->u.a.cfg.modes &= ~ANS_MODE_HST_LINKED;
+}
+
+static void hst_unpair(v90m_ec_t *e)
+{
+    hst_release(linked_modem(e), e);
+    v42ec_set_link(&e->e, NULL, NULL);
+}
+
+/* the modem's side: its endpoint, if still linked to it, lets go */
+static void hst_drop_ec(v90m_t *m)
+{
+    v90m_ec_t *e = m->hst_ec;
+    m->hst_ec = NULL;
+    if (e && linked_modem(e) == m) hst_unpair(e);
+}
+
+/* a checked configuration: v42ec_reset keeps the HST link (decision 18),
+ * so a host's reset at V90M_EV_CONNECTED keeps an LR taken during our
+ * training; with MNP off it unlinks */
 int v90m_ec_reset(v90m_ec_t *e, const v90m_ec_cfg *cfg)
 {
     v42ec_cfg_t c;
-    int o;
+    v90m_t *m;
     if (!e || !cfg || check_ec_cfg(cfg) != V90M_OK) return V90M_EINVAL;
-    o = e->owned;
+    m = linked_modem(e);
+    cfg_in(&c, cfg);
+    v42ec_reset(&e->e, &c);
+    if (m && !v42ec_linked(&e->e)) hst_release(m, e);   /* MNP off: the link ends both ways */
+    return V90M_OK;
+}
+
+/* a clean start, on memory of any content: no link */
+static void ec_start(v90m_ec_t *e, int owned, const v90m_ec_cfg *cfg)
+{
+    v42ec_cfg_t c;
     cfg_in(&c, cfg);
     memset(e, 0, sizeof *e);
-    e->owned = o;
+    e->owned = owned;
     v42ec_init(&e->e, &c);
-    return V90M_OK;
 }
 
 size_t v90m_ec_mem_size(void) { return sizeof(struct v90m_ec); }
@@ -570,7 +645,7 @@ v90m_ec_t *v90m_ec_init(void *mem, size_t len, const v90m_ec_cfg *cfg, int *err)
     v90m_ec_t *e = mem;
     if (!mem || !cfg || !aligned(mem) || check_ec_cfg(cfg) != V90M_OK) { seterr(err, V90M_EINVAL); return NULL; }
     if (len < sizeof *e) { seterr(err, V90M_ENOMEM); return NULL; }
-    e->owned = 0; v90m_ec_reset(e, cfg); seterr(err, V90M_OK);
+    ec_start(e, 0, cfg); seterr(err, V90M_OK);
     return e;
 }
 
@@ -579,23 +654,46 @@ v90m_ec_t *v90m_ec_create(const v90m_ec_cfg *cfg, int *err)
     v90m_ec_t *e;
     if (!cfg || check_ec_cfg(cfg) != V90M_OK) { seterr(err, V90M_EINVAL); return NULL; }
     if (!(e = malloc(sizeof *e))) { seterr(err, V90M_ENOMEM); return NULL; }
-    e->owned = 1; v90m_ec_reset(e, cfg); seterr(err, V90M_OK);
+    ec_start(e, 1, cfg); seterr(err, V90M_OK);
     return e;
 }
 
-void   v90m_ec_destroy(v90m_ec_t *e) { if (e && e->owned) free(e); }
+void v90m_ec_destroy(v90m_ec_t *e)
+{
+    if (!e) return;
+    hst_unpair(e);              /* the modem keeps no address of ours */
+    if (e->owned) free(e);
+}
+
+int v90m_ec_link_hst(v90m_ec_t *e, v90m_t *m)
+{
+    /* an originator's endpoint has MNP off (v42ec_init) */
+    if (!e || !m || !e->e.cfg.mnp.enable || ORIGINATING(m)) return V90M_EINVAL;
+    if (answer_hst_decided(&m->u.a)) return V90M_ESTATE;
+    hst_unpair(e);              /* from the modem it had, if any */
+    hst_drop_ec(m);             /* one endpoint per modem: the one it had lets go */
+    m->hst_ec = e;
+    m->u.a.cfg.modes |= ANS_MODE_HST_LINKED;
+    v42ec_set_link(&e->e, api_hst_get, m);
+    return V90M_OK;
+}
 int    v90m_ec_tx_bit(v90m_ec_t *e) { return v42ec_tx_bit(&e->e); }
 void   v90m_ec_rx_bit(v90m_ec_t *e, int bit) { v42ec_rx_bit(&e->e, bit); }
 /* NULL (the header): every function checks its object but the two per-bit ones */
 void   v90m_ec_tick(v90m_ec_t *e, unsigned ms) { if (e) v42ec_tick(&e->e, ms); }
 void   v90m_ec_line_stopped(v90m_ec_t *e) { if (e) v42ec_line_stopped(&e->e); }
 void   v90m_ec_line_restored(v90m_ec_t *e) { if (e) v42ec_line_restored(&e->e); }
+int    v90m_ec_set_rates(v90m_ec_t *e, int tx_bps, int rx_bps)
+{
+    if (!e || v42ec_set_rates(&e->e, tx_bps, rx_bps) != 0) return V90M_EINVAL;
+    return V90M_OK;
+}
 size_t v90m_ec_write(v90m_ec_t *e, const uint8_t *d, size_t n) { return e ? v42ec_write(&e->e, d, n) : 0; }
 size_t v90m_ec_write_space(const v90m_ec_t *e) { return e ? v42ec_write_space(&e->e) : 0; }
 size_t v90m_ec_read(v90m_ec_t *e, uint8_t *d, size_t max) { return e ? v42ec_read(&e->e, d, max) : 0; }
 size_t v90m_ec_read_avail(const v90m_ec_t *e) { return e ? v42ec_read_avail(&e->e) : 0; }
 int    v90m_ec_tx_idle(const v90m_ec_t *e) { return e ? v42ec_tx_idle(&e->e) : V90M_EINVAL; }
-int    v90m_ec_tx_busy(const v90m_ec_t *e) { return e ? e->e.hdlc_tx_on && v42hdlc_tx_busy(&e->e.htx) : V90M_EINVAL; }
+int    v90m_ec_tx_busy(const v90m_ec_t *e) { return e ? v42ec_tx_busy(&e->e) : V90M_EINVAL; }
 void   v90m_ec_release(v90m_ec_t *e) { if (e) v42ec_release(&e->e); }
 void   v90m_ec_abort(v90m_ec_t *e) { if (e) v42ec_abort(&e->e); }
 int    v90m_ec_send_break(v90m_ec_t *e, int opt, int len10ms)

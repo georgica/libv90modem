@@ -117,6 +117,28 @@ Each item names where it is recorded.
   at a 100 ms round trip, 28800 at 300 ms, 12000 at 400 ms. The answer side
   is clean at every one. Not investigated (0.6.0 audit, ISP-1 follow-up).
 
+- **V.34 transmit cap: opt-in, answering only.** `V90M_OPT_V34_TX_CAP`
+  (0.6.2, off by default) caps our V.34 transmit at the caller's own
+  INFO1c / INFO1a projection; the host sets it per caller from its own
+  count of calls that asked above their projection and failed error
+  control (`docs/answering.md`). The evidence is small: of the 106
+  recorded calls only 6 reach a V.34 MP, plus one V.90 caller that
+  selected V.34 (x2b), and none of those asked above its projection; with
+  the cap our MP would offer them 31200 where it offers 33600, and the
+  recordings, which hold the echo of the MP really sent, no longer replay
+  with it. The target case is confirmed: a second WebTV box's error
+  control failed in 7 calls of 7 when its MP asked above its projection,
+  and came up in 12 of 12 (6 of them at 31200) at or below it. **Risk
+  with the cap on:** a caller that projects below what it can do loses a
+  step, as a caller like this library's own answerer would (it projects
+  28800 on a clean line while its MP offers 33600 and the call runs at
+  31200). The calling side has no cap at all, for that reason: against
+  this library's own answerer (`test/test_orig_v34.c`, good line) it would
+  have cost those calls a step. The V.90 analogue caller's upstream
+  follows the digital modem's CP and is not capped at its INFO1d either;
+  PCM has no such projection. Real answerers' INFO1a against their MP:
+  not measured (no recordings of the calling side).
+
 ## Not checked against a specification
 
 - **The Bell 212A calling handshake** follows V.22 and what this library's
@@ -199,11 +221,11 @@ delivered).
   errors. The pad (none, 3 dB, 6 dB) the client reports is handled.
 - **A non-x2 V.34 caller sees an x2 server's JM and INFO0a.** With x2
   offered, a caller whose CM offers V.34 and no PCM gets a JM whose carrier
-  is inverted after each JM, and an INFO0a with max_sr_diff 4 and cme 1, as
-  from a U.S. Robotics server. It still connects at V.34 in simulation and
-  on recordings. Not tried on a live non-x2 V.34 call: a V.8 receiver that
-  cannot take the inverted JM would fail V.8, as this library's 0.3.0
-  calling side did. Check one before x2 is offered by default.
+  is inverted after each JM for the first 2 s (`V8A_X2_FLIP_MS`), then
+  plain, and an INFO0a with max_sr_diff 4 and cme 1, as from a U.S.
+  Robotics server. Live, a strict V.8 receiver (two WebTV boxes) never
+  took the inverted JM and failed V.8 (0.6.1: 14 of 21 calls); since 0.6.2
+  it gets the plain JM after 2 s and loses those 2 s only (simulation).
 - **No way back to V.34.** Once the client's marker has come, a start-up
   or rate change that does not complete, or a request we cannot serve
   (rate index 0, a pad other than none / 3 / 6 dB, MD other than 5),
@@ -311,6 +333,461 @@ a Rockwell or Lucent modem.
   K56flex mid-call (`V90M_EV_RATES`). Designed, not driven by any test.
 - **No calling (client) side.**
 
+## HST (answering)
+
+0.7.0 work in progress: the answering branch to data (Task 18); channel
+reversals, rate changes and the other watchdogs come later in the plan.
+Measured against `sim/hstcall` only; no real HST modem has called it yet.
+
+- **W, the wait after ANSam, is 650 ms, and up to 2000 ms while the back
+  channel's band holds energy** (`HST_W_MS`, `HST_W_MAX_MS` in
+  `modem/hst.h`; decision 25 and the Task 13 ruling, the cap raised from
+  that ruling's 1500 ms to the controller's ceiling of 2000 in Task 18's
+  fix round). `make hst-wsize` (`rig/hst_wsize.c`) runs `sim/hstcall`
+  against the answerer and times the detector of ANS_HST_WAIT from the
+  wait's start. hstcall starts its back channel 30-45 ms after our answer
+  tone stops; the firmware's caller starts "once the tone has stopped" (BF
+  §1, [FW]) with no figure. What reaches us later than that is the
+  caller's turn-around plus the round trip of our tone and its back
+  channel: a VoIP path's jitter buffers, and the host's block latency (a
+  host that processes 4000-sample blocks adds 500 ms, as
+  `test_answer_hst` `block_size` does). So each line runs again with the
+  caller 50 to 500 ms later [OURS: the bound]. The lines: 450 and 300 bit/s
+  at -9 / -26 / -43 dBm0, +-7 Hz, +-100 ppm (24 a speed); one 20 or 40 ms
+  dropout 100-300 ms into the preamble at +-7 Hz (84 a speed); a 300 Hz
+  4th-order high-pass, a line's lower edge (4 a speed): 1568 lines. The
+  latest detections, ms from the wait's start:
+
+  | caller later by | 450 levels | 300 levels | 450 dropout | 300 dropout | 450 edge | 300 edge |
+  |---|---|---|---|---|---|---|
+  | 0 ms | 430 | 690 | 690 | 1440 | 860 | 580 |
+  | 50 ms | 940 | 1400 | 740 | 1060 | 900 | 630 |
+  | 100 ms | 650 | 1400 | 790 | 1110 | 940 | 700 |
+  | 200 ms | 690 | 970 | 890 | 1220 | 1060 | 800 |
+  | 300 ms | 1230 | 1040 | 990 | 1740 | 1140 | 880 |
+  | 400 ms | 950 | 1400 | 1090 | 1410 | 1260 | 980 |
+  | 500 ms | 950 | 1850 | 1190 | 1510 | 1360 | 1080 |
+
+  (A lock lost and won again in the acquisition makes the latest jump: it
+  is not monotonic in the delay.) The slack of a line is the time from its
+  detection to the end of the wait that would have applied to it: the
+  first ms from W on without the energy stage, or the cap. Lines with less
+  than 100 ms of slack (missed included), of 1568:
+
+  | cap | W 400 | W 450 | W 500 | W 550 | W 600 | W 650 ... 1000 | least slack at W 650 |
+  |---|---|---|---|---|---|---|---|
+  | 1500 | 466 | 450 | 249 | 233 | 36 | 20 | -350 (missed) |
+  | 1600 | 465 | 449 | 241 | 225 | 28 | 12 | -250 (missed) |
+  | 1700 | 465 | 449 | 241 | 225 | 19 | 3 | -150 (missed) |
+  | 1800 | 465 | 449 | 241 | 225 | 19 | 3 | -50 (missed) |
+  | 1900 | 464 | 448 | 240 | 224 | 18 | 2 | 50 |
+  | 2000 | 464 | 448 | 240 | 224 | 16 | 0 | 150 |
+
+  W 650 with a cap of 2000 ms is the least pair that leaves every line
+  100 ms or more; the least is 150 ms (the 300 bit/s caller at -26 dBm0 500
+  ms late, found at 1850 ms). The cap is at the ceiling the controller set
+  (2000 ms): a caller slower than 500 ms, or a dropout later in a slow
+  start, can still meet it. W 400 leaves lines short at any cap, since
+  their energy stage is not yet there when the wait ends. With the first
+  choice, W 700 and a cap of 1500 ms, the slack was 10 ms on the clean
+  300 bit/s lines and 60 ms under the cap with the caller on time, and a
+  later caller fell to V.22bis. Every line here is found through the
+  extension once past W: the energy stage holds while the back channel is
+  there, and a dropout of up to 40 ms never broke it.
+- **W's cost to callers without V.8:** a V.22bis, V.21 or Bell 103 caller
+  is answered up to W later than without HST, only where the host offers
+  HST and has linked an endpoint (`test_answer_hst` `legacy_unchanged`:
+  the same modulation, rates and data, connected 650, 620 and 650 ms
+  later; with W at 700 ms it was 700, 670 and 700, at 450 ms 450, 420 and
+  450, at 400 ms 400, 370 and 400). None of them puts energy in 250-500
+  Hz, so none waits past W; a caller with dial tone or hum on its line
+  might, up to 2000 ms. Callers that send CM or AA are answered sample for
+  sample as without HST.
+- **The forward channel sends 48 symbols of scrambled ones after each of
+  our trainings before the first data bit** (`HST_ONES_N`, [OURS], V.17's
+  segment 4 length): `sim/hstcall`'s receiver enters data only on random
+  points, and without them our first frame after the training (our LR)
+  was lost, which cost a T401 (about 2 s) on every call.
+- **The back channel's presence, for the 5 s watchdog, is a back
+  receiver's lock,** not its carrier detect: our own forward signal's echo
+  holds the carrier detect on with no back channel (the Task 13 review).
+- **The back channel's bits go on through our retrains** (the forward
+  channel alone trains): the endpoint gets them while data is stopped at
+  the API.
+- **Our own echo, holding the forward channel: about 12 dB of margin in
+  data, 3 dB while we train.** The spec's real-line corner is our forward
+  signal at -10 dBm0 coming back at 6 dB echo return loss (-16 dBm0, 17 dB
+  over a back channel received at -33 dBm0, with white noise 20 dB under
+  it). With the real forward transmitter (`hst_ftx`, data at 14400) as
+  the echo, `test_hst_back` `echo_fwd` gives no bit in error and no loss
+  of lock at both speeds (2 x 20000 bits a speed); with `HST_VERBOSE` it
+  lowers the ERL a dB at a time over 4 lines (+-7 Hz, +-100 ppm), 80000
+  bits a step: none in error down to -6 dB ERL (echo -4 dBm0, 29 dB over
+  the back channel), the first errors at -7 dB (8 at 450, 3 at 300) and
+  -8 dB (239, 70), never a loss of lock. That margin is our pulse's: it is
+  some 40 dB down at 400 Hz and below (V.32's pulse, the Task 13 stand-in,
+  failed at 13 dB less echo). A whole call (`tools/rec_hst -e ERL -b -33
+  -n -53`, our level -12 dBm0, 6 seeds a step) is tighter while we train:
+  the caller's LR arrives during our long training, and its AB (600 Hz
+  and 3000 Hz) costs the back receiver its lock where data does not. Up
+  to 1 dB ERL (echo -13 dBm0, 20 dB over the back channel) every call
+  reaches 14400 at the same time as on a clean line; at 0 dB the 300
+  bit/s calls (6 of 6) and 2 of 6 at 450 lose the LR once, and MNP's
+  resend puts data 2.3-2.7 s later; the calls still come up. Measured
+  against `sim/hstcall` and our own transmitter, not a real line.
+- **A lasting level drop of the back channel keeps its lock** (the Task
+  13 review's N1, settled in Task 23). Before, a drop of 12 dB or more
+  for good lost the lock 140-160 ms after it (the fade rule took the drop
+  for the back channel's end) and found it again 0.2-1.1 s later; MNP
+  resent what was lost. Now, when a fade has run long enough to lose the
+  lock (11 symbols at 450, 8 at 300), its last 8 (450) or 5 (300) symbols
+  are looked at: steady (the strongest at most twice the weakest's power)
+  and on the decision grid but for one at most, they are a step, the
+  symbols' mean is taken from them and the lock kept; noise alone passes
+  that 1 time in 10^5 at 450 and 1 in 550 at 300 (then held until the
+  quality rules end it, a few symbols' bits wrong). `test_hst_back`
+  `lasting_drop`: 12, 15 and 20 dB down for good (30 dB SNR before, +7,
+  -7, +3 Hz, +100 ppm, 8 seeds), the lock held on every line, at most 40
+  wrong bits, at both speeds; the dropouts (`fades`, 100 ms off: lock
+  lost, no wrong bit) as before. A whole call (`tools/rec_hst -p 450|300
+  -x -12@1000` and `-20@1000`, 2 seeds): no loss of lock, and the answerer
+  gets 832 octets in 19 s at 450 and 576 at 300, an undropped line's.
+- **Rate changes by marks (0x3R, Task 22a, the DSP half; the policy
+  follows):** our transmitter sends 36 symbols of ones at the old code and
+  36 at the new, its scrambler, differential and trellis encoders running
+  on (`hst_ftx_marks_switch`); our receiver, armed (`hst_frx_arm_switch`),
+  waits for 24 symbols of decoded ones, decodes the new code as well from
+  where they end (the last 24 points again, then at most 48 symbols of
+  both), and switches on 24 symbols of ones at the new code, its
+  descrambler and differential memory taken from the last of the old
+  code's ones. Nothing is adapted from 8 symbols of ones on until the
+  switch: fed the old code's decisions on the new code's points for 20-odd
+  symbols, the carrier loop was kicked and the data after the marks lost
+  for 200 symbols (46 of 144 switches in a sweep of every pair of codes 3..6
+  at 30, 26 and 22 dB, 4 seeds each; with the hold, 2 of 144, both at 22 dB
+  to 14400, under 14400's 23.5 dB). Codes 3..6 only: with 4800 on either
+  side the transmitter trains instead. Armed, S or S-bar for 16 symbols (a
+  training instead of the marks, as BinModem does) or 2 s without a
+  switch gives the acquisition at the new code (`test_hst_fwd`
+  `marks_switch`, `marks_missed`). Never run against a real HST modem: R2
+  (spec, "Evidence") is to show where the new rate starts.
+- **"Good" for the upshift** (`hst_good_mse`, `make hst-thresh`): our
+  receiver on v32line, a long training on a 40 dB line, then white noise
+  added to the SNR (against the signal at the receiver, 0-4 kHz), runs of
+  20 s of data each until 2 000 000 bits or 200 errors a point (a lost
+  lock counts as 200), going down by 0.5 dB to the second point over
+  1e-5:
+
+  | code | rate | SNR at BER 1e-5 | the receiver's error 3 dB above | `hst_good_mse` |
+  |---|---|---|---|---|
+  | 3 | 7200 | 13.5 dB | -17.76 dB | 1098 |
+  | 4 | 9600 | 16.5 dB | -20.54 dB | 579 |
+  | 5 | 12000 | 21.0 dB | -23.78 dB | 274 |
+  | 6 | 14400 | 23.5 dB | -24.13 dB | 253 |
+
+  Near the crossing the errors come as events (a burst, or a lost lock),
+  not as a smooth curve: at 12000, 20.5 dB had 26 errors in 2 000 000 bits,
+  20.0 and 19.5 none, 19.0 a lost lock. The crossing is taken at the
+  first point over 1e-5 going down, so it errs high. The receiver's error
+  flattens at about -24.5 dB (28 dB of SNR and up), so 14400's "good"
+  (-24.13 dB) needs a line of 26.5 dB or better and has only 0.4 dB in
+  hand on the cleanest line.
+- **The forward receiver in long calls** (`test_hst_fwd` `long_drift`;
+  the full set `make hst-drift`). Until Task 22c the data mode's gain loop
+  and the equaliser drifted apart on a noisy line: the loop held the
+  points' power at the set's, the equaliser (least squares) at the set's
+  less its error's, and nothing fixed the scale between them, so the gain
+  climbed and the taps shrank with it (7200 at 19 dB: +4.9 dB in 60 s;
+  300 s at codes 3..6, 1 and 3 dB over BER 1e-5: 5 of 8 calls lost the
+  lock, at 31 to 130 s). The loop now leaks back to the gain as last set
+  (0.85 s) and stays within 1 dB of it; the slow scale is the
+  equaliser's. The same 8 calls: no lock lost, no error in 300 s, the
+  gain within -0.83..+0.63 dB of its value at 10 s, the receiver's error
+  at the end within 0.2 dB of a frozen gain's. Short calls are unchanged:
+  `test_hst_fwd`'s 23 earlier cases print the same, level steps of -3..+6
+  dB at 9600 and 14400 (8 seeds each, a scratch sweep) fail 3 of 96 before
+  and after, and `make hst-thresh` again gives the crossings above and
+  the receiver's error 3 dB above them within 0.04 dB (-17.80, -20.56,
+  -23.79, -24.13 dB), so `hst_good_mse` stands. The thresholds' runs of
+  20 s were chosen to keep the drift out; they are kept.
+- **The forward receiver's first training and the band's lower edge**
+  (Task 23b and its fix round; `test_hstcall fwd_edge`, `test_hstcall
+  sweep [SEEDS [v17|long [HZ [PPM]]]]`, `sim/v32line`'s `edge_*`). The
+  first training starts from a matched filter; a line's high-pass near 600
+  Hz (channel banks, ATAs) bends the phase where the forward band starts
+  (500-700 Hz). The edge model is Butterworth only (high-passes of even
+  order, and a second-order all-pass): elliptic or Chebyshev filters, with
+  more phase ripple near the corner, are not modelled, and neither are
+  real ATAs' or channel banks' filters, nor a real Courier's pulse (we
+  assume the sharp one).
+
+  Before (one start, our pulse's matched filter), codes 2..6, our pulse and
+  V.17's 25 % roll-off, hstcall's long training and V.17's, 5 seeds, a
+  mu-law line at 30 dB, no offset: phase alone (an all-pass, 0.5 to 3 ms at
+  600 Hz over 1800's) never failed; a high-pass of order 4 never failed
+  from 300 to 650 Hz; of order 10 it failed at 550 Hz (39 and 45 of 50
+  passing, our pulse and V.17's) and nearly always at 600 Hz (5 and 8 of
+  50), the error stuck near -4 dB.
+
+  Now the receiver measures, over the first 128 training symbols, its own
+  pulse's matched filter and that pulse's through a 550 Hz 6th-order
+  high-pass, by the spread of each one's point power, and starts again
+  from the second unless its spread is 1.25 times the first's or more
+  (`mf_choose`; the rule leans to the second start). The restart takes
+  AB's symbol timing later by `HST_FMF_AB_SHIFT` (0.45 symbol): the second
+  start's own high-pass reads AB's two tones that much early. Without it
+  (Task 23b as first committed) a caller's clock 100 ppm slow moved the
+  timing the rest of the way out: on steep edges 3 to 34 % of first
+  trainings failed (below). A scratch probe of the restart's timing
+  showed the failures on the early side: 0.12 to 0.38 sample earlier than
+  AB's reading failed up to 61 % of a cell at -100 ppm, while 0.12 to
+  1.75 samples later failed at most 2 of 80 at -100, 0 and +100 ppm
+  (the shift, 1.5 samples, sits inside that).
+
+  Failures out of 80 a cell (codes 2..6, both shapes, both trainings, 4
+  seeds; failure = no data, or a bit in error in the first 2000 or so;
+  scratch grid, the same `sweep_one`), before this round and now:
+
+  | Hz, ppm | hp 525/10 | 550/10 | 575/10 | 600/10 | 550/6 | 625/6 | 500/8 | 525/8 | gd 3 ms |
+  |---|---|---|---|---|---|---|---|---|---|
+  | 0, 0 | 0 / 0 | 1 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 1 / 1 | 2 / 1 | 0 / 0 |
+  | 0, +100 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 5 / 5 | 4 / 4 | 1 / 1 |
+  | 0, -100 | 11 / 0 | 7 / 0 | 8 / 0 | 2 / 0 | 0 / 0 | 32 / 0 | 1 / 1 | 0 / 0 | 0 / 0 |
+  | +7, -100 | 10 / 0 | 27 / 0-1 | 13 / 0 | 4 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+  | -7, +100 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 7 / 7 | 78 / 78 | 0 / 0 | 0 / 1 | 0 / 0 |
+  | +7, +100 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 3 / 3 | 0 / 0 | 0 / 0 | 0 / 0 | 2 / 2 |
+  | -7, -100 | 12 / 0 | 3 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 74 / 74 | 0 / 0 | 6 / 0 | 0 / 0 |
+
+  (+7 Hz, -100 ppm at 550/10: 0 or 1 of 80 between runs of the grid.)
+  No edge, hp 500/4 and hp 300/10: 0 at every offset, before and now.
+  What is left:
+  - 550 Hz order 6 with the carrier 7 Hz off and the clock +100 ppm: 7
+    and 3 of 80. The rule keeps our pulse's start there (its spread
+    ratio 1.26 and up, the review's measure), and it fails as it did
+    before Task 23b.
+  - 625 Hz order 6 with the carrier -7 Hz off: AB is never heard (74, 78
+    of 80), and the same at 625-650 Hz of order 10 and 650 Hz of order 6
+    and 8 with no offset (a 3-seed scratch sweep: 240 of 240). The 600
+    Hz tone is too far down for the detector, so there the margin's edge
+    is AB, not the training; such a cut also takes the bottom of the
+    forward band.
+  - 500 and 525 Hz of order 8, and the all-pass at 3 ms: a few single
+    misses, none of them switching, the same before and now.
+  - Pure group delay is the closest call on a line with no high-pass: at
+    3 ms and 20-22 dB the second start's spread is 1.53 times the first's
+    (the review's sweep; the rule switches under 1.25). The 0.5-3 ms the
+    brief asked for are covered; more delay than that is not measured, and
+    there a switch would hurt: started from the second filter with AB's
+    timing as read, the 3 ms line failed 68 to 103 of 160 (the review's
+    control).
+  - Noise: the review swept 18-30 dB with offsets (11 200 runs); no line
+    without a steep edge ever switched (the largest spread ratio 3.3 at 18
+    dB with no edge), and on steep edges the choice held at 18-22 dB.
+
+  Lines with no edge, and every existing case, train exactly as before
+  (the second start is never chosen: only test_hstcall's golden output
+  changed, by fwd_edge's lines).
+- **"Good", read at the rate in force** (Task 22b; `test_hst_fwd
+  upshift`, which `make hst-thresh` runs after the sweep). The policy asks
+  for code c while running at c - 1, so it reads `hst_good_mse[c]`, a
+  figure measured at c, off a receiver at c - 1. On the line where c is
+  good (its SNR of BER 1e-5 + 3 dB), 4 runs of 20 s each, the receiver's
+  error at c - 1 and at c:
+
+  | up to | line | error at c - 1 | error at c | `hst_good_mse[c]` |
+  |---|---|---|---|---|
+  | 3 (from 4800) | 16.5 dB | 1075 (-17.85 dB) | 1090 | 1098 |
+  | 4 | 19.5 dB | 578 (-20.55 dB) | 577 | 579 |
+  | 5 | 24.0 dB | 276 (-23.75 dB) | 274 | 274 |
+  | 6 | 26.5 dB | 253 (-24.13 dB) | 253 | 253 |
+
+  The error is the line's, not the code's (within 0.06 dB), so the table
+  is used as it is, read at c - 1: no table per code. A code-5 receiver
+  on a 26.5 dB line reads 253, 14400's threshold exactly. But "good" is
+  90 % of the time, and the error over 256 symbols swings about its mean:
+  at the line of each threshold the receiver is under it 32 to 69 % of
+  the time, and 1 dB higher 99 to 100 % at codes 3..5; at code 6 it is 8 %
+  at 26.5 dB, 25 % at 27.5, 65 % at 28.5 and 100 % at 30.5. So the
+  upshift to 14400 comes on lines of about 29 to 30 dB, 3 dB more than
+  its definition, the others 1 dB more. Left so (it errs safe: 14400's
+  BER 1e-5 is at 23.5 dB); lowering 14400's threshold would need the
+  error's spread at 26.5 dB, not its mean.
+- **The rate policy** (`modem/ans_hst.c`; spec "Rate changes"; hst.h
+  `HST_UP_MS` ...). Holding the back channel: an upshift every 10 s at 90 %
+  good, none within 10 s of a downshift; one agreed rate lower on 15
+  frame errors (the endpoint's `rx_bad`: bad FCS, too long, not parsed)
+  within 10 s of the first, or on 3 failed retrains within 10 s of the
+  first. A retrain fails when the receiver is not in data at its rate 4 s
+  after the request left (`HST_RC_BOUND_MS`; not counted while the
+  request waits in the mailbox), when its training ends without data
+  (TRAINFAIL), or when it loses the data mode it reached within 2 s
+  (`HST_RC_HOLD_MS`); a failed one is asked again at the same rate. The
+  receiver losing data mode by itself with the carrier there (UNLOCKED,
+  TRAINFAIL) is a retrain at the rate in force. At 15 dB SNR from 12000
+  (`test_answer_hst` `fallback`): three retrains at 12000 fail (data, then
+  the lock lost within 0.5 s), then at 9600 the same, then 7200 holds;
+  10 s from the noise to 7200, 7 retrains. At 15 dB a short training at
+  7200 fails three times in a row on about 2 lines in 5 (seeds 2206-2225:
+  9 to 12 of 20 end at 7200, the rest go on to 4800), before Task 23 as
+  after it: the training's start, not the policy. At the lowest agreed
+  rate, 3 failures within 10 s end the call `V90M_END_RETRAIN_FAILED`
+  (`retrain_failed`: 9600 alone agreed, 3 dB SNR, the end 6.6 s after the
+  noise). A retrain that holds data over 2 s is a success, so a line that
+  unlocks every few seconds retrained at one rate for ever (the Task 22b
+  review's M2): now each retrain for a lost data mode (UNLOCKED, TRAINFAIL,
+  NOCARRIER with the carrier back) counts in a 30 s window opened by the
+  first (`HST_CY_N`, `HST_CY_MS`), and the 4th asks one agreed rate lower,
+  or at the lowest ends the call likewise (`unlock_loop`: 10 dB SNR for
+  0.8 s every 4 s at 12000: 3 retrains there, then 9600, 3 more, the end;
+  18 retrains at 12000 in 70 s before). Untested against a real HST: what
+  a Courier counts as good, and whether it retrains or marks (R2).
+- **Watchdogs, cleardown and the end codes** (Task 23; spec "Retrain,
+  watchdogs, cleardown and end codes", [OURS] each). Holding forward, 5 s
+  without either back receiver locked ends the call `V90M_END_LOST` (5.0
+  to 5.3 s after the caller's carriers stop). Holding back, 1 s without
+  the forward carrier (the guard's output under -48 dBm0 or 10 dB under
+  its level for 20 ms, `hst_frx_carrier`) asks 0x2R at the rate in force;
+  5 s takes the forward channel back with a short training (a retrain),
+  and the first rule follows: LOST 10.0-10.3 s after the caller went
+  (`back_silent`); a caller gone at our switch to the back channel: taken
+  back after 3 s, LOST at 8 s. No call stays up without a far signal for
+  more than 12 s. A dropout over 200 ms in data ends the forward receiver
+  in NOCARRIER (Task 16's hold); the carrier back without a training, our
+  0x2R at once. The far end's LD (`far_ld`) ends the call
+  `V90M_END_CLEARDOWN_FAR` when its carrier goes (the back receivers' lock
+  lost within 300 ms; the forward carrier within 100 ms) or 2 s after our
+  endpoint had it. Ours: the host releases the endpoint (LD 255), waits for
+  `v90m_ec_tx_busy` 0 (at most 1 s), then `v90m_cleardown`; with MNP up the
+  host's bits go on 30 ms holding forward, 200 ms holding back, then both
+  carriers stop (`ours`: the caller has the LD both ways). `tx_busy` is 0
+  from the LD's closing flag's first bit: a host that stopped the modem
+  then would cut the flag (the caller saw an abort at 450 bit/s; Task 23
+  found it). Every end has its `v90m_get_diag` error: `ANS_ERR_HST_LINK`
+  (no MNP link in 15 s), `ANS_ERR_HST_CARRIER` (the watchdogs' LOST),
+  `ANS_ERR_RETRAINS` (RETRAIN_FAILED), 0 for an orderly cleardown.
+- **AB louder than the data** (the Task 16 review's Minor F): the forward
+  receiver's level, against which a fade or a loss is judged, is taken
+  again where data mode begins, so a far end whose AB is up to 4 dB over
+  its data loses nothing (`test_hst_fwd` `ab_loud`: AB 4 dB over, then a
+  6.5 dB step down in data, kept; from AB's level it was a carrier loss).
+  Our training itself (Task 23e) now takes the level again from the
+  training's own points: qamrx's gain is set from AB's power; when 5 or
+  more of the last 8 points are off and their power stays over 3 dB off
+  A..D's for 8 symbols, the next 16 symbols' power sets the gain again
+  (the equaliser's line and the points scaled by the root of the ratio; at
+  most 4 such measures a training, each taking the level or not); the carrier's level starts 6 dB under AB's (the
+  relative clamp 16 dB under AB) and is taken again then. Before, the pass
+  edge was AB 3 dB under to 5 dB over the rest: 6 to 9 dB over gave
+  TRAINFAIL (every point off the 4, nothing adapted), 10 dB and more
+  NOCARRIER (the clamp 10 dB under AB's level), 4 dB under TRAINFAIL. Now
+  `test_hst_fwd ab_sweep` passes every cell from AB 8 dB under to 14 dB
+  over, codes 2..6 (3 seeds, 30 dB; 2 seeds at +7 Hz -100 ppm). On a 20 dB
+  line, code 5 (the Task 23e review, 30 seeds): with AB 4 and 5 dB over
+  the data, 18/30 and 25/30 pass, against 30/30 for BASE (no re-take, the
+  points starting smaller: a smaller equaliser step) and 24/30 at equal
+  levels; a re-taken training matches an equal-level one only from about
+  6 dB off (10 seeds: 5..8 of 10 from 6 dB on, 8 at 0 dB). The training's
+  own scale on a noisy line is untuned. Unchanged from BASE: AB 2 to 3 dB
+  quieter than the data fails code 5 on a 20 dB line (10 seeds: 0/10 at
+  -2 and -3 dB, before and after).
+  Limits: measured on our own caller only, a real Courier's AB level
+  against its data is unknown; a level 3 to 5 dB off that leaves the points
+  on the 4 is not taken (the equaliser takes it, a slower training at code
+  2); a level step of 10 to 16 dB later in a training is not clamped (a cut
+  under -48 dBm0 still is); its points are off and nothing adapts on them.
+- **The level-step residuals** (a 6.5 dB drop at 14400 on a 30 dB line
+  loses the forward receiver's lock on about 15 % of calls: 6 of 40 seeds,
+  the Task 23e review; Task 16 had counted about 5 in 96 over a mix of
+  steps and rates; 14400 recovering slowly from some 100 ms
+  dropouts): left as they are. An UNLOCKED is now a retrain at once (0x2R,
+  counted as above), and a slow recovery keeps data mode while MNP
+  resends. `levels` (`test_answer_hst`: -9 to -33 dBm0, +-100 ppm, 25 dB,
+  60 s each with 25 reversals and 5 rate changes) delivers every octet at
+  every level with no retrain beyond those asked.
+- **Frame errors** are the endpoint's broken frames alone: hst-facts
+  (P2:538) also counts 50 ms blocks of fill characters, which the spec
+  narrows to CRC failures.
+- **An attention superseded** (v42/mnp.c, [OURS], a departure from Annex
+  A's "sent again every T401 until its LNA"). Holding back, a failed
+  retrain's next 0x2R/0x3R replaces ours still waiting for its LNA, V(SA)
+  moving on without it: that LNA comes on the forward receiver that
+  failed, and waiting for it ran to N400 and the link's end. It does so
+  only on evidence that the far end has the LN: the pump saw the
+  holder's training for it (`ln_acted`, set only for the pump's own
+  request and cleared at every LN sent, the endpoint's cap and reversal
+  requests included), or it has gone twice (both lost on the healthy back
+  channel: p squared). Sent once only, it is sent again at once, ahead of
+  the new request, and superseded once that copy has gone: not at its
+  T401, which holding back is 11 s at 450/9600 and more at 300 (our
+  transmit rate is the back channel's), well over the 4 s bound (that
+  bound does not run while the request waits; the wait itself is bounded
+  next). The failure mode if the guess is wrong: our N(SA) one ahead of
+  the far V(RA), so the far end acknowledges every later LN, a 0x1R too,
+  and acts on none, for the rest of the call (`v42/test/test_ec_hst`
+  `attn_lost`: our LN lost, then a new request: both reach the far end in
+  order; the rule without the evidence fails it so). Task 23 and the
+  interop runs (R2) watch for a far end that acknowledges attentions and
+  does nothing.
+- **A request behind our own 0x1R** (the final review's m2; `hst.h`
+  `HST_RC_UNTAKEN_MS`, [OURS]). The supersede above covers 0x2R/0x3R
+  only: while our 0x1R waits for its LNA, holding back, the endpoint takes
+  no request of the pump's. Such a request untaken for 3 s counts as a
+  failed retrain (an 0x2R: asked again, 3 failures then one agreed rate
+  lower, at the lowest the end) or is dropped (an 0x3R). A far end that
+  never acknowledges our 0x1R thus ends the call with
+  `V90M_END_RETRAIN_FAILED` some 9 s an agreed rate after our first
+  request (45 s from 14400 with five rates agreed; `test_answer_hst`
+  `retrain_untaken`), where before the request waited for that LN's N400
+  x T401, some 2 min at 450 bit/s. The cost: a far end that delays its LNA
+  to our 0x1R by 3 s or more (an LNA lost, resent at T401) while our
+  receiver asks for a retrain steps the rate down for nothing; never
+  seen in simulation.
+- **Receive throughput while the caller holds the fast channel** (Task 24
+  run 4: some 700 B/s from BinModem at 14400 after its reversals, no
+  frame lost or sent again). MNP's window, not a fault: the far sender
+  may have k LTs of N401 octets unacknowledged, k 8 and N401 64 by default
+  (`mnp.k`, `mnp.n401`, `mnp.opt` 2), 512 octets, and every
+  acknowledgement (LA) crosses the 450 or 300 bit/s back channel: 11
+  octets with flags in the standard layout, 195 ms at 450 bit/s; 6, 107
+  ms, streamlined. Simulated (`sim/hstcall` holding the fast channel at
+  14400 after its reversal, a full backlog, we send nothing; 20 s; a
+  scratch harness over `test_answer_hst`'s line, not a committed test;
+  hstcall sends no parameter 8, so these LAs are the standard layout's):
+  867 octets/s with the 450 bit/s back channel, 726 with 300, against
+  some 1640 the line carries (64 data octets in about 71 on the line,
+  bit stuffing). Our LAs go back to back (102 in 20 s, every one moving
+  N(R) on), and the sender is blocked by its window 65 % of the time: it
+  sends its 8 LTs in some 310 ms and the LA covering the last of them
+  reaches it some 280 ms later (the LA's length plus both receivers'
+  delays), 8 LTs every 586 ms. Our acknowledging changes little: an LA
+  on a 450 bit/s channel takes longer than the window's 8 LTs leave room
+  for; holding each LA until k/2 LTs wait (A.7.3.3's other trigger), not
+  sending it at once when we have nothing else to send, gave 947 and 762
+  octets/s in the same runs, +9 and +5 %, not worth leaving the rule for.
+  What does: N401 256, parameter 8 bit 0 (`mnp.opt` 3, `mnp.n401`
+  256), when the caller's LR offers it (BinModem's does, parameter 8 = 3,
+  [BM]): 1728 octets/s in the same run at 450 and at 300 bit/s. Not the
+  default, because it is both ways (A.6.4.1.8): our own LTs on the back
+  channel then carry up to 256 octets, 4.6 s each at 450 bit/s (7 s at
+  300), and an LA waits behind the one going out; T401 grows with N401.
+  For an ISP whose callers mostly download, `mnp.opt` 3 is the setting to
+  try. k is at most 8 (`MNP_MAX_K`). BinModem's LR carries parameter 8 =
+  3, so with our default (2) its calls agree the streamlined layout, LAs
+  of some 107 ms, and still gave about 700 octets/s: its own delays (its
+  back receiver, its turnaround) are longer than hstcall's.
+- **The armed receiver's S detection** (`hst_frx_arm_switch`,
+  `hst_frx_arm_train`; Task 22b, which found both limits of 22a's): a
+  training is seen in data mode as S or S-bar, 16 symbols each the point
+  two before and a quarter turn from the last, within 30 % of its power.
+  22a's test of A..D themselves, 1.2 units, missed it when data mode held
+  the carrier a quarter turn round (S showed as D A), when the data-mode
+  loops had pulled the points 15 degrees and 1.2 dB off A..D a dozen
+  symbols in, and on any line under some 20 dB (the difference of two
+  points carries twice the noise). A random point passes the test with a
+  chance of 1 in 8 at 4 points (TRN) and about 1 in 38 in data (16 to 128
+  points, the tolerance taking in neighbours; the Task 22b review's Monte
+  Carlo): 16 in a row, 4e-15 or less.
+
 ## Included tables (x2)
 
 x2 has no published specification. Where no rule reproduces a table, it is
@@ -366,6 +843,28 @@ minimum-distance ladder in linear terms behind the pad reproduces 25 of
 the 39 constellations, and only when each table's first point and
 spacing are given, and none of the 3 dB tables but 32000's.
 
+## Included tables (HST)
+
+HST has no published specification. Its tables are in `modem/hst_tabs.c`,
+generated by `tools/gen_hst_tabs.py` (`docs/history/hst-facts.md`, "Back
+channel"):
+
+- **The back channel's phase steps** (`hst_bstep`, 8 octets): the Courier
+  firmware's constant 0x43705261 read a nibble at a time, as BinModem's
+  author reports it (BF §3, [FW]); a fact, written as the generator's one
+  number. Nothing else of BinModem's is used.
+- **Everything else is our own design** [OURS], named in the generator's
+  header: the transmit pulse (root-raised-cosine, beta 0.35, 10 symbols,
+  Kaiser window; polyphase for 150 and 100 baud at 8000 Hz, and the
+  receivers' matched filter read from it at 1600 Hz), the receivers'
+  decimation band-pass (39 taps, 60 dB down only where it folds into the
+  back channel at 1600 Hz), and the detector's 250-500 Hz band (at 1600
+  Hz) and 600-3400 Hz high band (Kaiser-windowed FIRs). The Courier's own
+  72-tap filter is unknown, so
+  our pulse's band (274-476 Hz at 450 bit/s, 283-417 Hz at 300, at
+  -20 dB) is chosen to sit under the forward channel's 600 Hz edge, not
+  taken from it.
+
 ## Memory
 
 - **The answering side's state sets the memory of a modem.** One modem,
@@ -377,6 +876,9 @@ spacing are given, and none of the 3 dB tables but 32000's.
   `v90m_mem_size()`; only a smaller answering state (its union of engines,
   or the V.34 and Phase 2 state outside it) would.
   (`docs/history/audit-0.6.md`, Task 29.)
+- **HST's engine** (`hst_t`, in the answering side's union of engines) is
+  9840 octets on x86-64 and 9808 on ARMv5, against the union's 45096 /
+  45008 (V.92's engine); `v90m_mem_size()` is unchanged.
 
 ## Bounds and clocks
 
@@ -461,6 +963,84 @@ CPU"); 0.5.0's in brackets:
 - **V.42:** an endpoint at 56 kbit/s both ways costs 5.21 / 9.08 / 9.48 M a
   second with no compression / V.42bis / V.44 (`make cost-v42`; before
   0.6.0's V.42 work: 7.96 / 11.81 / 12.19).
+- **HST's forward receiver (0.7.0 work):** 25.43 M instructions a second
+  in 14400 data mode (`make cost-hst-fwd`; the budget 26 M; 25.40 M before
+  the gain loop's leak, Task 22c), unchanged by the switch by marks while
+  none is armed. A switch by marks from 12000 to
+  14400 costs 636 939 instructions in the 20 ms from where both codes are
+  decoded (the new code's decoder run over 24 points kept, then both
+  decoders, the switch 23 symbols in): 31.70 M a second for those 20 ms
+  (the bench's loop taken off), against the plan's 40 M.
+- **HST's back channel (0.7.0 work):** the two back
+  receivers (450 and 300) on one band-pass, as the pump runs them while it
+  holds the forward channel, cost 1.89 M instructions a second with the
+  caller at 450 and 1.88 M at 300 (`make cost-hst-back`, the third second
+  of `rig/bench_hst`'s recording, its own loop of 0.11 M taken off; 2.00 M
+  with it); the target was 2.0 M, the spec's "about 1 M a second each".
+  The worst case is not the locked one: echo (our forward signal at
+  -16 dBm0) or noise at -30 dBm0 holding the carrier detect on with no
+  back channel keeps both receivers acquiring, 1.90 / 1.91 M net (2.02 M
+  with the loop; the Task 13 review's recordings). Task 12's receivers,
+  with a 243-tap band-pass, were 3.70 M (some 1.1 M of that the bench
+  reading its file inside the counted second). The detector of
+  ANS_HST_WAIT (the two receivers, its 250-500 Hz band and the 189-tap
+  600-3400 Hz band at every 4th sample) is 3.70 M, for at most W (650 ms,
+  2000 ms while the band holds energy) when nothing else runs; its high
+  band is 1.26 M of that. In ANS_HST the detector's receivers carry on
+  without its two bands (`hst_det_rx`): the 1.89 M above.
+- **HST holding the forward channel (0.7.0 work): 13.19 M instructions a
+  second** (`make cost-hst`, target 15 M): a whole simulated call
+  (`tools/rec_hst`: `sim/hstcall` calling, MNP up, the retrain to 14400,
+  text both ways) replayed into the answerer alone through the public API
+  in 10 ms blocks (`rig/bench_hst -c`), the second from 1 s into data at
+  14400 counted, the bench's own loop and its endpoint's text included.
+  By qemu's profile (`tools/qprof`) about 3.8 M is the forward
+  transmitter (`v32tx_tick` with HST's 30-symbol pulse 3.15 M), 1.7 M the
+  two back receivers, 3.3 M V.42 / MNP with the HST link (the link polled
+  at every bit: `link_poll` 1.05 M, `mnp_hst_poll` 0.82 M, `v42ec_tx_bit`
+  0.90 M), 1.7 M G.711 (encoding what we send, decoding what we hear),
+  1.9 M the answerer's and the API's per-sample work. The first count was
+  16.64 M: a bench that processed and polled a sample at a time (1.3 M of
+  harness) and V.32's echo canceller's reference computed for HST too
+  (1.12 M; `v32tx_tick` now makes it only with V.32's own pulse: HST has
+  no canceller). Polling the HST link once per tick rather than per bit
+  is the next lever (some 2 M). Task 23's run of the same bench: **14.44
+  M** (14 441 425; the reversal, rate-change, watchdog and cleardown
+  logic of Tasks 21 to 23 in the per-sample path since Task 19's count;
+  not split further).
+- **HST holding the back channel: 29.29 M instructions a second**
+  (target 30 M; `make cost-hst`: `tools/rec_hst -R`, the caller taking
+  the forward channel and keeping it, our endpoint writing nothing;
+  `rig/bench_hst -k`, the second from 1 s into the caller's data at 14400
+  coming in; 2688 octets received in 3 s). Task 23's run was 38.44 M.
+  Task 23c's profile of that second (`tools/qprof`): the forward receiver
+  25.5 M (its trellis decoder `v32_vit_step` 9.35 M, qamrx's interpolator,
+  equaliser output and update 9.5 M, the guard 3.14 M), our idle forward
+  transmitter 2.87 M (`v32tx_tick` filtering a line of zeros), the back
+  transmitter 1.72 M, the HST link polled at every bit 2.3 M
+  (`link_poll`, `mnp_hst_poll`), G.711 1.65 M, the answerer's and the
+  API's per-sample work and MNP the rest. Two cuts, both with the same
+  output to the bit (every golden, bench hash and replay identical):
+  the trellis decoder as `hst_vit_step` (each subset's nearest point by
+  rounding on its grid, `hst_vgrid_*`; the add-compare-select written
+  out): 9.35 -> 3.32 M; the forward transmitter stopped and rung out keeps
+  its count alone: 2.87 -> 0.15 M. The forward receiver alone in 14400
+  data is now 19.37 M (cost-hst-fwd's -r). Not done, the next levers: the
+  link polled per tick rather than per bit (about 2 M, in v42/), a
+  shorter interpolator for HST in qamrx (about 1.6 M, changes the
+  receiver's output). The equaliser at T/2 is not one: qamrx's equaliser
+  is pass-band, and at 4800 Hz a 600-3000 Hz signal's image falls on
+  1800-4200 Hz, half the band (Task CPU-frx measured 5.4 dB through the
+  receiver's start against 33.0 at T/3).
+- **The 0x3R parallel decode: 31.98 M a second for its 20 ms, the whole
+  modem** (target 40 M; Task 23's run 32.04 M for the forward receiver
+  alone, about 45 M on this basis). `make cost-hst` gives it as the
+  forward receiver's 20 ms (cost-hst-fwd's -p: 443 923 instructions,
+  22.05 M a second, the two trellis decoders and the 24 points replayed
+  into the new one) plus the rest of holding back (holding back less the
+  forward receiver alone in 14400 data: 9.92 M).
+- **HST holding the forward channel after Task 23c: 14.47 M** (target 15
+  M; 14.44 M before it: the transmitter's stopped test on every sample).
 
 ## Not implemented
 

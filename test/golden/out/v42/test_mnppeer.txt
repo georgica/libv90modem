@@ -1,0 +1,27 @@
+loop_mode3: connected at 169/211 ms, 65536 octets each way intact in 263310 ms, LT 1024/1024, retx 0/0, bad 0/0
+loop_mode2: connected at 234/296 ms, 65536 octets each way intact in 341659 ms, LT 1024/1024, retx 0/0, bad 0/0
+loop_loss: connected at 169/211 ms, 65536 octets each way intact in 278855 ms, LT 1061/1082, retx 73/47, bad 0/0
+loop_corrupt: connected at 234/296 ms, 65536 octets each way intact in 360192 ms, LT 1061/1049, retx 33/50, bad 15/15
+loop_negotiate: framing 2 k 4 n401 32 layout 0/0
+loop_negotiate: parameter 8 both 3&2: layout 1; caller only: layout 0
+loop_negotiate: parameter 8 both 3: n401 256, 8192 octets in 32 LTs
+loop_ld: release -> LD reason 255 at the other end, both ways
+loop_ln: 3 codes delivered once each, in order
+loop_ln_full: 12 codes through a queue of 8, 5 LNs refused while full, all in order
+loop_conf_std: confirming LA layout 0, then layout 1
+loop_zero_credit: 0 octets before the credit, then 8192 intact
+loop_break: LN 1 from the originator: one reset each end, then 16 KiB each way intact
+loop_break: LN 1 from the responder: one reset each end, then 16 KiB each way intact
+loop_break: LN 1 from both ends at once: one reset each end, then 16 KiB each way intact
+loop_no_lr: 3 LRs, gave up at 1503 ms
+wire: LR and LA octets as written out, mode 3 FCS F9 08, mode 2 FCS 45 10
+raw_over_credit: 6 LTs on credit 0 (k 2): 4 beyond the credit given
+raw_ld_codes: constant 1 -> LD 2, framing 1 -> LD 1, no LA -> LD 1
+raw_lr_on_bad: LR sent 2 times by 600 ms (T401 5 s)
+raw_lna_match: an older LNA, then the match, while an LT is out: no LN after it
+raw_ln1_before_connect: break begun at link up, data dropped, one reset at the LNA
+loop_hst: 0xC0 01/FC and 09/7C: hst 1/1, rates 7C, back300 1, streamlined both ways, 4096 octets each way intact; LN 14 and 01 delivered as codes, resets 0
+loop_hst: no parameter 8: standard; stream_always: streamlined, intact; caller without bit 0: hst 0; no rate in common: hst 0
+loop_hst: unknown_ids 3: 21 LTs sent with 3F, 21 counted unknown, 4096 octets intact
+loop_hst: T401 from the formula: 10964 ms at 450 to 14400, 1560 ms at 14400 to 450
+test_mnppeer: 246 checks, 0 failures

@@ -6,7 +6,7 @@
 /* The answering modem: init, V.8, the dispatch to the scheme of the phase
  * (modem/ans_scheme.h), the end of a call and the backstop of the phases.
  * The schemes: modem/ans_legacy.c, ans_v90.c, ans_v34.c, ans_x2.c,
- * ans_k56.c. */
+ * ans_k56.c, ans_hst.c. */
 
 #define MS(ms) ((int32_t)(ms) * 8)
 /* The backstop of the phases before data mode (spec D5), above the limits
@@ -36,6 +36,7 @@ static const ans_scheme_t *const phase_scheme[] = {
     [ANS_P3X] = &ans_v92, [ANS_V92] = &ans_v92,
     [ANS_V34] = &ans_v34, [ANS_X2] = &ans_x2,
     [ANS_K56] = &ans_k56, [ANS_K56RT] = &ans_k56rt,
+    [ANS_HST_WAIT] = &ans_hst, [ANS_HST] = &ans_hst,
     [ANS_FAILED] = &ans_ended
 };
 /* one row per phase: a new last phase without its row fails to compile */
@@ -72,6 +73,7 @@ static const ans_scheme_t *mod_scheme(int mod)
     case ANS_MOD_V34: return &ans_v34;
     case ANS_MOD_X2:  return &ans_x2;
     case ANS_MOD_K56: return &ans_k56;
+    case ANS_MOD_HST: return &ans_hst;
     default:          return NULL;
     }
 }
@@ -177,6 +179,13 @@ void answer_v90_cfg(answer_t *a, const p2d_cfg *cfg)
     a->p2cfg = *cfg; x2_offer(a); k56_offer(a);
 }
 
+void ans_start_no_cm(answer_t *a)
+{
+    if (a->cfg.modes & V8_MOD_V22) ans_start_v22(a);
+    else if (a->cfg.modes & V8_MOD_V21) ans_start_v21(a);
+    else ans_fail(a, ANS_END_FAILED);
+}
+
 static int16_t tick_v8(answer_t *a, int16_t rx)
 {
     int16_t tx = 0;
@@ -189,9 +198,10 @@ static int16_t tick_v8(answer_t *a, int16_t rx)
     }
     if (v8ans_tick(&a->v8, rx, &tx) != V8A_DONE) return tx;
     if (a->v8.result == V8A_RES_NO_CM) {           /* pre-V.8 caller */
-        if (a->cfg.modes & V8_MOD_V22) ans_start_v22(a);
-        else if (a->cfg.modes & V8_MOD_V21) ans_start_v21(a);
-        else ans_fail(a, ANS_END_FAILED);
+        /* HST offered, and an endpoint linked now (decision 18): listen
+         * for its back channel first */
+        if ((a->cfg.modes & ANS_MODE_HST) && (a->cfg.modes & ANS_MODE_HST_LINKED)) ans_start_hst_wait(a);
+        else ans_start_no_cm(a);
         return tx;
     }
     a->used_v8 = 1;
@@ -287,3 +297,21 @@ int answer_odp_bypass(const answer_t *a)
     return a->v92_both && a->v8.cm.has_prot && a->v8.cm.prot == V8_PROT_LAPM
            && a->v8.jm.has_prot && a->v8.jm.prot == V8_PROT_LAPM;
 }
+
+/* ANS_HST is ON, with the mailbox; connected, or ended, on any other path
+ * is NONE; before that (ANS_HST_WAIT included), UNDECIDED (hst_link.h: a
+ * linked endpoint holds T400 through any training) */
+hst_link_t *answer_hst_link(answer_t *a, int *state)
+{
+    if (a->phase == ANS_HST) { *state = HST_LINK_ON; return &a->u.hst.link; }
+    *state = a->connected || a->phase == ANS_FAILED ? HST_LINK_NONE : HST_LINK_UNDECIDED;
+    return NULL;
+}
+
+/* u.hst is not used by anything after an HST call (ANS_FAILED) */
+unsigned answer_hst_reversals(const answer_t *a)
+{
+    return a->modulation == ANS_MOD_HST ? (unsigned)a->u.hst.reversals : 0u;
+}
+
+int answer_hst_decided(const answer_t *a) { return a->phase != ANS_V8 && a->phase != ANS_V8BIS; }

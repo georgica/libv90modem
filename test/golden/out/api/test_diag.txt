@@ -1,4 +1,4 @@
-  names: 117 codes in 17 families, each named once
+  names: 119 codes in 17 families, each named once
   V.90, the answerer hears nothing from its Phase 2 on:
     answerer end 1: P2D_ERR_INFO0, phase2, V.90, data reached 0
     caller end 1: P2L_ERR_REV, phase2, V.90, data reached 0
@@ -36,4 +36,4 @@
   V.22bis to data mode (no cleardown signal: the call goes on):
     answerer end 0: none, data, V.22bis, data reached 1
     caller end 0: none, data, V.22bis, data reached 1
-diag: 7410 checks, 0 failures
+diag: 7652 checks, 0 failures

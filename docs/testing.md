@@ -24,10 +24,10 @@ The host suite:
   internals renamed `v90m__i_*`) and the compiler's helpers;
 - `check-version`: the Makefile's `VERSION` is the header's
   `V90M_VERSION_*`, README's "This is X" and the `.so` names of
-  [getting-started.md](getting-started.md) (`version: 0.6.1 everywhere`);
+  [getting-started.md](getting-started.md) (`version: 0.7.0 everywhere`);
 - `check-soname`: the shared library's SONAME is
   `libv90modem.so.MAJOR.MINOR` while MAJOR is 0 (`soname:
-  libv90modem.so.0.6`);
+  libv90modem.so.0.7`);
 - `check-headers`: every header under `api/`, `modem/`, `v34/`, `v90/`,
   `v92/`, `v32/`, `v42/` and `include/` compiles alone with only `-I. -Iinclude`
   (each includes what it uses, by a path relative to itself);
@@ -78,13 +78,20 @@ program's own golden file is not a re-record.
 **The replay proof** (`tools/replay-proof.sh`, `make replay-proof`). The
 106 recordings of real calls (private, never in the repository: `RECS`,
 their names and hashes in `test/golden/recordings.sha256`) go through
-`v90m-replay` in six flag sets (none, `-9`, `-x`, `-x -9`, `-k`, `-k -9`):
-636 runs, whose trace, decided bits and exit code are hashed against
-`test/golden/replay.sha256`. `check` compares, `record` writes the
-manifest, `diff REF` replays with this tree and with the tool built from a
-git REF and prints the start of each trace that differs: that is how a
-release says which recorded calls it changes, and why
-(`docs/history/audit-0.6.md`, "Replay proof against v0.5.0").
+`v90m-replay` in seven flag sets (none, `-9`, `-x`, `-x -9`, `-k`, `-k -9`,
+`-H`): 742 runs, whose trace, decided bits and exit code are hashed against
+`test/golden/replay.sha256`. `check` compares (and stops at once on a set
+the manifest has no lines for), `record` writes the manifest, `diff REF`
+replays with this tree and with the tool built from a git REF and prints
+the start of each trace that differs, in the sets REF's own proof has: that
+is how a release says which recorded calls it changes, and why
+(`docs/history/audit-0.6.md`, "Replay proof against v0.5.0"). The `-H`
+set (HST offered, the endpoint linked, MNP on) is the spec's "untouched"
+rule on real callers: each of the 105 recordings whose caller sent CM or AA
+gives exactly its `base` trace, bits and exit code under `-H`; the one
+whose caller sent neither (`v21a`, V.21 forced) meets the HST wait, and
+its report says no back channel was detected (a detection there would be a
+detector bug).
 `V90M_NO_RECS=1` skips it (the CI has no recordings).
 
 **Split programs.** On ARM the slowest programs (`SPLIT_TESTS` in the
@@ -216,6 +223,14 @@ from the 68040 manual on 300,000 random operand sets.
 - `cost-*` and `prof-v90c` / `prof-v92c`: ARM instruction counts per
   second of line and per tick, from qemu (slow). `bench-x2` and `cost-x2`
   do the same for an x2 call of the simulated client.
+- `make bench-hst`, `make cost-hst`: a simulated HST call
+  (`tools/rec_hst.c`: `sim/hstcall` calling our answerer through the
+  public API, MNP up, the retrain to 14400, data both ways) replayed into
+  the answerer alone in 10 ms blocks on the host and under qemu
+  (`rig/bench_hst -c`; the transmit must be the recording's, and the
+  host's output the target's); `cost-hst` prints `cost-hst: holding
+  forward X M/s`, the ARM instructions of the second from 1 s into data at
+  14400. Its hashes are the `hst` line of `test/golden/bench.txt`.
 - `make test-x2-courier COURIER_EMU=DIR [PAD=0|3|6] [MODS=x2]
   [STRICT_RENEG=1]`: an emulated U.S. Robotics Courier (courier-emu, kept
   outside the repository) calls the answering modem (host only;
@@ -279,7 +294,7 @@ recorded call into the answering modem and reports what it made of it,
 phase by phase:
 
 ```
-v90m-replay [-a] [-9] [-x] [-k] [-B] [-M] [-F] [-u BPS] [-d BPS] [-l DBM0 | -r RMS] [-e SAMPLES] [-P CODE] [-s SAMPLE] [-b FILE] RECORDING
+v90m-replay [-a] [-9] [-x] [-k] [-B] [-H] [-M] [-F] [-u BPS] [-d BPS] [-l DBM0 | -r RMS] [-e SAMPLES] [-P CODE] [-s SAMPLE] [-b FILE] RECORDING
 ```
 
 | | |
@@ -289,6 +304,7 @@ v90m-replay [-a] [-9] [-x] [-k] [-B] [-M] [-F] [-u BPS] [-d BPS] [-l DBM0 | -r R
 | `-x` | x2 offered (`V90M_MOD_X2`) |
 | `-k` | K56flex offered (`V90M_MOD_K56`): V.8bis first; the recording is lined up with our answer tone after it |
 | `-B` | Bell 103 and Bell 212A offered too (`V90M_MOD_BELL103`, `V90M_MOD_BELL212A`), as a host may offer them (nsdiald's sidecar: `bell103`, `bell212`); without them a caller without V.8 hears no 2225 Hz from us 4 s into the V.22 wait |
+| `-H` | HST offered (`V90M_MOD_HST`) and the V.42 endpoint linked for it (MNP on, `v90m_ec_link_hst` before the first sample, the rates and the line's stops passed on as `docs/error-control.md` says): a caller without CM or AA meets the HST wait, and the report ends with `HST:` lines (the wait and what the detector heard, our forward training's segments and codes, the back receivers' locks, the rates and MNP's agreed rates, the reversals, the end). A caller with CM or AA gets exactly the report it gets without `-H` |
 | `-M` | in data mode transmit mark only (binary 1) in place of what the V.42 endpoint sends: "differs in 0" then proves the recording modem sent nothing but mark |
 | `-F` | print the caller's V.42 frames, found in the bits the V.42 endpoint receives: a line each with the time, length, address, control, type (`SABME`, `UA`, `I N(S) N(R)`, `RR`, `XID`, ...) and whether its FCS (16 or 32 bits) held; their count at the end |
 | `-u`, `-d BPS` | upstream / downstream rate ceilings |
@@ -324,6 +340,21 @@ it:
 
 A fault found on a call with a real modem comes with its recording as a
 fixture and a test that fails without the fix (`CONTRIBUTING.md`).
+
+**HST's tools on a simulated call** (`test/fixtures/replay-hst.sh`, in
+`make check`'s fixtures): `tools/rec_hst` records an HST call;
+`bench_hst -c` replays it to the last codeword; `v90m-replay -H` reports
+the detection within W, our two trainings (code 4, then code 6 after the
+caller's confirming LA), 9600 at CONNECTED and 14400 / 450 after, MNP's
+rates 0x7C, and follows the recording until the endpoint starts; without
+`-H` the same caller gets V.22bis; `hst-scan -b` finds its back channel
+and `hst-scan -f` our trainings' segments (180, 72, 3096 and 200 symbols,
+within 10) and constellations (32 points at 9600, 128 at 14400).
+`tools/rtp2rec.py --self-test` checks the RTP converter for R1 and R2 on
+captures it makes itself (pcap and pcapng, IPv4 and IPv6, loss,
+reordering, RFC 2198 with one or two layers, from the first packet on, and
+an empty redundant block); `make check`'s fixtures run it where python3 is
+found, and say they skipped it where not.
 
 **The calling side and the recordings.** There is no real modem for the
 calling side to call yet. `tools/v90m_fields.c` (`make build/v90m-fields`,

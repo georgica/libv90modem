@@ -1,0 +1,24 @@
+crc_vectors: CRC-16/ARC BB3D, FCS-16 sent 6E 90
+mode2_frame: 104 single-bit errors, 96 end in BAD, 0 frames
+mode2_frame: a cut-off frame then a good one: 1 BAD, 1 FRAME
+mode2_frame: 16 line octets: 16 10 02 04 04 01 01 05 41 10 10 42 10 03 8B 7A
+layouts: LT      04 04 01 01 07 41 42 43
+layouts: LA      07 05 01 01 07 02 01 08
+layouts: LN      07 06 01 01 03 02 01 02
+layouts: LNA     04 07 01 01 03
+layouts: LD      04 02 01 01 FF
+layouts: LD user 07 02 01 01 FF 02 01 09
+layouts: opt LT  02 04 07 41 42 43
+layouts: opt LA  03 05 07 08
+courier_lr: const1 2 framing 3 k 8 n401 64 opt 0 c0 0
+merge: framing 2 k 4 n401 64 opt 1/2
+c0: ours 01/7C, theirs 09/FC: HST 1, back300 1, rates 7C, best code 6
+c0: theirs 00/FC: 0xC0 in reply 0; theirs 01/80: rates 00 (plain MNP)
+layouts: str LT  04 07 41
+layouts: str LA  05 07 08
+layouts: str LN  06 03 14
+layouts: str LNA 07 03
+layouts: str LD  02 FF
+stream: 04 04 01 01 07 41: std agreed N(S) 7; streamlined agreed N(S) 4; none agreed, expect 4: N(S) 4
+stream: first octet 3F: unknown; the Courier's LR read as an LR in all 5 modes: yes
+test_mnp_frame: 350 checks, 0 failures

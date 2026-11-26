@@ -37,6 +37,17 @@
  * (retraining until data mode); anything but our flagged INFO1a, or a
  * third retrain in a row (none forgotten until data mode holds 2 s), ends
  * the call with ANS_END_K56_FAILED. We never retrain K56flex.
+ * HST (ANS_MODE_HST, and ANS_MODE_HST_LINKED when ANSam ends: an MNP
+ * endpoint is linked): a caller that sent neither CM nor AA during ANSam
+ * meets ANS_HST_WAIT, silence while the back channel's detector listens
+ * for up to W (modem/hst.h); heard, ANS_HST (modem/ans_hst.c), the point
+ * of no return: our forward channel's long training at the opening rate,
+ * both back receivers, connected once the training is out and a back
+ * receiver locked; the caller's bits reach the endpoint through the
+ * mailbox until then (v42/hst_link.h). The caller's confirming LA (MNP up)
+ * starts the retrain at the best agreed rate. No MNP link within 15 s ends
+ * the call with ANS_END_HST_FAILED; no back carrier for 5 s in data mode,
+ * ANS_END_LOST. Not heard within W: V.22bis or V.21 as without HST.
  * One sample in, one sample out. The data interface is a bit pump: getbit is
  * called for every transmitted line bit, putbit for every received one, once
  * the connection is up. Characters travel start-stop framed in that bit stream
@@ -56,6 +67,8 @@
 #include "v8bis.h"
 #include "../v32/v32.h"
 #include "../v92/v92_p34d.h"
+#include "../v42/hst_link.h"
+#include "hst.h"
 
 typedef enum {
     ANS_V8, ANS_V22, ANS_V21, ANS_FAILED,
@@ -76,6 +89,10 @@ typedef enum {
     ANS_K56RT,           /* K56flex: the client's retrain (its tone B in data mode): 70 ms of
                             silence, then V.34's Phase 2 of a retrain (v34.p2, INFO1a flagged
                             again), then ANS_K56 from the start */
+    ANS_HST_WAIT,        /* HST offered and linked, a caller without V.8: silent after ANSam,
+                            listening for its back channel (u.hst.det) for W, then ANS_V22 or
+                            ANS_V21 as without HST */
+    ANS_HST,             /* HST: from the detection on (u.hst), data mode included */
     ANS_NPHASES          /* the number of phases (not a phase): a new one goes above */
 } ans_phase;
 
@@ -98,6 +115,16 @@ typedef enum {
 /* with V8_MOD_V34: offer K56flex as its server in V.8bis before V.8
  * (modem/v8bis); only on a mu-law line */
 #define ANS_MODE_K56 0x200000u
+/* offer HST (U.S. Robotics' asymmetric modem) to a caller without V.8;
+ * only with ANS_MODE_HST_LINKED too when the modem decides (the end of
+ * ANSam) */
+#define ANS_MODE_HST 0x400000u
+/* an MNP endpoint is linked for HST (v90m_ec_link_hst): set and cleared by
+ * the API layer, in this word so that answer_t does not grow */
+#define ANS_MODE_HST_LINKED 0x800000u
+/* V.34: our MP's transmit ceiling capped at the caller's INFO1c / INFO1a
+ * projection (v34ans_cfg.tx_cap) */
+#define ANS_MODE_V34_TX_CAP 0x1000000u
 
 #define ANS_MOD_NONE   0
 #define ANS_MOD_V21    1
@@ -111,6 +138,7 @@ typedef enum {
 #define ANS_MOD_BELL212A 9   /* 1200 bit/s, in ANS_V22: V.22 begun after our 2225 Hz */
 #define ANS_MOD_X2     10    /* x2: PCM downstream, V.34 upstream */
 #define ANS_MOD_K56    11    /* K56flex: PCM downstream, V.34 upstream */
+#define ANS_MOD_HST    12    /* HST: a fast forward channel, a 450 / 300 bit/s back channel */
 
 /* why a call ended (answer_t.end, answer_end): set where it fails */
 enum {
@@ -123,8 +151,9 @@ enum {
     ANS_END_RETRAIN_FAILED, /* V.90, V.92, V.34: a retrain due past the limit in a row;
                                x2: the client asked for a retrain (its Tone A) */
     ANS_END_X2_FAILED,      /* the x2 start-up, or a rate change of the client's, did not complete */
-    ANS_END_K56_FAILED      /* past the point of no return, the K56flex start-up, a rate change
+    ANS_END_K56_FAILED,     /* past the point of no return, the K56flex start-up, a rate change
                                or retrain did not complete, or the third retrain in a row */
+    ANS_END_HST_FAILED      /* an HST call had no MNP link within its limit */
 };
 
 typedef struct {
@@ -169,8 +198,10 @@ typedef struct {
      * to V.8): they share their storage. u.v92 holds a call's V.92 engine
      * from ANS_P3X on, u.x2 the x2 engine from ANS_X2 on; u.v8b K56flex's
      * V.8bis, during ANS_V8BIS only (before any of the others), u.k56 the
-     * K56flex engine from ANS_K56 on. */
-    union { v32_t v32; v92d_t v92; x2d_t x2; v8bis_t v8b; k56d_t k56; } u;
+     * K56flex engine from ANS_K56 on; u.hst the HST engine from
+     * ANS_HST_WAIT on (a caller without V.8, after ANSam: none of the
+     * others; V.22 and V.21, which may follow it, keep their own storage). */
+    union { v32_t v32; v92d_t v92; x2d_t x2; v8bis_t v8b; k56d_t k56; hst_t hst; } u;
     v32_aadet_t aadet;       /* 1800 Hz from the caller while the answer tone runs */
     uint8_t    pcm;          /* the codeword of this sample while V.90 runs */
     v21mod_t   fmod; v21demod_t fdem; arx_t uart;
@@ -194,13 +225,17 @@ typedef struct {
                                 for the rest of the call when a V.92 start-up failed or the
                                 line did not carry the lowest PCM upstream rate */
     int        v92_data;     /* this V.92 engine has reached data mode */
-    /* x2 */
-    int        x2_offered;   /* ANS_MODE_X2 with V.34, on a mu-law line */
-    /* K56flex */
-    int        k56_offered;  /* ANS_MODE_K56 with V.34, on a mu-law line: ANS_V8BIS first */
-    int        k56_agreed;   /* the client's MS carried the K56flex block (we sent ACK(1));
+    /* x2 and K56flex: flags of one octet each, so that the API's modem can
+     * hold its HST endpoint's address without growing (v90m_mem_size) */
+    uint8_t    x2_offered;   /* ANS_MODE_X2 with V.34, on a mu-law line */
+    uint8_t    k56_offered;  /* ANS_MODE_K56 with V.34, on a mu-law line: ANS_V8BIS first */
+    uint8_t    k56_agreed;   /* the client's MS carried the K56flex block (we sent ACK(1));
                                 x2 is then not offered in this call */
 } answer_t;
+
+/* the HST engine shares the union and fits in it (the spec's "HST pump":
+ * no growth of answer_t) */
+typedef char hst_size_check[sizeof(hst_t) <= sizeof(v92d_t) ? 1 : -1];
 
 void    answer_init(answer_t *a, const answer_cfg *cfg);
 /* The same modem at the G.711 interface: one received codeword in, one out
@@ -257,9 +292,31 @@ int     answer_moving(const answer_t *a);
 int     answer_odp_bypass(const answer_t *a);
 /* Why the call ended: ANS_END_*, ANS_END_NONE until the phase is ANS_FAILED. */
 int     answer_end(const answer_t *a);
+/* The modem's side of the HST mailbox (v42/hst_link.h), for the MNP
+ * endpoint linked to it: *state HST_LINK_UNDECIDED until the modem is
+ * either on an HST call (HST_LINK_ON in ANS_HST, the mailbox returned) or
+ * connected or ended on another path (HST_LINK_NONE, from the sample that
+ * raises connected on); ANS_HST_WAIT is UNDECIDED. NULL but with ON. No
+ * side effects: it only reports. */
+hst_link_t *answer_hst_link(answer_t *a, int *state);
+/* HST: the channel reversals of this call (v90m_stats.reversals); 0 on
+ * any other call */
+unsigned answer_hst_reversals(const answer_t *a);
+/* 1 once the modem has decided whether to offer HST (it has left ANS_V8
+ * and ANS_V8BIS): an endpoint can no longer be linked for this call. */
+int     answer_hst_decided(const answer_t *a);
 /* The echo delay in samples the running engine measured or was given (V.90,
  * V.92, x2, K56flex): the engine of the phase; between engines (a retrain,
  * the end) the modulation's. -1 where there is none. */
 int     answer_echo_delay(const answer_t *a);
+/* V.34 (and V.34 selected by a V.90 caller's INFO1a), our transmit
+ * direction, from the last Phase 2 and Phase 4 of the call (kept after the
+ * end, until the next answer_init): *proj_bps the caller's own projection
+ * at the symbol rate in use (2400 x INFO1c / INFO1a bits 30:33), *ask_bps
+ * its MP's maximum (0 until its MP came; after our or its cleardown, the
+ * one data mode last began with), *capped 1 when ANS_MODE_V34_TX_CAP
+ * lowered our MP's offer below what it would have been without it. All 0
+ * when no V.34 training began this call (x2 and K56flex included). */
+void    answer_v34_tx_cap(const answer_t *a, int *proj_bps, int *ask_bps, int *capped);
 
 #endif

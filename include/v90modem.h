@@ -25,8 +25,9 @@
  * calling thread.
  *
  * What a callback may do to the modem that calls it: v90m_retrain,
- * v90m_cleardown, v90m_get_state, v90m_get_stats, v90m_get_diag (and
- * anything on another object: every v90m_ec_* and v90m_async_* function).
+ * v90m_cleardown, v90m_get_state, v90m_get_stats, v90m_get_diag,
+ * v90m_get_v34_cap (and anything on another object: every v90m_ec_* and
+ * v90m_async_* function).
  * v90m_reset returns V90M_ESTATE and changes nothing. v90m_destroy takes effect at the end of
  * the sample under way: no event after it, the rest of the block is
  * silence (linear 0, mu-law 0xFF, A-law 0xD5), the modem is freed (when it
@@ -38,8 +39,8 @@
  * own memory is not allowed.
  *
  * NULL: every function checks the object it is given (and the struct that
- * v90m_get_state, v90m_get_stats, v90m_get_diag and v90m_ec_get_status
- * fill): with NULL a function returning int returns V90M_EINVAL, one
+ * v90m_get_state, v90m_get_stats, v90m_get_diag, v90m_get_v34_cap and
+ * v90m_ec_get_status fill): with NULL a function returning int returns V90M_EINVAL, one
  * returning size_t or unsigned long 0, a void one does nothing. Except the four called for
  * every bit, v90m_ec_tx_bit, v90m_ec_rx_bit, v90m_async_getbit and
  * v90m_async_putbit: their object must not be NULL. */
@@ -54,9 +55,9 @@ extern "C" {
 #endif
 
 #define V90M_VERSION_MAJOR 0
-#define V90M_VERSION_MINOR 6
-#define V90M_VERSION_PATCH 1
-/* "0.6.1": the version of the library linked in (may differ from the header) */
+#define V90M_VERSION_MINOR 7
+#define V90M_VERSION_PATCH 0
+/* "0.7.0": the version of the library linked in (may differ from the header) */
 const char *v90m_version(void);
 
 /* error codes (negative returns) */
@@ -176,6 +177,39 @@ typedef enum {
  * (32000 to 56000 in steps of 2000, the figure a Rockwell modem prints)
  * and rx_bps the client's V.34 upstream. */
 #define V90M_MOD_K56      0x0200u
+/* Answering only (calling: V90M_ENOTSUP), needs no other bit, not in the
+ * defaults: HST, U.S. Robotics' asymmetric modem (a fast forward channel
+ * and a 450 or 300 bit/s back channel, MNP error control), as its answering
+ * side. Offered only when an MNP endpoint is linked to the modem with
+ * v90m_ec_link_hst before it decides (the end of ANSam); a modem without
+ * the link answers as without HST. A caller that sends neither CM nor AA
+ * during our answer tone is listened to for its back channel for 650 ms
+ * after it (up to 2 s while 250-500 Hz energy is there): heard, HST
+ * (V90M_CONN_HST: tx_bps 9600 at CONNECTED, the best rate both ends agree
+ * after MNP's LRs from the retrain that follows, rx_bps 450 or 300); not
+ * heard, V.22bis or V.21 as without HST, that much later (max_down_bps
+ * 1..4799: not offered, see there). Callers that send
+ * CM or AA are answered exactly as without HST. A call that took HST up
+ * and has no MNP link within 15 s ends with V90M_END_HST_FAILED. In data
+ * mode no HST call stays up without the far modem's signal for more than
+ * 12 s (V90M_END_LOST); the far modem's MNP LD ends it with
+ * V90M_END_CLEARDOWN_FAR once its carrier goes (2 s at most); ours is
+ * v90m_ec_release, v90m_ec_tx_busy 0 (at most 1 s), then v90m_cleardown. */
+#define V90M_MOD_HST      0x0400u
+/* Bits 0-15 of .modulations are modulations (V90M_MOD_*); bits 16 and up
+ * are options (V90M_OPT_*), never modulations. */
+/* Not a modulation (added in 0.6.2): an option bit in .modulations, off by
+ * default. Answering, V.34 (and V.34 selected by a V.90 caller's INFO1a):
+ * cap our V.34 transmit at the caller's own INFO1 projection. Our MP's
+ * maximum transmit rate is then the lower of max_down_bps and the caller's
+ * projection for it (INFO1c, or INFO1a bits 30:33, at the symbol rate in
+ * use), at start-up and at every retrain; V.34 takes the lower of the two
+ * MPs, so a caller whose MP asks for more than its own line probe gets
+ * what the probe said. Without it our MP offers max_down_bps (or all the
+ * engine can), as in 0.6.1. Meant to be set per call by a host that has
+ * seen a caller's box ask above its own projection and fail error control
+ * (v90m_get_v34_cap; docs/answering.md). Calling: ignored. */
+#define V90M_OPT_V34_TX_CAP 0x10000u
 
 /* the modulation of a connection (v90m_state.modulation) */
 typedef enum {
@@ -184,7 +218,9 @@ typedef enum {
     V90M_CONN_BELL103,          /* appended: the values above stay as they were */
     V90M_CONN_BELL212A,         /* V.22 at 1200 bit/s begun on the 2225 Hz Bell answer tone */
     V90M_CONN_X2,               /* (appended) x2: PCM downstream, V.34 upstream */
-    V90M_CONN_K56FLEX           /* (appended) K56flex: PCM downstream, V.34 upstream */
+    V90M_CONN_K56FLEX,          /* (appended) K56flex: PCM downstream, V.34 upstream */
+    V90M_CONN_HST               /* (appended) HST: tx_bps the channel we send on, rx_bps the
+                                   one we receive (they swap at a channel reversal) */
 } v90m_conn;
 
 typedef int  (*v90m_getbit_fn)(void *user);             /* next bit to send, 0 or 1 */
@@ -231,7 +267,15 @@ typedef struct {
                                        holds it at 33333. V.32bis (either role): one rate both ways,
                                        under the lower of the two. V.21, V.22, V.22bis, Bell: unused.
                                        With x2 or K56flex, max_up 1..2399 is V90M_EINVAL (their
-                                       V.34 upstream starts at 2400) */
+                                       V.34 upstream starts at 2400). HST (answering): max_down
+                                       1..4799 (under its lowest rate) and HST is not offered,
+                                       the modem answers as without V90M_MOD_HST; from 4800 the
+                                       call still opens at 9600, and from the retrain after
+                                       MNP's LRs on our forward rate is the best agreed one under
+                                       max_down; the far end's forward channel (after a
+                                       reversal) is held under max_up, at least 4800. A plain
+                                       MNP agreement (the caller's LR with no HST rate in
+                                       common) has no retrain: it stays at 9600 for the call */
     int            echo_delay;      /* samples from a sample leaving to its echo starting back (the
                                        driver's buffering), >= 0; -1 = measure it in every start-up.
                                        Calling V.90 / V.92: never measured, used as given, 0 .. 511
@@ -261,7 +305,8 @@ void     v90m_cfg_default(v90m_cfg *cfg);
  * range), V90M_ENOTSUP, V90M_ENOMEM; V90M_OK otherwise. */
 v90m_t  *v90m_create(const v90m_cfg *cfg, int *err);
 /* Or in memory of the caller's, at least v90m_mem_size() octets, aligned for
- * any type (nothing is allocated; v90m_destroy() then does nothing). Errors
+ * any type (nothing is allocated; v90m_destroy() then frees nothing, but
+ * still ends an HST link: call it before the memory is reused). Errors
  * as v90m_create, and V90M_EINVAL for mem NULL or misaligned, V90M_ENOMEM
  * for len too small. */
 size_t   v90m_mem_size(void);
@@ -288,8 +333,10 @@ int      v90m_process_g711(v90m_t *m, const uint8_t *rx, uint8_t *tx, size_t n);
 int      v90m_process_lin_rx(v90m_t *m, const int16_t *rx, uint8_t *tx, size_t n);
 int      v90m_process_linear(v90m_t *m, const int16_t *rx, int16_t *tx, size_t n);
 
-/* Ask for a retrain. Answering: in data mode of V.92, V.90, V.34, V.32bis
- * (x2, K56flex: V90M_ESTATE). Calling: once connected in V.22bis at 2400 bit/s, V.32bis, V.34, V.90,
+/* Ask for a retrain. Answering: in data mode of V.92, V.90, V.34, V.32bis,
+ * HST (holding the fast channel our short training; holding the back
+ * channel our MNP attention 0x2R at the rate in force, the far modem's
+ * training answering it) (x2, K56flex: V90M_ESTATE). Calling: once connected in V.22bis at 2400 bit/s, V.32bis, V.34, V.90,
  * V.92. V90M_OK, or V90M_ESTATE (none of those, or one under way).
  * Calling V.90 / V.92: 70 ms of silence and Tone A, Phase 2 to data mode
  * again (some 7 to 11 s); also during a rate renegotiation; V90M_ESTATE when
@@ -304,7 +351,11 @@ int      v90m_retrain(v90m_t *m);
  * cleardown is a rate sequence with data rate 0, drn = 0, and a caller that
  * does not acknowledge it is given up to 3.5 s); V90M_ESTATE when
  * there is nothing to send (V.21, V.22, V.22bis, V.32bis, Bell, or not in
- * data mode): just stop calling v90m_process_*. x2 and K56flex (answering,
+ * data mode): just stop calling v90m_process_*. HST (answering; the host
+ * has released its endpoint and waited for v90m_ec_tx_busy 0 first): the
+ * host's bits 30 ms more holding the fast channel, 200 ms holding the back
+ * one, so that MNP's LD reaches the far modem, then both carriers stop and
+ * the call ends; V90M_OK. x2 and K56flex (answering,
  * in data mode or a rate change): V90M_OK, and the call ends at once with
  * nothing sent. */
 int      v90m_cleardown(v90m_t *m);
@@ -324,15 +375,21 @@ typedef enum {
                                    more was due past the limit
                                    (see v90m_retrain); answering x2: the client asked for
                                    a retrain in data mode or in its rate change (its
-                                   Tone A), which x2 cannot serve */
+                                   Tone A), which x2 cannot serve; answering HST,
+                                   holding the back channel at the lowest agreed rate:
+                                   3 failed retrains within 10 s, or the 4th lost data
+                                   mode within 30 s */
     V90M_END_X2_FAILED,         /* (appended) answering: the client took up x2 (its marker
                                    came) and the x2 start-up, or a rate change of
                                    the client's, did not complete */
-    V90M_END_K56_FAILED         /* (appended) answering: K56flex was agreed and its start-up
+    V90M_END_K56_FAILED,        /* (appended) answering: K56flex was agreed and its start-up
                                    went past the point of no return (our INFO1a), and
                                    the start-up, or a rate change or retrain of the
                                    client's, did not complete, or the client retrained
                                    a third time in a row */
+    V90M_END_HST_FAILED         /* (appended) answering: an HST call had no MNP link
+                                   within its limit (a host that did not clear down
+                                   when the endpoint gave up) */
 } v90m_end;
 
 /* Cheap; fine to read after every sample. Also after the end: end says why. */
@@ -370,6 +427,7 @@ typedef struct {
                                    or when the call ends in it (not a cleardown's stop, ours
                                    or the far end's) (answering: V.34, V.90, V.92, x2, K56flex; calling:
                                    V.32bis, V.34, V.90, V.92) */
+    unsigned   reversals;       /* (appended) HST: channel reversals, this call; 0 otherwise */
 } v90m_stats;
 void     v90m_get_stats(const v90m_t *m, v90m_stats *st);
 
@@ -436,16 +494,40 @@ typedef struct {
 void     v90m_get_diag(const v90m_t *m, v90m_diag *d);
 /* The name of an error of v90m_diag ("P2D_ERR_INFO1A"), "none" for 0, "?"
  * for a number that is no error; never NULL. Diagnostic text, not an enum:
- * the numbers may change in any version, the names do not within 0.6.x
+ * the numbers may change in any version, the names do not within 0.7.x
  * (the list: docs/api.md). */
 const char *v90m_err_name(int code);
 /* Short names for a log line, never NULL, "?" outside the enum; they do
- * not change within 0.6.x. Phases: "none", "tone", "v8", "phase2",
+ * not change within 0.7.x. Phases: "none", "tone", "v8", "phase2",
  * "phase3", "phase4", "train", "data". Modulations: "none", "V.21",
  * "V.22", "V.22bis", "V.90", "V.34", "V.32bis", "V.92", "Bell 103",
- * "Bell 212A", "x2", "K56flex". */
+ * "Bell 212A", "x2", "K56flex", "HST". */
 const char *v90m_phase_name(v90m_phase p);
 const char *v90m_conn_name(v90m_conn c);
+
+/* The V.34 transmit cap's status (added in 0.6.2; V90M_OPT_V34_TX_CAP):
+ * answering, V.34 (and V.34 selected by a V.90 caller's INFO1a), our
+ * transmit direction, from the last Phase 2 and Phase 4 of the call, kept
+ * after the end until v90m_reset. All three are 0 when calling, on any
+ * other call (x2 and K56flex included), and before V.34 training began. A
+ * struct and a function of their own, as v90m_diag: v90m_stats keeps its
+ * size within 0.6, and so does v90m_v34_cap from 0.6.2 on. Cheap; fine to
+ * read after every sample. For the host's count: a caller whose ask_bps is
+ * above its proj_bps and whose error control failed (docs/answering.md). */
+typedef struct {
+    int        proj_bps;    /* the caller's own projection for our transmit,
+                               bit/s (2400 x INFO1c / INFO1a bits 30:33 at
+                               the symbol rate in use); 0 = none */
+    int        ask_bps;     /* the maximum the caller's MP asks of our
+                               transmit, bit/s; 0 until its MP came; after
+                               a cleardown (ours or the caller's), the one
+                               data mode last began with */
+    int        capped;      /* 1: V90M_OPT_V34_TX_CAP lowered our MP's offer
+                               below what it would have been without it
+                               (proj_bps below our ceiling); 0 otherwise, and
+                               always without the option */
+} v90m_v34_cap;
+void     v90m_get_v34_cap(const v90m_t *m, v90m_v34_cap *c);
 
 /* ------------------------------------- start-stop characters (V.14 basic)
  * Characters (1 start, 8 data LSB first, 1 stop, mark idle) on the bit pump
@@ -498,6 +580,17 @@ typedef struct {
         int v44_p3_tx, v44_p3_rx;   /* history, octets 512..4096 */
         int t401_ms, t403_ms, n400; /* t401_ms >= 1; t403_ms >= 0, 0 = off; n400 >= 1 */
     } lapm;
+    /* MNP (V.42 Annex A), answering: a caller's LR, in start-stop or HDLC,
+     * leads to MNP; an ODP still leads to LAPM (protocol in the status) */
+    struct {
+        int enable;        /* 0..1, default 0: MNP off, the endpoint is 0.6.0's */
+        int k;             /* 1..8, default 8 */
+        int n401;          /* 1..256, default 64 (256 needs opt bit 0, value 1) */
+        int opt;           /* parameter 8 bitmap, 0..3, default 2 (fixed-field LT/LA, no 256) */
+        int framing;       /* highest framing mode we offer or accept, 2..3, default 3 */
+        int t401_min_ms;   /* floor for the computed T401, 500..60000, default 1500 */
+        int n400;          /* 1..255, default 12 */
+    } mnp;
 } v90m_ec_cfg;
 #define V90M_COMP_AUTO   0
 #define V90M_COMP_ALWAYS 1
@@ -513,6 +606,8 @@ enum { V90M_EC_R_NONE = 0, V90M_EC_R_LOCAL, V90M_EC_R_PEER_DISC, V90M_EC_R_PEER_
        V90M_EC_R_N400, V90M_EC_R_PROTOCOL, V90M_EC_R_NEGOTIATION,
        V90M_EC_R_NO_EC = 16, V90M_EC_R_COMPRESSION, V90M_EC_R_NO_SABME };
 enum { V90M_EC_COMP_NONE = 0, V90M_EC_COMP_V42BIS, V90M_EC_COMP_V44 };
+/* the protocol the answerer's detection chose (v90m_ec_status.protocol) */
+enum { V90M_EC_PROTO_NONE = 0, V90M_EC_PROTO_LAPM, V90M_EC_PROTO_MNP, V90M_EC_PROTO_ASYNC };
 
 typedef struct {
     int state, reason;
@@ -531,13 +626,27 @@ typedef struct {
     unsigned long tx_rej, rx_rej, t401_expiries, violations;
     unsigned long comp_in, comp_out, decomp_in, decomp_out;
     unsigned long async_overruns, async_framing;
+    int protocol;                   /* V90M_EC_PROTO_* */
+    int mnp_framing, mnp_opt, mnp_streamlined;  /* MNP: framing mode 2 or 3, parameter 8
+                                                   agreed, the HST layout */
+    int hst, hst_rates, hst_back300;            /* the HST profile agreed (an HST call whose
+                                                   caller's 0xC0 has bit 0 and a rate in
+                                                   common): 1, the rate mask (bit n:
+                                                   2400n bit/s), 300 bit/s back channel */
+    int attn_tx, attn_rx;           /* MNP: the type of the last LN sent, received */
+    unsigned long rx_unknown;       /* MNP: valid frames of an unknown type */
+    int rx_unknown_id;              /* MNP: the first octet of the last of them */
+    int peer_ld_reason;             /* MNP: the reason in the far end's LD, 0 none */
 } v90m_ec_status;
 
 void        v90m_ec_cfg_default(v90m_ec_cfg *cfg, int originator);
 /* create / init: NULL on failure, *err as for v90m_create / v90m_init
  * (V90M_EINVAL for a value outside the ranges above); reset: V90M_OK, or
  * V90M_EINVAL for e or cfg NULL or a value outside them, the endpoint left
- * as it was */
+ * as it was. An endpoint in memory of the caller's (v90m_ec_init): call
+ * v90m_ec_destroy before that memory is freed or initialised again; it
+ * frees nothing, but ends an HST link (v90m_ec_link_hst), without which
+ * the modem keeps the endpoint's address */
 v90m_ec_t  *v90m_ec_create(const v90m_ec_cfg *cfg, int *err);
 size_t      v90m_ec_mem_size(void);
 v90m_ec_t  *v90m_ec_init(void *mem, size_t len, const v90m_ec_cfg *cfg, int *err);
@@ -549,21 +658,49 @@ void        v90m_ec_rx_bit(v90m_ec_t *e, int bit);      /* from the modem's putb
 void        v90m_ec_tick(v90m_ec_t *e, unsigned ms);    /* timers */
 void        v90m_ec_line_stopped(v90m_ec_t *e);         /* on V90M_EV_DATA_STOPPED (moving 1 -> 0) */
 void        v90m_ec_line_restored(v90m_ec_t *e);        /* on V90M_EV_DATA_MOVING (moving 0 -> 1) */
+/* the line's rates, ours and the far end's (v90m_state.tx_bps, rx_bps), each
+ * > 0: after v90m_ec_reset at V90M_EV_CONNECTED (a reset forgets them), and
+ * at each V90M_EV_RATES.
+ * MNP computes T401 and T404 from them (2400 until given); LAPM's timers are
+ * the configured ones. V90M_OK, or V90M_EINVAL (e NULL, a rate <= 0) */
+int         v90m_ec_set_rates(v90m_ec_t *e, int tx_bps, int rx_bps);
+/* HST (V90M_MOD_HST): tie the endpoint to the answering modem m, before m
+ * decides whether to offer HST (the end of ANSam): link before the first
+ * sample. Linked, the endpoint follows m's decision: it holds T400 until m
+ * has connected (or ended) on another path, and is then the unlinked
+ * endpoint; on an HST call it takes the caller's bits from the start of
+ * the line, so an LR sent during our training is kept. v90m_ec_reset keeps
+ * the link (resetting at V90M_EV_CONNECTED is harmless). The link is
+ * two-way, and either side ends it: v90m_destroy or v90m_reset of m;
+ * v90m_ec_destroy, a reset with mnp.enable 0, or a link to another modem
+ * of e; a second endpoint linked to m unlinks the first. So either may be
+ * destroyed first, and e may serve a new modem per call: link again after
+ * v90m_create or v90m_reset, before the first sample. Linking starts e's
+ * call afresh, as v90m_ec_reset with its configuration does (the link is
+ * for a call m has not decided yet), so linking again between calls
+ * without a reset is enough. V90M_OK;
+ * V90M_EINVAL for e or m NULL, e with mnp.enable 0 or an originator, or m
+ * calling; V90M_ESTATE once m has decided. */
+int         v90m_ec_link_hst(v90m_ec_t *e, v90m_t *m);
 
 size_t      v90m_ec_write(v90m_ec_t *e, const uint8_t *data, size_t len);
 size_t      v90m_ec_write_space(const v90m_ec_t *e);
 size_t      v90m_ec_read(v90m_ec_t *e, uint8_t *data, size_t max);
 size_t      v90m_ec_read_avail(const v90m_ec_t *e);
 int         v90m_ec_tx_idle(const v90m_ec_t *e);        /* everything written was acknowledged */
-int         v90m_ec_tx_busy(const v90m_ec_t *e);        /* a frame is still leaving the transmitter */
+int         v90m_ec_tx_busy(const v90m_ec_t *e);        /* a frame is still leaving the transmitter
+                                                           (MNP: an LD owed too, either framing) */
 
-void        v90m_ec_release(v90m_ec_t *e);              /* orderly: DISC, wait for UA */
+void        v90m_ec_release(v90m_ec_t *e);              /* orderly: DISC, wait for UA; MNP: LD 255,
+                                                           DISCONNECTED at once (wait for tx_busy 0) */
 void        v90m_ec_abort(v90m_ec_t *e);                /* the line is gone: stop without a word, in
                                                            every state: V90M_EC_DISCONNECTED on return */
 /* break signals (V.42 12.3.1): opt is one of these, len10ms the length in
  * 10 ms units. send_break: V90M_OK when the break is on its way;
  * V90M_EINVAL for any other opt; V90M_ESTATE when error control is not up
- * (V90M_EC_CONNECTED) or a break of ours is still pending. get_break: 1 with *opt and *len10ms when a break came
+ * (V90M_EC_CONNECTED), a break of ours is still pending, or on an HST call
+ * with its profile agreed (status hst 1: there, MNP's attention frames carry
+ * the channel's attention codes, no break). get_break: 1 with *opt and *len10ms when a break came
  * (in its place among the octets read), else 0. */
 #define V90M_BRK_NONDESTRUCTIVE_INSEQ      0x00
 #define V90M_BRK_NONDESTRUCTIVE_EXPEDITED  0x40

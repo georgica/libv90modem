@@ -22,4 +22,11 @@ int32_t ulaw_to_linear(uint8_t b);
 /* Encode a linear value to the nearest mu-law octet. */
 uint8_t linear_to_ulaw(int32_t v);
 
+/* G.711 A-law (Table 1a/G.711), on the same 16-bit scale (the 13-bit
+ * values times 8): the octet as sent (even bits inverted) to its decision
+ * value, and a linear value to its octet (truncating, as G.711's encoder
+ * does). */
+int32_t alaw_to_linear(uint8_t a);
+uint8_t linear_to_alaw(int32_t v);
+
 #endif

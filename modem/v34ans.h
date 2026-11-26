@@ -29,8 +29,10 @@ typedef struct {
     v34dx_putbit_fn putbit; /* data received */
     void *user;
     int x2;                 /* offer x2 in Phase 2 (p2ans_cfg.x2): V.8 made our JM x2's */
-    int k56;                /* K56flex was agreed in V.8bis (answer_t.k56_agreed): Phase 2
+    uint8_t k56;            /* K56flex was agreed in V.8bis (answer_t.k56_agreed): Phase 2
                                (p2ans_cfg.k56) may flag INFO1a, first and in a retrain */
+    uint8_t tx_cap;         /* 1: our MP's transmit ceiling capped at the caller's INFO1c /
+                               INFO1a projection (v34_tx_ceiling); 0: max_tx_rate alone */
 } v34ans_cfg;
 
 typedef enum {
@@ -70,7 +72,11 @@ typedef struct {
     int          retrains_now;      /* in a row, without data in between */
     int          retrains_ours;     /* ... of all, those we began */
     int          connects;          /* times data mode was reached (start-up, retrains) */
-    int          from_v90;          /* started by v34ans_init_call: no Phase 2 of ours */
+    uint8_t      from_v90;          /* started by v34ans_init_call: no Phase 2 of ours */
+    uint8_t      far_ask;           /* the caller's MP's maximum for our transmit, units of
+                                       2400 bit/s, as data mode last began (kept through a
+                                       renegotiation's or cleardown's MP exchange, which
+                                       clears dx.got_far_mp); 0 = none yet */
 } v34ans_t;
 
 void    v34ans_init(v34ans_t *a, const v34ans_cfg *cfg);

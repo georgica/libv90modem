@@ -73,6 +73,8 @@ static const char *const conn_name[] = { "none", "V.21", "V.22", "V.22bis", "V.9
                                          "x2" };
 static const char *const end_name[] = { "none", "start-up failed", "line lost", "far end cleared down", "we cleared down",
                                         "no answer tone", "no JM", "nothing in common", "retrain failed", "x2 failed" };
+/* a value past a table (a newer library's modulation or end code) prints "?" */
+#define NAME(t, i) ((unsigned)(i) < sizeof t / sizeof t[0] ? t[(unsigned)(i)] : "?")
 
 #define HDR      9          /* <IBBBH */
 #define MAXN     4096       /* samples in a frame, at most */
@@ -208,7 +210,7 @@ static void on_event(void *u, v90m_event ev)
     v90m_get_state(modem, &st);
     switch (ev) {
     case V90M_EV_CONNECTED:
-        printf("[%7.2f] ours: CONNECT %d/%d %s%s\n", line_s(), st.tx_bps, st.rx_bps, conn_name[st.modulation],
+        printf("[%7.2f] ours: CONNECT %d/%d %s%s\n", line_s(), st.tx_bps, st.rx_bps, NAME(conn_name, st.modulation),
                st.used_v8 ? "" : " (no V.8)");
         if (!ec_on) {
             v90m_ec_cfg ecc;
@@ -221,7 +223,7 @@ static void on_event(void *u, v90m_event ev)
         moving = 1;
         break;
     case V90M_EV_RATES:
-        printf("[%7.2f] ours: rates now %d/%d %s\n", line_s(), st.tx_bps, st.rx_bps, conn_name[st.modulation]);
+        printf("[%7.2f] ours: rates now %d/%d %s\n", line_s(), st.tx_bps, st.rx_bps, NAME(conn_name, st.modulation));
         if (st.modulation == V90M_CONN_X2) {
             changes++;
             burst_want = burst_len > 0;
@@ -240,7 +242,7 @@ static void on_event(void *u, v90m_event ev)
             v90m_ec_line_restored(ec);
         break;
     case V90M_EV_ENDED:
-        printf("[%7.2f] ours: ended: %s\n", line_s(), end_name[st.end]);
+        printf("[%7.2f] ours: ended: %s\n", line_s(), NAME(end_name, st.end));
         break;
     }
     fflush(stdout);
@@ -456,8 +458,8 @@ int main(int argc, char **argv)
     close(fd);
     v90m_get_state(modem, &st);
     printf("[%7.2f] ours: %s, %s %d/%d, %s, V.42 %s; %ld octets received (%ld printable), %s\n", line_s(),
-           was_connected ? "data mode reached" : "no data mode", conn_name[st.modulation], st.tx_bps, st.rx_bps,
-           st.used_v8 ? "V.8" : "no V.8", ec_up ? "up" : "never up", got, printable, end_name[st.end]);
+           was_connected ? "data mode reached" : "no data mode", NAME(conn_name, st.modulation), st.tx_bps, st.rx_bps,
+           st.used_v8 ? "V.8" : "no V.8", ec_up ? "up" : "never up", got, printable, NAME(end_name, st.end));
     v90m_destroy(modem);
     if (e_pre > 0 && e_post > 0)
         printf("ours: in data mode, sent %.1f dBm0 before the pad, %.1f dBm0 after it\n",

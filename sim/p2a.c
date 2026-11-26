@@ -184,7 +184,7 @@ int16_t p2a_tick(p2a_t *p, int16_t x)
             p->info1a.uinfo = (uint8_t)(p->cfg.v90 ? p->cfg.uinfo : 0);
             p->info1a.up_sr = (uint8_t)(p->cfg.up_sr >= 0 ? p->cfg.up_sr : best < 0 ? 3 : best);
             p->info1a.down_sr = 4;
-            p->info1a.max_rate = 12;
+            p->info1a.max_rate = (uint8_t)(!p->cfg.v90 && p->cfg.v34_max_rate > 0 ? p->cfg.v34_max_rate : 12);
             if (!p->cfg.v90) {              /* Table 11: one symbol rate, and the digital modem's carrier and filter */
                 p->info1a.down_sr = p->info1a.up_sr;
                 p->info1a.hi_carrier = (uint8_t)(p->cfg.v34_hi_carrier != 0);

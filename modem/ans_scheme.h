@@ -11,6 +11,7 @@
  *   ans_v34     ANS_V34 (modem/ans_v34.c), the V.34 hand-off of V.90 included
  *   ans_x2      ANS_X2 (modem/ans_x2.c)
  *   ans_v8bis   ANS_V8BIS; ans_k56 ANS_K56; ans_k56rt ANS_K56RT (modem/ans_k56.c)
+ *   ans_hst     ANS_HST_WAIT, ANS_HST (modem/ans_hst.c)
  *   ans_v8      ANS_V8; ans_ended ANS_FAILED (modem/answer.c)
  * The signal to noise, round trip and (between engines) echo delay are the
  * modulation's, not the phase's: answer.c finds those through the scheme of
@@ -33,7 +34,7 @@ typedef struct ans_scheme {
     uint8_t pcm_out;                         /* the codeword of the sample is a->pcm (answer_tick_lin) */
 } ans_scheme_t;
 extern const ans_scheme_t ans_legacy, ans_v90, ans_v92, ans_v34, ans_x2, ans_k56;
-extern const ans_scheme_t ans_v8, ans_v8bis, ans_p2, ans_k56rt;
+extern const ans_scheme_t ans_v8, ans_v8bis, ans_p2, ans_k56rt, ans_hst;
 /* enter phase p: answer_t.phase and the scheme of it (answer_t.t is the caller's) */
 void ans_enter(answer_t *a, ans_phase p);
 
@@ -67,6 +68,8 @@ int  ans_mod_echo_delay(const answer_t *a);
 
 /* the phases' starts, from the phase before (V.8's result, Phase 2's end, a
  * marker) */
+void ans_start_no_cm(answer_t *a);      /* modem/answer.c: a caller without V.8, as 0.6.0
+                                           answers it: V.22bis, else V.21, else the end */
 void ans_start_v22(answer_t *a);        /* modem/ans_legacy.c */
 void ans_start_v21(answer_t *a);
 void ans_start_v32(answer_t *a);
@@ -76,5 +79,7 @@ void ans_v34_cfg(const answer_t *a, v34ans_cfg *c);   /* modem/ans_v34.c */
 void ans_start_v34(answer_t *a);
 void ans_start_x2(answer_t *a);         /* modem/ans_x2.c */
 void ans_start_k56(answer_t *a);        /* modem/ans_k56.c */
+void ans_start_hst_wait(answer_t *a);   /* modem/ans_hst.c: ANSam over, no CM, no AA */
+void ans_start_hst(answer_t *a, int det); /* the detector fired (HST_DET_450 / HST_DET_300) */
 
 #endif

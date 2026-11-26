@@ -31,6 +31,8 @@
   API K56flex call, the client silent after its renegotiation's S: end 10
   API K56flex call, the client's retrain: 6 events (1 4 3 4 3 5), retrains 1, renegotiations 0, v90m_retrain in it -4; end 4
   API K56flex call, three retrains in a row: retrains 3, end 10
+  V.34 cap off, box B's shape: V.34 31200 bit/s to it; projection 28800, its MP 31200, capped 0
+  V.34 cap on, box B's shape: V.34 28800 bit/s to it; projection 28800, its MP 31200, capped 1
   V.22bis, the line silent 2 s into data mode: answerer end 2
   V.34, the line silent 2 s into data mode: answerer end 2
   V.90, the line silent 2 s into data mode: answerer end 2
@@ -56,4 +58,4 @@
   tx_level 16384 (the caller 16384), V.90 A-law back to back: data mode (56000 / 21600 bit/s)
   tx_level 16384, V.22 (a caller without 2400): V.22 1200 bit/s
   tx_level 16384 both, V.90 back to back: data mode, answerer end 0
-api: 953 checks, 0 failures
+api: 1128 checks, 0 failures

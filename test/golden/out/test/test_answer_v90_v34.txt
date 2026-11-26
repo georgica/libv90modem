@@ -3,5 +3,8 @@
   after our retrain: 28800 bit/s to it, 28800 bit/s from it; 86400 / 86400 bits, 0 / 0 bad; SNR 38.1 dB, rtd 46
   after the caller's retrain: 28800 bit/s to it, 28800 bit/s from it; 86400 / 86400 bits, 0 / 0 bad; SNR 36.4 dB, rtd 45
   high carrier, filter 3, ceilings: 14400 bit/s to it, 9600 bit/s from it; 43200 / 28800 bits, 0 / 0 bad; SNR 37.0 dB, rtd 45
+  INFO1a 24000, MP more, no cap: 28800 bit/s to it, 28800 bit/s from it; 86400 / 86400 bits, 0 / 0 bad; SNR 38.1 dB, rtd 45
+  INFO1a 24000, MP more: 24000 bit/s to it, 28800 bit/s from it; 72000 / 86400 bits, 0 / 0 bad; SNR 37.7 dB, rtd 45
+  the same after our retrain: 24000 bit/s to it, 28800 bit/s from it; 72000 / 86400 bits, 0 / 0 bad; SNR 36.6 dB, rtd 46
   caller's signal lost in data mode: over after 530 ms, 0 retrain(s)
-answer_v90_v34: 102 checks, 0 failures
+answer_v90_v34: 150 checks, 0 failures

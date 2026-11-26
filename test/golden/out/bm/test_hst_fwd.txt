@@ -1,0 +1,99 @@
+pulse_points: 30 symbols; level 3036 (V.32's 3036)
+  700-2900 Hz within 0.5 dB: pass
+  600 and 3000 Hz -3 +- 0.5 dB: pass
+  >= 3200 Hz at most -36 dB: pass
+  <= 400 Hz at most -40 dB: pass
+  the level V.32's within 0.1 dB: pass
+guard: 325 taps, 53 multiplies a sample
+  linear phase: pass
+  >= 560 Hz within 0.5 dB: pass
+  >= 600 Hz within 0.02 dB: pass
+  <= 480 Hz at least 50 dB down: pass
+guard: 32000 samples through hst_gf_tick, 0 unlike the direct form
+  hst_gf_tick is the direct form: pass
+v32_default answering: line 0x62AA7B75, reference 0x3C258E9C
+  V.32's pulse: the line as 0.6.0's: pass
+  V.32's pulse: the echo reference as 0.6.0's: pass
+  HST's pulse and back: the line and reference as 0.6.0's: pass
+v32_default calling: line 0x93EA3185, reference 0xC5E4CCCC
+  V.32's pulse: the line as 0.6.0's: pass
+  V.32's pulse: the echo reference as 0.6.0's: pass
+  HST's pulse and back: the line and reference as 0.6.0's: pass
+v32_default 30 -> 12 -> 30: line 0xF60DD2A1
+  30 -> 12 -> 30: the history past 18 symbols cleared: pass
+  30 -> 12 -> 30: the line as V.32's pulse's history then 30: pass
+bm: opening code 3
+  A..D in the 7200 set, labelled Y1 Y2 11 01 10 00: pass
+bm: segment 4 from each of A..D at codes 3..6: 0 of 16 unlike V.17's start
+  segment 4: from each first bridge state, in V.17's labelling: pass
+bm long, code 3: training 256 2976 64 48 100; data from symbol 3344 (1393 ms)
+bm long, code 3: the bridge's first symbol B
+bm long, code 3: unlike: AB 0, first 16 0, conditioning 0, bridge bits 0, ones off the rate's points 0, segment 4's start 0
+  segment 1: A B A B ...: pass
+  segment 2: V.17 Table 4's first 16 dibits: pass
+  segment 2: GPC from 0x2ECDD5, ones in, 00 C 01 D 11 A 10 B: pass
+  segment 3: the bridge's 16 bits, 8 times: pass
+  segment 4: on the rate's points: pass
+  segment 4: differential from the bridge's first symbol in the rate's labelling: pass
+  getbit idle through the training: pass
+  then data at the rate: pass
+bm short asked, code 2: training 256 2976 64 48 100; data from symbol 3344 (1393 ms)
+bm short asked, code 2: the bridge's first symbol B
+bm short asked, code 2: unlike: AB 0, first 16 0, conditioning 0, bridge bits 0, ones off the rate's points 0, segment 4's start 0
+  segment 1: A B A B ...: pass
+  segment 2: V.17 Table 4's first 16 dibits: pass
+  segment 2: GPC from 0x2ECDD5, ones in, 00 C 01 D 11 A 10 B: pass
+  segment 3: the bridge's 16 bits, 8 times: pass
+  segment 4: on the rate's points: pass
+  segment 4: differential from the bridge's first symbol in the rate's labelling: pass
+  getbit idle through the training: pass
+  then data at the rate: pass
+bm short asked, code 3: training 256 2976 64 48 100; data from symbol 3344 (1393 ms)
+bm short asked, code 3: the bridge's first symbol B
+bm short asked, code 3: unlike: AB 0, first 16 0, conditioning 0, bridge bits 0, ones off the rate's points 0, segment 4's start 0
+  segment 1: A B A B ...: pass
+  segment 2: V.17 Table 4's first 16 dibits: pass
+  segment 2: GPC from 0x2ECDD5, ones in, 00 C 01 D 11 A 10 B: pass
+  segment 3: the bridge's 16 bits, 8 times: pass
+  segment 4: on the rate's points: pass
+  segment 4: differential from the bridge's first symbol in the rate's labelling: pass
+  getbit idle through the training: pass
+  then data at the rate: pass
+bm short asked, code 4: training 256 2976 64 48 100; data from symbol 3344 (1393 ms)
+bm short asked, code 4: the bridge's first symbol B
+bm short asked, code 4: unlike: AB 0, first 16 0, conditioning 0, bridge bits 0, ones off the rate's points 0, segment 4's start 0
+  segment 1: A B A B ...: pass
+  segment 2: V.17 Table 4's first 16 dibits: pass
+  segment 2: GPC from 0x2ECDD5, ones in, 00 C 01 D 11 A 10 B: pass
+  segment 3: the bridge's 16 bits, 8 times: pass
+  segment 4: on the rate's points: pass
+  segment 4: differential from the bridge's first symbol in the rate's labelling: pass
+  getbit idle through the training: pass
+  then data at the rate: pass
+bm short asked, code 5: training 256 2976 64 48 100; data from symbol 3344 (1393 ms)
+bm short asked, code 5: the bridge's first symbol B
+bm short asked, code 5: unlike: AB 0, first 16 0, conditioning 0, bridge bits 0, ones off the rate's points 0, segment 4's start 0
+  segment 1: A B A B ...: pass
+  segment 2: V.17 Table 4's first 16 dibits: pass
+  segment 2: GPC from 0x2ECDD5, ones in, 00 C 01 D 11 A 10 B: pass
+  segment 3: the bridge's 16 bits, 8 times: pass
+  segment 4: on the rate's points: pass
+  segment 4: differential from the bridge's first symbol in the rate's labelling: pass
+  getbit idle through the training: pass
+  then data at the rate: pass
+bm short asked, code 6: training 256 2976 64 48 100; data from symbol 3344 (1393 ms)
+bm short asked, code 6: the bridge's first symbol B
+bm short asked, code 6: unlike: AB 0, first 16 0, conditioning 0, bridge bits 0, ones off the rate's points 0, segment 4's start 0
+  segment 1: A B A B ...: pass
+  segment 2: V.17 Table 4's first 16 dibits: pass
+  segment 2: GPC from 0x2ECDD5, ones in, 00 C 01 D 11 A 10 B: pass
+  segment 3: the bridge's 16 bits, 8 times: pass
+  segment 4: on the rate's points: pass
+  segment 4: differential from the bridge's first symbol in the rate's labelling: pass
+  getbit idle through the training: pass
+  then data at the rate: pass
+acq_v17: the receiver starts from BinModem's pulse's matched filter (HST_FMF_BM): test_hstcall fwd_to_ours_bm
+zero_isi: the pulse against itself at 1 .. 29 symbols
+  the pulse's own ISI at most -40 dB: pass
+zero_isi: through the receiver's start: BinModem's pulse's matched filter (HST_FMF_BM): test_hstcall fwd_to_ours_bm
+test_hst_fwd: 113 checks, 0 failures

@@ -17,6 +17,9 @@
 0.6 arm_test_ecdly
 0.0 arm_test_filt
 0.0 arm_test_g711
+60.0 arm_test_hst_back
+10.0 arm_test_hst_det
+497.6 arm_test_hst_fwd
 0.0 arm_test_info
 0.4 arm_test_k56enc
 0.0 arm_test_k56tab
@@ -185,6 +188,9 @@
 0.0 test_ecdly
 0.0 test_filt
 0.0 test_g711
+20.0 test_hst_back
+1.0 test_hst_det
+5.5 test_hst_fwd
 0.0 test_info
 0.6 test_k56enc
 0.0 test_k56tab

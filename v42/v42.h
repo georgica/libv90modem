@@ -41,6 +41,27 @@
  *     the two share their storage here, as only one runs on a connection.
  *   - A V.42 bis or V.44 decoder error releases the connection
  *     (V42EC_R_COMPRESSION).
+ *   - MNP (cfg.mnp.enable, answerer): in the detection phase a complete
+ *     LR with a good FCS, in start-stop (framing mode 2) or HDLC (mode 3),
+ *     starts the MNP link of mnp.h in LAPM's place (v42ec_status_t.protocol);
+ *     so does one in HDLC after flags, before LAPM has taken anything. An ODP
+ *     first means LAPM. Replies go in the framing the LR came in. T400 is
+ *     held, once and at most V42EC_T400_LR_HOLD_MS, while a start-stop
+ *     frame that begins as an LR is under way when it runs out (an LR at
+ *     300 bit/s). Breaks are
+ *     LNs of types 1 to 3; v42ec_release sends LD 255 and is
+ *     V42EC_DISCONNECTED at once (wait for v42ec_tx_busy() to be 0 before
+ *     dropping the line).
+ *   - HST (v42ec_set_link, hst_link.h): a linked answerer hunts for an LR
+ *     from the first bit the pump hands over before CONNECTED, holds T400
+ *     while the modem has not decided, and on an HST call has a window
+ *     (our training's end plus V42EC_HST_WINDOW_MS) in T400's place: no
+ *     LR in it ends with V42EC_R_NO_EC, never start-stop. v42ec_reset
+ *     keeps the link and an LR already taken (the host's reset at
+ *     CONNECTED); v42ec_init starts clean. A caller whose LR carries
+ *     0xC0 with bit 0 gets the HST profile of mnp.h (streamlined layouts,
+ *     attention codes for the pump, the reversal policy), told to the
+ *     pump through the mailbox; no break can be sent there.
  *   - After V42EC_DISCONNECTED keep calling v42ec_tx_bit() for a few dozen
  *     bits if the line is still up, so a final UA or DM gets out; data
  *     already received stays readable.
@@ -64,6 +85,8 @@
 #include "v42_lapm.h"
 #include "v42_comp.h"
 #include "v44_comp.h"
+#include "mnp.h"
+#include "hst_link.h"
 
 /* user data buffers, octets (compile-time) */
 #ifndef V42EC_TXBUF
@@ -87,6 +110,28 @@ enum {
 #define V42EC_R_COMPRESSION  17   /* V.42 bis or V.44 decoder reported C-ERROR */
 #define V42EC_R_NO_SABME     18   /* answerer: nothing after the detection phase */
 
+/* MNP on, answerer: when T400 runs out while an LR in start-stop is partly
+ * received (SYN DLE STX, then an LI of 2..254 and type 1: an LR's start),
+ * T400 is held until that frame ends, and at most this long; then
+ * start-stop. Any other frame, typed text included, is not waited for. A mode 2 LR at 300 bit/s takes about
+ * 1 s (the Courier's, 31 characters), longer than T400. [OURS] */
+#define V42EC_T400_LR_HOLD_MS 2000
+
+/* HST link (hst_link.h), state HST_LINK_ON: with no LR, the endpoint ends
+ * with V42EC_R_NO_EC this long after the pump says our training is out
+ * (`trained`), in T400's place; no start-stop over HST (decision 19) */
+#define V42EC_HST_WINDOW_MS 5000
+/* the longest LR the endpoint keeps for v42ec_reset: an LI of at most 254 */
+#define V42EC_LR_CAP 255
+
+/* MNP (V.42 Annex A) beside LAPM: the answerer takes a caller's LR */
+typedef struct {
+    int enable;             /* answerer: 1 = an LR (either framing) leads to MNP;
+                               0 = no MNP, the endpoint is 0.6.0's */
+    mnp_cfg_t link;         /* what we offer: k, N401, parameter 8, framing,
+                               T401 floor, N400 */
+} v42ec_mnp_cfg_t;
+
 typedef struct {
     int originator;         /* 1 = originating DCE, 0 = answering DCE */
     int detect;             /* run the detection phase (7.2.1) */
@@ -97,7 +142,12 @@ typedef struct {
     int comp_policy;        /* V42COMP_AUTO / _ALWAYS / _NEVER for our encoder
                                (V44COMP_* are the same values) */
     v42lapm_cfg_t lapm;     /* k, N401, V.42 bis, V.44, FCS, T401, T403, N400 */
+    v42ec_mnp_cfg_t mnp;
 } v42ec_cfg_t;
+
+/* the protocol detection chose: none yet, LAPM (an ODP, flags or a frame
+ * that is not an LR), MNP (an LR) or start-stop */
+enum { V42EC_PROTO_NONE = 0, V42EC_PROTO_LAPM, V42EC_PROTO_MNP, V42EC_PROTO_ASYNC };
 
 /* the compression procedure in use on the connection */
 enum { V42EC_COMP_NONE = 0, V42EC_COMP_V42BIS, V42EC_COMP_V44 };
@@ -121,6 +171,15 @@ typedef struct {
     unsigned long comp_in, comp_out;         /* our encoder: characters, octets */
     unsigned long decomp_in, decomp_out;     /* our decoder: octets, characters */
     unsigned long async_overruns, async_framing;
+    int protocol;            /* V42EC_PROTO_* */
+    int mnp_framing, mnp_opt, mnp_streamlined;   /* MNP: the framing mode, parameter 8
+                                                    agreed, we send HST's streamlined layouts */
+    int hst, hst_rates, hst_back300;             /* the HST profile agreed (mnp.h): its rate
+                                                    mask and 300 bit/s back channel; else 0 */
+    int attn_tx, attn_rx;    /* MNP: the type of the last LN sent, received */
+    unsigned long rx_unknown;    /* MNP: valid frames of an unknown type */
+    int rx_unknown_id;       /* MNP: the first octet of the last of them */
+    int peer_ld_reason;      /* MNP: the reason of the far end's LD, 0 none */
 } v42ec_status_t;
 
 typedef struct {
@@ -146,7 +205,9 @@ typedef struct v42ec {
     v42async_tx_t atx;
     v42hdlc_tx_t htx;
     v42hdlc_rx_t hrx;
-    v42lapm_t    lapm;
+    /* the link: LAPM until detection picks MNP (protocol), which then
+     * starts the MNP one in its place */
+    union { v42lapm_t lapm; mnp_t mnp; } l;
     union { v42comp_enc_t bis; v44comp_enc_t v44; } enc;    /* the one of comp_alg */
     union { v42comp_dec_t bis; v44comp_dec_t v44; } dec;
     int comp_alg;            /* V42EC_COMP_* */
@@ -164,6 +225,30 @@ typedef struct v42ec {
      * stop_frames of the transmitter's (htx.frames) */
     int stopped, stop_cut;
     unsigned long stop_frames;
+
+    int protocol;            /* V42EC_PROTO_* */
+    int mnp_brk;             /* MNP: our destructive break waits for its LNA; that
+                                LNA's reset flushes nothing (mnp.h, Breaks) */
+    mnp2_rx_t hunt2;         /* MNP on, detection: the start-stop LR hunter */
+    int tx_bps, rx_bps;      /* v42ec_set_rates; 0 = not given */
+    int t400_held;           /* MNP on: T400 ran out inside a start-stop frame and
+                                was held (V42EC_T400_LR_HOLD_MS) */
+    /* the HST link (v42ec_set_link). Per call: hst_call, the modem has
+     * said ON (latched: the call is HST to its end); link_none, it has
+     * said NONE before any ON (latched: get is not asked again until the
+     * next init or reset); hst_win, ms left of the HST window, -1 not
+     * started; lr_cap, the LR that started MNP on this HST call (its
+     * length, 0 none, and framing; dropped once MNP is connected);
+     * agreed_due, the mailbox is still to hear of the LRs' agreement;
+     * link_r, the ring's read count at the last poll; tx_seen, a bit has
+     * been transmitted since init. v42ec_reset keeps the per-call part
+     * only for the reset at this call's CONNECTED (see there). */
+    hst_link_get_fn link_get;
+    void *link_ctx;
+    int hst_call, link_none, hst_win, tx_seen;
+    unsigned link_r;
+    int lr_cap_len, lr_cap_fr, agreed_due;
+    uint8_t lr_cap[V42EC_LR_CAP];
 } v42ec_t;
 
 /* Fill cfg with defaults for the given role: detection on, fallback on,
@@ -173,8 +258,39 @@ typedef struct v42ec {
  * a history of min(4096, V44COMP_MAX_HISTORY), 16-bit FCS,
  * T401 1000 ms, N400 10, T403 off. */
 void   v42ec_cfg_default(v42ec_cfg_t *cfg, int originator);
-/* Start. Call when the modem reports its data mode is up (7.2). */
+/* Start. Call when the modem reports its data mode is up (7.2). A clean
+ * start: no HST link. */
 void   v42ec_init(v42ec_t *e, const v42ec_cfg_t *cfg);
+/* Start again with cfg (e from v42ec_init), keeping the HST link. With
+ * cfg->mnp.enable 0 (or an originator), or without a link, it is
+ * v42ec_init: unlinked. The ring's unread bits are the pump's and stay.
+ * The HST call in progress (an LR already taken, which is answered again,
+ * and the window, which keeps counting from our training's end) is kept
+ * only for the reset at that call's CONNECTED: get says ON now, nothing
+ * has been transmitted since v42ec_init or the last reset, and the
+ * mailbox is the one polled before (its ring has not gone back: the pump
+ * starts each call with a zeroed mailbox). Otherwise nothing of an
+ * earlier call is kept. A frame half-received before the reset is lost
+ * (the caller sends its LR again within the window). The rates of
+ * v42ec_set_rates are forgotten (the pump's come again). */
+void   v42ec_reset(v42ec_t *e, const v42ec_cfg_t *cfg);
+/* Link to an HST pump (hst_link.h): get(ctx, &state) is called from
+ * v42ec_tx_bit, v42ec_rx_bit, v42ec_tick and v42ec_reset. NULL get
+ * unlinks and changes nothing else; so does MNP off (cfg.mnp.enable 0, or
+ * an originator): nothing is linked. Linking starts the endpoint again,
+ * as v42ec_init with its configuration (the link is for a call the modem
+ * has not decided yet): nothing of an earlier call is kept. Linked, the
+ * endpoint holds T400 while the state is HST_LINK_UNDECIDED; from
+ * HST_LINK_NONE on it is the unlinked one (T400 counted from there, get
+ * not asked again in this call); once HST_LINK_ON has been seen the call
+ * is HST to its end: it drains the pre-connect ring into its receive
+ * path, writes the LRs' agreement into the mailbox, takes the pump's
+ * rates for T401 when they change, and has the HST window in T400's
+ * place (no start-stop: NO_EC; fallback does not apply; a later state
+ * other than ON starts the window at once if it has not started). */
+void   v42ec_set_link(v42ec_t *e, hst_link_get_fn get, void *ctx);
+/* 1 when linked */
+int    v42ec_linked(const v42ec_t *e);
 
 /* Line side, one bit at a time. */
 int    v42ec_tx_bit(v42ec_t *e);
@@ -199,6 +315,13 @@ void   v42ec_line_stopped(v42ec_t *e);
  * LAPM polls if frames are unacknowledged (v42lapm_line_restored()). */
 void   v42ec_line_restored(v42ec_t *e);
 
+/* The line's rates in bit/s, ours and the far end's (each > 0): MNP's
+ * T401 and T404 are computed from them (A.7.5.1, Table A.10); until they
+ * are given, or before MNP starts, 2400. Kept across MNP's start, taken
+ * again at each call (a rate change); LAPM's timers are the configured
+ * ones. -1 for a rate <= 0, nothing changed. */
+int    v42ec_set_rates(v42ec_t *e, int tx_bps, int rx_bps);
+
 /* User side. v42ec_write() returns how many octets were taken (0..len);
  * data written before the connection is up is held. v42ec_read() returns
  * how many octets were delivered (0..max). */
@@ -209,6 +332,9 @@ size_t v42ec_read_avail(const v42ec_t *e);
 /* True when everything written has been sent and, in error-corrected
  * mode, acknowledged by the far end. */
 int    v42ec_tx_idle(const v42ec_t *e);
+/* True while a frame (an MNP frame due from the link included) has not
+ * completely left the transmitter, in either framing. */
+int    v42ec_tx_busy(const v42ec_t *e);
 
 /* Orderly release (7.7): DISC is sent; unsent data is discarded, so wait
  * for v42ec_tx_idle() first if it matters. In async mode it just stops. */

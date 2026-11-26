@@ -17,6 +17,9 @@
 #include "../sim/callpeer.h"
 #include "../sim/g711.h"
 #include "../sim/noise.h"
+#include "../sim/hstcall.h"
+#include "../sim/mnppeer.h"
+#include "../sim/v32line.h"
 #include "line34.h"
 #include "v90link.h"
 
@@ -311,6 +314,100 @@ static void v22_call(void)
     CHECK_EQ_I(SA.bad - dbad0, 0); CHECK_EQ_I(SP.bad - ubad0, 0);
 }
 
+/* ---- HST: our answerer's ANS_HST with sim/hstcall on sim/v32line; our
+ * end of MNP an mnppeer responder in HST mode standing in for the endpoint
+ * (the mailbox's ring drained into it, agreed and la_rx written as the
+ * endpoint writes them, v42/hst_link.h). In data at 14400 / 450, the
+ * answerer's clock and the back receivers' symbol counts moved on as if
+ * 2^31 samples had gone by: three more seconds, data intact. Reversals
+ * (Task 21) add no free-running counter: hst_t's `rt` counts only within
+ * a reversal (bounded, HST_REV_BOUND_MS + 2 s at most), `reversals` is a
+ * uint32_t count, and the forward receiver held while we hold the back
+ * channel saturates its symbol counts (hst_fwd.c). ---- */
+
+static hstcall_t HCK;
+static mnppeer_t HM;
+static v32line_t HL;
+static int16_t hst_sat(double v) { long q = lrint(v); return (int16_t)(q > 32767 ? 32767 : q < -32768 ? -32768 : q); }
+static double hst_peer(void *u, double rx) { return hstcall_tick((hstcall_t *)u, hst_sat(rx)); }
+/* the ring first, as the endpoint drains it (v42/hst_link.h) */
+static void hst_drain(void)
+{
+    int b;
+    if (A.phase == ANS_HST) while ((b = hst_pre_get(&A.u.hst.link)) >= 0) mnppeer_rx_bit(&HM, b);
+}
+static int  hst_aget(void *u) { (void)u; hst_drain(); return mnppeer_tx_bit(&HM); }
+static void hst_aput(void *u, int bit) { (void)u; hst_drain(); mnppeer_rx_bit(&HM, bit); }
+static uint8_t hst_pat(uint32_t seed, long i) { return (uint8_t)((seed * 2654435761u + (uint32_t)i * 40503u) >> 13); }
+typedef struct { long w_hc, w_us, got_hc, got_us, bad; } hst_x_t;
+static hst_x_t HX;
+
+/* a ms: the endpoint's part, the data */
+static void hst_ms(void)
+{
+    static uint8_t buf[64];
+    size_t k, n;
+    hst_drain();
+    if (A.phase == ANS_HST) {
+        hst_link_t *l = &A.u.hst.link;
+        if (!l->agreed && HM.hst) { l->agreed = 1; l->agreed_rates = (uint8_t)HM.hst_rates; l->back300 = HM.back300; }
+        if (mnppeer_state(&HM) == MNPP_CONNECTED) l->la_rx = 1;
+    }
+    mnppeer_tick(&HM, 1);
+    if (mnppeer_state(&HM) == MNPP_CONNECTED && HCK.linked) {
+        for (;;) { uint8_t o = hst_pat(1u, HX.w_us); if (mnppeer_write(&HM, &o, 1) != 1) break; HX.w_us++; }
+        for (;;) { uint8_t o = hst_pat(2u, HX.w_hc); if (hstcall_write(&HCK, &o, 1) != 1) break; HX.w_hc++; }
+    }
+    n = hstcall_read(&HCK, buf, sizeof buf);
+    for (k = 0; k < n; k++, HX.got_hc++) if (buf[k] != hst_pat(1u, HX.got_hc)) HX.bad++;
+    n = mnppeer_read(&HM, buf, sizeof buf);
+    for (k = 0; k < n; k++, HX.got_us++) if (buf[k] != hst_pat(2u, HX.got_us)) HX.bad++;
+}
+
+static void hst_call(void)
+{
+    answer_cfg ac;
+    hstcall_cfg hc;
+    v32line_cfg lc;
+    mnp_peer_cfg mc;
+    int16_t atx = 0;
+    long n, hc0, us0, bad0;
+    int k;
+    memset(&HX, 0, sizeof HX);
+    memset(&lc, 0, sizeof lc);
+    lc.mulaw = 1; lc.loss_db = 6; lc.delay = 200; lc.near_db = 20; lc.c_near_db = 20; lc.far_db = lc.c_far_db = 300;
+    lc.noise_a_dbm0 = -60; lc.noise_c_dbm0 = -60; lc.seed = 5;
+    v32line_init(&HL, &lc);
+    hstcall_defaults(&hc);
+    hstcall_init(&HCK, &hc);
+    memset(&mc, 0, sizeof mc);
+    mc.originator = 0; mc.framing = 3; mc.c0 = 1; mc.c0_flags = 1; mc.c0_rates = 0x7C;
+    mc.layout_rx_any = 1; mc.t401_ms = 3000; mc.n400 = 15; mc.seed = 99u;
+    mnppeer_init(&HM, &mc);
+    memset(&ac, 0, sizeof ac);
+    ac.level = 3000; ac.modes = V8_MOD_V22 | V8_MOD_V21 | ANS_MODE_HST | ANS_MODE_HST_LINKED;
+    ac.getbit = hst_aget; ac.putbit = hst_aput;
+    answer_init(&A, &ac);
+    for (n = 0; n < 8000L * 60 && !(answer_moving(&A) && A.bitrate == 14400 && HX.got_hc > 2000) && A.phase != ANS_FAILED; n++) {
+        atx = answer_tick(&A, v32line_tick(&HL, atx, hst_peer, &HCK));
+        if (n % 8 == 7) hst_ms();
+    }
+    CHECK(answer_moving(&A)); CHECK_EQ_I(A.modulation, ANS_MOD_HST); CHECK_EQ_I(A.bitrate, 14400);
+    jump_answer(&A);
+    for (k = 0; k < 2; k++) A.u.hst.det.rx[k].nsym += (int32_t)(NEAR / 8000 * 150);
+    hc0 = HX.got_hc; us0 = HX.got_us; bad0 = HX.bad;
+    for (n = 0; n < 8000L * RUN_S; n++) {
+        atx = answer_tick(&A, v32line_tick(&HL, atx, hst_peer, &HCK));
+        if (n % 8 == 7) hst_ms();
+    }
+    printf("  HST: %d bit/s forward, %d back; after the clocks' wrap %ld / %ld octets, %ld wrong\n",
+           A.bitrate, A.rx_bitrate, HX.got_hc - hc0, HX.got_us - us0, HX.bad - bad0);
+    CHECK(answer_moving(&A)); CHECK_EQ_I(A.t, INT32_MAX);
+    CHECK(HX.got_hc - hc0 > 0);
+    CHECK(HX.got_us - us0 > 0);
+    CHECK_EQ_I(HX.bad - bad0, 0);
+}
+
 /* ---- after the end: ticks go on (the API allows it) ---- */
 
 static void after_end(void)
@@ -356,6 +453,7 @@ int main(void)
     dig_call(1);
     v34_call();
     v22_call();
+    hst_call();
     after_end();
     T_REPORT("clock");
 }

@@ -1,0 +1,173 @@
+bbpf: 39 taps
+  250-500 Hz within 0.5 dB: pass
+  60 dB down at 1124-1326, 1874-2076, 2724-2926 and 3474-3676 Hz: pass
+dbpf: 43 taps
+  250-500 Hz within 0.5 dB at 1600 Hz: pass
+  40 dB down at <= 150 Hz and 600-800 Hz: pass
+hbpf: 189 taps
+  600-3400 Hz within 0.5 dB: pass
+  40 dB down at <= 500 Hz: pass
+tx_phase 450: 117 symbols (45 preamble)
+  every step hst_bstep[t] x 45 deg within 3 deg: pass
+  every symbol on 22.5 + 45 k deg within 3 deg: pass
+tx_phase 300: 102 symbols (30 preamble)
+  every step hst_bstep[t] x 45 deg within 3 deg: pass
+  every symbol on 22.5 + 45 k deg within 3 deg: pass
+tx_speed: 450 -> 300 at sample 3040, after 57 symbols at 450
+  the 300 symbols' steps and grid within 3 deg: pass
+  silence once the pulses have drained: pass
+tx_spectrum 450: level 3999 (asked 4000), 38 segments
+  level within 0.3 dB of 4000: pass
+  >= 600 Hz at least 50 dB below the peak: pass
+  -20 dB band within 10 Hz of 274-476 Hz: pass
+tx_spectrum 300: level 4002 (asked 4000), 38 segments
+  level within 0.3 dB of 4000: pass
+  >= 600 Hz at least 50 dB below the peak: pass
+  -20 dB band within 10 Hz of 283-417 Hz: pass
+loop_450 +7 Hz +100 ppm: 200000 bits compared after the lock
+  locked: pass
+  BER < 1e-5 (at most one error): pass
+  no loss of lock or carrier after the lock: pass
+loop_450 +7 Hz -100 ppm: 200000 bits compared after the lock
+  locked: pass
+  BER < 1e-5 (at most one error): pass
+  no loss of lock or carrier after the lock: pass
+loop_450 -7 Hz +100 ppm: 200000 bits compared after the lock
+  locked: pass
+  BER < 1e-5 (at most one error): pass
+  no loss of lock or carrier after the lock: pass
+loop_450 -7 Hz -100 ppm: 200000 bits compared after the lock
+  locked: pass
+  BER < 1e-5 (at most one error): pass
+  no loss of lock or carrier after the lock: pass
+loop_300 +7 Hz +100 ppm: 200000 bits compared after the lock
+  locked: pass
+  BER < 1e-5 (at most one error): pass
+  no loss of lock or carrier after the lock: pass
+loop_300 +7 Hz -100 ppm: 200000 bits compared after the lock
+  locked: pass
+  BER < 1e-5 (at most one error): pass
+  no loss of lock or carrier after the lock: pass
+loop_300 -7 Hz +100 ppm: 200000 bits compared after the lock
+  locked: pass
+  BER < 1e-5 (at most one error): pass
+  no loss of lock or carrier after the lock: pass
+loop_300 -7 Hz -100 ppm: 200000 bits compared after the lock
+  locked: pass
+  BER < 1e-5 (at most one error): pass
+  no loss of lock or carrier after the lock: pass
+lock_time 450: 4 lines
+  locked within 300 ms on every line: pass
+lock_time 300: 4 lines
+  locked within 450 ms on every line: pass
+cd 450: 10 s of -50 dBm0 noise
+  no carrier, no lock, no bits: pass
+cd 450: 2 s of signal, then silence
+  carrier on with the signal: pass
+  carrier off within 100 ms of the silence: pass
+cd 300: 10 s of -50 dBm0 noise
+  no carrier, no lock, no bits: pass
+cd 300: 2 s of signal, then silence
+  carrier on with the signal: pass
+  carrier off within 100 ms of the silence: pass
+line_450 +7 Hz +100 ppm: 50000 bits compared after the lock
+  locked: pass
+  no bit in error: pass
+  no loss of lock or carrier after the lock: pass
+line_300 +7 Hz +100 ppm: 50000 bits compared after the lock
+  locked: pass
+  no bit in error: pass
+  no loss of lock or carrier after the lock: pass
+noise_first 450: 72 lines, 1 s of noise first at 20, 15 and 10 dB
+  each locked on the right carrier, at most one decision in error after the lock: pass
+noise_first 300: 72 lines, 1 s of noise first at 20, 15 and 10 dB
+  each locked on the right carrier, at most one decision in error after the lock: pass
+dropout 450: 72 lines, the signal off 0.1, 0.3 and 1 s
+  each locked again on the right carrier, at most one decision in error after the dropout: pass
+dropout 300: 72 lines, the signal off 0.1, 0.3 and 1 s
+  each locked again on the right carrier, at most one decision in error after the dropout: pass
+tones 450: US dial tone, mains hum, 375 Hz; at -30, -20 and -10 dBm0, 30 s each
+  never locked, no bits, grid_ok never on 24 of 30 decisions: pass
+tones 300: US dial tone, mains hum, 375 Hz; at -30, -20 and -10 dBm0, 30 s each
+  never locked, no bits, grid_ok never on 24 of 30 decisions: pass
+noise 450: white noise at -31 to -10 dBm0, 60 s each: 0 false locks a minute
+  no lock, no bits, grid_ok never on 24 of 30 decisions: pass
+noise 300: white noise at -31 to -10 dBm0, 60 s each: 0 false locks a minute
+  no lock, no bits, grid_ok never on 24 of 30 decisions: pass
+band: 3 s of 300 through one band-pass, bits out
+  the same bits and lock as a receiver on its own: pass
+cd_level 450: the signal at -41, -45.5 and -50 dBm0
+  on at -41 within 100 ms: pass
+  held at -45.5: pass
+  off at -50 within 100 ms: pass
+  never on at -45.5 or -50 from the start: pass
+cd_level 300: the signal at -41, -45.5 and -50 dBm0
+  on at -41 within 100 ms: pass
+  held at -45.5: pass
+  off at -50 within 100 ms: pass
+  never on at -45.5 or -50 from the start: pass
+alias 450: 112 hard starts at 12 dB (noise first, a 1 s dropout)
+  each locked on the right carrier; not one wrong bit given: pass
+alias 300: 112 hard starts at 12 dB (noise first, a 1 s dropout)
+  each locked on the right carrier; not one wrong bit given: pass
+fades 450: the signal off 20 ms, 24 lines
+  the lock held, at most 40 wrong bits: pass
+fades 450: the signal off 30 ms, 24 lines
+  the lock held, at most 40 wrong bits: pass
+fades 450: the signal off 50 ms, 24 lines
+  the lock held, at most 40 wrong bits: pass
+fades 450: the signal off 100 ms, 24 lines
+  the lock lost and found again, not one wrong bit given: pass
+fades 300: the signal off 20 ms, 24 lines
+  the lock held, at most 40 wrong bits: pass
+fades 300: the signal off 30 ms, 24 lines
+  the lock held, at most 40 wrong bits: pass
+fades 300: the signal off 50 ms, 24 lines
+  the lock held, at most 40 wrong bits: pass
+fades 300: the signal off 100 ms, 24 lines
+  the lock lost and found again, not one wrong bit given: pass
+hold 450: 8 dB for 60 s
+  no loss of lock, BER < 1e-3: pass
+hold 450: 6 dB for 60 s
+  no loss of lock, BER < 1e-3: pass
+hold 300: 8 dB for 60 s
+  no loss of lock, BER < 1e-3: pass
+hold 300: 6 dB for 60 s
+  no loss of lock, BER < 1e-3: pass
+grid_ok 450: 2 lines
+  0 before the estimate and for 6 decisions after it; then 1: pass
+grid_ok 300: 2 lines
+  0 before the estimate and for 6 decisions after it; then 1: pass
+first_bit 300: 256 clean starts, +-7 Hz, 20 and 30 dB
+  the lock giving the first bit within 450 ms on every start: pass
+echo 450: the back channel at -33 dBm0 under our forward signal's echo, HST's band at -16 dBm0 (-10 dBm0, 6 dB ERL), 2 lines
+  locked, no bit in error, no loss of lock: pass
+echo 300: the back channel at -33 dBm0 under our forward signal's echo, HST's band at -16 dBm0 (-10 dBm0, 6 dB ERL), 2 lines
+  locked, no bit in error, no loss of lock: pass
+echo 450: the back channel at -33 dBm0 under our forward signal's echo, V.32's pulse at -30 dBm0 (-24 dBm0, 6 dB ERL), 2 lines
+  locked, no bit in error, no loss of lock: pass
+echo 300: the back channel at -33 dBm0 under our forward signal's echo, V.32's pulse at -30 dBm0 (-24 dBm0, 6 dB ERL), 2 lines
+  locked, no bit in error, no loss of lock: pass
+echo_fwd: the echo's source
+  hst_ftx in data at 14400: pass
+echo_fwd 450: the back channel at -33 dBm0 under the echo of hst_ftx at 14400 (-10 dBm0, 6 dB ERL), 2 lines
+  locked, no bit in error, no loss of lock: pass
+echo_fwd 300: the back channel at -33 dBm0 under the echo of hst_ftx at 14400 (-10 dBm0, 6 dB ERL), 2 lines
+  locked, no bit in error, no loss of lock: pass
+stop_tail 450: data to the far end's stop, 12 lines
+  every bit sent given, the frame's FCS and flag included: pass
+stop_tail 300: data to the far end's stop, 12 lines
+  every bit sent given, the frame's FCS and flag included: pass
+lasting_drop 450: 12 dB down from 2 s on, 24 lines
+  the lock held, at most 40 wrong bits: pass
+lasting_drop 450: 15 dB down from 2 s on, 24 lines
+  the lock held, at most 40 wrong bits: pass
+lasting_drop 450: 20 dB down from 2 s on, 24 lines
+  the lock held, at most 40 wrong bits: pass
+lasting_drop 300: 12 dB down from 2 s on, 24 lines
+  the lock held, at most 40 wrong bits: pass
+lasting_drop 300: 15 dB down from 2 s on, 24 lines
+  the lock held, at most 40 wrong bits: pass
+lasting_drop 300: 20 dB down from 2 s on, 24 lines
+  the lock held, at most 40 wrong bits: pass
+test_hst_back: 131 checks, 0 failures

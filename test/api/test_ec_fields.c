@@ -34,6 +34,12 @@ static int old_check_ec_cfg(const v90m_ec_cfg *c)
         || !old_in(c->lapm.v44_p3_tx, 512, V44COMP_MAX_HISTORY) || !old_in(c->lapm.v44_p3_rx, 512, V44COMP_MAX_HISTORY))
         return V90M_EINVAL;
     if (c->lapm.t401_ms < 1 || c->lapm.t403_ms < 0 || c->lapm.n400 < 1) return V90M_EINVAL;
+    /* MNP (0.7.0): written out by hand, as the rest */
+    if (!old_flag(c->mnp.enable) || !old_in(c->mnp.k, 1, 8) || !old_in(c->mnp.n401, 1, 256)
+        || !old_in(c->mnp.opt, 0, 3) || !old_in(c->mnp.framing, 2, 3)
+        || !old_in(c->mnp.t401_min_ms, 500, 60000) || !old_in(c->mnp.n400, 1, 255))
+        return V90M_EINVAL;
+    if (c->mnp.n401 == 256 && !(c->mnp.opt & 1)) return V90M_EINVAL;
     return V90M_OK;
 }
 
@@ -53,6 +59,9 @@ static void old_cfg_in(v42ec_cfg_t *o, const v90m_ec_cfg *c)
     o->lapm.v44_p2_tx = c->lapm.v44_p2_tx; o->lapm.v44_p2_rx = c->lapm.v44_p2_rx;
     o->lapm.v44_p3_tx = c->lapm.v44_p3_tx; o->lapm.v44_p3_rx = c->lapm.v44_p3_rx;
     o->lapm.t401_ms = c->lapm.t401_ms; o->lapm.t403_ms = c->lapm.t403_ms; o->lapm.n400 = c->lapm.n400;
+    o->mnp.enable = c->mnp.enable; o->mnp.link.k = c->mnp.k; o->mnp.link.n401 = c->mnp.n401;
+    o->mnp.link.opt = c->mnp.opt; o->mnp.link.framing = c->mnp.framing;
+    o->mnp.link.t401_min_ms = c->mnp.t401_min_ms; o->mnp.link.n400 = c->mnp.n400;
 }
 
 static void old_cfg_out(v90m_ec_cfg *c, const v42ec_cfg_t *ip)
@@ -72,6 +81,9 @@ static void old_cfg_out(v90m_ec_cfg *c, const v42ec_cfg_t *ip)
     c->lapm.v44_p2_tx = i.lapm.v44_p2_tx; c->lapm.v44_p2_rx = i.lapm.v44_p2_rx;
     c->lapm.v44_p3_tx = i.lapm.v44_p3_tx; c->lapm.v44_p3_rx = i.lapm.v44_p3_rx;
     c->lapm.t401_ms = i.lapm.t401_ms; c->lapm.t403_ms = i.lapm.t403_ms; c->lapm.n400 = i.lapm.n400;
+    c->mnp.enable = i.mnp.enable; c->mnp.k = i.mnp.link.k; c->mnp.n401 = i.mnp.link.n401;
+    c->mnp.opt = i.mnp.link.opt; c->mnp.framing = i.mnp.link.framing;
+    c->mnp.t401_min_ms = i.mnp.link.t401_min_ms; c->mnp.n400 = i.mnp.link.n400;
 }
 
 static void old_status_out(v90m_ec_status *st, const v42ec_status_t *sp, const v42ec_t *e)
@@ -92,10 +104,14 @@ static void old_status_out(v90m_ec_status *st, const v42ec_status_t *sp, const v
     st->tx_rej = s.tx_rej; st->rx_rej = s.rx_rej; st->t401_expiries = s.t401_expiries; st->violations = s.violations;
     st->comp_in = s.comp_in; st->comp_out = s.comp_out; st->decomp_in = s.decomp_in; st->decomp_out = s.decomp_out;
     st->async_overruns = s.async_overruns; st->async_framing = s.async_framing;
+    st->protocol = s.protocol; st->mnp_framing = s.mnp_framing; st->mnp_opt = s.mnp_opt;
+    st->mnp_streamlined = s.mnp_streamlined; st->hst = s.hst; st->hst_rates = s.hst_rates;
+    st->hst_back300 = s.hst_back300; st->attn_tx = s.attn_tx; st->attn_rx = s.attn_rx;
+    st->rx_unknown = s.rx_unknown; st->rx_unknown_id = s.rx_unknown_id; st->peer_ld_reason = s.peer_ld_reason;
 }
 
 /* ---- the values tried ---- */
-#define NFIELDS 27
+#define NFIELDS 34
 static int *field_ptr(v90m_ec_cfg *c, int k)
 {
     int n = 0;
@@ -137,6 +153,7 @@ static void make_values(void)
     add(V42_MAX_K); add(V42_MAX_K + 1); add(V42_MAX_N401); add(V42_MAX_N401 + 1);
     add(V42COMP_MAX_CODEWORDS); add(V42COMP_MAX_CODEWORDS + 1); add(V44COMP_MAX_CODEWORDS); add(V44COMP_MAX_CODEWORDS + 1);
     add(V44COMP_MAX_HISTORY); add(V44COMP_MAX_HISTORY + 1); add(127); add(128); add(250); add(251); add(255); add(256);
+    add(60000); add(60001);
 }
 
 static union { v90m_align a; uint8_t b[V90M_EC_MEM_SIZE]; } mem;
@@ -250,7 +267,7 @@ static void test_status(void)
         CHECK(memcmp(&s1, &s2, sizeof s1) == 0);
     }
     printf("ec status: %d fields listed and 3 of the endpoint's, the same\n", n);
-    CHECK_EQ_I(n, 37);
+    CHECK_EQ_I(n, 49);
 }
 
 int main(void)

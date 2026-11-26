@@ -1,0 +1,8 @@
+linked_v32_odp: CONNECTED at 5425 ms (modem: UNDECIDED before, 1 then); protocol 1, 42 octets each way
+linked_v32_noec: CONNECTED at 5425 ms, start-stop 750 ms later
+relink_between_calls: never reset; call 1: protocol 1, data both ways; linked again: state 0; call 2: protocol 1, data both ways
+relink_after_reset: linked 1; ec reset 1; v90m_reset 0; linked again 1; ec reset MNP off 0; ec destroyed 0
+role_change: reset to calling while linked: start-stop 750 ms later; after the destroy, 8 s the same as a fresh caller's
+lifetimes: modem first: endpoint linked 0; ticked after: start-stop at 750 ms; new modem: linked 1 (bit 1, 0 after the endpoint's destroy); reset with MNP on: linked 0, start-stop at 750 ms; second endpoint: first 0, second 1, bit 1 after the first's destroy, second 0 after the modem's; modem reset: endpoint 0, bit 0
+hst_offered_now: V.22bis caller with MNP: CONNECTED at 3978 / 3978 ms, protocol 2 / 2, our samples the same
+test_ec_hstlink: 109 checks, 0 failures

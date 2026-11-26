@@ -117,7 +117,7 @@ void v42hdlc_tx_init(v42hdlc_tx_t *t)
 
 int v42hdlc_tx_busy(const v42hdlc_tx_t *t)
 {
-    return t->len != 0 || t->in_frame;
+    return t->len != 0 || t->in_frame || (t->closing && t->nbits != 0);
 }
 
 int v42hdlc_tx_frame(v42hdlc_tx_t *t, const uint8_t *data, int len, int fcs32)
@@ -170,12 +170,14 @@ int v42hdlc_tx_bit_full(v42hdlc_tx_t *t)
         return 0;
     }
     if (t->nbits == 0) {
+        t->closing = 0;
         if (t->in_frame && t->pos < t->len) {
             t->cur = t->buf[t->pos++]; t->nbits = 8; t->raw = 0;
         } else if (t->in_frame) {
             /* frame data exhausted: closing flag */
             t->in_frame = 0; t->len = 0; t->pos = 0; t->frames++;
             tx_raw(t, FLAG);
+            t->closing = 1;
             t->flag_done = 1;
             if (t->min_flags > 0) t->min_flags--;
         } else if (t->len != 0 && t->flag_done && t->min_flags == 0) {

@@ -1,0 +1,280 @@
+pulse_points: 30 symbols; level 3036 (V.32's 3036)
+  700-2900 Hz within 0.5 dB: pass
+  600 and 3000 Hz -3 +- 0.5 dB: pass
+  >= 3200 Hz at most -36 dB: pass
+  <= 400 Hz at most -40 dB: pass
+  the level V.32's within 0.1 dB: pass
+guard: 325 taps, 53 multiplies a sample
+  linear phase: pass
+  >= 560 Hz within 0.5 dB: pass
+  >= 600 Hz within 0.02 dB: pass
+  <= 480 Hz at least 50 dB down: pass
+guard: 32000 samples through hst_gf_tick, 0 unlike the direct form
+  hst_gf_tick is the direct form: pass
+v32_default answering: line 0x62AA7B75, reference 0x3C258E9C
+  V.32's pulse: the line as 0.6.0's: pass
+  V.32's pulse: the echo reference as 0.6.0's: pass
+  HST's pulse and back: the line and reference as 0.6.0's: pass
+v32_default calling: line 0x93EA3185, reference 0xC5E4CCCC
+  V.32's pulse: the line as 0.6.0's: pass
+  V.32's pulse: the echo reference as 0.6.0's: pass
+  HST's pulse and back: the line and reference as 0.6.0's: pass
+v32_default 30 -> 12 -> 30: line 0xF60DD2A1
+  30 -> 12 -> 30: the history past 18 symbols cleared: pass
+  30 -> 12 -> 30: the line as V.32's pulse's history then 30: pass
+train_long, code 4: S1 180 S2 72 S3 3096 data 200; data from symbol 3348 (1395 ms)
+  getbit idle through the training: pass
+  then data: code bits a symbol on the rate's points: pass
+train_short: before training 0 samples not zero, 0 getbit calls
+  silent and getbit idle before the first training: pass
+train_short, code 2: S1 180 S2 72 S3 200 data 100; data from symbol 452 (188 ms)
+  getbit idle through the training: pass
+  then data: code bits a symbol on the rate's points: pass
+train_short, code 3: S1 180 S2 72 S3 200 data 100; data from symbol 452 (188 ms)
+  getbit idle through the training: pass
+  then data: code bits a symbol on the rate's points: pass
+train_short, code 4: S1 180 S2 72 S3 200 data 100; data from symbol 452 (188 ms)
+  getbit idle through the training: pass
+  then data: code bits a symbol on the rate's points: pass
+train_short, code 5: S1 180 S2 72 S3 200 data 100; data from symbol 452 (188 ms)
+  getbit idle through the training: pass
+  then data: code bits a symbol on the rate's points: pass
+train_short, code 6: S1 180 S2 72 S3 200 data 100; data from symbol 452 (188 ms)
+  getbit idle through the training: pass
+  then data: code bits a symbol on the rate's points: pass
+train_short: after hst_ftx_stop and 37 symbols, 0 samples not zero, 0 getbit calls
+  silent and getbit idle after hst_ftx_stop: pass
+s1_s2: S1 0 symbols not A B alternating, S2 0 not C D
+  S1 is V.32's S: A B A B ...: pass
+  S2 is V.32's S-bar: C D C D ...: pass
+trn: long S3, 3096 symbols: 0 unlike GPC's, 2340 unlike GPA's; A 887, B 650, C 897, D 662
+  S3: ones through GPC from zero, Table 4's dibits: pass
+  S3: not GPA's: pass
+  S3: all 4 points: pass
+trn: short S3 after data, 200 symbols: 0 unlike GPC's, 150 unlike GPA's; A 82, B 17, C 86, D 15
+  S3: ones through GPC from zero, Table 4's dibits: pass
+  S3: not GPA's: pass
+  S3: all 4 points: pass
+acq_long, code 2: data mode reached; 0 errors in 100000 bits
+  reaches data mode: pass
+  no error in the bits compared: pass
+acq_long, code 3: data mode reached; 0 errors in 100000 bits
+  reaches data mode: pass
+  no error in the bits compared: pass
+acq_long, code 4: data mode reached; 0 errors in 100000 bits
+  reaches data mode: pass
+  no error in the bits compared: pass
+acq_long, code 5: data mode reached; 0 errors in 100000 bits
+  reaches data mode: pass
+  no error in the bits compared: pass
+acq_long, code 6: data mode reached; 0 errors in 100000 bits
+  reaches data mode: pass
+  no error in the bits compared: pass
+acq_short, code 2: data mode reached; 0 errors in 100000 bits
+  reaches data mode: pass
+  no error in the bits compared: pass
+acq_short, code 3: data mode reached; 0 errors in 100000 bits
+  reaches data mode: pass
+  no error in the bits compared: pass
+acq_short, code 4: data mode reached; 0 errors in 100000 bits
+  reaches data mode: pass
+  no error in the bits compared: pass
+acq_short, code 5: data mode reached; 0 errors in 100000 bits
+  reaches data mode: pass
+  no error in the bits compared: pass
+acq_short, code 6: data mode reached; 0 errors in 100000 bits
+  reaches data mode: pass
+  no error in the bits compared: pass
+acq_offset +7 Hz +100 ppm, code 6: data mode reached; 0 errors in 100000 bits
+  reaches data mode: pass
+  no error in the bits compared: pass
+acq_offset +7 Hz -100 ppm, code 6: data mode reached; 0 errors in 100000 bits
+  reaches data mode: pass
+  no error in the bits compared: pass
+acq_offset -7 Hz +100 ppm, code 6: data mode reached; 0 errors in 100000 bits
+  reaches data mode: pass
+  no error in the bits compared: pass
+acq_offset -7 Hz -100 ppm, code 6: data mode reached; 0 errors in 100000 bits
+  reaches data mode: pass
+  no error in the bits compared: pass
+stored_eq, code 3: data mode reached, tracking by then; from the 41st data symbol 0 errors in 100000 bits
+  trained (tracking) before the data came: pass
+  data from its 41st symbol on without error: pass
+stored_eq, code 6: data mode reached, tracking by then; from the 41st data symbol 0 errors in 100000 bits
+  trained (tracking) before the data came: pass
+  data from its 41st symbol on without error: pass
+trn_as_ones: 0 zeros before the data; 0 errors in 100000 data bits
+  TRN decodes as ones (and there is some): pass
+  then the data, no error in the bits compared: pass
+zero_isi: the pulse against itself at 1 .. 29 symbols
+  the pulse's own ISI at most -40 dB: pass
+zero_isi: transmitter to receiver, 400 points of the 4-point training through the matched filter
+  through the receiver's start, nothing adapted: at least 25 dB: pass
+carrier_loss, code 2: NOCARRIER in time; 0 bits from 200 ms after the carrier's end; 3 s later state 4
+  in data mode before: pass
+  NOCARRIER within HST_FRX_LOSS_MS + 200 ms, and kept: pass
+  no bits from 200 ms after the carrier's end: pass
+carrier_loss, code 4: NOCARRIER in time; 0 bits from 200 ms after the carrier's end; 3 s later state 4
+  in data mode before: pass
+  NOCARRIER within HST_FRX_LOSS_MS + 200 ms, and kept: pass
+  no bits from 200 ms after the carrier's end: pass
+carrier_loss, code 6: NOCARRIER in time; 0 bits from 200 ms after the carrier's end; 3 s later state 4
+  in data mode before: pass
+  NOCARRIER within HST_FRX_LOSS_MS + 200 ms, and kept: pass
+  no bits from 200 ms after the carrier's end: pass
+carrier_return: after a 1 s cut state 4; with the data back for 1 s, state 4 and 0 bits
+  the cut: NOCARRIER: pass
+  the data back without a training: still NOCARRIER, no bits: pass
+carrier_return: a short training then: data mode reached, tracking by then; from the 41st data symbol 0 errors in 100000 bits
+  a short training: from the equaliser kept, trained before the data: pass
+  then no error from the 41st data symbol: pass
+dropout, code 2: 100 ms; data mode kept; from 4000 data bits after it 0 errors in 100000 bits
+  data mode kept: pass
+  no error from 4000 bits after it: pass
+dropout, code 4: 100 ms; data mode kept; from 4000 data bits after it 0 errors in 100000 bits
+  data mode kept: pass
+  no error from 4000 bits after it: pass
+dropout, code 6: 100 ms; data mode kept; from 4000 data bits after it 0 errors in 100000 bits
+  data mode kept: pass
+  no error from 4000 bits after it: pass
+train_fail, 15 dB, code 3: in training 2.2 s after it began: no
+  not in training 2.2 s after it began: pass
+train_fail, 15 dB, code 4: in training 2.2 s after it began: no
+  not in training 2.2 s after it began: pass
+train_fail, 6 dB, code 4: in training 2.2 s after it began: no
+  not in training 2.2 s after it began: pass
+train_fail, 6 dB, code 4: state 6, 0 bits
+  TRAINFAIL, no bits: pass
+level_step -1 dB, code 6: state 3; from 16000 data bits after it 0 errors in 100000 bits
+  data mode kept: pass
+  no error from 16000 bits after it: pass
+level_step +3 dB, code 6: state 3; from 16000 data bits after it 0 errors in 100000 bits
+  data mode kept: pass
+  no error from 16000 bits after it: pass
+level_step -2 dB, code 4: state 3; from 16000 data bits after it 0 errors in 100000 bits
+  data mode kept: pass
+  no error from 16000 bits after it: pass
+level_step +6 dB, code 4: state 3; from 16000 data bits after it 0 errors in 100000 bits
+  data mode kept: pass
+  no error from 16000 bits after it: pass
+lock_loss: the carrier 40 Hz off at 14400: UNLOCKED in time; 0 bits after it; 2 s later state 5
+  UNLOCKED within HST_FRX_LOCK_SYMS + 0.3 s, and kept: pass
+  no bits after it: pass
+carrier_stop_noisy, 30 dB line, no loss, code 2: carrier or lock lost in time; 0 bits from 200 ms; 1 s on in data mode: no
+  NOCARRIER or UNLOCKED within 600 ms: pass
+  no bits from 200 ms, not back in data mode: pass
+carrier_stop_noisy, 30 dB line, no loss, code 4: carrier or lock lost in time; 0 bits from 200 ms; 1 s on in data mode: no
+  NOCARRIER or UNLOCKED within 600 ms: pass
+  no bits from 200 ms, not back in data mode: pass
+carrier_stop_noisy, 30 dB line, no loss, code 6: carrier or lock lost in time; 0 bits from 200 ms; 1 s on in data mode: no
+  NOCARRIER or UNLOCKED within 600 ms: pass
+  no bits from 200 ms, not back in data mode: pass
+carrier_stop_noisy, 25 dB line, no loss, code 2: carrier or lock lost in time; 0 bits from 200 ms; 1 s on in data mode: no
+  NOCARRIER or UNLOCKED within 600 ms: pass
+  no bits from 200 ms, not back in data mode: pass
+carrier_stop_noisy, 25 dB line, no loss, code 4: carrier or lock lost in time; 0 bits from 200 ms; 1 s on in data mode: no
+  NOCARRIER or UNLOCKED within 600 ms: pass
+  no bits from 200 ms, not back in data mode: pass
+carrier_stop_noisy, 25 dB line, no loss, code 6: carrier or lock lost in time; 0 bits from 200 ms; 1 s on in data mode: no
+  NOCARRIER or UNLOCKED within 600 ms: pass
+  no bits from 200 ms, not back in data mode: pass
+carrier_stop_noisy, 20 dB line, code 2: carrier or lock lost in time; 0 bits from 200 ms; 1 s on in data mode: no
+  NOCARRIER or UNLOCKED within 600 ms: pass
+  no bits from 200 ms, not back in data mode: pass
+carrier_stop_noisy, 20 dB line, code 4: carrier or lock lost in time; 0 bits from 200 ms; 1 s on in data mode: no
+  NOCARRIER or UNLOCKED within 600 ms: pass
+  no bits from 200 ms, not back in data mode: pass
+carrier_stop_noisy, 20 dB line, code 6: carrier or lock lost in time; 0 bits from 200 ms; 1 s on in data mode: no
+  NOCARRIER or UNLOCKED within 600 ms: pass
+  no bits from 200 ms, not back in data mode: pass
+carrier_stop_noisy, -40 dBm0 noise, code 2: carrier or lock lost in time; 0 bits from 200 ms; 1 s on in data mode: no
+  NOCARRIER or UNLOCKED within 600 ms: pass
+  no bits from 200 ms, not back in data mode: pass
+carrier_stop_noisy, -40 dBm0 noise, code 4: carrier or lock lost in time; 0 bits from 200 ms; 1 s on in data mode: no
+  NOCARRIER or UNLOCKED within 600 ms: pass
+  no bits from 200 ms, not back in data mode: pass
+carrier_stop_noisy, -40 dBm0 noise, code 6: carrier or lock lost in time; 0 bits from 200 ms; 1 s on in data mode: no
+  NOCARRIER or UNLOCKED within 600 ms: pass
+  no bits from 200 ms, not back in data mode: pass
+harsh_dropout: 100 ms at 9600, harsh line, +-7 Hz x +-100 ppm: 0 of 12 runs not recovered
+  every run: data mode kept, no error from 4000 bits after the cut: pass
+marks_switch 6 -> 5: data mode kept, code 5, armed 0; 0 errors before the marks, 0 in 100000 after; 276 bits between, 0 zeros
+  data mode kept, at the new code, disarmed: pass
+  no error before the marks, nor in NB bits after them: pass
+  only ones between, at most the marks' bits: pass
+marks_switch 4 -> 6: data mode kept, code 6, armed 0; 0 errors before the marks, 0 in 100000 after; 216 bits between, 0 zeros
+  data mode kept, at the new code, disarmed: pass
+  no error before the marks, nor in NB bits after them: pass
+  only ones between, at most the marks' bits: pass
+marks_missed 6 -> 5, the marks missed, a training 1 s on: data mode again within 2 s, code 5, armed 0; from the 41st data symbol 0 errors in 100000 bits
+  in data mode at the new code within 2 s: pass
+  then no error from the 41st data symbol: pass
+marks_missed 4 -> 6, the marks missed, a training 1 s on: data mode again within 2 s, code 6, armed 0; from the 41st data symbol 0 errors in 100000 bits
+  in data mode at the new code within 2 s: pass
+  then no error from the 41st data symbol: pass
+marks_missed 6 -> 5, a training instead: data mode again within 2 s, code 5, armed 0; from the 41st data symbol 0 errors in 100000 bits
+  in data mode at the new code within 2 s: pass
+  then no error from the 41st data symbol: pass
+marks_missed 6 -> 5, no marks: the acquisition at 2 s, state 5, code 5, armed 0
+  the acquisition at 2 s, at the new code: pass
+marks_missed 6 -> 5, then a short training: data mode reached; from the 41st data symbol 0 errors in 100000 bits
+  then no error from the 41st data symbol: pass
+long_drift code 3, 19.0 dB, 60 s: data mode kept; the gain 17041 at 10 s, 16099 .. 17566 after (Q14); 0 errors in 144000 bits in the first 20 s, 0 in 144000 in the last
+  data mode never left: pass
+  the gain within 1 dB of its value at 10 s: pass
+  errors in the last window no more than in the first: pass
+long_drift code 4, 17.5 dB, 60 s: data mode kept; the gain 16840 at 10 s, 16355 .. 18150 after (Q14); 0 errors in 192000 bits in the first 20 s, 0 in 192000 in the last
+  data mode never left: pass
+  the gain within 1 dB of its value at 10 s: pass
+  errors in the last window no more than in the first: pass
+ab_loud, code 4: AB 4 dB over the data, then the line 6.5 dB down; data mode kept; from 16000 data bits after it 0 errors in 100000 bits
+  data mode kept: pass
+  no error from 16000 bits after the step: pass
+ab_loud, code 6: AB 4 dB over the data, then the line 6.5 dB down; data mode kept; from 16000 data bits after it 0 errors in 100000 bits
+  data mode kept: pass
+  no error from 16000 bits after the step: pass
+ab_loud, code 2: AB +6 dB over the data; data mode reached (state 3); 0 errors in 20000 bits
+  data mode, no error in 20000 bits: pass
+ab_loud, code 3: AB +6 dB over the data; data mode reached (state 3); 0 errors in 20000 bits
+  data mode, no error in 20000 bits: pass
+ab_loud, code 4: AB +6 dB over the data; data mode reached (state 3); 0 errors in 20000 bits
+  data mode, no error in 20000 bits: pass
+ab_loud, code 5: AB +6 dB over the data; data mode reached (state 3); 0 errors in 20000 bits
+  data mode, no error in 20000 bits: pass
+ab_loud, code 6: AB +6 dB over the data; data mode reached (state 3); 0 errors in 20000 bits
+  data mode, no error in 20000 bits: pass
+ab_loud, code 2: AB +10 dB over the data; data mode reached (state 3); 0 errors in 20000 bits
+  data mode, no error in 20000 bits: pass
+ab_loud, code 3: AB +10 dB over the data; data mode reached (state 3); 0 errors in 20000 bits
+  data mode, no error in 20000 bits: pass
+ab_loud, code 4: AB +10 dB over the data; data mode reached (state 3); 0 errors in 20000 bits
+  data mode, no error in 20000 bits: pass
+ab_loud, code 5: AB +10 dB over the data; data mode reached (state 3); 0 errors in 20000 bits
+  data mode, no error in 20000 bits: pass
+ab_loud, code 6: AB +10 dB over the data; data mode reached (state 3); 0 errors in 20000 bits
+  data mode, no error in 20000 bits: pass
+ab_loud, code 2: AB +12 dB over the data; data mode reached (state 3); 0 errors in 20000 bits
+  data mode, no error in 20000 bits: pass
+ab_loud, code 3: AB +12 dB over the data; data mode reached (state 3); 0 errors in 20000 bits
+  data mode, no error in 20000 bits: pass
+ab_loud, code 4: AB +12 dB over the data; data mode reached (state 3); 0 errors in 20000 bits
+  data mode, no error in 20000 bits: pass
+ab_loud, code 5: AB +12 dB over the data; data mode reached (state 3); 0 errors in 20000 bits
+  data mode, no error in 20000 bits: pass
+ab_loud, code 6: AB +12 dB over the data; data mode reached (state 3); 0 errors in 20000 bits
+  data mode, no error in 20000 bits: pass
+ab_loud, code 2: AB -6 dB over the data; data mode reached (state 3); 0 errors in 20000 bits
+  data mode, no error in 20000 bits: pass
+ab_loud, code 3: AB -6 dB over the data; data mode reached (state 3); 0 errors in 20000 bits
+  data mode, no error in 20000 bits: pass
+ab_loud, code 4: AB -6 dB over the data; data mode reached (state 3); 0 errors in 20000 bits
+  data mode, no error in 20000 bits: pass
+ab_loud, code 5: AB -6 dB over the data; data mode reached (state 3); 0 errors in 20000 bits
+  data mode, no error in 20000 bits: pass
+ab_loud, code 6: AB -6 dB over the data; data mode reached (state 3); 0 errors in 20000 bits
+  data mode, no error in 20000 bits: pass
+fast_paths: hst_vit_step against v32_vit_step, codes 3..6: 200000 steps, 0 different
+  hst_vit_step gives v32_vit_step's decisions, metrics and history: pass
+fast_paths: a stopped transmitter, 17998 ticks against v32tx_tick, 0 different
+  a stopped transmitter gives v32tx_tick's samples and state: pass
+test_hst_fwd: 234 checks, 0 failures

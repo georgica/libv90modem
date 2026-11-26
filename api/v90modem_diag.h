@@ -60,7 +60,9 @@ enum {
     ANS_ERR_TIMEOUT = 1,    /* a phase ran past its limit (the backstop, a K56flex retrain's time) */
     ANS_ERR_RETRAINS,       /* one more retrain was due past the limit */
     ANS_ERR_START,          /* the next engine could not start with what was agreed */
-    ANS_ERR_K56_RETRAIN     /* the K56flex client's retrain did not take K56flex up again */
+    ANS_ERR_K56_RETRAIN,    /* the K56flex client's retrain did not take K56flex up again */
+    ANS_ERR_HST_LINK,       /* HST: no MNP link within the limit (V90M_END_HST_FAILED) */
+    ANS_ERR_HST_CARRIER     /* HST: the far end's carrier went (the watchdogs, V90M_END_LOST) */
 };
 enum {
     ORIG_ERR_TIMEOUT = 1    /* the start-up ran past the calling modem's limit for its phase */
@@ -70,7 +72,7 @@ enum {
  * v90m_phase or v90m_conn needs its name in api/v90modem_diag.c and this
  * changed (tools/check-diag-names.sh checks that it is the enum's last) */
 #define DG_LAST_PHASE V90M_PHASE_DATA
-#define DG_LAST_CONN  V90M_CONN_K56FLEX
+#define DG_LAST_CONN  V90M_CONN_HST
 
 /* the number of codes in family f (1 .. that); 0 for none */
 #define DG_COUNT_V8   V8_ERR_NO_CM
@@ -88,7 +90,7 @@ enum {
 #define DG_COUNT_P2L  P2L_ERR_NO_RATE
 #define DG_COUNT_V34O V34O_ERR_HANGUP
 #define DG_COUNT_V90A V90A_ERR_RETRAINS
-#define DG_COUNT_ANS  ANS_ERR_K56_RETRAIN
+#define DG_COUNT_ANS  ANS_ERR_HST_CARRIER
 #define DG_COUNT_ORIG ORIG_ERR_TIMEOUT
 static inline int dg_count(int fam)
 {

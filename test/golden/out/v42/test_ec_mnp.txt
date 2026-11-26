@@ -1,0 +1,23 @@
+odp_lapm: MNP on: connected, protocol 1, our bits the same as MNP off's
+lr_mode2: MNP, framing 2, our LR in start-stop, 2 KiB each way intact
+lr_mode3: MNP, framing 3, our LR in HDLC, 2 KiB each way intact
+odp_then_lr: protocol 1 (LAPM) after the peer's 2 LRs
+nothing: start-stop at 750 ms; with fallback 0, NO_EC
+junk: bad FCS in either framing, an LR-like frame without its constants: not MNP
+typed_syn: start-stop at T400, 36 of 36 characters delivered
+lr_off: MNP off, an LR in start-stop: start-stop at T400, as 0.6.0
+status: k 8, N401 64, opt 0; the peer's LD 255: reason 2
+breaks: the peer's LN 1 delivered as a break, ours with 300 octets after it: delivered
+busy: the user held off, credit 0, then 12000 octets intact
+release_mode2: busy for 120 bits, the peer got LD 255
+release_mode3: busy for 69 bits, the peer got LD 255
+abort_mnp: after the abort the peer heard 0 frames more
+ld_const1: constant parameter 1 = 3: LD 2, reason 6 (NEGOTIATION)
+n400_end: the caller silent, N400 3: 4 T401 expiries, LD 4 to the peer, reason 4 (N400)
+ln_brk: the peer's LN 3: a break after 300 of the 400 octets (300 written before it)
+ln_brk: ours: LN 3 after 500 of 600 octets (500 written before it), then LN 2; no reset
+lr_300: an MNP caller at 300 bit/s, framing 2: state 0 at 750 ms (T400 held), then MNP; 256 octets each way intact
+t400_hold: at 300 bit/s an LR's start that never ends: start-stop at 2750 ms; a bad LR: at its end, 1214 ms; SYN DLE STX typed at 600 ms: start-stop at 750 ms (MNP off: 750 ms), 11 of 11 characters
+rates_300: rates given before MNP: 4 KiB each way intact at 300 bit/s in 139.7 s, T401 expiries 0, LTs again 0
+rates_300: rates given once connected: 4 KiB each way intact at 300 bit/s in 139.7 s, T401 expiries 0, LTs again 0
+test_ec_mnp: 168 checks, 0 failures

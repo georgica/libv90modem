@@ -15,9 +15,9 @@ INC     := -I. -I$(ROOT)/test
 ARM_CC  ?= $(wildcard $(ROOT)/toolchain/*/bin/arm-linux-gcc)
 QEMU    ?= qemu-arm-static
 
-SRC     := v42_hdlc.c v42_detect.c v42_comp.c v44_comp.c v42_lapm.c v42.c
-HDR     := v42_hdlc.h v42_detect.h v42_comp.h v44_comp.h comp_out.h v42_lapm.h v42.h
-TESTS   := test_hdlc test_detect test_comp test_v44 test_lapm test_v42 test_v42_golden test_comp_out test_fcs
+SRC     := v42_hdlc.c v42_detect.c v42_comp.c v44_comp.c v42_lapm.c v42.c mnp_frame.c mnp.c
+HDR     := v42_hdlc.h v42_detect.h v42_comp.h v44_comp.h comp_out.h v42_lapm.h v42.h mnp_frame.h mnp.h hst_link.h
+TESTS   := test_hdlc test_detect test_comp test_v44 test_lapm test_v42 test_v42_golden test_comp_out test_fcs test_mnp_frame test_mnppeer test_mnp test_ec_mnp test_ec_link test_ec_hst
 
 .PHONY: all test test-arm test-interop clean build-tests build-tests-arm print-tests print-tests-arm
 all: test
@@ -28,8 +28,8 @@ $(BUILD):
 # the sources compiled once, into an archive each test links: $(BUILD)/libtest.a,
 # and for ARM_CC $(BUILD)/arm/libtest.a (../x.c compiles to up/x.o)
 EXTRA_CPPFLAGS ?=
-T_SRC     := $(SRC)
-T_HDR     := $(HDR) $(ROOT)/test/test.h
+T_SRC     := $(SRC) ../sim/mnppeer.c
+T_HDR     := $(HDR) $(ROOT)/test/test.h $(ROOT)/sim/mnppeer.h
 T_FLAGS    = $(CFLAGS) $(EXTRA_CPPFLAGS) $(INC)
 T_OBJ     := $(patsubst %.c,$(BUILD)/tobj/%.o,$(subst ../,up/,$(T_SRC)))
 ARM_T_OBJ := $(patsubst %.c,$(BUILD)/arm/tobj/%.o,$(subst ../,up/,$(T_SRC)))

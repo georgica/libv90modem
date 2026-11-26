@@ -1,0 +1,958 @@
+/* HST's back channel: the 8-DPSK transmitter and receiver (hst.h;
+ * hst-facts.md, "Back channel").
+ *
+ * Each speed has a pulse train (hst_blane_t): unit points at 22.5 + 45 k
+ * degrees, times the gain for the line level, shaped by the polyphase
+ * root-raised-cosine pulse of hst_tabs (HST_BL symbols, HST_Bxxx_P phases a
+ * symbol, HST_Bxxx_STEP phases a sample), then moved to its carrier. The
+ * speed being sent clocks its train; the other one, after a change of
+ * speed, takes zeros until its last symbols have left the pulse. Both
+ * carriers run from the first tick, so each is a fixed function of time. */
+#include <string.h>
+#include "hst.h"
+#include "sintab.h"
+#include "fixmath.h"
+#include "v34train.h"     /* v34_angle */
+
+/* per lane: carrier, baud, pulse phases a symbol, phases a sample, the pulse */
+static const struct {
+    int fc, baud, P, step;
+    const int16_t *pulse;
+} lanes[2] = {
+    { 375, 150, HST_B450_P, HST_B450_STEP, &hst_bpulse450[0][0] },
+    { 350, 100, HST_B300_P, HST_B300_STEP, &hst_bpulse300[0][0] },
+};
+static const int rms_q12[2] = { HST_B450_RMS_Q12, HST_B300_RMS_Q12 };
+
+static int lane_of(int bps) { return bps == 300 ? 1 : 0; }
+
+/* Q15 sine of a 32-bit phase, interpolated between sintab's entries */
+static int32_t sin_q15(uint32_t ph)
+{
+    int32_t s0 = sintab[(ph >> 22) & SIN_MASK], s1 = sintab[((ph >> 22) + 1) & SIN_MASK];
+    return s0 + (((s1 - s0) * (int32_t)((ph >> 7) & 0x7FFF)) >> 15);
+}
+
+/* the cosine and the sine together, as sin_q15 gives each */
+static void sincos_q15(uint32_t ph, int32_t *c, int32_t *s)
+{
+    uint32_t i = ph >> 22, j = i + SIN_N / 4;
+    int32_t f = (int32_t)((ph >> 7) & 0x7FFF);
+    int32_t s0 = sintab[i & SIN_MASK], s1 = sintab[(i + 1) & SIN_MASK];
+    int32_t c0 = sintab[j & SIN_MASK], c1 = sintab[(j + 1) & SIN_MASK];
+    *s = s0 + (((s1 - s0) * f) >> 15);
+    *c = c0 + (((c1 - c0) * f) >> 15);
+}
+
+void hst_btx_init(hst_btx_t *t, int bps, int level, v32_getbit_fn getbit, void *user)
+{
+    int l, j;
+    for (l = 0; l < 2; l++) {
+        hst_blane_t *L = &t->lane[l];
+        for (j = 0; j < HST_BL; j++) L->si[j] = L->sq[j] = 0;
+        L->acc = lanes[l].P;
+        L->left = 0;
+        L->cph = 0;
+        L->dph = (uint32_t)(((uint64_t)(uint32_t)lanes[l].fc << 32) / 8000u);
+        L->gain = (int32_t)((int64_t)(level > 0 ? level : 0) * 4096 / rms_q12[l]);
+    }
+    t->bps = t->want = bps == 300 ? 300 : 450;
+    t->mode = HST_BTX_SILENT;
+    t->phase = 0;
+    t->npre = 0;
+    t->newsym = 0;
+    scr_init(&t->scr);
+    t->getbit = getbit; t->user = user;
+}
+
+/* from the next symbol of the active lane, the speed asked for */
+static void take_speed(hst_btx_t *t)
+{
+    hst_blane_t *N;
+    if (t->want == t->bps) return;
+    t->bps = t->want;
+    N = &t->lane[lane_of(t->bps)];
+    if (N->left == 0) N->acc = lanes[lane_of(t->bps)].P;     /* idle: a symbol at once */
+}
+
+void hst_btx_preamble(hst_btx_t *t)
+{
+    hst_blane_t *L;
+    take_speed(t);
+    L = &t->lane[lane_of(t->bps)];
+    if (L->left == 0) L->acc = lanes[lane_of(t->bps)].P;
+    t->mode = HST_BTX_PREAMBLE;
+    t->npre = HST_BTX_PRE_MS * lanes[lane_of(t->bps)].baud / 1000;
+    t->phase = 0;
+    scr_init(&t->scr);
+}
+
+void hst_btx_set_speed(hst_btx_t *t, int bps) { t->want = bps == 300 ? 300 : 450; }
+
+void hst_btx_stop(hst_btx_t *t) { t->mode = HST_BTX_SILENT; }
+
+/* the next symbol of the speed being sent: returns 0 (and a zero symbol)
+ * when silent, 1 when a symbol is sent */
+static int next_symbol(hst_btx_t *t, int32_t *si, int32_t *sq)
+{
+    int b, tri = 0, idx;
+    int32_t g = t->lane[lane_of(t->bps)].gain;
+    if (t->mode == HST_BTX_SILENT) { *si = *sq = 0; return 0; }
+    for (b = 0; b < 3; b++) {                       /* the tribit's LSB first */
+        int di = t->mode == HST_BTX_PREAMBLE ? 1 : t->getbit(t->user) & 1;
+        tri |= scr17_scramble(&t->scr, di) << b;
+    }
+    if (t->mode == HST_BTX_PREAMBLE && --t->npre <= 0) t->mode = HST_BTX_DATA;
+    t->phase = (t->phase + hst_bstep[tri]) & 7;
+    idx = SIN_N / 16 + t->phase * (SIN_N / 8);      /* 22.5 + 45 k degrees */
+    *si = (int32_t)(((int64_t)g * sintab[(idx + SIN_N / 4) & SIN_MASK]) >> 15);
+    *sq = (int32_t)(((int64_t)g * sintab[idx & SIN_MASK]) >> 15);
+    return 1;
+}
+
+int16_t hst_btx_tick(hst_btx_t *t)
+{
+    int l, j, act;
+    int32_t v = 0;
+    t->newsym = 0;
+    /* a change of speed at the old speed's symbol boundary; the old lane drains below */
+    if (t->lane[lane_of(t->bps)].acc >= lanes[lane_of(t->bps)].P) take_speed(t);
+    act = lane_of(t->bps);
+    for (l = 0; l < 2; l++) {
+        hst_blane_t *L = &t->lane[l];
+        if (l == act || L->left > 0) {
+            if (L->acc >= lanes[l].P) {
+                int32_t si = 0, sq = 0;
+                L->acc -= lanes[l].P;
+                for (j = HST_BL - 1; j > 0; j--) { L->si[j] = L->si[j - 1]; L->sq[j] = L->sq[j - 1]; }
+                if (l == act) t->newsym = next_symbol(t, &si, &sq);
+                L->si[0] = si; L->sq[0] = sq;
+                if (si || sq) L->left = HST_BL; else if (L->left > 0) L->left--;
+            }
+            if (L->left > 0) {
+                const int16_t *h = lanes[l].pulse + L->acc * HST_BL;
+                int64_t bi = 0, bq = 0;
+                int32_t c, s;
+                for (j = 0; j < HST_BL; j++) { bi += (int64_t)L->si[j] * h[j]; bq += (int64_t)L->sq[j] * h[j]; }
+                bi >>= 14; bq >>= 14;                    /* Q14 pulse */
+                c = sin_q15(L->cph + (1u << 30));
+                s = sin_q15(L->cph);
+                v += (int32_t)((bi * c - bq * s) >> 15);
+            }
+            L->acc += lanes[l].step;
+        }
+        L->cph += L->dph;
+    }
+    if (v > 32767) v = 32767; else if (v < -32768) v = -32768;
+    return (int16_t)v;
+}
+
+/* ======================== the receiver ======================== */
+
+/* a folded (linear phase, odd length) FIR's output over the n samples
+ * ending at w + n - 1; two taps a turn */
+static int32_t fir_fold(const int16_t *h, int32_t n, const int16_t *w)
+{
+    int64_t acc = (int64_t)h[n / 2] * w[n / 2];
+    int32_t i;
+    for (i = 0; i + 1 < n / 2; i += 2) {
+        acc += (int64_t)h[i] * ((int32_t)w[i] + w[n - 1 - i]);
+        acc += (int64_t)h[i + 1] * ((int32_t)w[i + 1] + w[n - 2 - i]);
+    }
+    if (i < n / 2) acc += (int64_t)h[i] * ((int32_t)w[i] + w[n - 1 - i]);
+    return (int32_t)(acc / 32768);
+}
+
+#define DEC       5                   /* 8000 Hz to 1600 */
+#define BLK       16                  /* carrier detect and AGC: 10 ms blocks at 1600 Hz */
+#define CD_ON_PW  9900                /* -44 dBm0 (0 dBm0 = 15770 RMS), a block's mean square */
+#define CD_OFF_PW 4970                /* -47 dBm0 */
+#define CD_BLKS   3                   /* blocks over the threshold for on */
+#define CD_OFF_BLKS 6                 /* and under it for off: a lost 50 ms packet keeps the carrier */
+#define HOLD_BLKS 6                   /* blocks 9 dB under the mean the AGC holds its gain through */
+#define HOLD_SYMS 8                   /* symbols 9 dB under the mean the symbol power's mean holds through */
+#define AGC_RMS   4096                /* the band's RMS after the AGC */
+#define GAIN0     ((int32_t)((AGC_RMS * 65536LL) / 1577))   /* until a carrier: -20 dBm0 */
+#define DEG12     143165577u          /* 12 degrees, 2^32 a turn */
+#define LOCK_WIN  0xFFFFu             /* lock: 15 of the last 16 decisions on the grid */
+#define LOCK_MIN  15
+#define KT_ACQ    16                  /* Gardner's gain, until locked (x P / 64 of the Q14 error) */
+#define KT_TRK    4                   /* and once locked */
+#define KDA       8                   /* the frequency loop: 1/8 of the decision error a symbol, until locked */
+#define KDT       32                  /* and 1/32 once locked */
+#define WTURN_MAX (1 << 30)           /* a quarter turn a symbol */
+#define EST_AGAIN 24                  /* symbols after the carrier's estimate before acquiring again */
+#define CHK_EVERY 32                  /* symbols between alias checks while locked */
+#define RMS_SQ(d) (((d) * 65536 / 360) * ((d) * 65536 / 360) / 16 * HST_BRX_WIN)
+/* faded symbols in a row that lose the lock, about 75 ms: 11 at 450, 8 at
+ * 300; unless the last fade_win of them are a lasting drop (hst.h), with at
+ * most one off the grid */
+static const int32_t fade_lose[2] = { 11, 8 };
+static const int32_t fade_win[2] = { 8, 5 };
+typedef char hst_fade_win_fits[(8 <= HST_BRX_FN && 5 <= HST_BRX_FN) ? 1 : -1];
+#define CONFIRM   10                  /* symbols in each of the second check's two fresh windows */
+/* the bits are held back HST_BRX_DLY symbols while locked, at both speeds:
+ * past 2 x CONFIRM (no bit leaves before the second alias check on its two
+ * fresh windows), and past a fade that loses the lock (fade_lose) and the
+ * 8 symbols before it, over which the matched filter ramps down */
+typedef char hst_dly_check[HST_BRX_DLY > 2 * CONFIRM && HST_BRX_DLY >= 11 + 8 ? 1 : -1];
+
+enum { ACQ_TIMING, ACQ_CARRIER, ACQ_LOCK };
+
+/* pulse phases a 1600 Hz sample: 15 at 450 (160 a symbol), 5 at 300 (80) */
+static const int32_t rx_k[2] = { HST_MF450_K, HST_MF300_K };
+typedef char hst_mf_check[HST_MF450_K == HST_B450_P * 150 / 1600 && HST_MF300_K == HST_B300_P * 100 / 1600 ? 1 : -1];
+
+/* a - b as a signed angle (2^32 a turn) */
+static int32_t sangle(uint32_t a)
+{
+    return a <= (uint32_t)INT32_MAX ? (int32_t)a : -(int32_t)(UINT32_MAX - a) - 1;
+}
+
+static int ones(uint32_t v)
+{
+    int n = 0;
+    for (; v; v >>= 1) n += (int)(v & 1);
+    return n;
+}
+
+
+void hst_brx_init(hst_brx_t *r, int bps)
+{
+    memset(r, 0, sizeof *r);
+    r->lane = lane_of(bps);
+    r->xn = HST_BBPF_N - 1;
+    r->zn = HST_BRX_ZN;
+    r->gain = GAIN0;
+    r->dph0 = r->dph = (uint32_t)(((uint64_t)(uint32_t)lanes[r->lane].fc << 32) / 1600u);
+    {
+        /* the received pulse (the pulse through itself) at T/2 and 3T/2 */
+        const int32_t P = lanes[r->lane].P, n = HST_BL * P;
+        const int16_t *pulse = lanes[r->lane].pulse;
+        int64_t r0 = 0, r1 = 0, r3 = 0;
+        int32_t m;
+        for (m = 0; m < n; m++) {
+            int32_t a = pulse[(m % P) * HST_BL + m / P];
+            r0 += (int64_t)a * a;
+            if (m + P / 2 < n) r1 += (int64_t)a * pulse[((m + P / 2) % P) * HST_BL + (m + P / 2) / P];
+            if (m + 3 * P / 2 < n) r3 += (int64_t)a * pulse[((m + 3 * P / 2) % P) * HST_BL + (m + 3 * P / 2) / P];
+        }
+        r->rho1 = (int32_t)(r1 * 16384 / r0);
+        r->rho3 = (int32_t)(r3 * 16384 / r0);
+    }
+    scr_init(&r->scr);
+}
+
+int hst_brx_cd(const hst_brx_t *r) { return r->cd; }
+int hst_brx_locked(const hst_brx_t *r) { return r->locked; }
+int hst_brx_grid_ok(const hst_brx_t *r) { return r->grid_ok; }
+
+int hst_brx_snr(const hst_brx_t *r, int64_t *num, int64_t *den)
+{
+    /* Es/N0 = 1 / var(differential phase error, radians) = 2^32 / (e2 4 pi^2) */
+    if (!r->locked || r->e2 <= 0) return 0;
+    *num = (int64_t)100 << 32;
+    *den = r->e2 * 3948;                                    /* 4 pi^2 x 100 */
+    return 1;
+}
+
+static void rx_window_clear(hst_brx_t *r);
+
+/* a carrier: acquisition from the start */
+static void rx_acquire(hst_brx_t *r)
+{
+    r->dph = r->dph0; r->wturn = 0;
+    r->tacc = 0; r->half = 0;
+    r->acq = ACQ_TIMING; r->sidx = 0; r->nom = -1; r->omr = r->omi = 0;
+    r->pref = 0; r->nsym = 0;
+    r->okhist = 0; r->locked = 0; r->grid_ok = 0;
+    r->e2 = 0;
+    r->nest = 0; r->wait = 0; r->nchk = 0; r->nalias = 0;
+    r->qbad = r->nfade = r->nweak = 0; r->fok = 0; rx_window_clear(r);
+    r->ndly = r->pdly = 0; r->conf = r->nconf = 0;
+    scr_init(&r->scr);
+}
+
+/* floor(sqrt(v)), the bit-pair method in 32 bits (fixmath's isqrt_u64 in 64) */
+static uint32_t isqrt_u32(uint32_t v)
+{
+    uint32_t r = 0, b = 1u << 30;
+    while (b > v) b >>= 2;
+    while (b) {
+        if (v >= r + b) { v -= r + b; r = (r >> 1) + b; }
+        else r >>= 1;
+        b >>= 2;
+    }
+    return r;
+}
+
+/* a confirmed lock lost: the held bits are given (hst_brx_band) up to the
+ * newest symbol that is not 3 dB under the mean (bit 3 of a ring entry):
+ * the faded ones, and the one a cut signal (no pulse ringing out) halves,
+ * whose decision is not sure, stay back */
+static void rx_release(hst_brx_t *r)
+{
+    const int32_t n = HST_BRX_DLY;
+    int32_t k, m = r->ndly, p = (r->pdly - r->ndly + n) % n;
+    if (r->conf > 0 || r->nconf > 0) m = 0;                 /* not yet confirmed: none */
+    while (m > 0 && (r->dly[(p + m - 1) % n] & 8)) m--;
+    for (k = 0; k < m; k++) { r->rel[k] = (uint8_t)(r->dly[p] & 7); if (++p == n) p = 0; }
+    r->nrel = m;
+    r->prel = 0;
+    r->ndly = 0;
+}
+
+/* the band's power, a block at a time: carrier detect and AGC */
+static void rx_block(hst_brx_t *r)
+{
+    int64_t p = r->bpw / BLK;
+    r->bpw = 0;
+    if (!r->cd) {
+        r->cnt = p >= CD_ON_PW ? r->cnt + 1 : 0;
+        if (r->cnt >= CD_BLKS) { r->cd = 1; r->cnt = 0; r->ps = p; r->nhold = 0; rx_acquire(r); }
+    } else {
+        r->cnt = p < CD_OFF_PW ? r->cnt + 1 : 0;
+        if (r->cnt >= CD_OFF_BLKS) {
+            if (r->locked) rx_release(r);
+            r->cd = 0; r->cnt = 0; r->locked = 0; r->grid_ok = 0;
+        }
+        else if (p * 8 < r->ps && r->nhold < HOLD_BLKS) r->nhold++;    /* a dropout: the gain held */
+        else {
+            r->nhold = 0;
+            if (r->locked) r->ps += (p - r->ps) / 8;
+            else r->ps += (p - r->ps) / 2;
+        }
+    }
+    if (r->cd) {
+        int32_t rms = r->ps <= 0 ? 0 : r->ps <= (int64_t)UINT32_MAX ? (int32_t)isqrt_u32((uint32_t)r->ps) : isqrt_s64(r->ps);
+        r->gain = (int32_t)(AGC_RMS * 65536) / (rms > 16 ? rms : 16);
+    }
+}
+
+/* the matched filter at the strobe `frac` pulse phases (0 .. k-1) before the
+ * newest baseband sample, 4 symbols back: the pulse of hst_tabs over +-4
+ * symbols, read at the strobe's own phase (hst_mf450, hst_mf300: one row a
+ * phase, so a plain dot product) */
+static void rx_mf(const hst_brx_t *r, int32_t frac, int32_t *yr, int32_t *yi)
+{
+    const int16_t *h = r->lane ? hst_mf300[frac] : hst_mf450[frac];
+    const int32_t n = r->lane ? hst_mf300_n[frac] : hst_mf450_n[frac], i0 = frac > 0;
+    const int16_t *zr = r->zr + r->zn - 1 - i0, *zi = r->zi + r->zn - 1 - i0;   /* i0 samples back */
+    int64_t ar = 0, ai = 0;
+    int32_t t;
+    for (t = 0; t + 1 < n; t += 2) {                        /* two taps a turn: the loop's own cost halved */
+        ar += (int32_t)zr[-t] * h[t];
+        ai += (int32_t)zi[-t] * h[t];
+        ar += (int32_t)zr[-t - 1] * h[t + 1];
+        ai += (int32_t)zi[-t - 1] * h[t + 1];
+    }
+    if (t < n) {
+        ar += (int32_t)zr[-t] * h[t];
+        ai += (int32_t)zi[-t] * h[t];
+    }
+    *yr = (int32_t)(ar / 16384);
+    *yi = (int32_t)(ai / 16384);
+}
+
+/* (x + jy)(c + js), c and s Q14 */
+static void rot14(int32_t x, int32_t y, int32_t c, int32_t s, int64_t *re, int64_t *im)
+{
+    *re += ((int64_t)x * c - (int64_t)y * s) / 16384;
+    *im += ((int64_t)x * s + (int64_t)y * c) / 16384;
+}
+
+/* the last HST_BRX_WIN decisions: steps of variety (4 different at least,
+ * none in more than 8), and an RMS error under HST_BRX_RMS_HOLD degrees to
+ * hold a lock (qhold); under HST_BRX_RMS, and the symbols' power steady
+ * from one symbol to the next, to win one and for grid_ok (qacq) */
+static void rx_window(hst_brx_t *r)
+{
+    int i, distinct = 0, most = 0, steady;
+    int64_t s1 = r->wp1, n = r->wpn;
+    r->qacq = r->qhold = 0;
+    if (r->nwin < HST_BRX_WIN) return;
+    for (i = 0; i < 8; i++) { distinct += r->wn[i] > 0; if (r->wn[i] > most) most = r->wn[i]; }
+    if (!(distinct >= 4 && most <= 8)) return;
+    r->qhold = r->wsum <= RMS_SQ(HST_BRX_RMS_HOLD);
+    /* the symbols' power steady: its mean squared change from one
+     * symbol to the next at most a quarter of its squared mean, over the
+     * symbols not left out (12 at least) */
+    steady = n >= HST_BRX_WIN - 4 && r->wdn >= HST_BRX_WIN / 2
+          && 4 * r->wds * n * n <= (int64_t)r->wdn * s1 * s1;
+    r->qacq = r->wsum <= RMS_SQ(HST_BRX_RMS) && steady;
+}
+
+/* the window emptied */
+static void rx_window_clear(hst_brx_t *r)
+{
+    int i;
+    r->wpos = r->nwin = 0;
+    for (i = 0; i < 8; i++) r->wn[i] = 0;
+    r->wsum = r->wp1 = r->wds = 0;
+    r->wpn = r->wdn = 0;
+    r->qacq = r->qhold = 0;
+}
+
+/* the tribit of each phase step: hst_bstep's inverse (0x43705261 read a
+ * nibble at a time gives steps 1 6 2 5 0 7 3 4 for tribits 0 to 7; every
+ * received bit through the loop tests checks it) */
+static const uint8_t tri_of[8] = { 4, 0, 2, 6, 7, 3, 1, 5 };
+
+/* a differential angle d (the carrier's turn taken off): the step, its
+ * error (returned), grid_ok and its history, the bits through the
+ * descrambler. `count` 0 for a faded symbol, which is decided (the
+ * descrambler runs on) but left out of the grid history and the window,
+ * the fade rule alone judging it; pw, the symbol's power, Q8 of the mean */
+static int32_t rx_decide(hst_brx_t *r, uint32_t d, int count, int32_t pw)
+{
+    int32_t step = (int32_t)(((d + (1u << 28)) >> 29) & 7);    /* the nearest multiple of 45 degrees */
+    int32_t de = sangle(d - ((uint32_t)step << 29)), dq = de / 65536, tri, b, ok;
+    ok = de <= (int32_t)DEG12 && de >= -(int32_t)DEG12;
+    if (count) {
+        /* a symbol 9 dB under the mean (a dropout, a lost packet) is left
+         * out of the power's sums, before the lock as after it */
+        int32_t sq = dq * dq / 16, p = pw < 32 ? 0 : pw > 4095 ? 4095 : pw, prev, d2 = -1;
+        r->okhist = (r->okhist << 1) | (uint32_t)ok;
+        prev = r->nwin > 0 ? r->wpw[(r->wpos + HST_BRX_WIN - 1) % HST_BRX_WIN] : 0;
+        if (r->nwin == HST_BRX_WIN) {                       /* the oldest leaves the sums */
+            int32_t o = r->wpw[r->wpos], od = r->wd2[r->wpos];
+            r->wn[r->wstep[r->wpos]]--;
+            r->wsum -= r->wsq[r->wpos];
+            if (o) { r->wp1 -= o; r->wpn--; }
+            if (od >= 0) { r->wds -= od; r->wdn--; }
+        } else
+            r->nwin++;
+        if (p && prev) d2 = (p - prev) * (p - prev);
+        r->wstep[r->wpos] = (uint8_t)step;
+        r->wsq[r->wpos] = sq;
+        r->wpw[r->wpos] = (uint16_t)p;
+        r->wd2[r->wpos] = d2;
+        r->wn[step]++;
+        r->wsum += sq;
+        if (p) { r->wp1 += p; r->wpn++; }
+        if (d2 >= 0) { r->wds += d2; r->wdn++; }
+        if (++r->wpos == HST_BRX_WIN) r->wpos = 0;
+        rx_window(r);
+    }
+    r->grid_ok = count && r->acq == ACQ_LOCK && ok && r->qacq;
+    tri = tri_of[step];
+    for (b = 0; b < 3; b++) r->bits[b] = (uint8_t)scr17_descramble(&r->scr, (tri >> b) & 1);
+    return de;
+}
+
+/* den > 0 shifted to under 2^12: *sh the shift; the result at least 1 */
+static int32_t qden(int64_t den, int *sh)
+{
+    int s = 0;
+    static const int st[6] = { 32, 16, 8, 4, 2, 1 };
+    int i;
+    for (i = 0; i < 6; i++)
+        if ((den >> s) >= ((int64_t)4096 << st[i])) s += st[i];
+    if ((den >> s) >= 4096) s++;
+    *sh = s;
+    return (int32_t)(den >> s) > 0 ? (int32_t)(den >> s) : 1;
+}
+
+/* num x 2^q / den in 32-bit arithmetic, den as qden gives it (d, its shift
+ * sh): about 1/2^11 of den kept, num shifted with it and held to 32 bits */
+static int32_t qdiv(int64_t num, int32_t d, int sh, int q)
+{
+    num = sh >= q ? num >> (sh - q) : num * ((int64_t)1 << (q - sh));
+    if (num > INT32_MAX) num = INT32_MAX; else if (num < -INT32_MAX) num = -INT32_MAX;
+    return (int32_t)num / d;
+}
+
+/* the kept midpoints against those their symbols predict at a turn of h a
+ * symbol: each symbol is turned against the midpoint by h/4 at T/2, 3h/4
+ * at 3T/2 (the matched filter's output for a carrier off by w turns at
+ * w/2 across a pulse) */
+static int64_t est_mismatch(const hst_brx_t *r, int32_t h)
+{
+    uint32_t q1 = (uint32_t)(h / 4), q3 = (uint32_t)(h / 4 * 3);
+    int32_t c1 = sin_q15(q1 + (1u << 30)) / 2, s1 = sin_q15(q1) / 2;      /* Q14 */
+    int32_t c3 = sin_q15(q3 + (1u << 30)) / 2, s3 = sin_q15(q3) / 2;
+    int64_t sum = 0;
+    int i;
+    for (i = 2; i + 1 < HST_BRX_EST; i++) {
+        int64_t ar = 0, ai = 0, br = 0, bi = 0, er, ei;
+        rot14(r->esr[i - 1], r->esi[i - 1], c1, s1, &ar, &ai);    /* T/2 before: e^{+jh/4} */
+        rot14(r->esr[i], r->esi[i], c1, -s1, &ar, &ai);           /* T/2 after: e^{-jh/4} */
+        rot14(r->esr[i - 2], r->esi[i - 2], c3, s3, &br, &bi);
+        rot14(r->esr[i + 1], r->esi[i + 1], c3, -s3, &br, &bi);
+        er = (ar * r->rho1 + br * r->rho3) / 16384 - r->emr[i];
+        ei = (ai * r->rho1 + bi * r->rho3) / 16384 - r->emi[i];
+        sum += (er * er + ei * ei) / 256;
+    }
+    return sum;
+}
+
+/* the kept strobes' mismatch at the turns h - 45, h and h + 45 */
+static void alias_e(const hst_brx_t *r, int32_t h, int64_t e[3])
+{
+    int j;
+    for (j = 0; j < 3; j++) e[j] = est_mismatch(r, h + (j - 1) * (int32_t)(1u << 29));
+}
+
+/* the alias check on mismatches e at h - 45, h, h + 45: -1 or +1 when h -
+ * 45 or h + 45 predicts the midpoints better by 2:1, 0 when h does better
+ * than both by num:den, 2 when neither is clear */
+static int alias_vote(const int64_t e[3], int num, int den)
+{
+    if (e[0] * 2 < e[1] && e[0] <= e[2]) return -1;
+    if (e[2] * 2 < e[1] && e[2] < e[0]) return 1;
+    if (e[1] * num < e[0] * den && e[1] * num < e[2] * den) return 0;
+    return 2;
+}
+
+/* the alias check on the kept strobes around the turn h in use */
+static int rx_alias(const hst_brx_t *r, int32_t h, int num, int den)
+{
+    int64_t e[3];
+    alias_e(r, h, e);
+    return alias_vote(e, num, den);
+}
+
+/* the carrier's turn a symbol, from the kept strobes: modulo 45 degrees
+ * from the eighth power of the differential strobes, then which of r,
+ * r + 45 and r - 45 from the midpoints */
+static void rx_estimate(hst_brx_t *r, int redecide)
+{
+    int32_t c = 0, s = 0, h, best = 0, j;
+    int64_t e, emin = 0;
+    uint32_t prev = v34_angle(r->esr[0], r->esi[0]);
+    int i;
+    for (i = 1; i < HST_BRX_EST; i++) {
+        uint32_t a = v34_angle(r->esr[i], r->esi[i]), d8 = (a - prev) * 8u;
+        c += sin_q15(d8 + (1u << 30));
+        s += sin_q15(d8);
+        prev = a;
+    }
+    h = sangle(v34_angle(c, s)) / 8;                        /* modulo 45 degrees */
+    for (j = -1; j <= 1; j++) {
+        e = est_mismatch(r, h + j * (int32_t)(1u << 29));
+        if (j == -1 || e < emin) { emin = e; best = j; }
+    }
+    h += best * (int32_t)(1u << 29);
+    /* taken off the differential angles from now on (the NCO gets it only
+     * slowly, once locked: a step there would reach the strobes over the
+     * matched filter's 8 symbols); and the kept symbols decided again with
+     * it, for the lock */
+    r->wturn = h;
+    r->acq = ACQ_LOCK; r->wait = EST_AGAIN;
+    r->okhist = 0; r->qbad = 0; rx_window_clear(r);
+    scr_init(&r->scr);
+    prev = v34_angle(r->esr[0], r->esi[0]);
+    {
+        int64_t mean = 0;
+        int32_t md;
+        int ms;
+        for (i = 1; i <= redecide; i++) mean += (int64_t)r->esr[i] * r->esr[i] + (int64_t)r->esi[i] * r->esi[i];
+        md = qden(mean / redecide + 1, &ms);
+        for (i = 1; i <= redecide; i++) {
+            uint32_t a = v34_angle(r->esr[i], r->esi[i]);
+            rx_decide(r, a - prev - (uint32_t)h, 1,
+                      qdiv((int64_t)r->esr[i] * r->esr[i] + (int64_t)r->esi[i] * r->esi[i], md, ms, 8));
+            prev = a;
+        }
+    }
+}
+
+/* a strobe while acquiring the timing (four a symbol, sidx 0 .. 3): the
+ * symbol-rate line of the strobes' power; after HST_BRX_OM symbols, the
+ * next symbol strobe put at its peak */
+static void rx_timing(hst_brx_t *r, int32_t frac, int32_t yr, int32_t yi)
+{
+    const int32_t P = lanes[r->lane].P, k = rx_k[r->lane];
+    int64_t p = ((int64_t)yr * yr + (int64_t)yi * yi) / 256, mr, mi;
+    int32_t tau, dist;
+    if (r->nom >= 0)
+        switch (r->sidx) {                                  /* x e^{-j 2 pi sidx / 4} */
+        case 0: r->omr += p; break;
+        case 1: r->omi -= p; break;
+        case 2: r->omr -= p; break;
+        default: r->omi += p; break;
+        }
+    if (++r->sidx < 4) return;
+    r->sidx = 0;
+    if (++r->nom < HST_BRX_OM) return;
+    mr = r->omr; mi = r->omi;
+    while (mr > INT32_MAX / 2 || mr < -(INT32_MAX / 2) || mi > INT32_MAX / 2 || mi < -(INT32_MAX / 2)) { mr /= 2; mi /= 2; }
+    /* the power peaks tau pulse phases after the sidx 0 strobes */
+    tau = (int32_t)(-((int64_t)sangle(v34_angle((int32_t)mr, (int32_t)mi)) * P / 65536 / 65536));
+    /* this strobe (sidx 3) is 3P/4 after a sidx 0 one: the next peak is P/4 + tau away */
+    dist = P / 4 + tau;
+    r->half = 1;                                            /* the next strobe a symbol's */
+    if (dist < k) { dist += P / 2; r->half = 0; }           /* too near: a midpoint first */
+    r->tacc = (frac + P / 2 - dist) * 65536;
+    r->acq = ACQ_CARRIER;
+    r->nest = 0; r->nsym = 0;
+}
+
+/* the faded run so far a lasting drop of the level (hst.h): its last
+ * fade_win symbols steady, the strongest at most twice the weakest, and at
+ * most one off the grid; then their mean power, else 0 */
+static int64_t fade_step(const hst_brx_t *r)
+{
+    const int32_t n = fade_win[r->lane];
+    int64_t lo = 0, hi = 0, sum = 0;
+    int32_t j;
+    if (r->nfade < n || ones(~r->fok & ((1u << n) - 1)) > 1) return 0;
+    for (j = 0; j < n; j++) {
+        int64_t p = r->fpw[(r->nfade - 1 - j) % HST_BRX_FN];
+        if (j == 0 || p < lo) lo = p;
+        if (j == 0 || p > hi) hi = p;
+        sum += p;
+    }
+    return hi <= 2 * lo ? sum / n : 0;
+}
+
+/* a symbol strobe: timing, carrier, the decision */
+static int rx_symbol(hst_brx_t *r, int32_t yr, int32_t yi)
+{
+    const int32_t P = lanes[r->lane].P, k = rx_k[r->lane];
+    int64_t pw = (int64_t)yr * yr + (int64_t)yi * yi, e, adj, lim;
+    uint32_t a = v34_angle(yr, yi), d;
+    int32_t de, dq, pd;
+    int fade, weak, soft, psh;
+
+    /* a fade: the symbol 9 dB under the mean. fade_lose in a row lose the
+     * lock (a dropout under the carrier detect), and the bits held back
+     * with them; fewer (a lost 20 ms packet) keep it, and their bits go
+     * out with the rest */
+    weak = pw * 8 < r->pref;
+    soft = pw * 2 < r->pref;                                /* 3 dB under: not released (rx_release) */
+    fade = r->locked && weak;
+    r->nfade = fade ? r->nfade + 1 : 0;
+    r->nweak = weak ? r->nweak + 1 : 0;
+    /* the mean held through a dropout (HOLD_SYMS symbols at most: a level
+     * that really fell is then followed), so that the symbols after it are
+     * not measured against a mean the dropout pulled down */
+    if (!weak || r->nweak > HOLD_SYMS) r->pref = r->pref ? r->pref + (pw - r->pref) / 16 : pw;
+    if (r->pref < 1) r->pref = 1;
+    pd = qden(r->pref, &psh);                               /* the divisions by it below, in 32 bits */
+    if (r->nsym > 0 && !fade) {
+        /* Gardner: the midpoint against the change across it */
+        e = ((int64_t)r->ypr - yr) * r->ymr + ((int64_t)r->ypi - yi) * r->ymi;
+        e = qdiv(e, pd, psh, 14);                           /* Q14, about the timing error in symbols */
+        adj = -e * P * (r->locked ? KT_TRK : KT_ACQ) / 64;  /* pulse phases Q16 */
+        lim = (int64_t)k << 15;                             /* at most half a sample a symbol */
+        r->tacc += (int32_t)(adj > lim ? lim : adj < -lim ? -lim : adj);
+    }
+    r->ypr = yr; r->ypi = yi;
+    if (r->nsym > 0) {
+        /* the last HST_BRX_EST symbol and midpoint strobes, the newest last */
+        if (r->nest == HST_BRX_EST) {
+            int j;
+            for (j = 1; j < HST_BRX_EST; j++) {
+                r->esr[j - 1] = r->esr[j]; r->esi[j - 1] = r->esi[j];
+                r->emr[j - 1] = r->emr[j]; r->emi[j - 1] = r->emi[j];
+            }
+            r->nest--;
+        }
+        r->esr[r->nest] = yr; r->esi[r->nest] = yi;
+        r->emr[r->nest] = r->ymr; r->emi[r->nest] = r->ymi;
+        r->nest++;
+    }
+    if (r->acq == ACQ_CARRIER && r->nest == HST_BRX_EST) rx_estimate(r, HST_BRX_EST - 2);
+    else if (r->acq == ACQ_LOCK && !r->locked && --r->wait <= 0) {
+        rx_acquire(r);                                      /* no lock: from the start */
+        r->sidx = 1;                                        /* this was a symbol's strobe */
+        return 0;
+    }
+
+    d = a - r->aprev - (uint32_t)r->wturn;
+    r->aprev = a;
+    if (r->nsym++ == 0) return 0;
+
+    de = rx_decide(r, d, !fade, qdiv(pw, pd, psh, 8));
+    r->ndec++;
+    if (fade) {
+        r->fpw[(r->nfade - 1) % HST_BRX_FN] = pw;
+        r->fok = (r->fok << 1) | (uint32_t)(de <= (int32_t)DEG12 && de >= -(int32_t)DEG12);
+        if (r->nfade >= fade_lose[r->lane]) {
+            int64_t m = fade_step(r);
+            if (m > 0) {
+                /* a lasting drop: the level the faded symbols' (hst.h) */
+                r->pref = m;
+                r->nfade = r->nweak = 0;
+            }
+        }
+    }
+    if (r->acq == ACQ_LOCK) {
+        /* frequency: the decisions' error is the turn a symbol left over */
+        if (!fade) r->wturn += de / (r->locked ? KDT : KDA);
+        if (r->wturn > WTURN_MAX) r->wturn = WTURN_MAX; else if (r->wturn < -WTURN_MAX) r->wturn = -WTURN_MAX;
+        if (r->locked) {
+            /* the turn onto the NCO, slowly */
+            int32_t t = r->wturn / 64;
+            r->wturn -= t;
+            r->dph += (uint32_t)(r->lane ? t / 16 : t * 3 / 32);   /* t baud / 1600 */
+        }
+        /* quality: the strict ceiling to lock, a looser one to hold */
+        r->qbad = (r->locked ? r->qhold : r->qacq) ? 0 : r->qbad + 1;
+        if (!r->locked) {
+            if (ones(r->okhist & LOCK_WIN) >= LOCK_MIN && r->qbad == 0) {
+                int al = rx_alias(r, r->wturn, 2, 1);
+                if (al == 0) { r->locked = 1; r->nchk = CHK_EVERY; r->nalias = 0; r->conf = CONFIRM; r->nconf = 0; }
+                else if (al != 2) rx_estimate(r, HST_BRX_EST - 1);     /* 45 degrees off: again */
+            }
+        } else if (ones(~r->okhist & 0xFFFFu) >= 8 || r->qbad >= HST_BRX_WIN || r->nfade >= fade_lose[r->lane]) {
+            r->locked = 0; r->wait = 0;                     /* lost: acquire again */
+            rx_release(r);                                  /* this symbol is not in the ring */
+        } else if (r->conf > 0) {
+            /* the second check, before any bit is out: two fresh windows
+             * after the lock, their mismatches summed, the turn in use
+             * better than both others confirms it;
+             * otherwise no lock (again from the strobes, when they prefer
+             * r +- 45 by 2:1). The lock's own window is not pooled: it
+             * passed its check by selection, an alias's by the data's
+             * chance. One fresh window alone (7 midpoints) is unclear about
+             * a right lock now and then, more often right after the lock,
+             * where the carrier still turns inside the matched filter */
+            if (--r->conf == 0) {
+                int64_t e[3];
+                int j;
+                alias_e(r, r->wturn, e);
+                if (r->nconf == 0) {
+                    for (j = 0; j < 3; j++) r->econf[j] = e[j];
+                    r->nconf = 1; r->conf = CONFIRM;
+                } else {
+                    int al;
+                    for (j = 0; j < 3; j++) e[j] += r->econf[j];
+                    al = alias_vote(e, 1, 1);
+                    r->nconf = 0;
+                    if (al != 0) {
+                        r->locked = 0; r->okhist = 0;
+                        if (al != 2) rx_estimate(r, HST_BRX_EST - 1);
+                    }
+                }
+            }
+        } else if (--r->nchk <= 0) {
+            /* three checks in a row (on windows apart) for the same turn 45
+             * degrees off: one alone can be the data's chance */
+            int al = rx_alias(r, r->wturn, 3, 2);
+            r->nchk = CHK_EVERY;
+            r->nalias = (al == -1 || al == 1) && (r->nalias == 0 || (r->nalias > 0) == (al > 0))
+                      ? r->nalias + al : 0;
+            if (r->nalias >= 3 || r->nalias <= -3) { r->locked = 0; r->nalias = 0; rx_estimate(r, HST_BRX_EST - 1); }
+        }
+    }
+    dq = de / 65536;                                        /* turns Q16 */
+    r->e2 += ((int64_t)dq * dq - r->e2) / 32;
+    if (!r->locked) { r->ndly = 0; return 0; }
+    /* held back: a lock lost to a fade, or to the second alias check, takes
+     * the bits not yet out with it */
+    {
+        const int32_t n = HST_BRX_DLY;
+        uint8_t in = (uint8_t)(r->bits[0] | r->bits[1] << 1 | r->bits[2] << 2 | soft << 3), out = r->dly[r->pdly];
+        r->dly[r->pdly] = in;
+        if (++r->pdly == n) r->pdly = 0;
+        if (r->ndly < n) { r->ndly++; return 0; }
+        r->bits[0] = out & 1; r->bits[1] = (out >> 1) & 1; r->bits[2] = (out >> 2) & 1;
+        return 3;
+    }
+}
+
+static int rx_band(hst_brx_t *r, int32_t y);
+
+int hst_brx_flush(hst_brx_t *r, uint8_t *bits)
+{
+    const int32_t n = HST_BRX_DLY;
+    int32_t k, m = 0, p;
+    for (k = r->prel; k < r->prel + r->nrel; k++, m += 3) {
+        bits[m] = r->rel[k] & 1; bits[m + 1] = (r->rel[k] >> 1) & 1; bits[m + 2] = (r->rel[k] >> 2) & 1;
+    }
+    if (r->locked && r->conf == 0 && r->nconf == 0) {
+        p = (r->pdly - r->ndly + n) % n;
+        for (k = 0; k < r->ndly; k++, m += 3) {
+            bits[m] = r->dly[p] & 1; bits[m + 1] = (r->dly[p] >> 1) & 1; bits[m + 2] = (r->dly[p] >> 2) & 1;
+            if (++p == n) p = 0;
+        }
+    }
+    r->nrel = r->prel = 0;
+    r->ndly = r->pdly = 0;
+    return (int)m;
+}
+
+/* the band's sample; and after a lost lock, one released symbol's bits
+ * at each sample that gives none of its own */
+int hst_brx_band(hst_brx_t *r, int32_t y)
+{
+    int nb = rx_band(r, y);
+    if (nb == 0 && r->nrel > 0) {
+        uint8_t v = r->rel[r->prel++];
+        r->bits[0] = v & 1; r->bits[1] = (v >> 1) & 1; r->bits[2] = (v >> 2) & 1;
+        if (--r->nrel == 0) r->prel = 0;
+        return 3;
+    }
+    return nb;
+}
+
+static int rx_band(hst_brx_t *r, int32_t y)
+{
+    const int32_t P = lanes[r->lane].P, k = rx_k[r->lane];
+    int64_t g;
+    int32_t ya, c, s, frac, yr, yi, step;
+
+    r->bpw += (int64_t)y * y;
+    if (++r->nblk == BLK) { r->nblk = 0; rx_block(r); }
+
+    /* AGC, then to baseband: the products in 32 bits, ya held to 16 */
+    g = (int64_t)y * r->gain / 65536;
+    ya = (int32_t)(g > 32767 ? 32767 : g < -32767 ? -32767 : g);
+    sincos_q15(r->ph, &c, &s);
+    r->ph += r->dph;
+    if (r->zn == HST_BRX_ZL) {
+        memmove(r->zr, r->zr + HST_BRX_ZL - HST_BRX_ZN, HST_BRX_ZN * sizeof r->zr[0]);
+        memmove(r->zi, r->zi + HST_BRX_ZL - HST_BRX_ZN, HST_BRX_ZN * sizeof r->zi[0]);
+        r->zn = HST_BRX_ZN;
+    }
+    r->zr[r->zn] = (int16_t)(ya * c / 32768);
+    r->zi[r->zn++] = (int16_t)(-ya * s / 32768);
+    if (!r->cd) return 0;
+
+    /* the strobes: two a symbol, four while acquiring the timing */
+    step = r->acq == ACQ_TIMING ? P / 4 : P / 2;
+    r->tacc += k * 65536;
+    if (r->tacc < step * 65536) return 0;
+    r->tacc -= step * 65536;
+    frac = r->tacc < 0 ? 0 : r->tacc / 65536;
+    if (frac >= k) frac = k - 1;
+    rx_mf(r, frac, &yr, &yi);
+    if (r->acq == ACQ_TIMING) { rx_timing(r, frac, yr, yi); return 0; }
+    r->half ^= 1;
+    if (r->half) { r->ymr = yr; r->ymi = yi; return 0; }
+    return rx_symbol(r, yr, yi);
+}
+
+int hst_brx_tick(hst_brx_t *r, int16_t x)
+{
+    const int16_t *w;
+
+    if (r->xn == HST_BRX_XL) {
+        memmove(r->xh, r->xh + HST_BRX_XL - (HST_BBPF_N - 1), (HST_BBPF_N - 1) * sizeof r->xh[0]);
+        r->xn = HST_BBPF_N - 1;
+    }
+    r->xh[r->xn++] = x;
+    if (++r->dec < DEC) return 0;
+    r->dec = 0;
+
+    /* the band-pass, folded (linear phase), at 1600 Hz */
+    w = r->xh + r->xn - HST_BBPF_N;
+    r->y = fir_fold(hst_bbpf, HST_BBPF_N, w);
+    return hst_brx_band(r, r->y);
+}
+
+/* ======================== the detector ======================== */
+
+/* HST_DET_ON dBm0 as a mean square (0 dBm0 = 15770 RMS): 15770^2 x 10^(-4.5) */
+#define DET_ON_MS 7865
+#define DET_MIN   24                  /* grid_ok decisions of the last 30 */
+typedef char hst_det_on_check[HST_DET_ON == -45 ? 1 : -1];
+
+void hst_det_init(hst_det_t *d)
+{
+    memset(d, 0, sizeof *d);
+    hst_brx_init(&d->rx[0], 450);
+    hst_brx_init(&d->rx[1], 300);
+    d->xn = HST_HBPF_N - 1;
+    d->yn = HST_DBPF_N - 1;
+    d->hstep = 3;
+    d->hcnt = 3;
+}
+
+
+static int ones30(uint32_t v)
+{
+    return ones(v & 0x3FFFFFFFu);
+}
+
+/* the energy stage over the last 100 ms: the band over the threshold, and
+ * 10 dB over the high band */
+int hst_det_energy(const hst_det_t *d)
+{
+    int64_t sb = 0, sh = 0;
+    int i;
+    if (d->nfull != HST_DET_BLKS) return 0;
+    for (i = 0; i < HST_DET_BLKS; i++) { sb += d->bb[i]; sh += d->bh[i]; }
+    return sb > (int64_t)DET_ON_MS * HST_DET_BLKS && sb >= 10 * sh;
+}
+
+/* at every 5th sample: the band-pass's output to both receivers (their
+ * bits in nb[], their grid_ok in ok[]), and 1; else 0 */
+static int det_band(hst_det_t *d)
+{
+    int32_t y, k;
+    if (++d->dec < 5) return 0;
+    d->dec = 0;
+    y = fir_fold(hst_bbpf, HST_BBPF_N, d->xh + d->xn - HST_BBPF_N);
+    d->rx[0].y = y;
+    for (k = 0; k < 2; k++) {
+        hst_brx_t *r = &d->rx[k];
+        d->nb[k] = hst_brx_band(r, y);
+        if (r->ndec != d->ndec[k]) {
+            d->ndec[k] = r->ndec;
+            d->ok[k] = d->ok[k] << 1 | (uint32_t)(hst_brx_grid_ok(r) != 0);
+        }
+    }
+    return 1;
+}
+
+/* the input into xh (moved down when full); no bits yet this sample */
+static void det_input(hst_det_t *d, int16_t x)
+{
+    if (d->xn == HST_DET_XL) {
+        memmove(d->xh, d->xh + HST_DET_XL - (HST_HBPF_N - 1), (HST_HBPF_N - 1) * sizeof d->xh[0]);
+        d->xn = HST_HBPF_N - 1;
+    }
+    d->xh[d->xn++] = x;
+    d->nb[0] = d->nb[1] = 0;
+}
+
+void hst_det_rx(hst_det_t *d, int16_t x)
+{
+    det_input(d, x);
+    (void)det_band(d);
+}
+
+int hst_det_tick(hst_det_t *d, int16_t x)
+{
+    int32_t y;
+    det_input(d, x);
+
+    /* the high band, at every 3rd and 5th sample in turn */
+    if (--d->hcnt == 0) {
+        int32_t h = fir_fold(hst_hbpf, HST_HBPF_N, d->xh + d->xn - HST_HBPF_N);
+        d->ph += (int64_t)h * h;
+        d->nh++;
+        d->hstep = 8 - d->hstep;
+        d->hcnt = d->hstep;
+    }
+    /* the receivers' band-pass at 1600 Hz, both receivers on it */
+    if (!det_band(d)) return d->fired;
+    y = d->rx[0].y;
+
+    /* the detector's band, a block at a time */
+    if (d->yn == HST_DET_YL) {
+        memmove(d->yh, d->yh + HST_DET_YL - (HST_DBPF_N - 1), (HST_DBPF_N - 1) * sizeof d->yh[0]);
+        d->yn = HST_DBPF_N - 1;
+    }
+    d->yh[d->yn++] = (int16_t)(y > 32767 ? 32767 : y < -32768 ? -32768 : y);
+    {
+        int32_t b = fir_fold(hst_dbpf, HST_DBPF_N, d->yh + d->yn - HST_DBPF_N);
+        d->pb += (int64_t)b * b;
+    }
+    if (++d->nblk == 16) {
+        d->bb[d->pblk] = d->pb / 16;
+        d->bh[d->pblk] = d->nh ? d->ph / d->nh : 0;
+        if (++d->pblk == HST_DET_BLKS) d->pblk = 0;
+        if (d->nfull < HST_DET_BLKS) d->nfull++;
+        d->pb = d->ph = 0;
+        d->nblk = d->nh = 0;
+        if (!d->fired && hst_det_energy(d)) {
+            if (ones30(d->ok[0]) >= DET_MIN) d->fired = HST_DET_450;
+            else if (ones30(d->ok[1]) >= DET_MIN) d->fired = HST_DET_300;
+        }
+    }
+    return d->fired;
+}

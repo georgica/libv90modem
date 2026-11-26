@@ -14,7 +14,30 @@ void ans_v34_cfg(const answer_t *a, v34ans_cfg *c)
     c->max_tx_rate = a->max_down; c->max_rx_rate = a->max_up;
     c->getbit = a->cfg.getbit; c->putbit = a->cfg.putbit; c->user = a->cfg.user;
     c->x2 = v8ans_x2(&a->v8);
-    c->k56 = a->k56_agreed;
+    c->k56 = (uint8_t)(a->k56_agreed != 0);
+    c->tx_cap = (a->cfg.modes & ANS_MODE_V34_TX_CAP) != 0;
+}
+
+void answer_v34_tx_cap(const answer_t *a, int *proj_bps, int *ask_bps, int *capped)
+{
+    const v34ans_t *v = &a->v34;
+    const v34dx_cfg *d = &v->dx.cfg;
+    int proj, ask, off, top, low;
+    *proj_bps = *ask_bps = *capped = 0;
+    if (d->sym_rate == 0) return;                   /* no V.34 training this call */
+    if (a->modulation != 0 && a->modulation != ANS_MOD_V34) return;    /* the call went another way */
+    if (v->from_v90) { proj = a->p2.info1a.max_rate; ask = v->dx.far_mp.max_ca; }   /* we are the call modem */
+    else             { proj = v->p2.info1c.sr[v->p2.sym_idx].max_rate; ask = v->dx.far_mp.max_ac; }
+    *proj_bps = 2400 * proj;
+    /* live while an MP exchange stands; after a cleardown's (or during a
+     * renegotiation's) the one data mode last began with */
+    *ask_bps = 2400 * (v->dx.got_far_mp && !v->dx.far_clear ? ask : v->far_ask);
+    /* our MP's offer without the cap: what set_mp_limits makes of max_tx_rate */
+    top = d->peer_1664 ? 14 : 12; low = d->sym_rate == 2400 ? 1 : 2;
+    off = v->cfg.max_tx_rate ? v->cfg.max_tx_rate / 2400 : 14;
+    if (off > top) off = top;
+    if (off < low) off = low;
+    *capped = v->cfg.tx_cap && d->max_tx_rate > 0 && d->max_tx_rate / 2400 < off;
 }
 
 /* V.8 selected V.34 as the data mode: INFO0a starts right after the 75 ms

@@ -7,4 +7,5 @@
   K56flex: 56000 bit/s down, 31200 up; after the clocks' wrap 168000 / 93600 bits, 0 / 0 wrong
   V.34: 28800 bit/s down, 28800 up; after the clocks' wrap 86400 / 86400 bits, 0 / 0 wrong
   V.22bis: 2400 bit/s; after the clocks' wrap 7200 / 7200 bits, 0 / 0 wrong
-clock: 94 checks, 0 failures
+  HST: 14400 bit/s forward, 450 back; after the clocks' wrap 896 / 128 octets, 0 wrong
+clock: 102 checks, 0 failures

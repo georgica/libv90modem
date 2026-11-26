@@ -1,1 +1,2 @@
-test_v42: 5703 checks, 0 failures
+release_busy: busy for 39 bits, the peer's state 5, reason 2
+test_v42: 5708 checks, 0 failures

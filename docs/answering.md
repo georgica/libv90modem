@@ -27,7 +27,10 @@ V.92 and Bell:
 | `V90M_MOD_X2` | x2, U.S. Robotics' 56k of 1997, as its server; only with `V90M_MOD_V34` (without: `V90M_ENOTSUP`) | off |
 | `V90M_MOD_K56` | K56flex, Rockwell's and Lucent's 56k of 1997, as its server, experimental; only with `V90M_MOD_V34` (without: `V90M_ENOTSUP`) | off |
 
-At least one is required (0 gives `V90M_EINVAL`).
+At least one is required (0 gives `V90M_EINVAL`). Bits 16 and up are
+options, not modulations: `V90M_OPT_V34_TX_CAP` (off by default) caps our
+V.34 transmit at the caller's own INFO1 projection (below, "The V.34
+transmit cap").
 
 ## The start of a call
 
@@ -46,6 +49,7 @@ first: below, "K56flex".) The menu decides:
   endpoint should then start without detection
   ([error-control.md](error-control.md)).
 - **V.34**, **V.32bis**, **V.22bis / V.22** or **V.21**, as V.8 selects.
+  For V.34 see also "The V.34 transmit cap" below.
 - **No V.8 at all**: the V.22bis answer sequence after ANSam, V.32bis AA,
   V.21 after 8 s.
 - **Bell 103** (`V90M_MOD_BELL103`): a caller without V.8 that sends 1270 Hz
@@ -303,3 +307,33 @@ answering, on a mu-law line: never with `alaw` set.
   upstream rates, on the simulator's lines ([limits.md](limits.md)).
 - Only the three modems above have called it; the U.S. Robotics of 1998
   also in x2 (one call, above); none in K56flex.
+
+## The V.34 transmit cap
+
+Some callers ask in their V.34 MP for more than their own INFO1c projected
+for the symbol rate in use (seen: WebTV boxes, INFO1c 28800 at 3200, MP
+31200). V.34 takes the lower of the two MPs, so without a cap the call runs
+at the caller's ask; a WebTV box could not decode our 31200, missed our
+ADP and fell back to async. A triage of one box found error control
+failing in 7 calls of 7 when its MP asked above its projection, and
+coming up in 12 of 12 (6 of them at 31200) at or below it.
+
+`V90M_OPT_V34_TX_CAP` in `v90m_cfg.modulations` (off by default) makes our
+MP offer no more than the caller's projection (INFO1c, or INFO1a bits
+30:33 when a V.90 caller selects V.34), at start-up and at every retrain.
+Without it the modem behaves as 0.6.1. It is not the default because a
+caller that projects below what it can do loses a step under it (this
+library's own answerer projects 28800 on a clean line while its MP offers
+33600 and the call runs at 31200).
+
+The intended host policy: answer with the cap off; after each V.34 call,
+read `v90m_get_v34_cap`'s `proj_bps` and `ask_bps` (the caller's projection
+and its MP's ask for our transmit direction, bit/s, 0 = none). When the
+ask was above the projection and error control failed (no V.42 link came
+up, or it fell back to start-stop), count it against the member (or the
+calling number). After repeated such calls (the server uses 3), set
+`V90M_OPT_V34_TX_CAP` on that member's calls (`v90m_reset` with it, at
+the start of the call). The host keeps the count; the library keeps
+nothing between calls. Its `capped` says whether the cap lowered our
+MP's offer on a call ([api.md](api.md), "The V.34 transmit cap").
+

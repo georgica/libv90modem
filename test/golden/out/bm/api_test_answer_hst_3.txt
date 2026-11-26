@@ -1,0 +1,67 @@
+test_answer_hst: the HST answering branch through the API, the BinModem profile (W 650 ms)
+  (part 3 of 3)
+rates: code 6, back 450, start 450
+  connected: HST 1, tx 7200 rx 450; now tx 14400 rx 450; retrains 1, reversals 0; MNP hst 1 rates 0x7C back300 0
+  data: 16384 of 16384 octets to the caller, 16384 of 16384 to us, 0 wrong
+  CONNECTED as HST at the opening rate: pass
+  in data at the best agreed rate and the back speed: pass
+  the post-agreement retrain: DATA_STOPPED, then DATA_MOVING: pass
+  RATES with the best agreed rate: pass
+  the data both ways, intact: pass
+rates: code 6, back 300, start 450
+  connected: HST 1, tx 7200 rx 450; now tx 14400 rx 300; retrains 1, reversals 0; MNP hst 1 rates 0x7C back300 1
+  data: 16384 of 16384 octets to the caller, 16384 of 16384 to us, 0 wrong
+  CONNECTED as HST at the opening rate: pass
+  in data at the best agreed rate and the back speed: pass
+  the post-agreement retrain: DATA_STOPPED, then DATA_MOVING: pass
+  RATES with the best agreed rate: pass
+  the data both ways, intact: pass
+rates: code 6, back 300, start 300
+  connected: HST 1, tx 7200 rx 300; now tx 14400 rx 300; retrains 1, reversals 0; MNP hst 1 rates 0x7C back300 1
+  data: 16384 of 16384 octets to the caller, 16384 of 16384 to us, 0 wrong
+  CONNECTED as HST at the opening rate: pass
+  in data at the best agreed rate and the back speed: pass
+  the post-agreement retrain: DATA_STOPPED, then DATA_MOVING: pass
+  RATES with the best agreed rate: pass
+  the data both ways, intact: pass
+rev_caller: the caller's backlog: its 0x1R, our LNA, its training
+  switches 1; the caller's training S3 64 at code 6
+  one reversal: to the back channel: pass
+  to the back channel 20 ms and V.17's turn-off after our LNA drained: pass
+  ones, no host bit, from the cut to the switch: pass
+  there our forward carrier stops, our back transmitter starts at the agreed speed: pass
+  RATES with tx and rx exchanged: pass
+  the caller trains forward at the rate in force, the long training: pass
+  reversals 1 (the caller's 1), retrains 1, renegotiations 0; data 2048 of 2048 to the caller, 2048 of 2048 to us, 0 wrong
+  data never stopped after the post-agreement retrain: pass
+  the data both ways, intact: pass
+rev_stale_3r: the caller's 0x1R, then its 0x35 once it holds forward, never carried out
+  switches 1; reversals 1 (the caller's 1), retrains 2; our LN 0x00, the caller's 0x35; rx 14400, end 0; data 2048 of 2048 to the caller, 32048 of 32048 to us, 0 wrong
+  one reversal: to the back channel; the caller's 0x35 had: pass
+  no LN of ours, the call up at 14400: pass
+  one retrain more, data stopped that once: pass
+  the data both ways, intact: pass
+retrain_ignored: holding the back channel at 14400, v90m_retrain; the caller never trains for our 0x2R
+  our LNs from the retrain: 0x26 3, 0x25 3, 0x24 3, 0x23 3, 0x22 3; end 8
+  only 0x2R of ours, never a rate up: pass
+  each agreed rate HST_RC_FAILS times, 14400 down to 4800: pass
+  then V90M_END_RETRAIN_FAILED: pass
+up: our switch by training to 9600 as holder; then holding back, 10 s good: our 0x35, then 0x36
+  our switches by marks 0: 0 to 0; our trainings 3; switches 1
+  holding forward, the caller's 0x34: our short training at 9600 (HST_3R_TRAINS), RATES tx 9600: pass
+  then its reversal: we hold the back channel at 9600: pass
+  our LNs 2: 0x35 sent, 0x36 sent
+  our 0x35 10 s after the receiver came into data, our first LN: pass
+  our 0x36 10 s after the switch to 12000 was in: pass
+  the receiver retrained at 12000, then 14400; RATES rx 12000, rx 14400: pass
+  retrains 4, reversals 1; LNs ours 2, last 0x36, the caller's last 0x14, violations 0; data 2048 to the caller, 24192 to us, 0 wrong
+  data stopped for each of the three changes (trainings), not otherwise: pass
+  no more LNs (14400 is the top); the data both ways intact, ours all in: pass
+recovery: the caller's receiver drops out of data; 2 x T401: our short training
+  our switches by marks 0; then our trainings 1, code 6, S3 64
+  no switch, no retrain until then: pass
+  2 x T401 on (within 1 s more), our short training at 14400: pass
+  a retrain: DATA_STOPPED, DATA_MOVING; retrains 2; the caller's receiver at 14400: pass
+  retrains 2, reversals 0; LNs ours 0, last 0x00, the caller's last 0x00, violations 0; data 4096 to the caller, 768 to us, 0 wrong
+  the data both ways intact, and moving again: pass
+test_answer_hst: 116 checks, 0 failures

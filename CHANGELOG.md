@@ -8,9 +8,93 @@ change is listed here. Rebuild against the new header with every version;
 "Simulation and own answerer only" means: tried against simulated lines and
 this library's own answering modem, never against a real modem or server.
 
-## Unreleased
+## 0.7.0 (2026-11-26)
 
-Fixed:
+Includes the changes of 0.6.2-rc1 (below: the opt-in V.34 transmit cap
+with `v90m_get_v34_cap`, x2's plain JM after 2 s, the V.34 Phase 3/4 time
+limits, `v90m_ec_tx_busy` and the closing flag); there was no final 0.6.2.
+
+Tried against: simulated lines and callers (`sim/hstcall`, written from
+the published facts, and `sim/mnppeer`) with this library's own answering
+modem; the replay corpus of recorded calls (every recording identical
+but the 15 that pull request #5's fix, below, changes);
+and BinModem, a software HST modem, calling over SIP into a local test
+server. No real HST modem (a U.S. Robotics Courier) has called it, and no
+recorded HST call from one is in the corpus yet: live testing of HST
+against a real Courier comes after this release, and what it finds is
+fixed in 0.7.1.
+
+Checked on x86-64 (`make golden`, the BinModem profile's tests, the
+replay proof, the bench hashes); this release's all-platform verification
+is GitHub CI's (gcc and clang on x86-64, UBSan, ARMv7 and big-endian
+s390x under qemu, ARMv5 on the tag, a 32-bit Windows build). The local
+port matrix (riscv64 included) and the CPU costs were not run for it.
+
+Changed, the ABI: rebuild against the new header and link again.
+- `v90m_stats` (`reversals`, appended), `v90m_ec_cfg` (`mnp`, appended)
+  and `v90m_ec_status` (`protocol` and the MNP / HST fields, appended)
+  grow, and `v90m_ec_cfg_default` writes the larger struct: a program
+  built against 0.6 would be overrun by 0.7's library. The SONAME is
+  `libv90modem.so.0.7` (the version's minor, as every 0.x); a program
+  linked against `.so.0.6` does not load this one.
+- `v90m_ec_mem_size()` is 50448 on x86-64 (49792 in 0.6.0; 50200 on
+  32-bit ARM), under `V90M_EC_MEM_SIZE` (50 KiB, unchanged).
+  `V90M_MEM_SIZE` and `v90m_mem_size()` are unchanged.
+
+Changed, behaviour (all of it only where a host turns the new parts on;
+with `V90M_MOD_HST` not offered and `mnp.enable` 0, the default, every
+call is as in 0.6.2-rc1):
+- Answering with HST offered and an MNP endpoint linked: a caller that
+  sends neither CM nor AA (V.22bis, V.21, Bell 103 without V.8) hears our
+  V.22bis or V.21 650 ms later than before, up to 2 s later while there
+  is energy in the 250-500 Hz band (the wait for an HST back channel).
+  Callers that send CM or AA are answered exactly as before.
+- HST is not offered when `max_down_bps` is 1..4799 (under its lowest
+  rate): the modem then answers as without `V90M_MOD_HST`, linked or not.
+  From 4800 up the call opens at 9600 and takes the best agreed rate
+  under the ceiling in the retrain after MNP's LRs; a plain MNP agreement
+  (no HST rate in common) has no such retrain and stays at 9600.
+- `v90m_destroy` and `v90m_reset` also end an HST link: call them before
+  the memory of a modem in the caller's memory is reused.
+- On an HST call: `v90m_retrain` holding the fast channel sends our short
+  training, holding the back channel our MNP attention 0x2R at the rate
+  in force; `v90m_cleardown` (after `v90m_ec_release` and
+  `v90m_ec_tx_busy` 0) keeps the line 30 ms (fast channel) or 200 ms
+  (back channel) for MNP's LD, then stops both carriers;
+  `V90M_END_RETRAIN_FAILED` also ends an HST call whose retrains at the
+  lowest agreed rate failed (3 within 10 s, or the 4th loss of data mode
+  within 30 s). No HST call stays connected without the far modem's
+  signal for more than 12 s (`V90M_END_LOST`); the far modem's LD ends it
+  with `V90M_END_CLEARDOWN_FAR`.
+- On an HST call, a retrain (0x2R) or change by marks (0x3R) our receiver
+  asks for while our own reversal request (0x1R) still waits for its LNA
+  waits at most 3 s: then it counts as a failed retrain (0x2R) or is
+  dropped (0x3R). A caller that never acknowledges our 0x1R thus ends the
+  call with `V90M_END_RETRAIN_FAILED` some 9 s an agreed rate after our
+  first request, not after MNP's N400 x T401 (some 2 min at 450 bit/s)
+  (docs/limits.md, "A request behind our own 0x1R").
+- `v90m_ec_release` under MNP sends LD 255 and is `V90M_EC_DISCONNECTED`
+  at once; wait for `v90m_ec_tx_busy` 0 before stopping the line.
+- The host pattern for an HST call (link before the first sample, reset
+  at `CONNECTED`, or feed from the first sample and never reset, not
+  both): docs/error-control.md.
+
+Added (simulation, own answerer, the replay corpus and BinModem as above):
+- Answering role: HST, U.S. Robotics' asymmetric modem, as its answering
+  side: `V90M_MOD_HST` (0x0400, not in the defaults; calling:
+  `V90M_ENOTSUP`), offered only with an MNP endpoint linked by
+  `v90m_ec_link_hst`; `V90M_CONN_HST`, `V90M_END_HST_FAILED`,
+  `ANS_ERR_HST_LINK`, `ANS_ERR_HST_CARRIER`; channel reversals, rate
+  changes by marks and retrains (include/v90modem.h, `V90M_MOD_HST`;
+  docs/api.md).
+- Error control: MNP (V.42 Annex A) in the endpoint, off by default
+  (`v90m_ec_cfg.mnp`: `enable`, `k`, `n401`, `opt`, `framing`,
+  `t401_min_ms`, `n400`); `v90m_ec_status.protocol` (`V90M_EC_PROTO_*`)
+  and the MNP / HST fields; `v90m_ec_set_rates`. With MNP,
+  `v90m_ec_tx_busy` also counts an LD owed.
+- `v90m_stats.reversals` (appended): HST channel reversals, this call.
+
+Fixed (from zagdrath's pull request #5, merged from 0.6.1's line):
 - Answering role, V.90 (and wherever else S is found again after a silence:
   V.34, K56flex): the caller's S in answer to Jd was not taken
   when the line passes the two edges of the band unequally and the
@@ -23,10 +107,89 @@ Fixed:
   Seen on the recording `test/fixtures/usrc1.raw.xz`: Jd' and the DIL now
   follow 17 ms into the caller's S. On a live call through an AudioCodes
   MP-124E the Courier now connects at V.90, 49333 / 26400 (one short
-  call so far).
-  The other fixtures replay as before; `test_orig_v34`'s retrain by the
-  caller takes its S one count sooner (SNR 31.3 to 31.4 dB in its
-  output).
+  call so far): the first live connection with a USR Courier
+  V.Everything. In the private replay corpus 15 recorded calls now take
+  the caller's S at its start, in every flag set (HST's included), and the
+  V.92 sets' diagnostics of 20 more change with them; the other test
+  fixtures replay as before; `test_orig_v34`'s retrain by the caller
+  takes its S one count sooner (SNR 31.3 to 31.4 dB in its output).
+  Thanks to zagdrath.
+
+Known limits (docs/limits.md, "HST (answering)"): the receive throughput
+while the caller holds the fast channel is bounded by MNP's window (k 8
+LTs of 64 octets by default) against the back channel's acknowledgements:
+about half the line rate at 14400.
+
+## 0.6.2-rc1 (2026-11-25)
+
+A release candidate, for the ISP's WebTV calls: checked on x86-64 only
+(`make golden`, the replay proof). The all-platform verification (ARMv5,
+the port matrix, riscv64, Windows, the costs) is deferred to the final
+0.6.2 or 0.7.0. The library's version is 0.6.2 (`v90m_version()`), its
+SONAME `libv90modem.so.0.6`.
+
+Added:
+- Answering role, V.34 (and V.34 selected by a V.90 caller's INFO1a): an
+  opt-in cap of our transmit rate at the caller's own projection for it,
+  `V90M_OPT_V34_TX_CAP` (0x10000), an option bit in `v90m_cfg.modulations`
+  (bits 16 and up are options, not modulations; the bit alone is
+  `V90M_EINVAL`; ignored calling). Off by default: without it the modem
+  behaves as 0.6.1. With it our MP's maximum transmit rate is the lower of
+  `max_down_bps` and the caller's projection (INFO1c bits 30:33 for the
+  symbol rate in use; INFO1a bits 30:33 of Table 11/V.90), at start-up
+  and at every retrain. For a host that sets it per call, for a caller
+  whose box has asked above its own projection and failed error control
+  more than once (`docs/answering.md`). Why: WebTV boxes asked for 31200
+  in their MP against their own INFO1c's 28800; a triage of one found
+  error control failing in 7 calls of 7 when its MP asked above its
+  projection and coming up in 12 of 12 (6 at 31200) at or below it. Not
+  the default because a caller that projects below what it can do (as
+  this library's own answerer does: 28800 against an MP offering 33600)
+  would lose a step; of the 106 recorded calls only 6 reach a V.34 MP
+  (plus x2b, a V.90 caller that selected V.34), none asked above its
+  projection. `V90M_MEM_SIZE` and `v90m_mem_size()` are unchanged.
+- `v90m_get_v34_cap(m, &c)` fills a new `v90m_v34_cap` (`proj_bps`,
+  `ask_bps`, `capped`): answering V.34, our transmit direction, the
+  caller's projection, its MP's ask (both bit/s, 0 = none) and whether the
+  cap lowered our MP's offer; kept after the end until `v90m_reset`; all
+  0 calling, on any other call and before V.34 training. The host's count of "asked above its own projection and
+  error control failed" comes from these. A function and a struct of
+  their own, as `v90m_get_diag`: `v90m_state`, `v90m_stats` and
+  `v90m_diag` keep their size, and a program built against 0.6.0 or 0.6.1
+  runs on 0.6.2's shared library (SONAME `libv90modem.so.0.6`).
+
+Fixed:
+- Answering role, x2 offered: a caller whose CM offers V.34 and no PCM got
+  a JM whose carrier was inverted after every JM for the whole of V.8. A
+  strict V.8 receiver (two WebTV boxes, hardware V.34 modems) never
+  decoded it, went on sending CM and never sent CJ; we went on to Phase 2
+  after 5 s and the call failed there (`P2N_ERR_INFO0`). 14 of 21 such
+  live calls failed, none of 31 with a plain JM. The JM is now inverted
+  only for its first 2 s (`V8A_X2_FLIP_MS`); the JMs that begin later are
+  plain. An x2 client still sees the inverted JMs first (the live USR x2
+  client sent CJ 0.773 s after the JM began; the recorded corpus 0.606 to
+  0.641 s), and x2 is still offered in Phase 2. Non-x2 callers that did
+  take the inversion live took 1.47 to 3.87 s; the plain JM helps them too.
+  Simulation and the replay corpus: every recorded call identical.
+- V.34, either role, our own sample path's delay unknown (`io_delay` -1):
+  once the echo delay was found in Phase 3, the round trip used for the
+  Phase 3 and 4 time limits was replaced by the round trip less that
+  delay. Over a VoIP leg whose echo came back 150 ms late, the wait for the
+  caller's S after our J fell from 796 to 645 ms while the caller's S began
+  at 649 ms: five retrains and the call lost (WebTV). The limits now keep
+  the whole round trip from Phase 2; only the far echo canceller's lag
+  takes our own delay off, as before. A caller lost in Phase 3 or 4 is
+  noticed up to one, two or three echo delays later. Simulation: a caller
+  that sends S 470 ms after our J, our echo 150 ms late: data at the first
+  training (four retrains, no data, before).
+- V.42 (LAPM), either role, every modulation: `v90m_ec_tx_busy` read 0
+  from the first bit of a frame's closing flag, 7 bits before the frame
+  was out, against its contract (include/v90modem.h,
+  docs/error-control.md). A host that stops the line the moment it reads 0
+  (after `v90m_ec_release`, before `v90m_cleardown`) cut the DISC's
+  closing flag, and the far end never took the DISC. It now stays 1 until
+  the flag's last bit has gone. No bit on the line changes;
+  `v90m_ec_mem_size()` is unchanged.
 
 ## 0.6.1 (2026-11-24)
 

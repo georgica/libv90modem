@@ -7,7 +7,8 @@ its own memory and no allocation after create or init:
 
 - `v90m_async_*`: start-stop characters (V.14 basic), no error control;
 - `v90m_ec_*`: a V.42 endpoint (LAPM, detection phase, start-stop fallback,
-  breaks) with V.42bis or V.44 compression.
+  breaks) with V.42bis or V.44 compression, and optionally MNP (V.42
+  Annex A) for an answering modem.
 
 Use one of them, or framing of your own. Neither makes callbacks: the
 program moves bits between the modem's callbacks and the object, and
@@ -65,6 +66,57 @@ a new configuration.
 examples do. When answering and `v90m_state.odp_bypass` is 1 (two V.92
 modems that both named LAPM in V.8, V.92 9.3.1), set `detect = 0`: the
 caller skips the detection phase.
+
+*For an HST-capable call* (`V90M_MOD_HST` offered, `mnp.enable` 1), link
+before the first sample; resetting at `CONNECTED` is harmless:
+
+1. Create and configure the endpoint (`mnp.enable` 1) and the modem.
+2. `v90m_ec_link_hst(ec, m)` before the first `v90m_process_*` call. The
+   modem offers HST only to a linked endpoint, and decides at the end of
+   ANSam; after that the call gives `V90M_ESTATE`.
+3. At `V90M_EV_CONNECTED`, `v90m_ec_reset` as above. It keeps the link and
+   an LR the caller sent during our training, which is answered at our
+   first bit. Give the rates with `v90m_ec_set_rates` after that reset and
+   at each `V90M_EV_RATES`, as for any MNP call.
+4. For the next call, link again before its first sample, whether you
+   reset the modem (`v90m_reset`) or create a new one: both start
+   unlinked. Linking starts the endpoint's call afresh, as
+   `v90m_ec_reset` with its configuration does, so the link alone
+   readies the endpoint for the next call.
+
+On an HST call, `CONNECTED` comes at the opening rate (9600 bit/s
+forward); once MNP is up, the forward channel retrains at the best rate
+both ends agreed: `DATA_STOPPED`, `DATA_MOVING` and `RATES`, handled as
+for any retrain (`v90m_ec_line_stopped`, `v90m_ec_line_restored`,
+`v90m_ec_set_rates`). An HST caller that sends no LR ends the endpoint
+with `V90M_EC_R_NO_EC` at our training's end plus 5 s: clear the call down
+then (`v90m_cleardown`, `V90M_END_CLEARDOWN_OURS`); a host that does not
+has the modem end it 15 s after HST began, with `V90M_END_HST_FAILED`.
+
+The link is two-way, and either side ends it: `v90m_destroy` and
+`v90m_reset` of the modem; `v90m_ec_destroy` of the endpoint, a
+`v90m_ec_reset` with `mnp.enable` 0, or linking it to another modem.
+Linking a second endpoint to a modem unlinks the first. So the two may be
+destroyed in either order, and one endpoint may serve a new modem per
+call. An unlinked endpoint (its modem gone, say) is the plain one, with
+T400 counted from its next tick.
+
+A host may also feed and tick the linked endpoint from the first sample
+on, through the start-up. Until the modem connects on another path, the
+endpoint holds T400; from then on it is the unlinked endpoint, with T400
+counted from `CONNECTED`. Between calls, reset the endpoint as usual;
+for a linked endpoint that reset is optional, since linking it for the
+next call starts it afresh. An endpoint neither reset nor linked again
+starts again by itself only when the next call is an HST call (it sees
+the new call's mailbox); a following non-HST call would meet the last
+call's state, as with any endpoint that is not reset.
+Use one pattern or the other, not both: a host that feeds the endpoint
+before `CONNECTED` does not reset it at `CONNECTED`. Once the endpoint has
+sent a bit, a reset is a fresh start: the LR it took during our training
+and the MNP link begun on it are dropped, and the call then rests on the
+caller repeating its LR within that window.
+A frame half-received when the endpoint is reset is lost, and the caller
+repeats it (an LR, within the HST window of our training's end plus 5 s).
 
 **The detection phase** (V.42 7.2.1). The originator sends the ODP until
 two ADPs are seen, or the answerer's flags (an answerer without the
@@ -169,8 +221,44 @@ break of ours is still pending. `v90m_ec_get_break` returns 1 with `*opt`
 and `*len10ms` when a break came, in its place among the octets read, else
 0.
 
+**MNP** (V.42 Annex A; `cfg.mnp`, answering only, off by default). With
+`mnp.enable` 1, a caller's LR in start-stop (framing mode 2) or HDLC (mode
+3) in the detection phase starts an MNP link in LAPM's place; an ODP first
+still means LAPM, and a caller that sends neither gets start-stop at T400
+as before. `v90m_ec_status.protocol` says which (`V90M_EC_PROTO_*`).
+Breaks are LNs (types 1 to 3, the three `V90M_BRK_*`); `v90m_ec_release`
+sends LD 255 and the state is `V90M_EC_DISCONNECTED` at once: keep the bits
+moving until `v90m_ec_tx_busy` is 0.
+
+- *Line rates.* MNP's T401 depends on the line's speed (A.7.5.1: the
+  time a window of LTs and an LA take, plus a round trip; T404 too, Table
+  A.10). Give the rates with `v90m_ec_set_rates(ec, st.tx_bps,
+  st.rx_bps)` after the `v90m_ec_reset` at `V90M_EV_CONNECTED` (a reset
+  forgets them: call it after each one), and again at each
+  `V90M_EV_RATES`. The answering program of
+  [getting-started.md](getting-started.md) does both. Until then MNP counts 2400 bit/s: T401 is then
+  3.0 s (framing 3, k 8, N401 64) where 14400 bit/s needs only the 1.5 s
+  floor, and far too short below 2400 (at 300 bit/s about half the LTs
+  went twice). The rates are kept
+  through detection and taken by the link when it starts; LAPM ignores
+  them (its timers are `lapm.t401_ms` and `t403_ms`). The endpoint does
+  not read them from the modem itself: it is an object of its own with no
+  handle on a `v90m_t` (it runs as well over another modem, a recording or
+  a test rig), and the host already handles both moments, so one call
+  keeps the two objects apart.
+- *T400 at 300 bit/s.* A mode 2 LR at 300 bit/s takes about 1 s, longer
+  than T400 (750 ms). When T400 runs out while a start-stop frame that begins
+  as an LR is under way (SYN DLE STX, an LI of 2 to 254, type 1), it is
+  held once, until that frame ends, and at most 2000 ms
+  (`V42EC_T400_LR_HOLD_MS`): an LR then gives MNP, anything else
+  start-stop at the frame's end. Other frames, typed text with SYN DLE STX
+  included, and HDLC frames are not waited for, so a caller that sends no
+  LR gets start-stop at 750 ms as with MNP off. The hold needs the LR's
+  first octets: an LR begun in the last ~165 ms before T400 at 300 bit/s
+  falls to start-stop.
+
 **Memory.** At most `V90M_EC_MEM_SIZE` (50 KiB; `v90m_ec_mem_size()` gives
-the exact size, 49792 octets on x86-64).
+the exact size, 50448 octets on x86-64, 50200 on 32-bit ARM).
 
 More on the V.42 code, the compression and the readings taken where the
 Recommendations leave a choice: `v42/README.md`.
@@ -187,6 +275,7 @@ if (st.connected && !ec_on) {
     v90m_ec_cfg_default(&c, originator);
     c.detect = !st.odp_bypass;
     v90m_ec_reset(ec, &c);
+    v90m_ec_set_rates(ec, st.tx_bps, st.rx_bps);    /* MNP's T401; again on V90M_EV_RATES */
     ec_on = 1;
 }
 if (ec_on) v90m_ec_tick(ec, n / 8);
