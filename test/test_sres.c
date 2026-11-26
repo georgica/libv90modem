@@ -48,6 +48,20 @@ static void sym(void *u, double *re, double *im)
 
 typedef struct { int found, errors, n; double mse_db; } res_t;
 
+/* A line that passes the two edges of the band unequally: a first-order
+ * high-pass with its corner at `tilt_hz` (0 = none), as the coupling of a
+ * line interface is. S has a line at each edge (the carrier -+ half the
+ * symbol rate: 320 and 3520 Hz at 3200 symbols/s on 1920 Hz). */
+static double tilt_hz, tilt_x, tilt_y;
+static double tilt(double x)
+{
+    double a;
+    if (tilt_hz <= 0) return x;
+    a = 1.0 / (1.0 + 2 * 3.14159265358979 * tilt_hz / 8000.0);
+    tilt_y = a * (tilt_y + x - tilt_x); tilt_x = x;
+    return tilt_y;
+}
+
 static void run(int rate, int cn, int cd, double ppm, int gap_syms, double phase, double snr_db, int scr, res_t *o)
 {
     static qamrx_t rx; static sdet_t sd; static sres_t sr; qammod_t mod; rng_t rng; v34trn_t ref, dref;
@@ -55,6 +69,7 @@ static void run(int rate, int cn, int cd, double ppm, int gap_syms, double phase
     int i, synced = 0, resumed = 0, searching = 0, total;
 
     txn = 0; gap = gap_syms; rot = phase; fill = scr;
+    tilt_x = tilt_y = 0;
     v34trn_init(&txscr, V34T_GPA); txscr.scr.sr = 0x2b3c5;
     v34trn_init(&txtrn, V34T_GPA); v34trn_init(&txdat, V34T_GPA);
     v34trn_init(&ref, V34T_GPA); v34trn_init(&dref, V34T_GPA);
@@ -66,7 +81,7 @@ static void run(int rate, int cn, int cd, double ppm, int gap_syms, double phase
     memset(o, 0, sizeof *o);
     total = (int)((SIL + 2 * (V34_S_LEN + V34_SBAR_LEN) + V34_PP_LEN + NTRN + gap_syms + NDATA + 100) * 8000.0 / rate);
     for (i = 0; i < total; i++) {
-        int16_t x = (int16_t)floor(qammod_tick(&mod) + nrms * rng_gauss(&rng) + 0.5);
+        int16_t x = (int16_t)floor(tilt(qammod_tick(&mod)) + nrms * rng_gauss(&rng) + 0.5);
         if (!synced && sdet_tick(&sd, x)) {
             qamrx_sync(&rx, (int32_t)((16.5 * 8000.0 / rate - SDET_DELAY(&sd) - 1) * 256));
             synced = 1;
@@ -133,6 +148,27 @@ int main(void)
         if (o.found != 1 || o.errors || o.n != NDATA)
             printf("  SCR then S, gap %d: found %d, %d symbols, %d errors, mse %.1f dB\n", gaps[k], o.found, o.n, o.errors, o.mse_db);
         CHECK_EQ_I(o.found, 1); CHECK_EQ_I(o.n, NDATA); CHECK_EQ_I(o.errors, 0);
+    }
+
+    /* The S that answers Jd, after some 3 s of silence, on a line that
+     * tilts the band (a U.S. Robotics Courier V.Everything behind an FXS
+     * gateway, 2026-11-25: its S came 0.5 symbol late at -51 ppm and was
+     * never taken, P34_ERR_NO_S2; test/fixtures usrc1). The silence is
+     * stepped so that the drift covers a whole symbol in sixteenths: at
+     * every timing phase S must be found and what follows received. */
+    {
+        int nok = 0;
+        tilt_hz = 500.0;
+        for (k = 0; k < 16; k++) {
+            int g = 5000 + k * 1250;                    /* 0.25 .. 1.19 symbols at 50 ppm */
+            run(3200, 3, 5, -50.0, g, phases[k % 6], 0, 0, &o);
+            if (o.found != 1 || o.errors || o.n != NDATA)
+                printf("  tilted line, gap %d: found %d, %d symbols, %d errors, mse %.1f dB\n", g, o.found, o.n, o.errors, o.mse_db);
+            else nok++;
+            CHECK_EQ_I(o.found, 1); CHECK_EQ_I(o.n, NDATA); CHECK_EQ_I(o.errors, 0);
+        }
+        printf("  tilted line (high-pass 500 Hz), -50 ppm, 16 timing phases: resumed %d of 16\n", nok);
+        tilt_hz = 0;
     }
 
     T_REPORT("sres");

@@ -8,6 +8,26 @@ change is listed here. Rebuild against the new header with every version;
 "Simulation and own answerer only" means: tried against simulated lines and
 this library's own answering modem, never against a real modem or server.
 
+## Unreleased
+
+Fixed:
+- Answering role, V.90 (and wherever else S is found again after a silence:
+  V.34, K56flex): the caller's S in answer to Jd was not taken
+  when the line passes the two edges of the band unequally and the
+  caller's clock had drifted about half a symbol during its silence. Its
+  symbols then come out strong and weak in turn, and the weak ones kept
+  setting the count of S back: Jd went on until `P34_ERR_NO_S2`
+  (`V90M_END_FAILED`), on every call with a U.S. Robotics Courier
+  V.Everything behind an FXS gateway (-51 ppm, 3 s of silence). A symbol
+  now counts by itself, as before, or as a pair with the one before it.
+  Seen on the recording `test/fixtures/usrc1.raw.xz`: Jd' and the DIL now
+  follow 17 ms into the caller's S. On a live call through an AudioCodes
+  MP-124E the Courier now connects at V.90, 49333 / 26400 (one short
+  call so far).
+  The other fixtures replay as before; `test_orig_v34`'s retrain by the
+  caller takes its S one count sooner (SNR 31.3 to 31.4 dB in its
+  output).
+
 ## 0.6.1 (2026-11-24)
 
 Added:
