@@ -110,6 +110,7 @@ version; the init functions check the length given):
 | `V90M_MOD_BELL212A` | 0x0080 | not in the defaults, either role; answering only with `V90M_MOD_V22` (without: `V90M_ENOTSUP`) |
 | `V90M_MOD_X2` | 0x0100 | answering only (calling: `V90M_ENOTSUP`), with `V90M_MOD_V34` (without: `V90M_ENOTSUP`), not in the defaults: x2 as its server, offered on a mu-law line to a caller whose CM offers V.34 and no PCM; see [answering.md](answering.md), "x2" |
 | `V90M_MOD_K56` | 0x0200 | answering only (calling: `V90M_ENOTSUP`), with `V90M_MOD_V34` (without: `V90M_ENOTSUP`), not in the defaults; experimental: K56flex as its server, offered on a mu-law line in V.8bis before V.8 (every caller then hears our answer tone later: 1.790 s without V.8bis, 3.807 s for a V.8bis caller without K56flex, 3.413 s for a K56flex client); see [answering.md](answering.md), "K56flex" |
+| `V90M_OPT_V34_NO_TX_CAP` | 0x10000 | not a modulation (alone: `V90M_EINVAL`); answering, V.34: our MP's transmit rate is not capped at the caller's own INFO1c / INFO1a projection (as before 0.7.0); the cap is on without it; calling: ignored; see [answering.md](answering.md) |
 
 What each does in each role: [answering.md](answering.md),
 [calling.md](calling.md), and the header's comments above `v90m_role` and

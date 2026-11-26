@@ -260,6 +260,12 @@ static void test_errors(void)
         bad = c; bad.max_up_bps = -1;      CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
         bad = c; bad.echo_delay = -2;      CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
         bad = c; bad.modulations |= 0x800; CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);   /* 0x100 is x2, 0x200 K56flex, 0x400 HST now */
+        /* the V.34 transmit cap's switch: an option bit, not a modulation */
+        bad = c; bad.modulations = V90M_OPT_V34_NO_TX_CAP; CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
+        bad = c; bad.modulations |= V90M_OPT_V34_NO_TX_CAP;
+        m = v90m_create(&bad, &err); CHECK(m != NULL); CHECK_EQ_I(err, V90M_OK); v90m_destroy(m);
+        bad.role = V90M_ROLE_ORIGINATE; bad.modulations = V90M_MOD_V34 | V90M_OPT_V34_NO_TX_CAP;     /* calling: ignored */
+        m = v90m_create(&bad, &err); CHECK(m != NULL); CHECK_EQ_I(err, V90M_OK); v90m_destroy(m);
 
         m = v90m_init(mem.b, sizeof mem.b, &c, &err);
         CHECK(m != NULL); CHECK_EQ_I(err, V90M_OK);

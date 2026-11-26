@@ -194,6 +194,15 @@ typedef enum {
  * V90M_END_CLEARDOWN_FAR once its carrier goes (2 s at most); ours is
  * v90m_ec_release, v90m_ec_tx_busy 0 (at most 1 s), then v90m_cleardown. */
 #define V90M_MOD_HST      0x0400u
+/* Not a modulation: an option bit in .modulations. Answering, V.34 (and
+ * V.34 selected by a V.90 caller's INFO1a): by default our MP's maximum
+ * transmit rate is the lower of max_down_bps and the caller's own
+ * projection for it (INFO1c, or INFO1a bits 30:33, at the symbol rate in
+ * use), at start-up and at every retrain; V.34 takes the lower of the two
+ * MPs, so a caller whose MP asks for more than its own line probe gets
+ * what the probe said. This bit turns that off: our MP then offers
+ * max_down_bps (or all the engine can), as before 0.7.0. Calling: ignored. */
+#define V90M_OPT_V34_NO_TX_CAP 0x10000u
 
 /* the modulation of a connection (v90m_state.modulation) */
 typedef enum {

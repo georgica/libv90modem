@@ -239,6 +239,25 @@ int main(void)
     for (t = 0; t < 2000 && A.phase != ANS_FAILED; t += 10) run(80);
     CHECK_EQ_I(A.phase, ANS_FAILED); CHECK_EQ_I(answer_end(&A), ANS_END_CLEARDOWN_FAR); CHECK_EQ_I(A.connected, 0);
 
+    /* ---- our transmit ceiling: the caller's INFO1a projection (bits 30:33)
+     * when its MP asks for more; at start-up and after a retrain ---- */
+    start(ALL, 0, 0, 0, 0, 0, 0);
+    C.pc.v34_max_rate = 10;
+    CHECK_EQ_I(to_data(25000), 1);
+    CHECK_EQ_I(A.modulation, ANS_MOD_V34);
+    CHECK_EQ_I(A.p2.info1a.max_rate, 10);
+    CHECK(C.dx.mp.max_ca > 10);                         /* its MP asks for more */
+    CHECK_EQ_I(A.v34.dx.mp.max_ca, 10);
+    CHECK_EQ_I(A.bitrate, 24000); CHECK_EQ_I(C.dx.rx_rate, 24000);
+    data_ok("INFO1a 24000, MP more");
+    CHECK_EQ_I(answer_retrain(&A), 0);
+    run(8000);
+    CHECK_EQ_I(to_data(15000), 1);
+    CHECK_EQ_I(C.connects, 2); CHECK_EQ_I(A.p2.info1a.max_rate, 10);
+    CHECK(C.dx.mp.max_ca > 10);
+    CHECK_EQ_I(A.bitrate, 24000);
+    data_ok("the same after our retrain");
+
     /* ---- a retrain after which the caller wants V.90: Phase 3 of V.90 begins ---- */
     start(ALL, 0, 0, 0, 0, 0, 0);
     CHECK_EQ_I(to_data(25000), 1);

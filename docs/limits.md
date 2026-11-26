@@ -117,6 +117,21 @@ Each item names where it is recorded.
   at a 100 ms round trip, 28800 at 300 ms, 12000 at 400 ms. The answer side
   is clean at every one. Not investigated (0.6.0 audit, ISP-1 follow-up).
 
+- **V.34 transmit capped at the far end's projection: answering only.**
+  The answerer sends no faster than the caller's INFO1c projects (0.7.0,
+  on by default, `V90M_OPT_V34_NO_TX_CAP` turns it off; none of the 106
+  recorded calls asked for more than its projection, so no rate changed,
+  but our MP now offers 31200 to them where it offered 33600: replays of
+  recordings made before 0.7.0 need `v90m-replay -C`, since the echo they
+  hold is of the old MP). The calling side is not capped at the answerer's INFO1a:
+  this library's own answerer projects 28800 on a clean line while its MP
+  takes 31200 there (`test/test_orig_v34.c`, good line), and the cap would
+  have cost those calls a step. The V.90 analogue caller's upstream
+  follows the digital modem's CP and is not capped at its INFO1d either;
+  PCM has no such projection.
+  Real answerers' INFO1a against their MP: not measured (no recordings of
+  the calling side).
+
 ## Not checked against a specification
 
 - **The Bell 212A calling handshake** follows V.22 and what this library's

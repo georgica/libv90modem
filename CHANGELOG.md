@@ -8,6 +8,29 @@ change is listed here. Rebuild against the new header with every version;
 "Simulation and own answerer only" means: tried against simulated lines and
 this library's own answering modem, never against a real modem or server.
 
+## 0.7.0 (unreleased)
+
+Changed:
+- Answering role, V.34 (and V.34 selected by a V.90 caller's INFO1a): our
+  transmit rate is capped at the caller's own projection for it, INFO1c
+  bits 30:33 for the symbol rate in use (INFO1a bits 30:33 of Table
+  11/V.90), at start-up and at every retrain. A WebTV box asked for 31200
+  in its MP although its INFO1c projected 28800, could not take our 31200
+  and fell back to async; it now gets 28800. No call in the 106 recorded
+  calls asked for more than its projection, so no rate there changes, but
+  our MP now offers the projection (31200 for all of them) where it
+  offered the engine's top (33600). The calling role is not capped (see
+  `docs/limits.md`).
+
+Added:
+- `V90M_OPT_V34_NO_TX_CAP`, an option bit in `v90m_cfg.modulations` (not a
+  modulation; answering only, ignored calling): turns the cap above off,
+  for our MP as before 0.7.0. A `modulations` value with this bit alone is
+  `V90M_EINVAL`. `V90M_MEM_SIZE` and `v90m_mem_size()` are unchanged.
+- `v90m-replay -C` and `v90m-fields -C`: the same switch, for recordings
+  made before the cap (the echo they hold is of the MP sent then).
+  `tools/replay-proof.sh` and the real-modem fixtures replay with it.
+
 ## 0.6.1 (2026-11-24)
 
 Added:

@@ -50,7 +50,10 @@ void v34ans_dx_cfg(const p2ans_t *p2, const v34ans_cfg *cfg, v34dx_cfg *dx)
                                                                   and the first S pulse both ramp) */
     dx->peer_1664 = p2->info0c.c1664;
     dx->max_rx_rate = cfg->max_rx_rate;
-    dx->max_tx_rate = cfg->max_tx_rate;
+    /* no more than the caller's own INFO1c projects for this symbol rate
+     * (a retrain's Phase 2 brings a new INFO1c and comes here again) */
+    dx->max_tx_rate = cfg->no_tx_cap ? cfg->max_tx_rate
+                                     : v34_tx_ceiling(cfg->max_tx_rate, p2->info1c.sr[p2->sym_idx].max_rate);
     dx->getbit = cfg->getbit; dx->putbit = cfg->putbit; dx->user = cfg->user;
 }
 
@@ -151,7 +154,9 @@ int v34_call_cfg_from_v90(const info1a_t *i, int rx_hi_carrier, int c1664, int r
     dx->rtd_has_io = cfg->io_delay < 0;
     dx->peer_1664 = c1664;
     dx->max_rx_rate = cfg->max_rx_rate;
-    dx->max_tx_rate = cfg->max_tx_rate;
+    /* bits 30:33 of Table 11/V.90: the caller's projection for digital ->
+     * analogue, our transmitter */
+    dx->max_tx_rate = cfg->no_tx_cap ? cfg->max_tx_rate : v34_tx_ceiling(cfg->max_tx_rate, i->max_rate);
     dx->getbit = cfg->getbit; dx->putbit = cfg->putbit; dx->user = cfg->user;
     return 0;
 }

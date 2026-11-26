@@ -27,7 +27,10 @@ V.92 and Bell:
 | `V90M_MOD_X2` | x2, U.S. Robotics' 56k of 1997, as its server; only with `V90M_MOD_V34` (without: `V90M_ENOTSUP`) | off |
 | `V90M_MOD_K56` | K56flex, Rockwell's and Lucent's 56k of 1997, as its server, experimental; only with `V90M_MOD_V34` (without: `V90M_ENOTSUP`) | off |
 
-At least one is required (0 gives `V90M_EINVAL`).
+At least one is required (0 gives `V90M_EINVAL`). One more bit is an
+option, not a modulation: `V90M_OPT_V34_NO_TX_CAP` (off, so the V.34
+transmit cap below is on) turns off the cap of our V.34 transmit at the
+caller's own INFO1c / INFO1a projection.
 
 ## The start of a call
 
@@ -46,6 +49,14 @@ first: below, "K56flex".) The menu decides:
   endpoint should then start without detection
   ([error-control.md](error-control.md)).
 - **V.34**, **V.32bis**, **V.22bis / V.22** or **V.21**, as V.8 selects.
+  In V.34 our transmit rate is no more than the caller's own INFO1c
+  projects for the symbol rate in use, even when its MP asks for more
+  (V.34 takes the lower of the two MPs, and ours carries the projection);
+  the same for a V.90 caller that selects V.34 in its INFO1a. A WebTV box
+  that asked for 31200 against its own 28800 could not decode 31200 and
+  fell back to async; it gets 28800. `V90M_OPT_V34_NO_TX_CAP` in
+  `v90m_cfg.modulations` turns this off (our MP then offers `max_down_bps`
+  or all the engine can, as before 0.7.0); it is on by default.
 - **No V.8 at all**: the V.22bis answer sequence after ANSam, V.32bis AA,
   V.21 after 8 s.
 - **Bell 103** (`V90M_MOD_BELL103`): a caller without V.8 that sends 1270 Hz

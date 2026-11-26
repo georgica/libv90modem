@@ -122,6 +122,9 @@ typedef enum {
 /* an MNP endpoint is linked for HST (v90m_ec_link_hst): set and cleared by
  * the API layer, in this word so that answer_t does not grow */
 #define ANS_MODE_HST_LINKED 0x800000u
+/* V.34: our MP's transmit ceiling is not capped at the caller's INFO1c /
+ * INFO1a projection (v34ans_cfg.no_tx_cap) */
+#define ANS_MODE_V34_NO_TX_CAP 0x1000000u
 
 #define ANS_MOD_NONE   0
 #define ANS_MOD_V21    1

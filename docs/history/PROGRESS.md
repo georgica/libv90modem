@@ -6325,3 +6325,42 @@ milestone gate (verify-phase, ports, ARM) is Task 26's.
   157 of 158 identical, `test/test_hstcall.txt` re-recorded (the two runs'
   6 lines, count 114 -> 118). CPU path: one add at the restart (no ARM
   run). x86-64 only.
+
+## v34cap: our V.34 transmit capped at the caller's own INFO1 projection (2026-11-26)
+
+- **Why.** A WebTV box asked for 31200 in its MP although its own INFO1c
+  projected 28800 at 3200 Bd; it could not decode our 31200, missed our
+  ADP and fell back to async (`/home/georgica/v34-dbg/build/webtv-report.md`).
+  V.34 takes the lower of the two MPs, so ours now carries the projection.
+- **What.** Answering only: `v34ans_dx_cfg` (start-up and every retrain's
+  Phase 2) and `v34_call_cfg_from_v90` (a V.90 caller selecting V.34, INFO1a
+  bits 30:33) set `max_tx_rate` to `v34_tx_ceiling(cfg, projection)`;
+  renegotiation keeps it. On by default; `V90M_OPT_V34_NO_TX_CAP`, an option
+  bit in `v90m_cfg.modulations` (-> `ANS_MODE_V34_NO_TX_CAP` ->
+  `v34ans_cfg.no_tx_cap`, a `uint8_t` beside `k56`, now `uint8_t` too),
+  turns it off. Memory unchanged (106320 x86-64; 105840 -m32 i386
+  before and after). Calling side not capped: our own answerer projects
+  28800 on a clean line while its MP takes 33600, and the cap cut
+  `test_orig_v34`'s clean calls from 31200 to 28800.
+- **Corpus first.** 106 recordings x 7 sets, instrumented replay: no caller
+  asked in its MP for more than its own projection (6 V.34 calls project 13
+  and ask 13 or 12; x2b's V.90-to-V.34 INFO1a 12, MP 12). No rate changes;
+  but our MP offered 14 (33600) and now offers 13, so with the cap the 6
+  V.34 replays no longer connect (the recording's echo is of the old MP;
+  HEAD with `-d 31200` gives byte-identical output). Hence `v90m-replay -C`
+  / `v90m-fields -C` (cap off), used by `tools/replay-proof.sh` (every set)
+  and `test/fixtures/fixtures.txt` (every line).
+- **Tests.** `test_v34call`: INFO1c 28800 / MP 31200 -> 28800, kept over a
+  renegotiation; retrain with INFO1c 26400 -> 26400; MP below projection
+  unchanged; our ceiling below it wins; cap off -> MP max 14 and 31200, the
+  rest of our MP byte-equal to the capped one, also after a retrain.
+  `test_answer_v90_v34`: INFO1a 24000 -> 24000 at start-up and after a
+  retrain (sim/p2a `v34_max_rate`). `test_api`: the option bit alone is
+  EINVAL, accepted answering, ignored calling.
+- **Checks.** `make golden`: ALL HOST CHECKS PASS, fixtures all pass with
+  traces identical; 154 of 158 identical, 4 re-recorded: `test_v34call`
+  and `test_answer_v90_v34` (new cases and counts; one SNR 38.1->37.7 in the
+  latter's existing retrain line), `test_orig_v34` (4 SNR readings, 0.1-0.5
+  dB) and `api/test_api` (2 SNR readings, count). Every rate unchanged; with
+  the cap forced off the old lines come back byte for byte. Replay proof:
+  742 runs identical; bench hashes: 19 identical. x86-64 only.

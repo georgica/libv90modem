@@ -14,7 +14,8 @@ void ans_v34_cfg(const answer_t *a, v34ans_cfg *c)
     c->max_tx_rate = a->max_down; c->max_rx_rate = a->max_up;
     c->getbit = a->cfg.getbit; c->putbit = a->cfg.putbit; c->user = a->cfg.user;
     c->x2 = v8ans_x2(&a->v8);
-    c->k56 = a->k56_agreed;
+    c->k56 = (uint8_t)(a->k56_agreed != 0);
+    c->no_tx_cap = (a->cfg.modes & ANS_MODE_V34_NO_TX_CAP) != 0;
 }
 
 /* V.8 selected V.34 as the data mode: INFO0a starts right after the 75 ms
