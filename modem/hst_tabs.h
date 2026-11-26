@@ -51,8 +51,11 @@ extern const int16_t hst_fpulse[10][HST_FL][2];
 /* the BinModem profile's first equaliser: the matched filter of BinModem's
  * forward pulse (V.17's RRC 0.25 through a 10th-order Butterworth
  * high-pass at 560 Hz, [BM]), tap 36 the on-time sample, [re, im], in
- * mf_taps' units before MF_GAIN (modem/hst_fwd.c) */
+ * mf_taps' units before MF_GAIN (modem/hst_fwd.c); in that test build only
+ * (the final review's m6) */
+#ifdef HST_PROFILE_BM
 extern const int32_t hst_fmf_bm[HST_FMF_N][2];
+#endif
 
 #define HST_FMF_STARTS 2         /* the default receiver's first equalisers */
 #define HST_FMF_AB_SHIFT 2297    /* added to AB's timing for hst_fmf[1], 1/1536 sample */

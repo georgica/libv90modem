@@ -63,11 +63,12 @@ The forward channel (hst-facts.md "Forward channel"):
                  come out near -3.5 dB. Scaled so that its line RMS per unit
                  symbol gain is V.32's (v32_tx_rms_q12): v32tx's gain holds.
   hst_fmf_bm     the forward receiver's first equaliser under the BinModem
-                 profile (-DHST_PROFILE_BM) [OURS, from BM]: the matched
-                 filter of BinModem's forward pulse (docs/hst/binmodem-facts.md
-                 "Pulse shape", [BM]): V.17's root-raised-cosine, beta 0.25,
-                 on 1800 Hz, through a 10th-order Butterworth high-pass at 560
-                 Hz (the analog prototype), at qamrx's 72 taps a third of a
+                 profile (-DHST_PROFILE_BM, compiled only there) [OURS,
+                 from BM]: the matched filter of BinModem's forward pulse
+                 (docs/hst/binmodem-facts.md "Pulse shape", [BM]): V.17's
+                 root-raised-cosine, beta 0.25, on 1800 Hz, through a
+                 10th-order Butterworth high-pass at 560 Hz (the analog
+                 prototype), at qamrx's 72 taps a third of a
                  symbol apart, the symbol's instant at tap 36: conj p(u),
                  u the time before the on-time sample. In the units of
                  hst_fwd.c's mf_taps before MF_GAIN, with its fixed turn and
@@ -670,12 +671,16 @@ def tab_fmf_bm():
          "/* the BinModem profile's first equaliser: the matched filter of BinModem's",
          " * forward pulse (V.17's RRC 0.25 through a 10th-order Butterworth",
          " * high-pass at 560 Hz, [BM]), tap 36 the on-time sample, [re, im], in",
-         " * mf_taps' units before MF_GAIN (modem/hst_fwd.c) */",
-         "extern const int32_t hst_fmf_bm[HST_FMF_N][2];"]
-    c = ["const int32_t hst_fmf_bm[HST_FMF_N][2] = {"]
+         " * mf_taps' units before MF_GAIN (modem/hst_fwd.c); in that test build only",
+         " * (the final review's m6) */",
+         "#ifdef HST_PROFILE_BM",
+         "extern const int32_t hst_fmf_bm[HST_FMF_N][2];",
+         "#endif"]
+    c = ["#ifdef HST_PROFILE_BM", "const int32_t hst_fmf_bm[HST_FMF_N][2] = {"]
     c += ["    " + " ".join("{%8d,%8d}," % (vals[2 * i], vals[2 * i + 1]) for i in range(k, min(k + 4, FMF_N)))
           for k in range(0, FMF_N, 4)]
     c.append("};")
+    c.append("#endif")
     c.append("")
     return h, c
 

@@ -1017,6 +1017,7 @@ void hstcall_init(hstcall_t *c, const hstcall_cfg *cfg)
     m.lr_delay_ms = c->cfg.lr_delay_ms > 0 ? c->cfg.lr_delay_ms : 0;   /* mnppeer's clock starts with the back channel */
     m.t401_ms = 3000; m.n400 = 15;           /* BinModem's HST session [BM] */
     m.confirm_la_standard = 1;                /* [BM] */
+    m.drop_ln = c->cfg.drop_ln;
     m.seed = 0x48535443u;
     mnppeer_init(&c->mnp, &m);
 }

@@ -122,6 +122,8 @@ typedef struct {
                                  sends it [BM] (Annex A A.6.4.2 says A.3b) */
     int stream_always;   /* HST agreed: streamlined layouts even without parameter 8 */
     int tx_bps, rx_bps;  /* our transmit rate, the far end's: T401 from the formula */
+    int drop_ln;         /* the first N LN frames received are lost: neither taken nor
+                            acknowledged (a peer deaf to attention; the final review's m2) */
 } mnp_peer_cfg;
 
 enum { MNPP_IDLE = 0, MNPP_CONNECTED, MNPP_DISCONNECTED };
@@ -217,6 +219,7 @@ typedef struct {
     int rx_bad;                   /* frames failing their FCS, or malformed */
     int rx_over_credit;           /* LTs beyond any credit we gave (N(R) + N(k)) */
     int ln_rx_full;               /* LNs not taken (and not acknowledged): queue full */
+    int ln_dropped;               /* LNs lost by drop_ln */
     int rx_unknown;               /* valid frames of an unknown type */
     int tx_unknown;               /* HST: LTs sent with first octet 0x3F */
     /* HST (agreed by the LRs' 0xC0) */

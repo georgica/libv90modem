@@ -240,6 +240,7 @@ static void win_reset(hst_t *h)
 static void rc_clear(hst_t *h)
 {
     h->rc = HST_RC_NONE;
+    h->rc_late = 0;                       /* an LNA still owed us belongs to the old role (m1) */
     h->link.rate_order = 0;
     h->link.ln_req = 0;
     h->link.ln_acted = 0;
@@ -258,7 +259,7 @@ static void ask(answer_t *a, int order)
     hst_t *h = &a->u.hst;
     h->link.ln_req = order;
     h->rc = HST_RC_ASK; h->rc_order = order; h->rct = 0; h->rc_left = 0; h->rc_counted = 0;
-    h->rc_late = 0;
+    h->rc_late = 0; h->rc_wait = 0;
     h->rc_st = hst_frx_state(&h->frx);
     if (by_training(h, order)) hst_frx_arm_train(&h->frx, order & 15);
     win_reset(h);
@@ -315,6 +316,20 @@ static void rc_given_up(answer_t *a)
     if (hst_frx_armed(&h->frx)) hst_frx_set_code(&h->frx, h->frx.code);
     a->retraining = 0;
     failed(a, r);
+}
+
+/* holding back, our request untaken HST_RC_UNTAKEN_MS (hst.h): withdrawn,
+ * the receiver disarmed; an 0x2R a failed retrain, an 0x3R dropped */
+static void rc_untaken(answer_t *a)
+{
+    hst_t *h = &a->u.hst;
+    int order = h->rc_order;
+    h->link.ln_req = 0;
+    h->rc = HST_RC_NONE;
+    if (hst_frx_armed(&h->frx)) hst_frx_set_code(&h->frx, h->frx.code);
+    a->retraining = 0;
+    if ((order & 0xF0) == 0x20) failed(a, order & 15);
+    else win_reset(h);
 }
 
 /* holding back, an 0x3R followed but never carried out: the receiver in
@@ -380,8 +395,10 @@ static void rate_back(answer_t *a)
     }
     if (h->rc != HST_RC_NONE) {
         r = h->rc_order & 15;
-        if (h->rc == HST_RC_ASK && h->link.ln_req) h->rct = 0;   /* not yet taken by the endpoint */
-        else if (h->rct < (1 << 30)) h->rct++;
+        if (h->rc == HST_RC_ASK && h->link.ln_req) {
+            h->rct = 0;                                         /* not yet taken by the endpoint */
+            if (++h->rc_wait > MS(HST_RC_UNTAKEN_MS)) { rc_untaken(a); return; }
+        } else if (h->rct < (1 << 30)) h->rct++;
         if (st != HST_FRX_DATA) h->rc_left = 1;
         if (st == HST_FRX_TRAIN && !h->rc_counted) {
             /* the holder's training under way (its LNA may have been lost):

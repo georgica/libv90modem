@@ -578,6 +578,7 @@ const int16_t hst_fpulse[10][HST_FL][2] = {
   },
 };
 
+#ifdef HST_PROFILE_BM
 const int32_t hst_fmf_bm[HST_FMF_N][2] = {
     {     862,     269}, {     598,     624}, {     361,     936}, {    -254,    1060},
     {    -649,     848}, {   -1165,     544}, {   -1285,    -178}, {   -1200,    -703},
@@ -598,6 +599,7 @@ const int32_t hst_fmf_bm[HST_FMF_N][2] = {
     {     -64,      31}, {      60,     -50}, {     -36,      64}, {      21,     -64},
     {      -1,      71}, {     -24,     -60}, {      32,      46}, {     -43,     -36},
 };
+#endif
 
 const int32_t hst_fmf[HST_FMF_STARTS][HST_FMF_N][2] = {
   {

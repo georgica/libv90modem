@@ -850,6 +850,7 @@ static void on_frame_annex(mnppeer_t *p, const uint8_t *b, int n, int framing)
     case T_LN:
         if (li != 7 || n != 8 || b[2] != 1 || b[3] != 1 || b[5] != 2 || b[6] != 1) { bad_frame(p, framing); return; }
         if (p->phase != PH_DATA) return;
+        if (p->ln_dropped < p->cfg.drop_ln) { p->ln_dropped++; return; }   /* lost (drop_ln) */
         if (b[4] == p->vra) {                            /* A.7.4.3 */
             if (p->lnr_n == MNPP_LNQ) {
                 /* no room: neither taken nor acknowledged; the sender's

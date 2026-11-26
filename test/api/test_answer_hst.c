@@ -83,6 +83,9 @@
  *   rev_ours_la rev_ours against a caller that sends an LA first after each
  *               switch, as our endpoint does: the same 2 reversals (the
  *               other cases' caller does not: nothing says a Courier does)
+ *   rc_late_switch  (white box, the final review's m1) rc_late planted
+ *               while we hold the back channel: 0 after our reversal to
+ *               the forward channel
  *   rev_stale_3r  (the BinModem profile only) the caller's 0x1R, then
  *               its 0x35 once it holds forward, never carried out, and
  *               no 0x2R honoured (BinModem's turnaround): no LN of ours,
@@ -145,6 +148,11 @@
  *               lost every 4 s (10 dB SNR for 0.8 s), each retrain holding
  *               data over 2 s: 3 retrains, then one rate lower (0x24); at
  *               9600, the lowest agreed, 3 more and V90M_END_RETRAIN_FAILED
+ *   retrain_untaken  (the final review's m2) holding back, our 0x1R never
+ *               acknowledged (hstcall drop_ln), then v90m_retrain: the
+ *               0x26 the endpoint cannot take counts as a failed retrain
+ *               HST_RC_UNTAKEN_MS on; V90M_END_RETRAIN_FAILED within 50 s,
+ *               no 0x2R sent
  *   retrain_ignored  retrain_back against a caller that acknowledges our
  *               0x2R and never trains: 3 failed retrains at each agreed
  *               rate, 14400 down to 4800, then V90M_END_RETRAIN_FAILED
@@ -1235,6 +1243,39 @@ static void rev_ours_one(int back, int la, uint32_t seed)
     rev_end_checks(2, moved_index());
 }
 
+/* the final review's m1: an LNA still owed to a change of ours made
+ * holding back (rc_late) belongs to that role; a switch forgets it, so
+ * that after reversing back a holder's change of that code is followed.
+ * White box: rc_late planted (0x37, no order any end sends) while we hold
+ * the back channel; at our switch to the forward channel it is 0 */
+static void rc_late_switch(void)
+{
+    hstcall_cfg hc;
+    our_cfg oc = hst_ours();
+    int ok = -1;
+    printf("rc_late_switch: rc_late planted holding back, then our reversal\n");
+    hc_defaults(&hc);
+    hc.rev_backlog = 64;
+    our_init(&O, &oc);
+    line_init(0, 504u);
+    cal_init_hst(&hc, 2048, 2048, 504u);
+    C.after_fwd = 1;
+    rv_init();
+    run_start();
+    while (now_ms < 600000L && ok < 0 && O.end_ms < 0) {
+        answer_t *a;
+        run_ms(now_ms + 1, NULL);
+        a = ans();
+        if (RV.n == 1 && a->phase == ANS_HST && a->u.hst.link.role == HST_ROLE_BACK) {
+            a->u.hst.rc_late = 0x37;
+            if (O.to_send == 2048 && C.r >= O.to_send) O.to_send += 2048;   /* our backlog: our 0x1R */
+        }
+        if (RV.n >= 2) ok = a->u.hst.rc_late == 0;
+    }
+    printf("  switches %d; rc_late after our switch to the forward channel %s\n", RV.n, ok == 1 ? "0" : "kept");
+    bound("a switch of role forgets rc_late", RV.n >= 2 && RV.to[1] == HST_ROLE_FWD && ok == 1);
+}
+
 static void rev_ours(void)
 {
     printf("rev_ours: then our backlog: our 0x1R, its LNA, our training\n");
@@ -1931,6 +1972,49 @@ static void retrain_back(void)
     bound("the data both ways intact", C.bad == 0 && O.bad == 0 && C.r == O.to_send && O.r > 4000 && O.end_ms < 0);
 }
 
+/* retrain_untaken (the final review's m2): holding back at 14400, our
+ * backlog: our 0x1R, which the caller never receives (hstcall drop_ln: no
+ * LNA), so it stays out; then v90m_retrain: our 0x26 waits for the
+ * endpoint, which takes no request while that LN is out. Untaken
+ * HST_RC_UNTAKEN_MS it counts as a failed retrain (asked again, as
+ * failed() does), so the policy moves on: V90M_END_RETRAIN_FAILED after
+ * HST_RC_FAILS of them at each agreed rate (5 x 3 x 3 s), long before the
+ * 0x1R's N400 x T401 (some 2 min); the endpoint never sent a 0x2R */
+static void retrain_untaken(void)
+{
+    hstcall_cfg hc;
+    our_cfg oc = hst_ours();
+    mnp_t *m;
+    long t0, t_fail = -1;
+    int sent_2r = 0;
+    v90m_state st;
+    hc_defaults(&hc);
+    hc.rev_backlog = 64; hc.drop_ln = 1000;
+    printf("retrain_untaken: holding back, our 0x1R never acknowledged, then v90m_retrain\n");
+    rc_call(&hc, &oc, 100000000L, 2048, 2305u);
+    C.after_fwd = 1;
+    run_ms(60000L, holding_back_data);
+    O.to_send += 4096;                                   /* our backlog: our 0x1R */
+    m = our_mnp();
+    while (now_ms < 120000L && O.end_ms < 0 && !(m && m->ln_code == 0x16 && m->ln_tries > 0)) { run_ms(now_ms + 1, NULL); m = our_mnp(); }
+    run_ms(now_ms + 200, ended);
+    t0 = now_ms;
+    CHECK_EQ_I(v90m_retrain(O.m), V90M_OK);
+    while (now_ms < t0 + 120000L && O.end_ms < 0) {
+        hst_t *h;
+        run_ms(now_ms + 1, NULL);
+        h = &ans()->u.hst;
+        if (t_fail < 0 && h->fl_n > 0) t_fail = now_ms;
+        if (m && (m->attn_tx >> 4) == 2) sent_2r = 1;
+    }
+    v90m_get_state(O.m, &st);
+    printf("  our 0x1R out (tries %d); v90m_retrain's request untaken: counted failed %ld ms on; the end %d %ld ms on; a 0x2R of ours sent: %s\n",
+           m ? m->ln_tries : -1, t_fail >= 0 ? t_fail - t0 : -1L, st.end, O.end_ms >= 0 ? O.end_ms - t0 : -1L, sent_2r ? "yes" : "no");
+    bound("the untaken request a failed retrain HST_RC_UNTAKEN_MS on", t_fail >= 0 && t_fail - t0 >= HST_RC_UNTAKEN_MS && t_fail - t0 <= HST_RC_UNTAKEN_MS + 2);
+    bound("V90M_END_RETRAIN_FAILED within 50 s, no 0x2R ever sent",
+          st.end == V90M_END_RETRAIN_FAILED && O.end_ms - t0 <= 50000 && !sent_2r);
+}
+
 /* retrain_ignored: retrain_back against a caller that acknowledges our
  * 0x2R and never trains (hstcall ignore_2r, BinModem's way): each counts
  * as a failed retrain HST_RC_BOUND_MS on, HST_RC_FAILS at a rate then one
@@ -2276,7 +2360,7 @@ static void levels(void)
         }
 }
 
-#define NCASES 35
+#define NCASES 37
 int main(int argc, char **argv)
 {
     int only;
@@ -2340,6 +2424,8 @@ int main(int argc, char **argv)
 #endif
     if (!only || only == 34) retrain_ignored();
     if (!only || only == 35) max_down_low();
+    if (!only || only == 36) rc_late_switch();
+    if (!only || only == 37) retrain_untaken();
     CHECK_EQ_I(proc_err, 0);
     if (O.m) v90m_destroy(O.m);
     if (O.ec) v90m_ec_destroy(O.ec);

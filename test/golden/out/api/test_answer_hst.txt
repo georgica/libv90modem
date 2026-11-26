@@ -386,4 +386,11 @@ max_down_low: max_down_bps 4799, an HST caller, the endpoint linked
   our transmit over 8 s: the same as with HST off; ANS_V22 entered at the same sample
   no ANS_HST_WAIT under a ceiling below 4800: pass
   the caller hears exactly what it hears with HST off: pass
-test_answer_hst: 1126 checks, 0 failures
+rc_late_switch: rc_late planted holding back, then our reversal
+  switches 2; rc_late after our switch to the forward channel 0
+  a switch of role forgets rc_late: pass
+retrain_untaken: holding back, our 0x1R never acknowledged, then v90m_retrain
+  our 0x1R out (tries 4); v90m_retrain's request untaken: counted failed 3001 ms on; the end 8 45002 ms on; a 0x2R of ours sent: no
+  the untaken request a failed retrain HST_RC_UNTAKEN_MS on: pass
+  V90M_END_RETRAIN_FAILED within 50 s, no 0x2R ever sent: pass
+test_answer_hst: 1145 checks, 0 failures

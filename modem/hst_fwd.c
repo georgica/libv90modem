@@ -744,12 +744,20 @@ static int vg_near(int32_t a, int o, int n, int sh)
 }
 int hst_vit_step(v32_vit_t *v, int32_t zr, int32_t zi, int *hard)
 {
-    const int8_t (*c)[2] = v32_constel(v->rate);
-    int per = 1 << v->rate, i, k, s, best, g = v->rate - 1;
-    int sh = hst_vgrid_step[g] == 8 ? 10 : 9;     /* the grid's step in w's units, 2^sh */
+    const int8_t (*c)[2];
+    int per, i, k, s, best, g, sh;
     int32_t bm[8], nm[8], lim = 16 * V32_UNIT, min, wr, wi;
     int bl[8];
-    uint16_t *h = v->hist[v->pos];
+    uint16_t *h;
+
+    /* the grids are for rates 1..4 (7200 to 14400; codes 3..6 set code - 2);
+     * rate 0 (unreachable: code 2 goes by slice4, by_training) is
+     * v32_vit_step's plain search (the final review's m5) */
+    if (v->rate < 1) return v32_vit_step(v, zr, zi, hard);
+    c = v32_constel(v->rate);
+    per = 1 << v->rate; g = v->rate - 1;
+    sh = hst_vgrid_step[g] == 8 ? 10 : 9;         /* the grid's step in w's units, 2^sh */
+    h = v->hist[v->pos];
 
     if (zr > lim) zr = lim; else if (zr < -lim) zr = -lim;
     if (zi > lim) zi = lim; else if (zi < -lim) zi = -lim;
@@ -990,7 +998,12 @@ static void symbol(hst_frx_t *r)
     }
     for (k = 7; k > 0; k--) { r->hzr[k] = r->hzr[k - 1]; r->hzi[k] = r->hzi[k - 1]; }
     r->hzr[0] = zr; r->hzi[0] = zi;
-    if (r->nsym < (1 << 30)) r->nsym++;
+    /* counted on past 2^30 - 1 from 2^29: its low bits (the gain leak's
+     * cadence, G_LEAKN) go on as before, the thresholds stay met (the
+     * final review's m4: stuck at 2^30, after 5.2 days at 2400 baud, the
+     * leak ran every symbol) */
+    if (r->nsym < (1 << 30) - 1) r->nsym++;
+    else r->nsym = 1 << 29;
     if (r->state == HST_FRX_TRAIN || r->code == 2) {
         st = slice4(zr, zi);
         v32_state_point(st, &x, &y);

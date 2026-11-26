@@ -599,7 +599,7 @@ typedef struct {
                                        * was set, the equaliser flushing */
     int32_t    ga;                    /* the gain as last set (G_ONE at a training): the
                                        * loop leaks back to it and stays within 1 dB */
-    int32_t    nsym;                  /* symbols since qamrx_sync */
+    int32_t    nsym;                  /* symbols since qamrx_sync (past 2^30 - 1: from 2^29) */
     int32_t    held;                  /* symbols the error has been under -20 dB */
     int32_t    fast;                  /* still on the fast steps */
     uint32_t   offw;                  /* off the 4 points: the last 8 symbols, bit 0 the newest */
@@ -807,6 +807,16 @@ void hst_frx_arm_train(hst_frx_t *r, int code);
  * retrains within HST_DOWN_MS there do [OURS] */
 #define HST_CY_N             4
 #define HST_CY_MS        30000
+/* the final review's m2: holding back, the policy's request waits for the
+ * endpoint to take it (link.ln_req) while another LN of ours is out (our
+ * 0x1R, which no request of the pump's supersedes, mnp_hst_poll), and
+ * nothing else of rate_back runs meanwhile. Untaken HST_RC_UNTAKEN_MS: an
+ * 0x2R counts as a failed retrain (failed(): again at R, HST_RC_FAILS then
+ * one rate lower, at the lowest the end), an 0x3R is dropped. Under half
+ * HST_DOWN_MS, so that HST_RC_FAILS of them fall in one window: a far end
+ * that never acknowledges our 0x1R ends the call within some 9 s an agreed
+ * rate, not at that LN's N400 x T401 (some 2 min at 450 bit/s) [OURS] */
+#define HST_RC_UNTAKEN_MS 3000
 enum {
     HST_RC_NONE,
     HST_RC_WAIT,                      /* holding forward: a 0x2R/0x3R granted, our LNA gone: the
@@ -861,6 +871,7 @@ typedef struct {
     int32_t       hold_t;             /* samples a retrain's data mode is still on probation */
     int32_t       rc_late;            /* our request done before its LNA came (the training seen, its
                                          LNA lost): that LNA, when it comes, is not a change; 0 none */
+    int32_t       rc_wait;            /* holding back: samples our request has waited untaken (m2) */
     uint32_t      rx_bad;             /* the endpoint's frame errors as last seen */
     /* Task 23 */
     int32_t       cy_t, cy_n;         /* holding back: unlock retrains, samples since the window's first

@@ -359,6 +359,8 @@ typedef struct {
                               and does nothing on that LN's LNA (no change, no training) */
     int     ignore_2r;     /* an 0x2R from the answerer gets its LNA and nothing more (BinModem has no
                               0x2R, binmodem-facts.md `Online fallback`, [BM]) */
+    int     drop_ln;       /* the first N LNs from the answerer are lost: no LNA, nothing done
+                              (mnppeer's drop_ln; the final review's m2) */
 } hstcall_cfg;
 
 /* back 450, start 450, rates 0x7C (codes 2..6), flags 0x01, level -12 */
