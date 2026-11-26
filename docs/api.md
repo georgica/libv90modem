@@ -43,8 +43,8 @@ the object first.
 
 | | |
 |---|---|
-| `V90M_VERSION_MAJOR`, `V90M_VERSION_MINOR`, `V90M_VERSION_PATCH` | the header's version: 0, 6, 2 |
-| `const char *v90m_version(void)` | "0.6.2": the version of the library linked in (may differ from the header) |
+| `V90M_VERSION_MAJOR`, `V90M_VERSION_MINOR`, `V90M_VERSION_PATCH` | the header's version: 0, 7, 0 |
+| `const char *v90m_version(void)` | "0.7.0": the version of the library linked in (may differ from the header) |
 
 ## Error codes
 
@@ -273,14 +273,14 @@ if (st.end != V90M_END_NONE && !d.data_reached)
 
 `const char *v90m_phase_name(v90m_phase p)` and `const char
 *v90m_conn_name(v90m_conn c)`: short names for a log line, never NULL,
-`"?"` outside the enum, the same within 0.6.x. Modulations: `none`,
+`"?"` outside the enum, the same within 0.7.x. Modulations: `none`,
 `V.21`, `V.22`, `V.22bis`, `V.90`, `V.34`, `V.32bis`, `V.92`, `Bell 103`,
 `Bell 212A`, `x2`, `K56flex`, `HST`.
 
 `const char *v90m_err_name(int code)`: the name of an `error`, `"none"`
 for 0, `"?"` for a number that is no error; never NULL. The names are
 diagnostic text, not an enum: the numbers behind them may change in any
-version, the names do not within 0.6.x. Most are the engines' own (the
+version, the names do not within 0.7.x. Most are the engines' own (the
 header named in brackets, for the detail); `make check` fails when an
 engine's header has an error without its name here
 (`tools/check-diag-names.sh`):

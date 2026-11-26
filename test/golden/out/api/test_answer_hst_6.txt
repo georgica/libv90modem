@@ -91,6 +91,14 @@ max_down_low: max_down_bps 4799, an HST caller, the endpoint linked
   our transmit over 8 s: the same as with HST off; ANS_V22 entered at the same sample
   no ANS_HST_WAIT under a ceiling below 4800: pass
   the caller hears exactly what it hears with HST off: pass
+max_down_4800: max_down_bps 4800, an HST caller, the endpoint linked
+  connected: HST 1, tx 9600 rx 450; now tx 4800 rx 450; retrains 1, reversals 0; MNP hst 1 rates 0x04 back300 0
+  data: 16384 of 16384 octets to the caller, 16384 of 16384 to us, 0 wrong
+  CONNECTED as HST at the opening rate: pass
+  in data at the best agreed rate and the back speed: pass
+  the post-agreement retrain: DATA_STOPPED, then DATA_MOVING: pass
+  RATES with the best agreed rate: pass
+  the data both ways, intact: pass
 rc_late_switch: rc_late planted holding back, then our reversal
   switches 2; rc_late after our switch to the forward channel 0
   a switch of role forgets rc_late: pass
@@ -98,4 +106,4 @@ retrain_untaken: holding back, our 0x1R never acknowledged, then v90m_retrain
   our 0x1R out (tries 4); v90m_retrain's request untaken: counted failed 3001 ms on; the end 8 45002 ms on; a 0x2R of ours sent: no
   the untaken request a failed retrain HST_RC_UNTAKEN_MS on: pass
   V90M_END_RETRAIN_FAILED within 50 s, no 0x2R ever sent: pass
-test_answer_hst: 553 checks, 0 failures
+test_answer_hst: 570 checks, 0 failures

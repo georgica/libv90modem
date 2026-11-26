@@ -121,7 +121,7 @@
 
 typedef struct {
     int k;            /* window offered, 1..MNP_MAX_K (8) */
-    int n401;         /* information field offered, 1..256 (64); 256 needs opt bit 1 */
+    int n401;         /* information field offered, 1..256 (64); 256 needs opt bit 0 (value 1) */
     int opt;          /* LR parameter 8 offered, 0..3 (2: fixed-field LT and LA) */
     int framing;      /* highest framing mode offered, 2..3 (3) */
     int t401_min_ms;  /* floor of the computed T401 (1500) */

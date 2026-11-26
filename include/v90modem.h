@@ -55,9 +55,9 @@ extern "C" {
 #endif
 
 #define V90M_VERSION_MAJOR 0
-#define V90M_VERSION_MINOR 6
-#define V90M_VERSION_PATCH 2
-/* "0.6.2": the version of the library linked in (may differ from the header) */
+#define V90M_VERSION_MINOR 7
+#define V90M_VERSION_PATCH 0
+/* "0.7.0": the version of the library linked in (may differ from the header) */
 const char *v90m_version(void);
 
 /* error codes (negative returns) */
@@ -494,11 +494,11 @@ typedef struct {
 void     v90m_get_diag(const v90m_t *m, v90m_diag *d);
 /* The name of an error of v90m_diag ("P2D_ERR_INFO1A"), "none" for 0, "?"
  * for a number that is no error; never NULL. Diagnostic text, not an enum:
- * the numbers may change in any version, the names do not within 0.6.x
+ * the numbers may change in any version, the names do not within 0.7.x
  * (the list: docs/api.md). */
 const char *v90m_err_name(int code);
 /* Short names for a log line, never NULL, "?" outside the enum; they do
- * not change within 0.6.x. Phases: "none", "tone", "v8", "phase2",
+ * not change within 0.7.x. Phases: "none", "tone", "v8", "phase2",
  * "phase3", "phase4", "train", "data". Modulations: "none", "V.21",
  * "V.22", "V.22bis", "V.90", "V.34", "V.32bis", "V.92", "Bell 103",
  * "Bell 212A", "x2", "K56flex", "HST". */
@@ -585,7 +585,7 @@ typedef struct {
     struct {
         int enable;        /* 0..1, default 0: MNP off, the endpoint is 0.6.0's */
         int k;             /* 1..8, default 8 */
-        int n401;          /* 1..256, default 64 (256 needs opt bit 1) */
+        int n401;          /* 1..256, default 64 (256 needs opt bit 0, value 1) */
         int opt;           /* parameter 8 bitmap, 0..3, default 2 (fixed-field LT/LA, no 256) */
         int framing;       /* highest framing mode we offer or accept, 2..3, default 3 */
         int t401_min_ms;   /* floor for the computed T401, 500..60000, default 1500 */

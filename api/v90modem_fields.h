@@ -77,7 +77,7 @@ typedef char v90m_check_ec_cfg_fields[(0 V90M_EC_CFG_FIELDS(V90M_EC_FIELD_ONE)) 
 static inline int ec_in_range(int v, int lo, int hi) { return v >= lo && v <= hi; }
 
 /* V90M_OK, or V90M_EINVAL for a value outside its range, or for the one
- * rule across fields: an MNP N401 of 256 needs parameter 8 bit 1 (the
+ * rule across fields: an MNP N401 of 256 needs parameter 8 bit 0, value 1 (the
  * 256-octet facility), which is how Annex A agrees it */
 static inline int check_ec_cfg(const v90m_ec_cfg *c)
 {

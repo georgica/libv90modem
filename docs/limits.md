@@ -388,12 +388,12 @@ Measured against `sim/hstcall` only; no real HST modem has called it yet.
   ms late, found at 1850 ms). The cap is at the ceiling the controller set
   (2000 ms): a caller slower than 500 ms, or a dropout later in a slow
   start, can still meet it. W 400 leaves lines short at any cap, since
-  their energy stage is not yet there when the wait ends. With this task's first choice, 700 and 1500, the
-  slack was 10 ms on the clean 300 bit/s lines and 60 ms under the cap
-  with the caller on time, and a later caller fell to V.22bis. Every line
-  here is found through the extension once past W: the energy stage holds
-  while the back channel is there, and a dropout of up to 40 ms never
-  broke it.
+  their energy stage is not yet there when the wait ends. With the first
+  choice, W 700 and a cap of 1500 ms, the slack was 10 ms on the clean
+  300 bit/s lines and 60 ms under the cap with the caller on time, and a
+  later caller fell to V.22bis. Every line here is found through the
+  extension once past W: the energy stage holds while the back channel is
+  there, and a dropout of up to 40 ms never broke it.
 - **W's cost to callers without V.8:** a V.22bis, V.21 or Bell 103 caller
   is answered up to W later than without HST, only where the host offers
   HST and has linked an endpoint (`test_answer_hst` `legacy_unchanged`:

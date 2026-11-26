@@ -32,6 +32,10 @@
  *               not offered although linked; the caller hears exactly what
  *               it hears with HST off (our transmit hash over 8 s; the
  *               final review's I3)
+ *   max_down_4800  max_down_bps exactly 4800, HST's lowest rate: HST still
+ *               offered (our 0xC0 rates 0x04), the call opens at 9600 and
+ *               the retrain after the LRs takes it to 4800 (the final
+ *               re-review)
  *   lr_in_training  the caller's LR (lr_delay_ms 600 and 1000) leaves while
  *               our long training goes out (asserted from the timestamps:
  *               its first bit after ANS_HST began, its last before our
@@ -890,6 +894,24 @@ static void max_down_low(void)
         bound("no ANS_HST_WAIT under a ceiling below 4800", !waited);
         bound("the caller hears exactly what it hears with HST off", h[0] == h[1] && v22[0] == v22[1] && v22[0] >= 0);
     }
+}
+
+/* ===================== max_down_4800 ===================== */
+/* max_down_bps exactly at HST's lowest rate: HST is offered, at 4800 only */
+static void max_down_4800(void)
+{
+    hstcall_cfg hc;
+    our_cfg oc = hst_ours();
+    v90m_ec_status es;
+    hc_defaults(&hc);
+    oc.max_down = 4800;
+    printf("max_down_4800: max_down_bps 4800, an HST caller, the endpoint linked\n");
+    hst_call(&hc, &oc, DATA_BACK, DATA_FWD, 407u, 1200000L);
+    v90m_ec_get_status(O.ec, &es);
+    CHECK_EQ_I(ans()->u.hst.link.offer_rates, 0x04);
+    CHECK_EQ_I(es.hst_rates, 0x04);
+    CHECK_EQ_I(HC.mnp.hst_rates, 0x04);
+    data_checks(2, 450, 1);
 }
 
 /* ===================== lr_in_training ===================== */
@@ -2363,7 +2385,7 @@ static void levels(void)
         }
 }
 
-#define NCASES 37
+#define NCASES 38
 /* The program is built as several (make: api_test_answer_hst_<k>, from
  * this file with -DHST_PART=k), so that none runs much over 30 s on
  * x86-64 (the whole set took 187 s; the final review's m7). With no case
@@ -2449,6 +2471,7 @@ static void run_case(int c)
     case 35: max_down_low(); break;
     case 36: rc_late_switch(); break;
     case 37: retrain_untaken(); break;
+    case 38: max_down_4800(); break;
     default: break;
     }
 }
@@ -2457,7 +2480,7 @@ int main(int argc, char **argv)
 {
     /* the whole set's order; the BinModem profile's (its own, below) */
     static const int order[] = { RATES_23, RATES_45, RATES_6, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
-                                 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 34, 35, 36, 37 };
+                                 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 34, 35, 38, 36, 37 };
     static const int order_bm[] = { RATES_23, RATES_45, RATES_6, 12, 33, 34, 19, 23 };
     int only;
     size_t i;

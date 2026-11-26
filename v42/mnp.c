@@ -182,7 +182,7 @@ int mnp_accept_lr(mnp_t *m, const uint8_t *f, int len, int framing_in)
     m->k = imin(m->lr.k, MNP_MAX_K);
     m->n401 = m->lr.n401;
     m->opt = m->lr.have_opt ? m->lr.opt : 0;
-    /* parameter 8 bit 1 agreed: N401 256 both ways (A.6.4.1.8) */
+    /* parameter 8 bit 0 (value 1) agreed: N401 256 both ways (A.6.4.1.8) */
     if (m->opt & 1) m->n401 = MNP_MAX_N401;
     m->layout = (m->opt & 2) ? MNP_LAYOUT_OPT : MNP_LAYOUT_STD;
     m->rx_layout = m->layout;

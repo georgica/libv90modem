@@ -8,7 +8,7 @@ change is listed here. Rebuild against the new header with every version;
 "Simulation and own answerer only" means: tried against simulated lines and
 this library's own answering modem, never against a real modem or server.
 
-## 0.7.0 (unreleased)
+## 0.7.0 (2026-11-26)
 
 Includes the changes of 0.6.2-rc1 (below: the opt-in V.34 transmit cap
 with `v90m_get_v34_cap`, x2's plain JM after 2 s, the V.34 Phase 3/4 time
@@ -16,10 +16,19 @@ limits, `v90m_ec_tx_busy` and the closing flag); there was no final 0.6.2.
 
 Tried against: simulated lines and callers (`sim/hstcall`, written from
 the published facts, and `sim/mnppeer`) with this library's own answering
-modem; the replay corpus of recorded calls (every recording identical);
+modem; the replay corpus of recorded calls (every recording identical
+but the 15 that pull request #5's fix, below, changes);
 and BinModem, a software HST modem, calling over SIP into a local test
 server. No real HST modem (a U.S. Robotics Courier) has called it, and no
-recorded HST call from one is in the corpus yet.
+recorded HST call from one is in the corpus yet: live testing of HST
+against a real Courier comes after this release, and what it finds is
+fixed in 0.7.1.
+
+Checked on x86-64 (`make golden`, the BinModem profile's tests, the
+replay proof, the bench hashes); this release's all-platform verification
+is GitHub CI's (gcc and clang on x86-64, UBSan, ARMv7 and big-endian
+s390x under qemu, ARMv5 on the tag, a 32-bit Windows build). The local
+port matrix (riscv64 included) and the CPU costs were not run for it.
 
 Changed, the ABI: rebuild against the new header and link again.
 - `v90m_stats` (`reversals`, appended), `v90m_ec_cfg` (`mnp`, appended)
@@ -57,6 +66,13 @@ call is as in 0.6.2-rc1):
   within 30 s). No HST call stays connected without the far modem's
   signal for more than 12 s (`V90M_END_LOST`); the far modem's LD ends it
   with `V90M_END_CLEARDOWN_FAR`.
+- On an HST call, a retrain (0x2R) or change by marks (0x3R) our receiver
+  asks for while our own reversal request (0x1R) still waits for its LNA
+  waits at most 3 s: then it counts as a failed retrain (0x2R) or is
+  dropped (0x3R). A caller that never acknowledges our 0x1R thus ends the
+  call with `V90M_END_RETRAIN_FAILED` some 9 s an agreed rate after our
+  first request, not after MNP's N400 x T401 (some 2 min at 450 bit/s)
+  (docs/limits.md, "A request behind our own 0x1R").
 - `v90m_ec_release` under MNP sends LD 255 and is `V90M_EC_DISCONNECTED`
   at once; wait for `v90m_ec_tx_busy` 0 before stopping the line.
 - The host pattern for an HST call (link before the first sample, reset

@@ -6666,3 +6666,39 @@ bench hashes 19 identical; `v90m_mem_size()` 106320 (x86-64).
 Commands: `make golden` (165 programs identical, ALL HOST CHECKS PASS,
 check-hst-bm included); `tools/replay-proof.sh check` 742 identical;
 `tools/bench-hashes.sh check` 19 identical. x86-64 only.
+
+## release 0.7.0: HST answering, MNP, and #5 from main (2026-11-26)
+
+The owner: pushed now, the all-platform verification left to GitHub CI;
+live testing of HST against a real USR Courier comes after the release,
+its fixes into 0.7.1.
+
+- Merge of origin/main (9ef5089): v0.6.1 + zagdrath's #5 (v34train: the
+  caller's S after a silence counts a symbol alone or as a weak/strong
+  pair; test_sres, the fixture usrc1 and its golden, test_orig_v34's
+  golden) + 56e0ce6 (main's manifest). hst never touched those files, so
+  main's goldens stand (`make golden` 165 identical on the merge). The
+  manifest, re-recorded over hst's 7 sets: 259 lines changed, all #5's:
+  main's 231 lines with main's hashes in the six shared sets (15
+  recordings that now take S at its start, in every set; the V.92 sets'
+  diagnostics of 20 more), and 28 in the hst set (the same 15, the same
+  files as base). CHANGELOG: #5's "Unreleased" entry is 0.7.0's Fixed,
+  crediting zagdrath; the first live connection with a Courier
+  V.Everything (V.90 49333 / 26400 through an AudioCodes MP-124E).
+- Version 0.7.0 in the Makefile, the header (0, 7, 0), test_api (700),
+  README, docs/api.md, getting-started.md (`.so.0.7.0`, SONAME
+  `.so.0.7`), testing.md and call_loop's golden; the name tables'
+  stability now reads "within 0.7.x" (header, api.md).
+- The final re-review's minors: "opt bit 0 (value 1)" for parameter 8's
+  256-octet bit everywhere (include/v90modem.h, v42/mnp.h, v42/mnp.c,
+  api/v90modem_fields.h; docs/api.md already said so); CHANGELOG's
+  behaviour list names the 3 s bound on a request behind our own 0x1R;
+  docs/limits.md's overlong line rewrapped; test_answer_hst case 38
+  `max_down_4800` (in part 6): max_down_bps exactly 4800 still offers
+  HST, rates 0x04, opens at 9600 and retrains to 4800 (part 6's golden:
+  that case's 8 lines and the count, 553 -> 570; part 6 25 s on x86-64).
+- CHANGELOG 0.7.0 (2026-11-26): includes 0.6.2-rc1; no real Courier has
+  called HST yet; the all-platform verification is GitHub CI's (the local
+  port matrix, riscv64 and the CPU costs not run for this release).
+
+`v90m_mem_size()` 106320, `v90m_ec_mem_size()` 50448 (x86-64).

@@ -82,7 +82,7 @@
 # test peer and may use double; it is never installed.
 
 NAME     := libv90modem
-VERSION  := 0.6.2
+VERSION  := 0.7.0
 # the SONAME's version: MAJOR.MINOR while MAJOR is 0 (every 0.x changes the
 # ABI), MAJOR from 1.0
 SOVER    := $(shell echo '$(VERSION)' | awk -F. '{ print ($$1 == 0 ? $$1 "." $$2 : $$1) }')
