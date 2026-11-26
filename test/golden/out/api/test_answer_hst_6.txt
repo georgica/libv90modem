@@ -108,4 +108,11 @@ retrain_untaken: holding back, our 0x1R never acknowledged, then v90m_retrain
   our 0x1R out (tries 4); v90m_retrain's request untaken: counted failed 3001 ms on; the end 8 45002 ms on; a 0x2R of ours sent: no
   the untaken request a failed retrain HST_RC_UNTAKEN_MS on: pass
   V90M_END_RETRAIN_FAILED within 50 s, no 0x2R ever sent: pass
-test_answer_hst: 574 checks, 0 failures
+courier: N(SA) 1 on every LN: its 0x34, 0x35, 0x36 by marks; then its reversal, its short training
+  our switches by marks 3: 6 to 4, 4 to 5, 5 to 6; the caller's last LN 0x16, its V(SA) 1; violations 0
+  each of its three LNs with N(SA) 1 carried out (RATES tx 9600, 12000, 14400): pass
+  its reversal: we hold the back channel, its training the Courier's: pass
+  our receiver in data on it at 14400 (RATES rx 14400): pass
+  retrains 1, reversals 1; LNs ours 0, last 0x00, the caller's last 0x16, violations 0; data 12288 to the caller, 2048 to us, 0 wrong
+  the data both ways intact: pass
+test_answer_hst: 588 checks, 0 failures

@@ -18,4 +18,8 @@ impaired_300: 8 lines with a dropout early in the preamble (20 and 40 ms), 8 wit
   a fade: the right speed within 650 ms on every line: pass
 late_drop_300: 8 lines, a 40 ms dropout at 300 ms and a 20 ms one at 200 ms: 2 past 650 ms
   the right speed within 650 ms, or the energy stage held from then on (W's extension): pass
-test_hst_det: 12 checks, 0 failures
+courier: a Courier's back channel (17 symbols of preamble, then flags) at -6, -9 and -12 dBm0, 2 lines, 235 starts each
+  never the other speed: pass
+  450 within W from at least 95 % of the starts: pass
+  and within W - 100 ms (the slack W was sized with) from at least 90 %: pass
+test_hst_det: 15 checks, 0 failures

@@ -241,6 +241,7 @@ int16_t hst_gf_tick(hst_gf_t *g, int16_t in)
 #define AB_SHARE   128             /* |tone x 64|^2 against the power: 1/16 of it */
 #define AB_PW_MIN  ((int64_t)112 * 112)   /* -43 dBm0 (RMS 112) */
 #define AB_RUN     (HST_FRX_AB_MS * 8)
+#define AB_MIN     (HST_FRX_AB_MIN_MS * 8)
 #define DPH600     322122547u      /* 600 / 8000 of 2^32, set to 0 every 40 samples */
 /* the carrier in training and data: low under -48 dBm0 (RMS 62) or 10 dB
  * under the signal's level (pref); back over -45 dBm0 (RMS 88) and within
@@ -664,7 +665,8 @@ static int level(hst_frx_t *r)
 }
 
 /* AB: both band-edge tones, a sample (the power is the tick's); 1 when it
- * has been there AB_RUN samples */
+ * has been there AB_RUN samples, or when it ends after AB_MIN (a short AB:
+ * the receiver starts on what was heard, in CD or TRN) */
 static int ab_hear(hst_frx_t *r, int16_t y)
 {
     int i3 = (r->n40 * 384) & SIN_MASK, i6 = (int)(r->ph6 >> 22);
@@ -679,6 +681,7 @@ static int ab_hear(hst_frx_t *r, int16_t y)
     l2 = (int64_t)r->lr * r->lr + (int64_t)r->li * r->li;
     u2 = (int64_t)r->ur * r->ur + (int64_t)r->ui * r->ui;
     if (r->pw < AB_PW_MIN || l2 < AB_SHARE * r->pw || u2 < AB_SHARE * r->pw || l2 + u2 < 4 * AB_SHARE * r->pw) {
+        if (r->abrun >= AB_MIN) return 1;
         r->abrun = 0;
         r->tr = r->ti = r->fr = r->fi = 0;
         r->state = r->listen;

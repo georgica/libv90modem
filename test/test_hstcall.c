@@ -403,7 +403,7 @@ typedef struct { hc_ftx t; src_t s; } hcf_peer_t;
 static double hcf_tx(void *u, double rx) { (void)rx; return hc_ftx_tick(&((hcf_peer_t *)u)->t); }
 
 /* hstcall's forward transmitter into our hst_frx: shape bm (1 BinModem's,
- * 2 V.17's roll-off alone), the band's edge e (NULL none), the line's
+ * 2 V.17's roll-off alone, 3 ours with the Courier's recorded training), the band's edge e (NULL none), the line's
  * offsets hz and ppm, nb bits */
 static void fwd_to_ours_run(const char *what, int code, int long_form, int v17, int bm, const edge_t *e, double hz, double ppm, long nb, uint32_t seed)
 {
@@ -417,6 +417,7 @@ static void fwd_to_ours_run(const char *what, int code, int long_form, int v17, 
     hc_ftx_init(&P.t, FLEVEL, src_bit, &P.s);
     if (bm == 1) hc_ftx_bm(&P.t);
     if (bm == 2) hc_ftx_rolloff(&P.t, 0.25);
+    if (bm == 3) hc_ftx_courier(&P.t);
     hst_frx_init(&R);
     hst_frx_set_code(&R, code);
     line_edge = e;
@@ -456,6 +457,11 @@ static void fwd_to_ours(void)
     fwd_to_ours_one("short", 6, 0, 0, 0, 47u);
     fwd_to_ours_one("V.17", 3, 1, 1, 0, 48u);
     fwd_to_ours_one("V.17", 6, 1, 1, 0, 49u);
+    /* the training a Courier was recorded sending (hst-facts.md `Training`,
+     * [REC]): AB 72, CD 8, TRN 192, the scrambler carried on from AB and
+     * CD; our receiver's first training, from the matched filter */
+    for (code = 4; code <= 6; code++) fwd_to_ours_one("the Courier's short", code, 0, 0, 3, 50u + (uint32_t)code);
+    fwd_to_ours_run("the Courier's short, +7 Hz -100 ppm", 6, 0, 0, 3, NULL, 7, -100, NB_FWD, 57u);
 }
 
 /* the BinModem profile's: BinModem's forward shape (its pulse and guard) */

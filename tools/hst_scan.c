@@ -265,9 +265,10 @@ static int scan_f(const char *name, int c, const char *side)
         int st6;
         for (k = 2; k <= 6; k++) (void)hst_frx_tick(&rx[k], ch[c][n]);
         st6 = hst_frx_state(&rx[6]);
-        /* the receiver started: AB was heard HST_FRX_AB_MS before */
+        /* the receiver started: AB was heard for abrun samples before
+         * (HST_FRX_AB_MS, or less for a short AB that ended) */
         if ((st6 == HST_FRX_TRAIN || st6 == HST_FRX_DATA) && lst != HST_FRX_TRAIN && lst != HST_FRX_DATA) {
-            ab_at = restart_at >= 0 ? restart_at : n - HST_FRX_AB_MS * FS / 1000;
+            ab_at = restart_at >= 0 ? restart_at : n - rx[6].abrun;
             trainings++;
             printf("%s: %s: forward training heard%s: AB from about %.3f s\n", name, side,
                    restart_at >= 0 ? " in data" : "", ab_at / (double)FS);

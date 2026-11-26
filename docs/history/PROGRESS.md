@@ -6807,3 +6807,77 @@ check-hst-bm pass; check-fixed pass.
   `.so.0.7`), testing.md and call_loop's golden.
 - CHANGELOG 0.7.2 (2026-11-26): K56flex versions 1 and 2 offered (0x43),
   version 1 declined and reported, `V90M_OPT_K56_V2_ONLY`, v90m_get_k56.
+
+## 0.7.3 (unreleased): HST fixes from a real Courier call (2026-11-26)
+
+Source: the Retrocet 2024 public recording (a Courier V.Everything calling
+a Courier I-Modem, 16800 HST; hst-facts.md `Recordings`, row REC), as
+measured in `build/hst-recording-report.md` (untracked; the audio and our
+cuts stay out of the tree). Every test below is synthetic, written from the
+measured figures.
+
+- **LN with an unchanged N(SA)** (the report's finding 4/10). `v42/mnp.c`
+  `on_ln`: on HST, an LN whose N(SA) is V(RA) - 1 and whose code differs
+  from the last one taken is a new attention (`hst_attn`, then the LNA);
+  V(RA) stays; the same code is a repeat (LNA alone), as Annex A. Off HST
+  unchanged. `sim/mnppeer` `ln_nsa_fixed` (V(SA) never steps), through
+  `sim/hstcall` `ln_nsa_fixed`. Tests: test_ec_hst `attn_same_nsa` (LNs
+  34, 35, 35, 36 all N(SA) 1: orders 34, 35, none, 36); test_answer_hst
+  `courier` (part 6): the caller's 0x34, 0x35, 0x36 1.9 s apart, our
+  switches by marks 6 to 4, 4 to 5, 5 to 6 (0.7.2: the first only, the
+  rest LNAs).
+- **Short AB** (finding 2/5). `hst_frx`'s AB stage also starts the
+  receiver when AB ends after `HST_FRX_AB_MIN_MS` (16 ms) of it; a long AB
+  still starts at 40 ms, the same sample as before (test_hstcall's verbose
+  timings and SNRs identical). Its CD (the same tones, both turned 180
+  degrees: the timing product unchanged) keeps the stage going, so the
+  start comes as CD ends. `sim/hstcall` `hc_ftx_courier` / `courier_train`:
+  AB 72, CD 8, TRN 192, the scrambler fed AB's and CD's Table 4 dibits and
+  carried on. test_hstcall `fwd_to_ours`: our receiver's first training
+  (from the matched filter) on it at codes 4, 5, 6 and at 6 with +7 Hz
+  -100 ppm: data, 0 errors (0.7.2: never started; 40 seeds at +-7 Hz
+  +-100 ppm all clean); test_answer_hst `courier`: the caller's reversal
+  with it, our receiver in data at 14400. `hst-scan -f` on the recording
+  now finds the answerer's training (AB from 6.851 s, 78 symbols counted
+  with the guard's delay; then unlocked, the Opus-coded data) and
+  reports a short AB's start from `abrun` instead of a fixed 40 ms.
+- **Back channel at real levels** (finding 5). Two causes of the 1.07 s
+  first lock: `GAIN0`, -20 dBm0, clipped the 16-bit baseband of a -12 dBm0
+  caller before the carrier detect; and that baseband, still in the
+  matched filter's 8 symbols when the acquisition starts, stayed at
+  `GAIN0`'s scale against the AGC's from then on. Now `GAIN0` is for -8
+  dBm0 and `rx_block` takes the held baseband to the new gain when the
+  carrier comes. Variants measured (lone receiver's first confirmed lock
+  from the recorded onset; detector restarted at 262 points of the
+  recording, within W; synthetic Courier, 385 mid-stream starts, within
+  W, at -6/-12/-24 dBm0):
+
+  | variant | onset lock, 0 dB / -12 dB | recording det. | synthetic |
+  |---|---|---|---|
+  | 0.7.2 | 1200 / 353 ms | 37 % | 97 / 98 / 96 % |
+  | GAIN0 -8 alone | not measured | 55 % | 98 / 96 / 91 % |
+  | held baseband zeroed at the carrier | 353 / 353 ms | 53 % | 91 / 91 / 91 % |
+  | GAIN0 -8, held baseband rescaled (chosen) | 393 / 393 ms | 49 % | 98 / 98 / 98 % |
+  | zeroed, the timing's start 4 symbols later | | 51 % | 96 / 96 % (-6, -24) |
+  | rescaled or zeroed, 4 or 8 symbols later (63 starts only) | | 41-62 % | 93-97 % |
+
+  The chosen one is level-independent and best on the synthetic set; on
+  the recording the variants are within its noise. What limits the
+  recording is its error through our receiver, 6 to 8 degrees RMS against
+  `HST_BRX_RMS` 7 (the report's own demodulator: 3.5); the threshold is
+  left alone (its false-lock figures, from 1910 minutes of noise, would
+  need measuring again). test_hst_det `courier`: hstcall's back
+  transmitter, 17 symbols of preamble then flags, -6/-9/-12 dBm0, +-7 Hz
+  +-100 ppm, 20 dB SNR, the detector started at 235 phases each: 1363 of
+  1410 within W, 1308 within W - 100 ms (0.7.2: 1362, 1104); bounds 95 %
+  and 90 %. `hstcall` `bpre_syms`.
+- **W**: `rig/hst_wsize` with a `courier` group (450, 17-symbol preamble,
+  -6/-9/-12 dBm0, 24 lines a delay): 1736 lines; at W 650 and the 2000 ms
+  cap no line under 100 ms of slack, the least 150 ms, as in 0.7.2. W
+  stays 650/2000. The latest detections moved in three cells (300 levels
+  +300 ms: 1040 to 1510; two 450 cells 10-20 ms earlier); docs/limits.md.
+- Not done, as asked: our transmitted training (for 0.8.0; goldens and
+  BinModem interop rest on it), 16800 (not measurable through Opus), the
+  V.8 / V.22bis / XID / DM start-up (0.8.0). hst-facts.md: REC added as a
+  source, confirmed values re-tagged `[X -> REC]`, the XID path, the
+  training, the LN pattern, the LA credit; W's row fixed (400 to 650).

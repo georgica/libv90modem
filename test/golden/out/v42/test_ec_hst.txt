@@ -2,6 +2,7 @@ offer: offer_rates 3C, the caller 01/FC: our LR ends C0 02 01 3C; hst 1, rates 3
 streamlined_rule: parameter 8 both: streamlined 1 (the peer heard 2), data intact; the template: streamlined 0 (the peer heard 0, sent streamlined), data intact
 mailbox: agreed 1, rates 7C, back300 1; la_rx 0 at the agreement, 1 after the caller's LA
 attn_in: LN 14: LNA, rev_lna_sent after its closing flag (early 0), rev_code 4, LTs held 1 until the epoch; LN 23, 35: rate_order 23, 35; LN 37, 45: violations +2, no order
+attn_same_nsa: LNs 34, 35, 35, 36 all N(SA) 1: rate_order 34, 35, none for the repeat, 36; V(RA) 2 throughout 1
 attn_out: ln_req 16: LN 16 sent, attn_tx 16, rev_lna_rx 1; LTs held 1, LAs 5, the peer's LN answered 1; LTs after the epoch; our LN and LD during a hold out
 hold_bound: no epoch: LTs again 12000 ms after the LN was asked for
 layout_learn: A: LT 4 lost, then LT 5: 3 octets, right; C: LT 2 again as 01 01 30: state 2, 2 octets; D: a standard LNA at V(R) 7: 6 octets, right
@@ -14,4 +15,4 @@ attn_stale: ln_acted cleared by the cap's LN 1; it lost, then the pump's 23: the
 far_ld: far_ld 1, peer_ld_reason 255
 t401: 14400/450 2932 ms, 9600/450 3088 ms, 450/9600 11027 ms, 9600/300 3887 ms
 throughput: clean >= 70 % at 14400/450 and 9600/300: yes; bit errors: >= 55 %, at most k sent again per LT lost: yes
-test_ec_hst: 157 checks, 0 failures
+test_ec_hst: 169 checks, 0 failures

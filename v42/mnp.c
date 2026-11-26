@@ -374,6 +374,14 @@ static void on_ln(mnp_t *m, int nsa, int code)
         m->vra++;
         m->attn_rx = code;
         hst_attn(m, code);
+    } else if (m->hst && m->attn_rx != 0 && nsa == (uint8_t)(m->vra - 1) && code != m->attn_rx) {
+        /* HST: the last N(SA) with a new code is a new attention, not a
+         * repeat. A Courier sent 0x35, 0x36 and 0x37 all with N(SA) 1, and
+         * each was carried out (hst-facts.md `Rate changes`, [REC]); Annex
+         * A would take the second and third for repeats of the first. V(RA)
+         * stays; the same code again is a repeat (below: an LNA alone) */
+        m->attn_rx = code;
+        hst_attn(m, code);
     } else if (nsa == m->vra) {                           /* A.7.4.3 */
         /* no room: neither taken nor acknowledged; it comes again */
         if (m->lnq_n == MNP_LNQ) return;

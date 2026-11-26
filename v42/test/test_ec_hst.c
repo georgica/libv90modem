@@ -381,6 +381,46 @@ static void attn_in(void)
            early, S.L.rev_code, held, r23, r35, E.l.mnp.violations - viol);
 }
 
+/* a Courier's attentions (hst-facts.md `Rate changes`, [REC]): 0x35,
+ * 0x36 and 0x37 each with N(SA) 1, each carried out. Holding forward, an
+ * LN with the last N(SA) but a new code is a new attention: the order and
+ * an LNA, V(RA) left as it is; the same code again is a repeat (Annex A):
+ * an LNA, nothing done */
+static void attn_same_nsa(void)
+{
+    mnp_peer_cfg pc = peer_courier();
+    int r34, r35, rep, r36, nsa1;
+    pc.ln_nsa_fixed = 1;
+    hst_setup(pc, 14400, 450, 127, 0x7C, 6);
+    CHECK(connect(5000) > 0);
+    data_reset();
+    run(100);
+    CHECK(peer_ln(0x34, 3000));
+    r34 = S.L.rate_order;
+    S.L.rate_order = 0; S.L.epoch++;
+    run(200);
+    CHECK(peer_ln(0x35, 3000));
+    r35 = S.L.rate_order;
+    S.L.rate_order = 0; S.L.epoch++;
+    run(200);
+    CHECK(peer_ln(0x35, 3000));          /* the same again: a repeat */
+    rep = S.L.rate_order;
+    run(200);
+    CHECK(peer_ln(0x36, 3000));
+    r36 = S.L.rate_order;
+    S.L.rate_order = 0; S.L.epoch++;
+    nsa1 = P.vsa == 1 && E.l.mnp.vra == 2;
+    CHECK_EQ_I(r34, 0x34);
+    CHECK_EQ_I(r35, 0x35);
+    CHECK_EQ_I(rep, 0);
+    CHECK_EQ_I(r36, 0x36);
+    CHECK(nsa1);
+    CHECK_EQ_I(st().attn_rx, 0x36);
+    CHECK_EQ_I((int)E.l.mnp.violations, 0);
+    printf("attn_same_nsa: LNs 34, 35, 35, 36 all N(SA) 1: rate_order %02X, %02X, %s for the repeat, %02X; V(RA) 2 throughout %d\n",
+           r34, r35, rep ? "an order" : "none", r36, nsa1);
+}
+
 /* attention the pump asks for: our LN, LTs held until the epoch, the
  * control frames still going */
 static void attn_out(void)
@@ -884,6 +924,7 @@ int main(void)
     streamlined_rule();
     mailbox();
     attn_in();
+    attn_same_nsa();
     attn_out();
     hold_bound();
     layout_learn();

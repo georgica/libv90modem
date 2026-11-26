@@ -74,6 +74,18 @@ fwd_to_ours, V.17, code 3: data mode reached; 0 errors
 fwd_to_ours, V.17, code 6: data mode reached; 0 errors
   our hst_frx reaches data: pass
   no bit in error: pass
+fwd_to_ours, the Courier's short, code 4: data mode reached; 0 errors
+  our hst_frx reaches data: pass
+  no bit in error: pass
+fwd_to_ours, the Courier's short, code 5: data mode reached; 0 errors
+  our hst_frx reaches data: pass
+  no bit in error: pass
+fwd_to_ours, the Courier's short, code 6: data mode reached; 0 errors
+  our hst_frx reaches data: pass
+  no bit in error: pass
+fwd_to_ours, the Courier's short, +7 Hz -100 ppm, code 6: data mode reached; 0 errors
+  our hst_frx reaches data: pass
+  no bit in error: pass
 marks 6 -> 5: 0 errors before the switch, 0 after
   the old rate's data intact: pass
   the receiver follows: the new rate's data intact: pass
@@ -174,4 +186,4 @@ fwd_to_ours, high-pass 550 Hz 10th order, ours, -100 ppm, code 6: data mode reac
 fwd_to_ours, high-pass 525 Hz 10th order, V.17's roll-off and train, +7 Hz -100 ppm, code 5: data mode reached; 0 errors
   our hst_frx reaches data: pass
   no bit in error: pass
-test_hstcall: 118 checks, 0 failures
+test_hstcall: 126 checks, 0 failures

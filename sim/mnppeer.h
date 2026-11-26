@@ -124,6 +124,9 @@ typedef struct {
     int tx_bps, rx_bps;  /* our transmit rate, the far end's: T401 from the formula */
     int drop_ln;         /* the first N LN frames received are lost: neither taken nor
                             acknowledged (a peer deaf to attention; the final review's m2) */
+    int ln_nsa_fixed;    /* HST: V(SA) does not step on an LNA, so every LN goes with the
+                            first's N(SA) (1), a new attention told only by its code, as a
+                            Courier sent 0x35, 0x36 and 0x37 (hst-facts.md `Rate changes`, [REC]) */
 } mnp_peer_cfg;
 
 enum { MNPP_IDLE = 0, MNPP_CONNECTED, MNPP_DISCONNECTED };

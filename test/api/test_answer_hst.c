@@ -2426,7 +2426,61 @@ static void levels(void)
         }
 }
 
-#define NCASES 38
+/* courier (0.7.3): a caller as a Courier was recorded (hst-facts.md,
+ * [REC]): its back preamble 17 symbols, its attentions all with N(SA) 1,
+ * its forward training AB 72, CD 8, TRN 192 with the scrambler carried
+ * on. Holding forward, its 0x34, 0x35 and 0x36 1.9 s apart (the
+ * recording's cadence; from 12 s, past the post-agreement retrain): each a new attention, our switches 14400 -> 9600
+ * -> 12000 -> 14400 (0.7.2 took the 0x35 and 0x36 for repeats: LNAs, no
+ * switch). Then its reversal, its short training: our receiver in data
+ * on it at 14400, the data both ways intact */
+static void courier(void)
+{
+    hstcall_cfg hc;
+    our_cfg oc = hst_ours();
+    v90m_ec_status es;
+    long t_back;
+    int ok;
+    hc_defaults(&hc);
+    hc.ln_nsa_fixed = 1; hc.bpre_syms = 17; hc.courier_train = !HST_LONG_V17;
+    hc.force_kind = 0x30; hc.force_rate_code = 4; hc.force_rate_at_ms = 12000;
+    hc.force_more[0].kind = 0x30; hc.force_more[0].code = 5; hc.force_more[0].at_ms = 13900;
+    hc.force_more[1].kind = 0x30; hc.force_more[1].code = 6; hc.force_more[1].at_ms = 15800;
+    hc.rev_backlog = 64;
+    printf("courier: N(SA) 1 on every LN: its 0x34, 0x35, 0x36 %s; then its reversal, its short training\n", R3_HOW);
+    our_init(&O, &oc);
+    line_init(0, 3901u);
+    cal_init_hst(&hc, 2048, 12288, 3901u);
+    C.after_fwd = 1;
+    rv_init();
+    run_start();
+    run_ms(60000L, holding_back_data);
+    t_back = now_ms;
+    run_ms(t_back + 3000L, ended);
+    run_ms(60000L, data_done);
+    v90m_ec_get_status(O.ec, &es);
+    printf("  our switches by marks %d: %d to %d, %d to %d, %d to %d; the caller's last LN 0x%02X, its V(SA) %d; violations %lu\n",
+           RC.nmk, RC.mk_from[0], RC.mk_to[0], RC.mk_from[1], RC.mk_to[1], RC.mk_from[2], RC.mk_to[2], es.attn_rx,
+           (int)HC.mnp.vsa, es.violations);
+    if (verbose) printf("  (holding back in data at %ld ms; the caller's training S3 %d at code %d)\n", t_back,
+                        RV.nhc ? RV.hc_len[0] : 0, RV.nhc ? RV.hc_code[0] : 0);
+#if HST_3R_TRAINS
+    ok = RC.nmk == 0;
+#else
+    ok = RC.nmk == 3 && RC.mk_from[0] == 6 && RC.mk_to[0] == 4 && RC.mk_from[1] == 4 && RC.mk_to[1] == 5
+      && RC.mk_from[2] == 5 && RC.mk_to[2] == 6;
+#endif
+    bound("each of its three LNs with N(SA) 1 carried out (RATES tx 9600, 12000, 14400)", ok && HC.mnp.vsa == 1 && es.violations == 0
+          && (HST_3R_TRAINS || (rates_at(RC.mk_ms[0], 9600, 0) >= 0 && rates_at(RC.mk_ms[1], 12000, 0) >= 0
+                                && rates_at(RC.mk_ms[2], 14400, 0) >= 0)));
+    bound("its reversal: we hold the back channel, its training the Courier's",
+          RV.n == 1 && RV.to[0] == HST_ROLE_BACK && RV.nhc == 1 && RV.hc_len[0] == (HST_LONG_V17 ? 64 : HC_CR_TRN));
+    bound("our receiver in data on it at 14400 (RATES rx 14400)", RC.nrx >= 1 && RC.rx_code[0] == 6 && rates_at(RV.sw[0], 0, 14400) >= 0);
+    rc_data_line();
+    bound("the data both ways intact", C.bad == 0 && O.bad == 0 && C.r == O.to_send && O.r == C.to_send && O.end_ms < 0);
+}
+
+#define NCASES 39
 /* The program is built as several (make: api_test_answer_hst_<k>, from
  * this file with -DHST_PART=k), so that none runs much over 30 s on
  * x86-64 (the whole set took 187 s; the final review's m7). With no case
@@ -2513,6 +2567,7 @@ static void run_case(int c)
     case 36: rc_late_switch(); break;
     case 37: retrain_untaken(); break;
     case 38: max_down_4800(); break;
+    case 39: courier(); break;
     default: break;
     }
 }
@@ -2521,7 +2576,7 @@ int main(int argc, char **argv)
 {
     /* the whole set's order; the BinModem profile's (its own, below) */
     static const int order[] = { RATES_23, RATES_45, RATES_6, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
-                                 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 34, 35, 38, 36, 37 };
+                                 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 34, 35, 38, 36, 37, 39 };
     static const int order_bm[] = { RATES_23, RATES_45, RATES_6, 12, 33, 34, 19, 23 };
     int only;
     size_t i;

@@ -874,7 +874,7 @@ static void on_frame_annex(mnppeer_t *p, const uint8_t *b, int n, int framing)
         if (p->phase != PH_DATA || p->ln_code < 0) return;
         if (b[4] == p->vsa) {                            /* A.7.4.6 */
             int was = p->ln_code, i;
-            p->vsa++;
+            if (!p->cfg.ln_nsa_fixed) p->vsa++;
             p->ln_code = -1;
             p->ln_send = 0;
             p->ln_t = 0;

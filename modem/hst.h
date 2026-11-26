@@ -474,7 +474,9 @@ int16_t hst_gf_tick(hst_gf_t *g, int16_t in);
  *   IDLE   listening: both band-edge tones (600 and 3000 Hz) of AB, each
  *          at least 1/16 of the power and both 1/4, the power at least
  *          -43 dBm0
- *   AB     ... for HST_FRX_AB_MS; then qamrx_sync_eq with the symbol timing
+ *   AB     ... for HST_FRX_AB_MS, or for HST_FRX_AB_MIN_MS and then ended
+ *          (a Courier's 72 symbols, the start in its CD or TRN); then
+ *          qamrx_sync_eq with the symbol timing
  *          from the phase between the two tones, and the equaliser and
  *          carrier frequency kept (hst_frx_restore, or a carrier lost) or
  *          else the transmit pulse's matched filter and the tones' own turn
@@ -541,7 +543,9 @@ enum {
 };
 
 #define HST_FRX_U          1024  /* receiver units per signal space unit: 2 V32_UNIT */
-#define HST_FRX_AB_MS        40  /* AB heard this long before the receiver starts */
+#define HST_FRX_AB_MS        40  /* AB heard this long before the receiver starts ... */
+#define HST_FRX_AB_MIN_MS    16  /* ... or this long, then ended: a Courier's AB is 72
+                                  * symbols, 30 ms (hst-facts.md `Training`, [REC]) */
 #define HST_FRX_HOLD        100  /* symbols under -20 dB before tracking */
 #define HST_FRX_CLAMP_MS     20  /* no carrier this long: no bits, nothing adapted */
 #define HST_FRX_LOSS_MS     200  /* ... this long: NOCARRIER (a 100 ms dropout survives) */
