@@ -30,10 +30,13 @@
  *   fwd_edge      the band's lower edge (v32line's edge_*: a 10th-order
  *                 Butterworth high-pass at 575 or 600 Hz on the way to us),
  *                 hstcall's long training (or V.17's) in our pulse or V.17's
- *                 roll-off at codes 3, 4 and 6: our hst_frx reaches data, no
- *                 bit in error in 2 x 10^4 (TEST_SHORT 2 x 10^3); from our
- *                 pulse's matched filter alone its error stayed near -4 dB
- *                 and it never trained (hst_fwd.c, mf_choose)
+ *                 roll-off at codes 3, 4 and 6; and 550 Hz at -100 ppm, 525
+ *                 Hz at +7 Hz -100 ppm (codes 6, 5): our hst_frx reaches
+ *                 data, no bit in error in 2 x 10^4 (TEST_SHORT 2 x 10^3);
+ *                 from our pulse's matched filter alone its error stayed
+ *                 near -4 dB and it never trained, and the two with the
+ *                 clock offset failed from the second start until its
+ *                 timing took HST_FMF_AB_SHIFT (hst_fwd.c, mf_choose)
  *   marks_self    hstcall's forward transmitter and receiver, 6 -> 5 and
  *                 4 -> 6 by marks (0x3R), the receiver armed 36 ms after the
  *                 marks began (the line, and an LNA's decoding): it
@@ -80,12 +83,13 @@
  * Under make check-hst-bm (HST_PROFILE_BM) only fwd_from_ours and
  * fwd_to_ours_bm run.
  *
- * `test_hstcall sweep [SEEDS [v17]]` (not a check; Task 23b's measure):
- * our hst_frx's first training over a grid of band edges (no edge;
- * high-pass 300-650 Hz of order 4 and 10; the all-pass's 0.5-3 ms), our
- * pulse and V.17's roll-off, codes 2..6, SEEDS seeds a cell (3), hstcall's
- * long training or V.17's: passes, the error at the training's end and
- * the time to data.
+ * `test_hstcall sweep [SEEDS [v17|long [HZ [PPM]]]]` (not a check; Task
+ * 23b's measure): our hst_frx's first training over a grid of band edges
+ * (no edge; Butterworth high-passes 300-650 Hz of order 4, 6 and 10; the
+ * all-pass's 0.5-3 ms), our pulse and V.17's roll-off, codes 2..6, SEEDS
+ * seeds a cell (3), hstcall's long training or V.17's, the line's carrier
+ * offset HZ and the caller's clock PPM (0): passes, the error at the
+ * training's end and the time to data.
  *
  * The output (the golden file) holds exact integers and one pass or fail
  * line per bound; the measured values, from floating-point arithmetic, only
@@ -399,8 +403,9 @@ typedef struct { hc_ftx t; src_t s; } hcf_peer_t;
 static double hcf_tx(void *u, double rx) { (void)rx; return hc_ftx_tick(&((hcf_peer_t *)u)->t); }
 
 /* hstcall's forward transmitter into our hst_frx: shape bm (1 BinModem's,
- * 2 V.17's roll-off alone), the band's edge e (NULL none), nb bits */
-static void fwd_to_ours_run(const char *what, int code, int long_form, int v17, int bm, const edge_t *e, long nb, uint32_t seed)
+ * 2 V.17's roll-off alone), the band's edge e (NULL none), the line's
+ * offsets hz and ppm, nb bits */
+static void fwd_to_ours_run(const char *what, int code, int long_form, int v17, int bm, const edge_t *e, double hz, double ppm, long nb, uint32_t seed)
 {
     static hcf_peer_t P;
     static hst_frx_t R;
@@ -415,7 +420,7 @@ static void fwd_to_ours_run(const char *what, int code, int long_form, int v17, 
     hst_frx_init(&R);
     hst_frx_set_code(&R, code);
     line_edge = e;
-    line(6, 300, 300, dbm0_of(arrive) - 30, -300, 0, 0, seed);
+    line(6, 300, 300, dbm0_of(arrive) - 30, -300, hz, ppm, seed);
     line_edge = NULL;
     nrx = 0;
     for (n = 0; n < nmax && P.s.n < nb + 2000; n++) {
@@ -441,7 +446,7 @@ static void fwd_to_ours_run(const char *what, int code, int long_form, int v17, 
 
 static void fwd_to_ours_one(const char *what, int code, int long_form, int v17, int bm, uint32_t seed)
 {
-    fwd_to_ours_run(what, code, long_form, v17, bm, NULL, NB_FWD, seed);
+    fwd_to_ours_run(what, code, long_form, v17, bm, NULL, 0, 0, NB_FWD, seed);
 }
 
 static void fwd_to_ours(void)
@@ -470,6 +475,7 @@ static void fwd_to_ours_bm(void)
  * data ---- */
 typedef struct { int data, ok; long data_ms; int32_t mse_end; } sweep_res_t;
 static int sweep_v17;              /* the sweep's training: V.17's long train instead of hstcall's long one */
+static double sweep_hz, sweep_ppm; /* ... the line's carrier and clock offsets */
 static sweep_res_t sweep_one(int code, double rolloff, const edge_t *e, uint32_t seed)
 {
     static hcf_peer_t P;
@@ -485,7 +491,7 @@ static sweep_res_t sweep_one(int code, double rolloff, const edge_t *e, uint32_t
     hst_frx_init(&R);
     hst_frx_set_code(&R, code);
     line_edge = e;
-    line(6, 300, 300, dbm0_of(arrive) - 30, -300, 0, 0, seed);
+    line(6, 300, 300, dbm0_of(arrive) - 30, -300, sweep_hz, sweep_ppm, seed);
     line_edge = NULL;
     nrx = 0;
     for (n = 0; n < nmax && P.s.n < 6000; n++) {
@@ -516,15 +522,17 @@ static void sweep(int nseed)
         { "hp 300/4", 300, 4, 0 }, { "hp 400/4", 400, 4, 0 }, { "hp 500/4", 500, 4, 0 },
         { "hp 550/4", 550, 4, 0 }, { "hp 600/4", 600, 4, 0 }, { "hp 650/4", 650, 4, 0 },
         { "hp 300/10", 300, 10, 0 }, { "hp 400/10", 400, 10, 0 }, { "hp 500/10", 500, 10, 0 },
-        { "hp 550/10", 550, 10, 0 }, { "hp 600/10", 600, 10, 0 }, { "hp 650/10", 650, 10, 0 },
+        { "hp 525/10", 525, 10, 0 }, { "hp 550/10", 550, 10, 0 }, { "hp 575/10", 575, 10, 0 },
+        { "hp 600/10", 600, 10, 0 }, { "hp 650/10", 650, 10, 0 },
+        { "hp 550/6", 550, 6, 0 }, { "hp 600/6", 600, 6, 0 }, { "hp 625/6", 625, 6, 0 },
         { "gd 0.5", 0, 0, 0.5 }, { "gd 1.0", 0, 0, 1.0 }, { "gd 1.5", 0, 0, 1.5 },
         { "gd 2.0", 0, 0, 2.0 }, { "gd 2.5", 0, 0, 2.5 }, { "gd 3.0", 0, 0, 3.0 },
     };
     static const double rolls[2] = { 0, 0.25 };
     static const char *rname[2] = { "ours", "rrc25" };
     int ei, si, code, k;
-    printf("sweep (%s): our hst_frx's first training, %d seeds a cell: pass/seeds, error at the training's end (dB, mean), time to data (ms, mean of those reaching it)\n",
-           sweep_v17 ? "V.17's long train" : "hstcall's long training", nseed);
+    printf("sweep (%s, %+g Hz, %+g ppm): our hst_frx's first training, %d seeds a cell: pass/seeds, error at the training's end (dB, mean), time to data (ms, mean of those reaching it)\n",
+           sweep_v17 ? "V.17's long train" : "hstcall's long training", sweep_hz, sweep_ppm, nseed);
     for (si = 0; si < 2; si++)
         for (ei = 0; ei < (int)(sizeof edges / sizeof edges[0]); ei++) {
             printf("%-5s %-9s", rname[si], edges[ei].name);
@@ -552,10 +560,16 @@ static void sweep(int nseed)
 static void fwd_edge(void)
 {
     static const edge_t e575 = { "hp 575/10", 575, 10, 0 }, e600 = { "hp 600/10", 600, 10, 0 };
-    fwd_to_ours_run("high-pass 600 Hz 10th order, ours", 6, 1, 0, 0, &e600, NB_OFF, 71u);
-    fwd_to_ours_run("high-pass 600 Hz 10th order, V.17's roll-off", 6, 1, 0, 2, &e600, NB_OFF, 72u);
-    fwd_to_ours_run("high-pass 575 Hz 10th order, ours, V.17's train", 4, 1, 1, 0, &e575, NB_OFF, 73u);
-    fwd_to_ours_run("high-pass 600 Hz 10th order, ours", 3, 1, 0, 0, &e600, NB_OFF, 74u);
+    static const edge_t e525 = { "hp 525/10", 525, 10, 0 }, e550 = { "hp 550/10", 550, 10, 0 };
+    fwd_to_ours_run("high-pass 600 Hz 10th order, ours", 6, 1, 0, 0, &e600, 0, 0, NB_OFF, 71u);
+    fwd_to_ours_run("high-pass 600 Hz 10th order, V.17's roll-off", 6, 1, 0, 2, &e600, 0, 0, NB_OFF, 72u);
+    fwd_to_ours_run("high-pass 575 Hz 10th order, ours, V.17's train", 4, 1, 1, 0, &e575, 0, 0, NB_OFF, 73u);
+    fwd_to_ours_run("high-pass 600 Hz 10th order, ours", 3, 1, 0, 0, &e600, 0, 0, NB_OFF, 74u);
+    /* the caller's clock 100 ppm slow (and the carrier 7 Hz off): from the
+     * second start, AB's timing read as it is failed these (the edge's
+     * phase at 600 Hz moves it early; the clock moves it further) */
+    fwd_to_ours_run("high-pass 550 Hz 10th order, ours, -100 ppm", 6, 1, 0, 0, &e550, 0, -100, NB_OFF, 81u);
+    fwd_to_ours_run("high-pass 525 Hz 10th order, V.17's roll-off and train, +7 Hz -100 ppm", 5, 1, 1, 2, &e525, 7, -100, NB_OFF, 96u);
 }
 
 /* 0x3R by marks, hstcall's transmitter to its own receiver: the old
@@ -1177,6 +1191,8 @@ int main(int argc, char **argv)
 {
     if (argc >= 2 && strcmp(argv[1], "sweep") == 0) {
         sweep_v17 = argc >= 4 && strcmp(argv[3], "v17") == 0;
+        sweep_hz = argc >= 5 ? atof(argv[4]) : 0;
+        sweep_ppm = argc >= 6 ? atof(argv[5]) : 0;
         sweep(argc >= 3 ? atoi(argv[2]) : 3);
         return 0;
     }

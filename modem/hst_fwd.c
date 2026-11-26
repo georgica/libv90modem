@@ -453,10 +453,10 @@ static int32_t ab_freq(const hst_frx_t *r)
     return (int32_t)((int64_t)i * ((int64_t)1 << 32) / 12288);
 }
 
-/* the next symbol's centre from AB's tones, in 1/256 sample (AB's phases
- * repeat every 40 samples, 12 symbols: good for as long as the tones' sums
- * are kept, the training's too) */
-static int32_t ab_delay(const hst_frx_t *r, int n40)
+/* the next symbol's centre from AB's tones, later by `shift` 1/1536 sample,
+ * in 1/256 sample (AB's phases repeat every 40 samples, 12 symbols: good
+ * for as long as the tones' sums are kept, the training's too) */
+static int32_t ab_delay(const hst_frx_t *r, int n40, int32_t shift)
 {
     int32_t delay;
     /* the turn of 600 x conj(3000) is 2400 Hz times the time of a symbol's
@@ -464,7 +464,7 @@ static int32_t ab_delay(const hst_frx_t *r, int n40)
     int arg = turn1024(r->tr, r->ti);
     /* in 1/1536 sample: a symbol 5120, a centre at arg x 5 from a sample
      * whose n40 is 0; from the next sample, n40 (already moved on) */
-    delay = (arg * 5 - n40 * 1536) % 5120;
+    delay = (arg * 5 - n40 * 1536 + shift) % 5120;
     if (delay < 0) delay += 5120;
     return delay / 6;
 }
@@ -473,10 +473,10 @@ static int32_t ab_delay(const hst_frx_t *r, int n40)
 static void start(hst_frx_t *r)
 {
     int32_t cr[QRX_NTAP], ci[QRX_NTAP];
-    if (r->eq.valid) qamrx_sync_eq(&r->q, ab_delay(r, r->n40), r->eq.cr, r->eq.ci, r->eq.freq);
+    if (r->eq.valid) qamrx_sync_eq(&r->q, ab_delay(r, r->n40, 0), r->eq.cr, r->eq.ci, r->eq.freq);
     else {
         mf_taps(cr, ci, 0);
-        qamrx_sync_eq(&r->q, ab_delay(r, r->n40), cr, ci, ab_freq(r));
+        qamrx_sync_eq(&r->q, ab_delay(r, r->n40, 0), cr, ci, ab_freq(r));
     }
     r->state = HST_FRX_TRAIN;
     train_reset(r);
@@ -523,7 +523,10 @@ static int mf_choose(hst_frx_t *r)
     }
     if (4 * d[1] >= 5 * d[0]) return 0;
     mf_taps(cr, ci, 1);
-    qamrx_sync_eq(&r->q, ab_delay(r, r->mft), cr, ci, ab_freq(r));
+    /* AB's timing read through the second start's high-pass (gen_hst_tabs.py):
+     * as it was, a caller's clock 100 ppm slow moved it the rest of the way
+     * out, and up to a fifth of these trainings failed (the sweep) */
+    qamrx_sync_eq(&r->q, ab_delay(r, r->mft, HST_FMF_AB_SHIFT), cr, ci, ab_freq(r));
     train_reset(r);
     return 1;
 }

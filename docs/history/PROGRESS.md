@@ -6219,3 +6219,29 @@ Sizes: `hstcall_t` 165712 octets (x86-64), test side only. Host run 33 s
   CHECKS PASS; 157 of 158 identical, `test/test_hstcall.txt` re-recorded
   (case 19's 12 lines, count 106 -> 114); bm goldens identical. TEST_SHORT
   build of case 19: pass. x86-64 only (owner rule).
+- **Fix round 1** (review: Important 1, Minors 2-4). With a clock offset the
+  restart from the second start lost trainings on steep edges (-100 ppm:
+  525/10 11 of 80, 550/10 7; +7 Hz -100 ppm: 550/10 27). Cause, measured
+  with a scratch knob on the restart's timing: AB's reading is early on
+  the line the second start assumes (its 550 Hz high-pass's phase at 600
+  Hz against 3000 Hz: 1.5 samples, 0.45 symbol), and a slow caller clock
+  adds 0.09 sample by the restart; moved 0.12-0.38 sample earlier the
+  failures rose to 61 % of a cell, 0.12-1.75 samples later they were at
+  most 2 of 80. The generator now computes that bias (HST_FMF_AB_SHIFT,
+  2297/1536 sample) and the restart adds it. New fwd_edge runs (550/10
+  -100 ppm code 6; 525/10 +7 Hz -100 ppm code 5, V.17's shape and train):
+  4 of 4 checks failed before. Sweep mode takes HZ and PPM (`sweep SEEDS
+  v17|long HZ PPM`) and has 525/575/10 and 550/600/625/6 rows. Scratch
+  grid, 13 edges x 7 offsets x 80 runs, before / control (second start
+  from AB, no choice) / now: the steep order-10 edges now fail 0 at every
+  offset (were up to 27); the control failed 5-71 on flat lines and up to
+  54 on edges; left: 550/6 at +-7 Hz +100 ppm 7 and 3 (no switch, as
+  before), 625/6 at -7 Hz (AB never heard), single misses at 500/525 of
+  order 8 and gd 3 ms, all as before. limits.md rewritten with the table,
+  the Butterworth-only model, gd > 3 ms (ratio 1.53, the closest flat
+  call). Wording: the rule keeps the second start unless its spread is
+  1.25 times the first's or more; gen_hst_tabs.py's message says int64.
+  `make golden` (make check, check-hst-bm in it): ALL HOST CHECKS PASS;
+  157 of 158 identical, `test/test_hstcall.txt` re-recorded (the two runs'
+  6 lines, count 114 -> 118). CPU path: one add at the restart (no ARM
+  run). x86-64 only.

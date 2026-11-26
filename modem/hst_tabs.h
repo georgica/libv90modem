@@ -55,6 +55,7 @@ extern const int16_t hst_fpulse[10][HST_FL][2];
 extern const int32_t hst_fmf_bm[HST_FMF_N][2];
 
 #define HST_FMF_STARTS 2         /* the default receiver's first equalisers */
+#define HST_FMF_AB_SHIFT 2297    /* added to AB's timing for hst_fmf[1], 1/1536 sample */
 /* the default receiver's first equalisers, as hst_fmf_bm: [0] mf_taps'
  * reading of hst_fpulse (its matched filter), [1] the matched filter of
  * the same root-raised-cosine (1/12) through a 6th-order Butterworth

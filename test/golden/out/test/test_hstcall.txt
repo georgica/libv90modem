@@ -168,4 +168,10 @@ fwd_to_ours, high-pass 575 Hz 10th order, ours, V.17's train, code 4: data mode 
 fwd_to_ours, high-pass 600 Hz 10th order, ours, code 3: data mode reached; 0 errors
   our hst_frx reaches data: pass
   no bit in error: pass
-test_hstcall: 114 checks, 0 failures
+fwd_to_ours, high-pass 550 Hz 10th order, ours, -100 ppm, code 6: data mode reached; 0 errors
+  our hst_frx reaches data: pass
+  no bit in error: pass
+fwd_to_ours, high-pass 525 Hz 10th order, V.17's roll-off and train, +7 Hz -100 ppm, code 5: data mode reached; 0 errors
+  our hst_frx reaches data: pass
+  no bit in error: pass
+test_hstcall: 118 checks, 0 failures

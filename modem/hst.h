@@ -472,11 +472,13 @@ int16_t hst_gf_tick(hst_gf_t *g, int16_t in);
  *          are not an alternation, the points of both starts in hst_fmf
  *          (ours, and ours through a 550 Hz high-pass) are measured, as
  *          they were loaded, by how far their power spreads (A..D have one
- *          power: |z|^4 against |z|^2 squared); if the second's spread is
- *          under 1.25 times the first's, the training starts again from it
- *          (the band's lower edge: a steep high-pass at 550 to 600 Hz on
- *          the line left ours some 4 dB under its error, and it never
- *          trained; test_hstcall fwd_edge and its sweep)
+ *          power: |z|^4 against |z|^2 squared); unless the second's
+ *          spread is 1.25 times the first's or more, the training starts
+ *          again from it, AB's timing moved by HST_FMF_AB_SHIFT (the second
+ *          start's high-pass reads AB early) (the band's lower edge: a
+ *          steep high-pass at 550 to 600 Hz on the line left ours some 4 dB
+ *          under its error, and it never trained; test_hstcall fwd_edge and
+ *          its sweep)
  *   DATA   at code 3..6, once more than 3 of the last 8 points are off the
  *          4 points: the rate's set through v32_vit_t; at code 2, the 4
  *          points, once S and S-bar are over. Either only when the error

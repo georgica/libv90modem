@@ -82,12 +82,15 @@ The forward channel (hst-facts.md "Forward channel"):
                  the same integers), [1] the matched filter of the same
                  root-raised-cosine (1/12, no window) through an analog
                  6th-order Butterworth high-pass at 550 Hz, with [0]'s turn
-                 and energy. The receiver measures both starts over its
-                 first training's first symbols and starts again from [1]
-                 when it fits better (modem/hst_fwd.c, mf_choose): a steep
-                 high-pass at the band's lower edge (550-600 Hz, the
-                 test_hstcall sweep) left [0]'s points some 4 dB under the
-                 error. Each tap under 2^16.
+                 and energy. A steep high-pass at the band's lower edge
+                 (550-600 Hz, the test_hstcall sweep) left [0]'s points some
+                 4 dB under the error. The receiver measures both starts
+                 over its first training's first symbols and starts again
+                 from [1] unless [1]'s spread is 1.25 times [0]'s or more
+                 (modem/hst_fwd.c, mf_choose), its symbol timing AB's plus
+                 HST_FMF_AB_SHIFT: on the line [1] assumes, the high-pass's
+                 phase at 600 Hz against 3000 Hz reads AB's timing about
+                 0.45 symbol early. Each tap under 2^16.
   hst_guard      the forward receiver's guard high-pass [OURS]: within
                  +-0.5 dB from 560 Hz up, at least 50 dB down at 480 Hz and
                  below (the spec's edges; the back channel's -20 dB band ends
@@ -673,9 +676,26 @@ def tab_fmf():
     ours = [v for t in mfi for v in t]
     edge = fmf_of("fmf", u, shape, alpha, lambda t: shaped_pulse(t, F_BETA, EDGE_HZ, EDGE_N))
     if max(abs(v) for v in ours + edge) >= 1 << 16:
-        die("fmf: a tap past 2^16 (hst_fwd.c's mf_choose sums a tap times a sample in int32)")
+        die("fmf: a tap past 2^16 (hst_fwd.c's mf_choose: a tap times a sample must fit int32 before its int64 sum)")
     sys.stderr.write("gen_hst_tabs: fmf: peak taps %d, %d\n" % (max(abs(v) for v in ours), max(abs(v) for v in edge)))
+    # AB's timing read through the second start's high-pass: the tones' phase
+    # 600 x conj(3000) is 2400 Hz times the delay, plus the high-pass's phase
+    # at 600 Hz less its phase at 3000 Hz; that extra, as a time, in
+    # 1/1536 sample (ab_delay's unit), within half a symbol either way
+    def hp_phase(f):
+        sn = 1j * f / EDGE_HZ
+        h = 1 + 0j
+        for k in range(EDGE_N // 2):
+            z = math.sin((2 * k + 1) * math.pi / (2 * EDGE_N))
+            h *= sn * sn / (sn * sn + 2 * z * sn + 1)
+        return math.atan2(h.imag, h.real)
+    sym = 5120.0
+    shift = (hp_phase(600.0) - hp_phase(3000.0)) / (2 * math.pi * 2400.0) * FS * 1536
+    shift = (shift + sym / 2) % sym - sym / 2
+    ab_shift = int(round(-shift))
+    sys.stderr.write("gen_hst_tabs: fmf: AB's timing through the second start's high-pass %.1f/1536 sample\n" % shift)
     h = [define("HST_FMF_STARTS", 2, "the default receiver's first equalisers"),
+         define("HST_FMF_AB_SHIFT", ab_shift, "added to AB's timing for hst_fmf[1], 1/1536 sample"),
          "/* the default receiver's first equalisers, as hst_fmf_bm: [0] mf_taps'",
          " * reading of hst_fpulse (its matched filter), [1] the matched filter of",
          " * the same root-raised-cosine (1/12) through a 6th-order Butterworth",
