@@ -378,4 +378,12 @@ retrain_ignored: holding the back channel at 14400, v90m_retrain; the caller nev
   only 0x2R of ours, never a rate up: pass
   each agreed rate HST_RC_FAILS times, 14400 down to 4800: pass
   then V90M_END_RETRAIN_FAILED: pass
-test_answer_hst: 1110 checks, 0 failures
+max_down_low: max_down_bps 4000, an HST caller, the endpoint linked
+  our transmit over 8 s: the same as with HST off; ANS_V22 entered at the same sample
+  no ANS_HST_WAIT under a ceiling below 4800: pass
+  the caller hears exactly what it hears with HST off: pass
+max_down_low: max_down_bps 4799, an HST caller, the endpoint linked
+  our transmit over 8 s: the same as with HST off; ANS_V22 entered at the same sample
+  no ANS_HST_WAIT under a ceiling below 4800: pass
+  the caller hears exactly what it hears with HST off: pass
+test_answer_hst: 1126 checks, 0 failures

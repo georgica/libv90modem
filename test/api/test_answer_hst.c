@@ -28,6 +28,10 @@
  *               caller hears exactly what it hears with HST not offered
  *               (our transmit hash over 8 s)
  *   max_down    max_down_bps 12000: our 0xC0 rates 0x3C, data at 12000
+ *   max_down_low  max_down_bps 4000 and 4799, under HST's lowest rate: HST
+ *               not offered although linked; the caller hears exactly what
+ *               it hears with HST off (our transmit hash over 8 s; the
+ *               final review's I3)
  *   lr_in_training  the caller's LR (lr_delay_ms 600 and 1000) leaves while
  *               our long training goes out (asserted from the timestamps:
  *               its first bit after ANS_HST began, its last before our
@@ -838,6 +842,43 @@ static void unlinked(void)
            v22[0] == v22[1] && v22[0] >= 0 ? "at the same sample" : "differently");
     bound("no ANS_HST_WAIT without the link", !waited);
     bound("the caller hears exactly what it hears with HST not offered", h[0] == h[1] && v22[0] == v22[1] && v22[0] >= 0);
+}
+
+/* ===================== max_down_low ===================== */
+/* max_down_bps under HST's lowest rate (4800): HST is not offered, linked
+ * or not; the caller hears what it hears from a modem without HST (the
+ * final review's I3) */
+static void max_down_low(void)
+{
+    static const int ceil[2] = { 4000, 4799 };
+    int c;
+    for (c = 0; c < 2; c++) {
+        our_cfg oc = hst_ours();
+        hstcall_cfg hc;
+        uint32_t h[2];
+        long v22[2];
+        int k, waited = 0;
+        printf("max_down_low: max_down_bps %d, an HST caller, the endpoint linked\n", ceil[c]);
+        hc_defaults(&hc);
+        for (k = 0; k < 2; k++) {
+            oc.max_down = ceil[c];
+            if (k == 1) oc.mods &= ~V90M_MOD_HST;
+            our_init(&O, &oc);
+            line_init(0, 406u);
+            cal_init_hst(&hc, 0, 0, 406u);
+            run_start();
+            while (now_ms < 8000) {
+                block(8, 8);
+                our_ms(&O);
+                if (ans()->phase == ANS_HST_WAIT || ans()->phase == ANS_HST) waited = 1;
+            }
+            h[k] = txhash; v22[k] = O.v22_ms;
+        }
+        printf("  our transmit over 8 s: %s as with HST off; ANS_V22 entered %s\n", h[0] == h[1] ? "the same" : "not the same",
+               v22[0] == v22[1] && v22[0] >= 0 ? "at the same sample" : "differently");
+        bound("no ANS_HST_WAIT under a ceiling below 4800", !waited);
+        bound("the caller hears exactly what it hears with HST off", h[0] == h[1] && v22[0] == v22[1] && v22[0] >= 0);
+    }
 }
 
 /* ===================== lr_in_training ===================== */
@@ -2235,7 +2276,7 @@ static void levels(void)
         }
 }
 
-#define NCASES 34
+#define NCASES 35
 int main(int argc, char **argv)
 {
     int only;
@@ -2298,6 +2339,7 @@ int main(int argc, char **argv)
     if (only == 33) rev_stale_3r();       /* the BinModem profile's own (above) */
 #endif
     if (!only || only == 34) retrain_ignored();
+    if (!only || only == 35) max_down_low();
     CHECK_EQ_I(proc_err, 0);
     if (O.m) v90m_destroy(O.m);
     if (O.ec) v90m_ec_destroy(O.ec);

@@ -187,7 +187,8 @@ typedef enum {
  * after it (up to 2 s while 250-500 Hz energy is there): heard, HST
  * (V90M_CONN_HST: tx_bps 9600 at CONNECTED, the best rate both ends agree
  * after MNP's LRs from the retrain that follows, rx_bps 450 or 300); not
- * heard, V.22bis or V.21 as without HST, that much later. Callers that send
+ * heard, V.22bis or V.21 as without HST, that much later (max_down_bps
+ * 1..4799: not offered, see there). Callers that send
  * CM or AA are answered exactly as without HST. A call that took HST up
  * and has no MNP link within 15 s ends with V90M_END_HST_FAILED. In data
  * mode no HST call stays up without the far modem's signal for more than
@@ -266,7 +267,15 @@ typedef struct {
                                        holds it at 33333. V.32bis (either role): one rate both ways,
                                        under the lower of the two. V.21, V.22, V.22bis, Bell: unused.
                                        With x2 or K56flex, max_up 1..2399 is V90M_EINVAL (their
-                                       V.34 upstream starts at 2400) */
+                                       V.34 upstream starts at 2400). HST (answering): max_down
+                                       1..4799 (under its lowest rate) and HST is not offered,
+                                       the modem answers as without V90M_MOD_HST; from 4800 the
+                                       call still opens at 9600, and from the retrain after
+                                       MNP's LRs on our forward rate is the best agreed one under
+                                       max_down; the far end's forward channel (after a
+                                       reversal) is held under max_up, at least 4800. A plain
+                                       MNP agreement (the caller's LR with no HST rate in
+                                       common) has no retrain: it stays at 9600 for the call */
     int            echo_delay;      /* samples from a sample leaving to its echo starting back (the
                                        driver's buffering), >= 0; -1 = measure it in every start-up.
                                        Calling V.90 / V.92: never measured, used as given, 0 .. 511

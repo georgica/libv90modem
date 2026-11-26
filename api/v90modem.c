@@ -180,6 +180,9 @@ static void setup(v90m_t *m, const v90m_cfg *cfg)
         memset(&ac, 0, sizeof ac);
         ac.level = cfg->tx_level;
         ac.modes = modes_of(cfg->modulations);
+        /* HST under a ceiling below its lowest rate (4800): not offered,
+         * the modem answers as without it (include/v90modem.h) */
+        if (cfg->max_down_bps > 0 && cfg->max_down_bps < 4800) ac.modes &= ~ANS_MODE_HST;
         if (cfg->modulations & V90M_OPT_V34_TX_CAP) ac.modes |= ANS_MODE_V34_TX_CAP;
         ac.getbit = cfg->getbit;
         ac.putbit = cfg->putbit;
