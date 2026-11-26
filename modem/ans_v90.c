@@ -99,9 +99,9 @@ static void start_v92(answer_t *a)
 
 /* A retrain is due: the 70 ms of silence, then Phase 2 again (V.90 9.5.1,
  * V.92 9.7.1). A line that needs too many in a row is no line (ans_rt_v90). */
-void ans_v90_retrain(answer_t *a)
+void ans_v90_retrain(answer_t *a, int why)
 {
-    ans_rt_begin(a, &ans_rt_v90);
+    ans_rt_begin(a, &ans_rt_v90, why);
     if (a->phase == ANS_FAILED) return;
     ans_enter(a, ANS_RETRAIN); a->t = 0;
 }
@@ -165,7 +165,7 @@ static int16_t tick_v90(answer_t *a, int16_t rx)
     a->pcm = p34d_tick(&a->p34, rx);
     tx = (int16_t)v90_octet_linear(a->p2cfg.alaw, a->pcm);
     if (a->p34.state == P34_RETRAIN) {
-        ans_v90_retrain(a); tx = 0;
+        ans_v90_retrain(a, a->p34.retrain_ours); tx = 0;
     } else if (a->p34.state == P34_FAILED) {
         ans_fail(a, a->p34.error == P34_ERR_CLEARDOWN ? ANS_END_CLEARDOWN_FAR
                     : a->p34.error == P34_ERR_HANGUP ? ANS_END_CLEARDOWN_OURS : ans_retrain_or(a, ANS_END_FAILED));
@@ -221,7 +221,7 @@ static int16_t tick_v92(answer_t *a, int16_t rx)
          * then bit 70 of INFO1d says "no PCM upstream" for the rest of
          * the call and the caller is left with V.34 upstream (V.90). */
         if (m->state == V92D_FAILED || !a->v92_data || m->up_floor) a->pcm_up = 0;
-        ans_v90_retrain(a); tx = 0;
+        ans_v90_retrain(a, m->state == V92D_FAILED ? WHY_OURS : m->retrain_ours); tx = 0;
     } else if (m->state == V92D_DATA) {
         /* also after a rate renegotiation */
         a->connected = 1; a->modulation = ANS_MOD_V92;

@@ -26,7 +26,7 @@
  *
  * What a callback may do to the modem that calls it: v90m_retrain,
  * v90m_cleardown, v90m_get_state, v90m_get_stats, v90m_get_diag,
- * v90m_get_v34_cap (and anything on another object: every v90m_ec_* and
+ * v90m_get_v34_cap, v90m_get_restarts (and anything on another object: every v90m_ec_* and
  * v90m_async_* function).
  * v90m_reset returns V90M_ESTATE and changes nothing. v90m_destroy takes effect at the end of
  * the sample under way: no event after it, the rest of the block is
@@ -39,8 +39,8 @@
  * own memory is not allowed.
  *
  * NULL: every function checks the object it is given (and the struct that
- * v90m_get_state, v90m_get_stats, v90m_get_diag, v90m_get_v34_cap and
- * v90m_ec_get_status fill): with NULL a function returning int returns V90M_EINVAL, one
+ * v90m_get_state, v90m_get_stats, v90m_get_diag, v90m_get_v34_cap,
+ * v90m_get_restarts and v90m_ec_get_status fill): with NULL a function returning int returns V90M_EINVAL, one
  * returning size_t or unsigned long 0, a void one does nothing. Except the four called for
  * every bit, v90m_ec_tx_bit, v90m_ec_rx_bit, v90m_async_getbit and
  * v90m_async_putbit: their object must not be NULL. */
@@ -528,6 +528,56 @@ typedef struct {
                                always without the option */
 } v90m_v34_cap;
 void     v90m_get_v34_cap(const v90m_t *m, v90m_v34_cap *c);
+
+/* Who began the call's rate renegotiations and retrains, and why (added in
+ * 0.7.1): of v90m_stats.renegotiations and retrains, the far end's and
+ * ours, in either role and every modulation that has them; kept after the
+ * end until v90m_reset. A struct and a function of their own, as
+ * v90m_v34_cap: v90m_stats keeps its size within 0.7, and so does
+ * v90m_restarts from 0.7.1 on. Cheap; fine to read after every sample.
+ * reneg_ours + reneg_far is renegotiations and retrain_ours + retrain_far
+ * is retrains (calling, after a V.22bis or V.32bis call has ended, when
+ * v90m_stats.retrains reads 0, these still read the call's). A
+ * renegotiation is the far end's when its signal stopped the data (its S,
+ * its Rd or Ru; x2's and K56flex's clients, a V.32bis answerer's preamble:
+ * always), else ours. A retrain is the far end's when its signal began it
+ * (Tone A or Tone B, V.32bis's 1800 Hz or AC, V.22bis's S1, K56flex's
+ * tone B, HST: the far end's 0x2R or 0x3R carried out with training, ours
+ * granted or its own), else ours. */
+typedef enum {
+    V90M_CAUSE_NONE = 0,    /* none yet */
+    V90M_CAUSE_FAR,         /* the far modem began it */
+    V90M_CAUSE_OURS,        /* ours: a step of a start-up, retrain or renegotiation
+                               failed or ran out of time, a failed V.92 start-up,
+                               HST's training after MNP's agreement, its upshift,
+                               or a modulation that says no more */
+    V90M_CAUSE_RX_ERRORS,   /* ours: our receiver's errors too many for the rate
+                               (V.34's, V.90's and V.92's rate drop, as a
+                               renegotiation or, with no lower rate, a retrain;
+                               the V.90 / V.92 caller's watch on its receiver;
+                               V.32bis's; HST's frame errors) */
+    V90M_CAUSE_RX_LOST,     /* ours: our receiver lost the far end's data or
+                               signal (V.34's and V.90's dead receiver, HST's
+                               receiver out of data or its carrier gone) */
+    V90M_CAUSE_HOST         /* ours: v90m_retrain */
+} v90m_cause;
+typedef struct {
+    unsigned   reneg_ours, reneg_far;       /* renegotiations, counted as
+                                               v90m_stats.renegotiations is */
+    unsigned   retrain_ours, retrain_far;   /* retrains begun */
+    unsigned   retrain_host;                /* of retrain_ours, v90m_retrain's */
+    v90m_cause last;            /* the cause of the one of them begun last (a
+                                   renegotiation once it counts), _NONE before */
+    int        last_retrain;    /* 1: that one is a retrain, 0: a renegotiation */
+    unsigned   last_ms;         /* where it began (a renegotiation: where data
+                                   stopped), ms from the first sample since
+                                   v90m_create or v90m_reset (it wraps after
+                                   2^32 samples, 6.2 days); 0 with _NONE */
+} v90m_restarts;
+void     v90m_get_restarts(const v90m_t *m, v90m_restarts *r);
+/* "none", "far", "ours", "rx_errors", "rx_lost", "host"; "?" outside the
+ * enum; never NULL, and they do not change within 0.7.x */
+const char *v90m_cause_name(v90m_cause c);
 
 /* ------------------------------------- start-stop characters (V.14 basic)
  * Characters (1 start, 8 data LSB first, 1 stop, mark idle) on the bit pump

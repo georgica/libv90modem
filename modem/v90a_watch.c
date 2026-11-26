@@ -120,6 +120,7 @@ void v90a__begin_retrain(v90a_t *a, int ours)
     a->max_rx0 = max0;
     a->now = now; a->t_data = t_data; a->rt_clock = rt_clock; a->info0d = i0;
     a->retrains = retrains + 1; a->retrains_ours = ro + (ours != 0); a->rt_recent = rr + 1;
+    a->rt_why = ours;
     a->renegs = renegs; a->best_rate = best; a->auto_down = adown;
     a->state = V90A_RETRAIN; a->t = 0;
 }

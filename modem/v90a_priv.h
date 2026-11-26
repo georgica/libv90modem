@@ -104,6 +104,6 @@ void    v90a__on_dec(v90a_t *a, const v90arx_dec_t *d);
 int     v90a__renegotiate(v90a_t *a, int kind);
 void    v90a__line_watch(v90a_t *a);
 void    v90a__watch(v90a_t *a);
-void    v90a__begin_retrain(v90a_t *a, int ours);
+void    v90a__begin_retrain(v90a_t *a, int ours);      /* ours: 0, or why (WHY_*) */
 
 #endif

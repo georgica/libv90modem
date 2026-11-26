@@ -69,6 +69,7 @@
 #include "../v92/v92_p34d.h"
 #include "../v42/hst_link.h"
 #include "hst.h"
+#include "callev.h"
 
 typedef enum {
     ANS_V8, ANS_V22, ANS_V21, ANS_FAILED,
@@ -176,19 +177,21 @@ typedef struct {
 struct ans_scheme;            /* modem/ans_scheme.h */
 
 typedef struct {
+    /* the members are in an order that leaves no holes between them on
+     * a 64-bit host, for callev (at the end) */
     answer_cfg cfg;
     ans_phase  phase;
+    int        used_v8;      /* the caller spoke V.8 */
     const struct ans_scheme *s;  /* the scheme of the phase: set with it */
     int32_t    t;            /* samples in this phase (saturates) */
     int32_t    t_phase;      /* the backstop's clock (saturating): samples in this phase, or
                                 in V.34's Phase 2 within ANS_V34 since it began */
-    int        used_v8;      /* the caller spoke V.8 */
     v8ans_t    v8;
     v22bis_t   v22;
     p2d_cfg    p2cfg;
     int        echo_delay, max_down, max_up;    /* answer_v90_line */
-    p2d_t      p2;
     info0_t    info0a;       /* the caller's INFO0a from V.90 Phase 2 (a retrain's has none) */
+    p2d_t      p2;
     p34d_t     p34;
     v34ans_t   v34;
     /* V.32bis, V.92, x2 and K56flex never meet in one call (V.92 needs the
@@ -203,10 +206,11 @@ typedef struct {
      * others; V.22 and V.21, which may follow it, keep their own storage). */
     union { v32_t v32; v92d_t v92; x2d_t x2; v8bis_t v8b; k56d_t k56; hst_t hst; } u;
     v32_aadet_t aadet;       /* 1800 Hz from the caller while the answer tone runs */
-    uint8_t    pcm;          /* the codeword of this sample while V.90 runs */
-    v21mod_t   fmod; v21demod_t fdem; arx_t uart;
+    v21mod_t   fmod;
+    int        bpos;         /* the place in bpf */
+    v21demod_t fdem; arx_t uart;
     int        fbit, fsk_mod, via_bell; int32_t cd_run; int64_t cd_thresh;
-    int16_t    bpf[128]; int bpos;   /* V.21 / Bell 103 receive band-pass history */
+    int16_t    bpf[128];     /* V.21 / Bell 103 receive band-pass history (bpos above) */
     const int16_t *bpf_taps;         /* v21_bpf or bell103_bpf */
     tonedet_t  bell;                 /* the Bell 103 caller's mark while we wait in ANS_V22 */
     tonedet_t  v21mark;              /* the V.21 caller's mark (980 Hz) while we wait in ANS_V22 */
@@ -225,12 +229,15 @@ typedef struct {
                                 for the rest of the call when a V.92 start-up failed or the
                                 line did not carry the lowest PCM upstream rate */
     int        v92_data;     /* this V.92 engine has reached data mode */
+    uint8_t    pcm;          /* the codeword of this sample while V.90 runs */
     /* x2 and K56flex: flags of one octet each, so that the API's modem can
      * hold its HST endpoint's address without growing (v90m_mem_size) */
     uint8_t    x2_offered;   /* ANS_MODE_X2 with V.34, on a mu-law line */
     uint8_t    k56_offered;  /* ANS_MODE_K56 with V.34, on a mu-law line: ANS_V8BIS first */
     uint8_t    k56_agreed;   /* the client's MS carried the K56flex block (we sent ACK(1));
                                 x2 is then not offered in this call */
+    callev_t   ev;           /* who began the retrains and renegotiations (v90m_get_restarts);
+                                in the holes the order above took away, v90m_mem_size unchanged */
 } answer_t;
 
 /* the HST engine shares the union and fits in it (the spec's "HST pump":
@@ -292,6 +299,9 @@ int     answer_moving(const answer_t *a);
 int     answer_odp_bypass(const answer_t *a);
 /* Why the call ended: ANS_END_*, ANS_END_NONE until the phase is ANS_FAILED. */
 int     answer_end(const answer_t *a);
+/* v90m_get_restarts: on the sample data stops for a rate renegotiation, who
+ * began it and why (CEV_* of callev.h) */
+int     answer_reneg_cev(const answer_t *a);
 /* The modem's side of the HST mailbox (v42/hst_link.h), for the MNP
  * endpoint linked to it: *state HST_LINK_UNDECIDED until the modem is
  * either on an HST call (HST_LINK_ON in ANS_HST, the mailbox returned) or

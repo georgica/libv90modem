@@ -202,7 +202,9 @@ static int16_t tick_v32(answer_t *a, int16_t rx)
         a->connected = 1; a->modulation = ANS_MOD_V32BIS;
         a->bitrate = a->rx_bitrate = a->u.v32.bitrate;    /* may change at a retrain */
     }
-    a->retraining = a->u.v32.retraining; a->retrains = a->u.v32.retrains;
+    a->retraining = a->u.v32.retraining;
+    while (a->retrains < a->u.v32.retrains) { a->retrains++; callev_retrain(&a->ev, a->u.v32.rt_why); }
+    a->retrains = a->u.v32.retrains;
     return tx;
 }
 

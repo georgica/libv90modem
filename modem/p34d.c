@@ -252,7 +252,7 @@ static void rate_down(p34d_t *p)
     fprintf(stderr, "P34 rate_down: snr %d, now %d, wanted %d\n", (int)snr, now, drn);
 #endif
     if (drn >= now) drn = now - 1;
-    if (drn < 2) { retrain(p, 1); return; }
+    if (drn < 2) { retrain(p, WHY_RX_ERRORS); return; }
     p->mp.max_rate = (uint8_t)drn;
     p->rate_drops++;
     start_rd(p);
@@ -325,7 +325,7 @@ static void rx_symbol(p34d_t *p)
         /* the watches are off during a renegotiation */
         switch (v34up_data(&p->up, !p->in_reneg, !p->in_reneg)) {
         case V34UP_B1_BAD: fail(p, P34_ERR_B1); break;
-        case V34UP_DEAD:   retrain(p, 1); break;
+        case V34UP_DEAD:   retrain(p, WHY_RX_LOST); break;
         case V34UP_SLOW:   rate_down(p); break;
         case V34UP_LOST:   fail(p, P34_ERR_CARRIER); break;
         default: break;

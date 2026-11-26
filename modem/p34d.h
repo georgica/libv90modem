@@ -23,6 +23,7 @@
 #include "ec.h"
 #include "ecdly.h"
 #include "tonedet.h"
+#include "callev.h"
 #include "v34up.h"
 #include "../v90/v90_tx.h"
 #include "../v34/v34.h"
@@ -126,7 +127,7 @@ typedef struct {
     int        in_reneg;            /* a rate renegotiation is under way */
     int        clearing;            /* ... of ours, to send MP with drn = 0 */
     tonedet_t  tone_a;              /* Tone A (2400 Hz) watch */
-    int        retrain_ours;        /* P34_RETRAIN: we asked for it */
+    int        retrain_ours;        /* P34_RETRAIN: we asked for it, why (WHY_* of callev.h; 0 the caller's) */
     int        rate_drops;          /* renegotiations we began to lower the rate */
 } p34d_t;
 

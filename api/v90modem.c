@@ -60,7 +60,8 @@ struct v90m {
     uint8_t  busy;              /* inside v90m_process_*: a callback may be running */
     uint8_t  dead;              /* v90m_destroy came from a callback: stop after this sample */
     uint8_t  reneg_pending;     /* data stopped, not in a retrain: counts when it moves again, becomes
-                                   a retrain, or the call ends other than by a cleardown */
+                                   a retrain, or the call ends other than by a cleardown; 0 none,
+                                   else who began it (CEV_*, modem/callev.h: never 0) */
     uint8_t  meas_tick;         /* samples since the SNR and round trip were last kept */
     uint8_t  was_mod;           /* V90M_CONN_* (they fit 8 bits) */
     int      was_tx, was_rx;
@@ -327,6 +328,8 @@ static void diag_track(v90m_t *m, int orig)
 static inline void after(v90m_t *m, int orig)
 {
     int moving, rx, connected = connected_of(m, orig), failed = failed_of(m, orig);
+    callev_t *ev = orig ? &m->u.o.ev : &m->u.a.ev;
+    ev->now++;                  /* v90m_get_restarts' clock */
     if (!connected && !m->was_connected && !failed) {          /* start-up: nothing to report */
         diag_track(m, orig);
         return;
@@ -355,9 +358,13 @@ static inline void after(v90m_t *m, int orig)
          * it counts when data moves again, or when it becomes a retrain or
          * ends the call (below), unless that end is a cleardown, ours or the
          * far end's, which stops data for good: a cleardown never counts */
-        if (!moving) m->reneg_pending = connected && !retraining_of(m, orig) && !failed;
-        else if (m->reneg_pending) {
+        if (!moving) {
+            m->reneg_pending = connected && !retraining_of(m, orig) && !failed
+                               ? (uint8_t)(orig ? orig_reneg_cev(&m->u.o) : answer_reneg_cev(&m->u.a)) : 0;
+            ev->pend_at = ev->now;
+        } else if (m->reneg_pending) {
             m->renegotiations++;
+            callev_reneg(ev, m->reneg_pending);
             m->reneg_pending = 0;
         }
         m->was_moving = moving;
@@ -366,10 +373,14 @@ static inline void after(v90m_t *m, int orig)
     if (m->reneg_pending) {
         if (failed) {
             v90m_end e = end_of(m);
-            if (e != V90M_END_CLEARDOWN_OURS && e != V90M_END_CLEARDOWN_FAR) m->renegotiations++;
+            if (e != V90M_END_CLEARDOWN_OURS && e != V90M_END_CLEARDOWN_FAR) {
+                m->renegotiations++;
+                callev_reneg(ev, m->reneg_pending);
+            }
             m->reneg_pending = 0;
         } else if (retraining_of(m, orig)) {
             m->renegotiations++;     /* the renegotiation became a retrain: counted in both */
+            callev_reneg(ev, m->reneg_pending);
             m->reneg_pending = 0;
         }
     }
@@ -438,9 +449,18 @@ int v90m_process_linear(v90m_t *m, const int16_t *rx, int16_t *tx, size_t n)
 
 int v90m_retrain(v90m_t *m)
 {
+    callev_t *ev;
+    uint8_t was;
+    int r;
     if (!m) return V90M_EINVAL;
-    if (ORIGINATING(m)) return orig_retrain(&m->u.o) == 0 ? V90M_OK : V90M_ESTATE;
-    return answer_retrain(&m->u.a) == 0 ? V90M_OK : V90M_ESTATE;
+    /* the next retrain of ours counted is this one (v90m_get_restarts): some
+     * engines count it before they return; refused, as it was (one asked
+     * for before may still be to count) */
+    ev = ORIGINATING(m) ? &m->u.o.ev : &m->u.a.ev;
+    was = ev->host; ev->host = 1;
+    r = ORIGINATING(m) ? orig_retrain(&m->u.o) : answer_retrain(&m->u.a);
+    if (r != 0) { ev->host = was; return V90M_ESTATE; }
+    return V90M_OK;
 }
 
 int v90m_cleardown(v90m_t *m)
@@ -516,6 +536,40 @@ void v90m_get_v34_cap(const v90m_t *m, v90m_v34_cap *c)
     if (!m || !c) return;
     c->proj_bps = c->ask_bps = c->capped = 0;
     if (!ORIGINATING(m)) answer_v34_tx_cap(&m->u.a, &c->proj_bps, &c->ask_bps, &c->capped);
+}
+
+typedef char v90m_check_cause[(SAME(V90M_CAUSE_NONE, CEV_NONE) && SAME(V90M_CAUSE_FAR, CEV_FAR)
+                               && SAME(V90M_CAUSE_OURS, CEV_OF(WHY_OURS)) && SAME(V90M_CAUSE_RX_ERRORS, CEV_OF(WHY_RX_ERRORS))
+                               && SAME(V90M_CAUSE_RX_LOST, CEV_OF(WHY_RX_LOST)) && SAME(V90M_CAUSE_HOST, CEV_HOST)
+                               && WHY_RX_ERRORS == 2) ? 1 : -1];      /* (v32/'s rt_why says 2) */
+
+void v90m_get_restarts(const v90m_t *m, v90m_restarts *r)
+{
+    const callev_t *ev;
+    unsigned rt, rt_ours;
+    if (!m || !r) return;
+    if (ORIGINATING(m)) {
+        ev = &m->u.o.ev;
+        rt_ours = (unsigned)m->u.o.rt_ours;
+    } else {
+        ev = &m->u.a.ev;
+        rt = (unsigned)m->u.a.retrains;
+        rt_ours = rt - ev->rt_far;
+    }
+    r->reneg_far = ev->reneg_far;
+    r->reneg_ours = m->renegotiations - ev->reneg_far;
+    r->retrain_far = ev->rt_far;
+    r->retrain_ours = rt_ours;
+    r->retrain_host = ev->rt_host;
+    r->last = (v90m_cause)ev->last;
+    r->last_retrain = ev->last_rt;
+    r->last_ms = ev->last != CEV_NONE ? ev->last_at / 8u : 0u;
+}
+
+const char *v90m_cause_name(v90m_cause c)
+{
+    static const char *const names[] = { "none", "far", "ours", "rx_errors", "rx_lost", "host" };
+    return (unsigned)c < sizeof names / sizeof names[0] ? names[c] : "?";
 }
 
 answer_t *v90m__answer(v90m_t *m) { return &m->u.a; }

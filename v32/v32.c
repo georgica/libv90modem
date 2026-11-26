@@ -72,7 +72,7 @@ static void init(v32_t *m, const v32_cfg *cfg, int call)
     m->tone_ref = 0;
     m->ec_best = 0; m->ec_block = 0; m->ec_stall = 0; m->erle_db10 = 0; m->trn1_min = TRN1_MIN;
     m->r2_rates = 0; m->rate = -1; m->v32_only = 0;
-    m->connected = 0; m->bitrate = 0; m->retrains = 0; m->retraining = 0;
+    m->connected = 0; m->bitrate = 0; m->retrains = 0; m->retraining = 0; m->rt_why = 0;
     m->auto_rt = 0; m->good_run = 0;
     m->call = call;
     m->t_rev1 = m->t_cc = m->t_rev2 = 0; m->nt = 0; m->snt_len = 0; m->pw_data = 0;
@@ -88,7 +88,7 @@ void v32_init_call(v32_t *m, const v32_cfg *cfg) { init(m, cfg, 1); }
 int v32_retrain(v32_t *m)
 {
     if (m->state != V32S_DATA) return -1;
-    m->retrains++; m->retraining = 1;
+    m->retrains++; m->retraining = 1; m->rt_why = 1;
     m->seg_len[m->state] = m->seg;
     if (m->call) v32c_start(m); else start(m);
     return 0;
@@ -301,7 +301,7 @@ static void rx_control(v32_t *m)
         /* 7.2: an 1800 Hz tone for more than 128 symbol intervals is the
          * caller asking for a retrain */
         if (r->pure_run > 2 * 128 + 16) {
-            m->retrains++; m->retraining = 1;
+            m->retrains++; m->retraining = 1; m->rt_why = 0;
             m->seg_len[m->state] = m->seg;
             start(m);
             break;
@@ -321,7 +321,7 @@ static void rx_control(v32_t *m)
             if (++m->bad_run > (int32_t)MS(RT_BAD_MS)) {
                 if (m->auto_rt >= RT_MAX) { fail(m, V32_ERR_CARRIER); break; }
                 m->auto_rt++; m->good_run = 0;
-                v32_retrain(m);
+                v32_retrain(m); m->rt_why = 2;
             }
         } else {
             if (m->bad_run > 0) m->bad_run--;

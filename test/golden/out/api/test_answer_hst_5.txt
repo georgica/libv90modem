@@ -81,12 +81,16 @@ up: our switch by marks to 9600 as holder; then holding back, 10 s good: our 0x3
   retrains 1, reversals 1; LNs ours 2, last 0x36, the caller's last 0x14, violations 0; data 2048 to the caller, 22656 to us, 0 wrong
   data never stopped after the post-agreement retrain: pass
   no more LNs (14400 is the top); the data both ways intact, ours all in: pass
+  restarts: retrains ours 1 (host 0), far 0; renegotiations 0; the last ours
+  restarts: ours 1, none the far end's: pass
 down: holding back at 14400, 15 frame errors in 10 s: our 0x25
   10 frame errors, then 11 s: no LN: pass
   then frame errors until our LN: 15; our first LN 0x25
   15 frame errors within 10 s of the first: our 0x25: pass
   the caller's training at 12000: a retrain, DATA_STOPPED then DATA_MOVING, RATES rx 12000, retrains 2: pass
   our next LN 0x36, no sooner than 10 s after the downshift; back at 14400 by marks: pass
+  restarts: retrains ours 2 (host 0), far 0; renegotiations 0; the last rx_errors
+  restarts: our 0x25 ours for the receiver's errors, the last; none the far end's: pass
   retrains 2, reversals 1; LNs ours 2, last 0x36, the caller's last 0x16, violations 0; data 2048 to the caller, 34112 to us, 0 wrong
   the data both ways intact: pass
 retrain_by_2R: holding forward, the caller's 0x25: our short training at 12000
@@ -95,6 +99,8 @@ retrain_by_2R: holding forward, the caller's 0x25: our short training at 12000
   a retrain: DATA_STOPPED, then DATA_MOVING at tx 12000; retrains 2: pass
   MNP's T401 held through both retrains (running at this one's start): pass
   the caller's receiver in data at 12000: pass
+  restarts: retrains ours 1 (host 0), far 1; renegotiations 0; the last far
+  restarts: the caller's 0x25 the far end's, the last; ours 1 (after MNP's agreement): pass
   retrains 2, reversals 0; LNs ours 0, last 0x00, the caller's last 0x25, violations 0; data 8512 to the caller, 512 to us, 0 wrong
   the data both ways intact: pass
 max_up: max_up_bps 9600; the caller's 0x16, then its 0x36
@@ -118,4 +124,4 @@ fallback: holding back at 12000, the line at 15 dB SNR: down to 7200, and stayin
   no loop: at most 8 retrains, none and no LN in the last 15 s: pass
   retrains 9, reversals 1; LNs ours 3, last 0x23, the caller's last 0x15, violations 0; data 2048 to the caller, 11904 to us, 0 wrong
   the data intact: pass
-test_answer_hst: 232 checks, 0 failures
+test_answer_hst: 244 checks, 0 failures

@@ -879,6 +879,8 @@ typedef struct {
     int32_t       fq;                 /* holding back: samples without the forward carrier */
     int32_t       ld_t;               /* samples since the far end's LD came (link.far_ld) */
     int32_t       clr;                /* our cleardown: samples of ones still to send, 0 none */
+    int32_t       ask_why;            /* why we asked our pending change (WHY_* of callev.h), for
+                                         v90m_get_restarts when its training is counted */
 } hst_t;
 
 #endif

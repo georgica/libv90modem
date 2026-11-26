@@ -32,6 +32,7 @@
 #define V90D_V92_P34D_H
 #include <stdint.h>
 #include "../modem/seqhunt.h"
+#include "../modem/callev.h"
 #include "../modem/ec.h"
 #include "../modem/ecdly.h"
 #include "../modem/tonedet.h"
@@ -178,7 +179,7 @@ typedef struct {
     int        reneg_ours;          /* 0 the caller's, 1 ours, 2 ours to drop the upstream rate
                                        (its design one step, 4000 bit/s, below up_rate) */
     int        renegs;              /* renegotiations completed */
-    int        retrain_ours;
+    int        retrain_ours;        /* V92D_RETRAIN: ours, why (WHY_* of callev.h; 0 the caller's) */
     int        up_floor;            /* the retrain is ours because the upstream did not hold
                                        even the lowest PCM rate in data mode */
     tonedet_t  tone_a;              /* Tone A (2400 Hz) watch */

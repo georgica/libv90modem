@@ -1644,6 +1644,20 @@ static int holding_back_data(void)
             && hst_frx_state(&a->u.hst.frx) == HST_FRX_DATA) || O.end_ms >= 0;
 }
 
+/* v90m_get_restarts (0.7.1): who began our retrains, a line for the log;
+ * the split adds up to v90m_stats' */
+static void restarts(v90m_restarts *r)
+{
+    v90m_stats ss;
+    v90m_get_restarts(O.m, r);
+    v90m_get_stats(O.m, &ss);
+    printf("  restarts: retrains ours %u (host %u), far %u; renegotiations %u; the last %s\n", r->retrain_ours, r->retrain_host,
+           r->retrain_far, r->reneg_ours + r->reneg_far, v90m_cause_name(r->last));
+    CHECK_EQ_I(r->retrain_ours + r->retrain_far, ss.retrains);
+    CHECK_EQ_I(r->reneg_ours + r->reneg_far, ss.renegotiations);
+    CHECK(r->last == V90M_CAUSE_NONE || r->last_retrain);
+}
+
 /* up: holding forward, the caller's 0x34: our switch by marks 6 -> 4, no
  * retrain; then its reversal at 9600: we hold the back channel at 4 on a
  * good line, and every 10 s our 0x3R to the next agreed rate, 0x35 then
@@ -1705,6 +1719,15 @@ static void up(void)
           count_ev(V90M_EV_DATA_STOPPED, moved_index()) == 3 * HST_3R_TRAINS);
     bound("no more LNs (14400 is the top); the data both ways intact, ours all in", RC.nln == 2 && C.bad == 0 && O.bad == 0
           && C.r == O.to_send && O.r > 20000 && O.end_ms < 0);
+    {
+        /* the post-agreement retrain ours; with HST_3R_TRAINS, the
+         * caller's 0x34 the far end's, our 0x35 and 0x36 ours (upshifts) */
+        v90m_restarts r;
+        restarts(&r);
+        bound(HST_3R_TRAINS ? "restarts: ours 3, the far end's 1 (its 0x34); the last ours" : "restarts: ours 1, none the far end's",
+              r.retrain_ours == (HST_3R_TRAINS ? 3u : 1u) && r.retrain_far == (HST_3R_TRAINS ? 1u : 0u) && r.retrain_host == 0
+              && r.last == V90M_CAUSE_OURS);
+    }
 }
 
 /* down: holding back at 14400, frame errors (a bit of what we receive
@@ -1761,6 +1784,12 @@ static void down(void)
     if (verbose) printf("  (0x36 at %ld, %ld ms after the 0x25)\n", i36 >= 0 ? RC.ln_ms[i36] : -1L, i36 >= 0 ? RC.ln_ms[i36] - RC.ln_ms[0] : -1L);
     bound("our next LN 0x36, no sooner than 10 s after the downshift; back at 14400 by marks",
           i36 == 1 && RC.ln_ms[1] - RC.ln_ms[0] >= 10000 && RC.nrx == 3 && RC.rx_code[2] == 6 && !RC.rx_trained[2]);
+    {
+        v90m_restarts r;
+        restarts(&r);
+        bound("restarts: our 0x25 ours for the receiver's errors, the last; none the far end's",
+              r.retrain_ours == 2 && r.retrain_far == 0 && r.retrain_host == 0 && r.last == V90M_CAUSE_RX_ERRORS);
+    }
     rc_data_line();
     bound("the data both ways intact", C.bad == 0 && O.bad == 0 && C.r == O.to_send && O.r > 20000 && O.end_ms < 0);
 }
@@ -1792,6 +1821,12 @@ static void retrain_by_2R(void)
     bound("a retrain: DATA_STOPPED, then DATA_MOVING at tx 12000; retrains 2", i1 >= 0 && i2 > i1 && O.ev_tx[i2] == 12000 && ss.retrains == 2);
     bound("MNP's T401 held through both retrains (running at this one's start)", RC.rt_ticks > 0 && RC.rt_bad == 0 && RC.rt_running >= 1);
     bound("the caller's receiver in data at 12000", HC.frx.state == HC_FRX_DATA && HC.frx.d.code == 5);
+    {
+        v90m_restarts r;
+        restarts(&r);
+        bound("restarts: the caller's 0x25 the far end's, the last; ours 1 (after MNP's agreement)",
+              r.retrain_ours == 1 && r.retrain_far == 1 && r.retrain_host == 0 && r.last == V90M_CAUSE_FAR);
+    }
     rc_data_line();
     bound("the data both ways intact", C.bad == 0 && O.bad == 0 && O.r == C.to_send && C.r > 8000 && O.end_ms < 0);
 }
@@ -1994,6 +2029,12 @@ static void retrain_back(void)
     bound("our 0x26 at once, our only LN", RC.nln == 1 && RC.ln[0] == 0x26 && RC.ln_ms[0] - t0 <= 2);
     bound("the caller's training at 14400: DATA_STOPPED, then DATA_MOVING at rx 14400; retrains 2",
           htr_from(t0, 6) == 1 && htr_from(t0, 0) == 1 && i1 >= 0 && i2 > i1 && O.ev_rx[i2] == 14400 && ss.retrains == 2);
+    {
+        v90m_restarts r;
+        restarts(&r);
+        bound("restarts: our 0x26 the host's, the last; none the far end's",
+              r.retrain_ours == 2 && r.retrain_host == 1 && r.retrain_far == 0 && r.last == V90M_CAUSE_HOST);
+    }
     bound("the data both ways intact", C.bad == 0 && O.bad == 0 && C.r == O.to_send && O.r > 4000 && O.end_ms < 0);
 }
 

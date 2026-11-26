@@ -4,6 +4,8 @@ retrain_back: holding the back channel at 14400, v90m_retrain: our 0x26
   retrains 2, reversals 1; LNs ours 1, last 0x26, the caller's last 0x16, violations 0; data 2048 to the caller, 8512 to us, 0 wrong
   our 0x26 at once, our only LN: pass
   the caller's training at 14400: DATA_STOPPED, then DATA_MOVING at rx 14400; retrains 2: pass
+  restarts: retrains ours 2 (host 1), far 0; renegotiations 0; the last host
+  restarts: our 0x26 the host's, the last; none the far end's: pass
   the data both ways intact: pass
 back_silent: holding the back channel, the caller gone
   the forward channel taken back yes; end 2 (ANS_ERR_HST_CARRIER)
@@ -106,4 +108,4 @@ retrain_untaken: holding back, our 0x1R never acknowledged, then v90m_retrain
   our 0x1R out (tries 4); v90m_retrain's request untaken: counted failed 3001 ms on; the end 8 45002 ms on; a 0x2R of ours sent: no
   the untaken request a failed retrain HST_RC_UNTAKEN_MS on: pass
   V90M_END_RETRAIN_FAILED within 50 s, no 0x2R ever sent: pass
-test_answer_hst: 570 checks, 0 failures
+test_answer_hst: 574 checks, 0 failures

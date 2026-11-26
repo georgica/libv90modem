@@ -46,8 +46,12 @@ void ans_enter(answer_t *a, ans_phase p);
  * through every data mode sample of the call). K56flex's counting is not
  * this one (modem/ans_k56.c). */
 typedef struct { int limit; int32_t forget_ms; } rt_policy_t;
-/* a retrain is due: counted, or the call ends (phase ANS_FAILED) */
-void ans_rt_begin(answer_t *, const rt_policy_t *);
+/* a retrain is due: counted, or the call ends (phase ANS_FAILED); why
+ * (WHY_*, modem/callev.h) is who began it, for v90m_get_restarts */
+void ans_rt_begin(answer_t *, const rt_policy_t *, int why);
+/* a retrain is counted (answer_t.retrains) that began for why (WHY_*): the
+ * schemes that count their own (K56flex, HST) */
+void ans_rt_count(answer_t *a, int why);
 /* a sample of data mode */
 void ans_rt_data_tick(answer_t *, const rt_policy_t *);
 /* V.90's: also V.92's, and V.34's after a V.90 Phase 2 (their retrains are
@@ -74,7 +78,7 @@ void ans_start_v22(answer_t *a);        /* modem/ans_legacy.c */
 void ans_start_v21(answer_t *a);
 void ans_start_v32(answer_t *a);
 void ans_start_p2(answer_t *a);         /* modem/ans_v90.c */
-void ans_v90_retrain(answer_t *a);      /* a V.90 retrain is due: ANS_RETRAIN, or the end */
+void ans_v90_retrain(answer_t *a, int why);  /* a V.90 retrain is due (why: WHY_*): ANS_RETRAIN, or the end */
 void ans_v34_cfg(const answer_t *a, v34ans_cfg *c);   /* modem/ans_v34.c */
 void ans_start_v34(answer_t *a);
 void ans_start_x2(answer_t *a);         /* modem/ans_x2.c */

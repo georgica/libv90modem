@@ -53,6 +53,7 @@
 #define V90D_MODEM_V90A_H
 #include <stdint.h>
 #include "seqhunt.h"
+#include "callev.h"
 #include "p2call.h"
 #include "v90arx.h"
 #include "v90adec.h"
@@ -249,6 +250,8 @@ typedef struct {
     int32_t    since_auto;          /* data frames since a renegotiation for the line ended */
     int        auto_down;           /* the receiver's watch took the rate down (or retrained) */
     int        best_rate;           /* the highest downstream of this call */
+    int        rt_why;              /* the last retrain begun: 0 the digital modem's, else ours,
+                                       why (WHY_* of callev.h) */
 } v90a_t;
 
 void    v90a_init(v90a_t *a, const v90a_cfg *cfg);
