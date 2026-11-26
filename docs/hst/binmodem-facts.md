@@ -590,6 +590,21 @@ BinModem's version [OWN] (`S:519-564`):
   because the LNA may be arriving at the new rate (`S:102-104`, `S:530-543`,
   `S:598-604`).
 - The `fallback` setting can turn this off (`S:57-59`).
+- **In a turnaround it asked for** [OWN] (`S:478-486`, `S:497`,
+  `S:521-564`, `S:605-609`): after the LNA to its own 0x1R it is still the
+  back-channel end for the **400 ms** wait before its training, and the
+  fallback check runs on every tick of that wait (it does not look at the
+  pending take). Its forward receiver counts as in data until **150 ms**
+  of quiet has passed (`crates/datapump/src/v17/receiver.rs:86`, `:384-388`),
+  so it can read an SNR off our forward carrier as that carrier stops and
+  ask **0x3R** at a lower rate. That LN goes out once it holds the forward
+  channel. Seen live (2026-11-25, rev3 debug): on its second take of the
+  forward channel, 0x35 at 14400, our receiver in data at -35 dB.
+- **As holder,** it does nothing when its own 0x3R is acknowledged (the
+  LNA is acted on only at the back-channel end, `S:598-604`), so the rate
+  it asked for is never trained.
+- **0x2R:** no handling at all. It gets the LNA every LN gets, and nothing
+  else happens (`S:566-611`, the catch-all arm at `S:611`).
 
 ### Cleardown
 

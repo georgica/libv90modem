@@ -79,6 +79,10 @@
  *   rev_ours_la rev_ours against a caller that sends an LA first after each
  *               switch, as our endpoint does: the same 2 reversals (the
  *               other cases' caller does not: nothing says a Courier does)
+ *   rev_stale_3r  (the BinModem profile only) the caller's 0x1R, then
+ *               its 0x35 once it holds forward, never carried out, and
+ *               no 0x2R honoured (BinModem's turnaround): no LN of ours,
+ *               the call on at 14400, one retrain more, the data intact
  *   snr         holding the back channel, v90m_stats.snr_db10 is the
  *               forward receiver's, within 1 dB of the line's SNR
  * Rate changes (Task 22b; spec "Rate changes"):
@@ -147,7 +151,7 @@
  *
  * Built with -DHST_PROFILE_BM (make check-hst-bm) the caller trains as
  * BinModem (V.17's long train) and, with no case named, only `rates`,
- * `rev_caller`, `up` and `recovery` run: the switch then 20 ms plus V.17's
+ * `rev_caller`, `rev_stale_3r`, `up` and `recovery` run: the switch then 20 ms plus V.17's
  * turn-off after the LNA drained; a 0x3R carried out by a training both
  * ways (HST_3R_TRAINS: data stops for each); recovery from the caller's
  * receiver dropping out of data.
@@ -1207,6 +1211,51 @@ static void rev_ours_la(void)
     rev_ours_one(450, 1, 507u);
 }
 
+/* BinModem's turnaround (hstcall stale_3r and ignore_2r): its 0x1R, our
+ * LNA; in its wait before its training its fallback asks 0x35, which comes
+ * once it holds forward; it changes nothing for it, nor for an 0x2R. Our
+ * receiver, in data at 14400 throughout, follows the holder's 0x35: no
+ * training by HST_RC_BOUND_MS, no change made, none failed: no LN of ours,
+ * the call goes on at 14400, one retrain more (the follow's; data stopped
+ * that once); 40 s on, the data both ways intact. The BinModem profile
+ * only (by marks, as the default build does, a change not made unlocks the
+ * receiver at HST_SW_SYMS) */
+#if HST_LONG_V17
+static void rev_stale_3r(void)
+{
+    hstcall_cfg hc;
+    our_cfg oc = hst_ours();
+    v90m_stats ss; v90m_state st; v90m_ec_status es;
+    long t0;
+    int mi;
+    hc_defaults(&hc);
+    hc.rev_backlog = 64; hc.stale_3r = 5; hc.ignore_2r = 1;
+    printf("rev_stale_3r: the caller's 0x1R, then its 0x35 once it holds forward, never carried out\n");
+    our_init(&O, &oc);
+    line_init(0, 508u);
+    cal_init_hst(&hc, 2048, 2048, 508u);
+    C.after_fwd = 1;
+    rv_init();
+    run_start();
+    run_ms(300000L, data_done);
+    mi = moved_index();
+    /* more from the caller, then 40 s on */
+    t0 = now_ms;
+    C.to_send += 30000;
+    run_ms(t0 + 40000L, ended);
+    v90m_get_stats(O.m, &ss);
+    v90m_get_state(O.m, &st);
+    v90m_ec_get_status(O.ec, &es);
+    printf("  switches %d; reversals %u (the caller's %d), retrains %u; our LN 0x%02X, the caller's 0x%02X; rx %d, end %d; data %ld of %ld to the caller, %ld of %ld to us, %ld wrong\n",
+           RV.n, ss.reversals, HC.reversals, ss.retrains, es.attn_tx, es.attn_rx, st.rx_bps, (int)st.end,
+           C.r, O.to_send, O.r, C.to_send, C.bad + O.bad);
+    bound("one reversal: to the back channel; the caller's 0x35 had", RV.n == 1 && ss.reversals == 1 && HC.reversals == 1 && es.attn_rx == 0x35);
+    bound("no LN of ours, the call up at 14400", es.attn_tx == 0 && st.end == V90M_END_NONE && O.end_ms < 0 && st.rx_bps == 14400 && st.moving);
+    bound("one retrain more, data stopped that once", ss.retrains == 2 && count_ev(V90M_EV_DATA_STOPPED, mi) == 1);
+    bound("the data both ways, intact", C.r == O.to_send && O.r == C.to_send && C.bad == 0 && O.bad == 0);
+}
+#endif
+
 /* both ends always behind: reversals back and forth, 20 within 120 s;
  * then no more data, the backlogs drained */
 #ifdef TEST_SHORT
@@ -2158,6 +2207,7 @@ int main(int argc, char **argv)
         printf("test_answer_hst: the HST answering branch through the API, the BinModem profile (W %d ms)\n", HST_W_MS);
         rates();
         rev_caller();
+        rev_stale_3r();
         up();
         recovery();
         CHECK_EQ_I(proc_err, 0);

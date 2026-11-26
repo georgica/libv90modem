@@ -71,7 +71,9 @@
  *    the request already, as the LNA may be lost); a training stops data
  *    (retraining) once under way, until the receiver is in data at R; then
  *    epoch. A change given up (not in data at R by HST_RC_BOUND_MS, the
- *    training failed) also bumps epoch, and counts as a failed retrain.
+ *    training failed) also bumps epoch, and counts as a failed retrain;
+ *    one followed that never came (the receiver in data at the code in
+ *    force throughout) bumps epoch and is dropped, nothing failed.
  * Retrain, watchdogs, cleardown and end codes (spec "Retrain, watchdogs,
  * cleardown and end codes"; Task 23):
  *  - v90m_retrain: holding forward, the short training at the rate in
@@ -315,6 +317,22 @@ static void rc_given_up(answer_t *a)
     failed(a, r);
 }
 
+/* holding back, the holder's change followed but never made: the receiver
+ * in data at the code in force all along (BinModem's 0x3R asked in its
+ * turnaround, binmodem-facts.md `Online fallback`). Nothing changed and
+ * nothing failed: disarmed, the code in force kept, the endpoint's LTs go
+ * again */
+static void rc_not_made(answer_t *a)
+{
+    hst_t *h = &a->u.hst;
+    h->rc = HST_RC_NONE;
+    h->link.epoch++;
+    hst_frx_set_code(&h->frx, h->frx.code);
+    h->code = h->frx.code;
+    a->retraining = 0;
+    win_reset(h);
+}
+
 /* holding back, the holder's change (rate_order: its own 0x2R/0x3R, or
  * the LNA to ours): the forward receiver follows. A training stops data
  * until the receiver is in data again (decision 21) */
@@ -383,6 +401,8 @@ static void rate_back(answer_t *a)
             h->hold_t = h->rc_left ? MS(HST_RC_HOLD_MS) : 0;
             a->retraining = 0;
             win_reset(h);
+        } else if (h->rct > MS(HST_RC_BOUND_MS) && h->rc == HST_RC_FOLLOW && !h->rc_left) {
+            rc_not_made(a);
         } else if (h->rct > MS(HST_RC_BOUND_MS) || ((h->rc_st == HST_FRX_TRAIN || h->rc_st == HST_FRX_DATA)
                    && (st == HST_FRX_TRAINFAIL || st == HST_FRX_UNLOCKED || st == HST_FRX_NOCARRIER))) {
             rc_given_up(a);

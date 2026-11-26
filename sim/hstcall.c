@@ -1086,6 +1086,12 @@ static void ln_done(hstcall_t *c, int code)
         c->phase = HC_GAP;
         c->t_wait = c->ms + 200;
         c->wait_code = r;
+        if (c->cfg.stale_3r >= 2 && c->cfg.stale_3r <= 6) {
+            /* its fallback, still holding back, asks a rate of the forward
+             * channel it is about to hold; the LN goes after the switch */
+            c->ln_pend = 0x30 | c->cfg.stale_3r;
+            mnppeer_send_ln(&c->mnp, c->ln_pend);
+        }
     } else if (kind == 0x20 && c->role == HC_ROLE_BACK) {
         hc_frx_set_code(&c->frx, r);
         c->fwd_code = r;
@@ -1108,6 +1114,7 @@ static void ln_take(hstcall_t *c, int code)
     int r = code & 0x0F, kind = code & 0xF0;
     if (c->role != HC_ROLE_FWD || r < 2 || r > 6) return;
     if (c->lns_ignored < c->cfg.ignore_ln) { c->lns_ignored++; return; }
+    if (kind == 0x20 && c->cfg.ignore_2r) return;
     if (kind == 0x10) {
         c->ln_rx = code;
         if (c->mnp.lna_due || c->lna_going) c->lna_done = -1;

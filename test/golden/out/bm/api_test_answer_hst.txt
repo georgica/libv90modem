@@ -96,6 +96,12 @@ rev_caller: the caller's backlog: its 0x1R, our LNA, its training
   reversals 1 (the caller's 1), retrains 1, renegotiations 0; data 2048 of 2048 to the caller, 2048 of 2048 to us, 0 wrong
   data never stopped after the post-agreement retrain: pass
   the data both ways, intact: pass
+rev_stale_3r: the caller's 0x1R, then its 0x35 once it holds forward, never carried out
+  switches 1; reversals 1 (the caller's 1), retrains 2; our LN 0x00, the caller's 0x35; rx 14400, end 0; data 2048 of 2048 to the caller, 32048 of 32048 to us, 0 wrong
+  one reversal: to the back channel; the caller's 0x35 had: pass
+  no LN of ours, the call up at 14400: pass
+  one retrain more, data stopped that once: pass
+  the data both ways, intact: pass
 up: our switch by training to 9600 as holder; then holding back, 10 s good: our 0x35, then 0x36
   our switches by marks 0: 0 to 0; our trainings 3; switches 1
   holding forward, the caller's 0x34: our short training at 9600 (HST_3R_TRAINS), RATES tx 9600: pass
@@ -114,4 +120,4 @@ recovery: the caller's receiver drops out of data; 2 x T401: our short training
   a retrain: DATA_STOPPED, DATA_MOVING; retrains 2; the caller's receiver at 14400: pass
   retrains 2, reversals 0; LNs ours 0, last 0x00, the caller's last 0x00, violations 0; data 4096 to the caller, 768 to us, 0 wrong
   the data both ways intact, and moving again: pass
-test_answer_hst: 214 checks, 0 failures
+test_answer_hst: 225 checks, 0 failures
