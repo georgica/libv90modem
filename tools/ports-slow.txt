@@ -7,4 +7,9 @@ arm_test_v22bis
 v32/arm_test_call
 v34/arm_test_ber
 arm/api_test_mnp_call
-arm/api_test_answer_hst
+arm/api_test_answer_hst_1
+arm/api_test_answer_hst_2
+arm/api_test_answer_hst_3
+arm/api_test_answer_hst_4
+arm/api_test_answer_hst_5
+arm/api_test_answer_hst_6

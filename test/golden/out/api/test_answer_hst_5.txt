@@ -1,0 +1,121 @@
+test_answer_hst: the HST answering branch through the API (W 650 ms)
+  (part 5 of 6)
+rev_caller: the caller's backlog: its 0x1R, our LNA, its training
+  switches 1; the caller's training S3 3096 at code 6
+  one reversal: to the back channel: pass
+  to the back channel 20 ms and 20 symbols of ones after our LNA drained: pass
+  ones, no host bit, from the cut to the switch: pass
+  there our forward carrier stops, our back transmitter starts at the agreed speed: pass
+  RATES with tx and rx exchanged: pass
+  the caller trains forward at the rate in force, the long training: pass
+  reversals 1 (the caller's 1), retrains 1, renegotiations 0; data 2048 of 2048 to the caller, 2048 of 2048 to us, 0 wrong
+  data never stopped after the post-agreement retrain: pass
+  the data both ways, intact: pass
+rev_ours: then our backlog: our 0x1R, its LNA, our training
+  switches 2; our 0x1R 0x16; the caller's receiver from its kept equaliser on 1 of 1 of our trainings
+  two reversals: to the back channel and back: pass
+  to the back channel 20 ms and 20 symbols of ones after our LNA drained: pass
+  ones, no host bit, from the cut to the switch: pass
+  there our forward carrier stops, our back transmitter starts at the agreed speed: pass
+  RATES with tx and rx exchanged: pass
+  to the forward channel at the caller's LNA: our back transmitter stopped: pass
+  200 ms on, our forward training, the short one: pass
+  RATES with tx and rx exchanged: pass
+  our 0x1R at the forward rate in force: pass
+  the caller's receiver started from its kept equaliser: pass
+  reversals 2 (the caller's 2), retrains 1, renegotiations 0; data 4096 of 4096 to the caller, 2048 of 2048 to us, 0 wrong
+  data never stopped after the post-agreement retrain: pass
+  the data both ways, intact: pass
+rev_back300: the same, the back channel at 300
+  switches 2; our 0x1R 0x16; the caller's receiver from its kept equaliser on 1 of 1 of our trainings
+  two reversals: to the back channel and back: pass
+  to the back channel 20 ms and 20 symbols of ones after our LNA drained: pass
+  ones, no host bit, from the cut to the switch: pass
+  there our forward carrier stops, our back transmitter starts at the agreed speed: pass
+  RATES with tx and rx exchanged: pass
+  to the forward channel at the caller's LNA: our back transmitter stopped: pass
+  200 ms on, our forward training, the short one: pass
+  RATES with tx and rx exchanged: pass
+  our 0x1R at the forward rate in force: pass
+  the caller's receiver started from its kept equaliser: pass
+  reversals 2 (the caller's 2), retrains 1, renegotiations 0; data 4096 of 4096 to the caller, 2048 of 2048 to us, 0 wrong
+  data never stopped after the post-agreement retrain: pass
+  the data both ways, intact: pass
+rev_many: both ends behind, 20 reversals
+  20 reversals (the caller's 20) within 120 s; the caller's trainings 12, the long one first 1, short after 1
+  the caller's trainings: long the first time, short after: pass
+  then: reversals 23 (the caller's 23); data 11008 octets to the caller, 10944 to us, 0 wrong
+  then the data delivered, intact; both ends count the same: pass
+  data never stopped after the post-agreement retrain: pass
+rev_lost: the caller never trains after our LNA
+  switches 3: to the back channel, then the forward one taken back within 3 s
+  the forward channel taken back within 3 s of the switch: pass
+  then the data both ways, intact: pass
+  reversals 2 (the caller's 1), retrains 2
+snr: holding the back channel, the forward receiver's SNR
+  holding the back channel: yes
+  v90m_stats.snr_db10 within 1 dB of the line's SNR: pass
+rev_ours_la: rev_ours, the caller sending an LA first after each switch
+  switches 2; our 0x1R 0x16; the caller's receiver from its kept equaliser on 1 of 1 of our trainings
+  two reversals: to the back channel and back: pass
+  to the back channel 20 ms and 20 symbols of ones after our LNA drained: pass
+  ones, no host bit, from the cut to the switch: pass
+  there our forward carrier stops, our back transmitter starts at the agreed speed: pass
+  RATES with tx and rx exchanged: pass
+  to the forward channel at the caller's LNA: our back transmitter stopped: pass
+  200 ms on, our forward training, the short one: pass
+  RATES with tx and rx exchanged: pass
+  our 0x1R at the forward rate in force: pass
+  the caller's receiver started from its kept equaliser: pass
+  reversals 2 (the caller's 2), retrains 1, renegotiations 0; data 4096 of 4096 to the caller, 2048 of 2048 to us, 0 wrong
+  data never stopped after the post-agreement retrain: pass
+  the data both ways, intact: pass
+up: our switch by marks to 9600 as holder; then holding back, 10 s good: our 0x35, then 0x36
+  our switches by marks 1: 6 to 4; our trainings 2; switches 1
+  holding forward, the caller's 0x34: our switch by marks, 14400 to 9600, RATES tx 9600: pass
+  then its reversal: we hold the back channel at 9600: pass
+  our LNs 2: 0x35 sent, 0x36 sent
+  our 0x35 10 s after the receiver came into data, our first LN: pass
+  our 0x36 10 s after the switch to 12000 was in: pass
+  the receiver switched by marks to 12000, then 14400, untrained; RATES rx 12000, rx 14400: pass
+  retrains 1, reversals 1; LNs ours 2, last 0x36, the caller's last 0x14, violations 0; data 2048 to the caller, 22656 to us, 0 wrong
+  data never stopped after the post-agreement retrain: pass
+  no more LNs (14400 is the top); the data both ways intact, ours all in: pass
+down: holding back at 14400, 15 frame errors in 10 s: our 0x25
+  10 frame errors, then 11 s: no LN: pass
+  then frame errors until our LN: 15; our first LN 0x25
+  15 frame errors within 10 s of the first: our 0x25: pass
+  the caller's training at 12000: a retrain, DATA_STOPPED then DATA_MOVING, RATES rx 12000, retrains 2: pass
+  our next LN 0x36, no sooner than 10 s after the downshift; back at 14400 by marks: pass
+  retrains 2, reversals 1; LNs ours 2, last 0x36, the caller's last 0x16, violations 0; data 2048 to the caller, 34112 to us, 0 wrong
+  the data both ways intact: pass
+retrain_by_2R: holding forward, the caller's 0x25: our short training at 12000
+  our trainings after 12 s: 1, code 5, S3 200; retrains 2
+  one short training at 12000: pass
+  a retrain: DATA_STOPPED, then DATA_MOVING at tx 12000; retrains 2: pass
+  MNP's T401 held through both retrains (running at this one's start): pass
+  the caller's receiver in data at 12000: pass
+  retrains 2, reversals 0; LNs ours 0, last 0x00, the caller's last 0x25, violations 0; data 8512 to the caller, 512 to us, 0 wrong
+  the data both ways intact: pass
+max_up: max_up_bps 9600; the caller's 0x16, then its 0x36
+  the caller's 0x16 granted: we hold back at 14400 (RATES rx 14400): pass
+  once its training is in, our 0x24, our first LN: pass
+  its training at 9600: our receiver in data there, RATES rx 9600: pass
+  the caller's last LN 0x36; violations 1; our LNs 2
+  its 0x36: an LNA, a count, our 0x24 again; never above 9600: pass
+  retrains 3, reversals 1; LNs ours 2, last 0x24, the caller's last 0x36, violations 1; data 2048 to the caller, 27008 to us, 0 wrong
+  the data both ways intact: pass
+recovery: the caller expects a training where we switch by marks; 2 x T401: our short training
+  our switch by marks: 6 to 5; then our trainings 1, code 5, S3 200
+  the caller's 0x35: our switch by marks to 12000, no retrain there: pass
+  2 x T401 on (within 1 s more), our short training at 12000: pass
+  a retrain: DATA_STOPPED, DATA_MOVING; retrains 2; the caller's receiver at 12000: pass
+  retrains 2, reversals 0; LNs ours 0, last 0x00, the caller's last 0x35, violations 0; data 5632 to the caller, 768 to us, 0 wrong
+  the data both ways intact, and moving again: pass
+fallback: holding back at 12000, the line at 15 dB SNR: down to 7200, and staying there
+  our LNs 3: 0x25 0x24 0x23; retrains 8
+  in data at 7200, holding back: pass
+  no loop: at most 8 retrains, none and no LN in the last 15 s: pass
+  retrains 9, reversals 1; LNs ours 3, last 0x23, the caller's last 0x15, violations 0; data 2048 to the caller, 11904 to us, 0 wrong
+  the data intact: pass
+test_answer_hst: 232 checks, 0 failures

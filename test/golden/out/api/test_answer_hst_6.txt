@@ -1,0 +1,101 @@
+test_answer_hst: the HST answering branch through the API (W 650 ms)
+  (part 6 of 6)
+retrain_back: holding the back channel at 14400, v90m_retrain: our 0x26
+  retrains 2, reversals 1; LNs ours 1, last 0x26, the caller's last 0x16, violations 0; data 2048 to the caller, 8512 to us, 0 wrong
+  our 0x26 at once, our only LN: pass
+  the caller's training at 14400: DATA_STOPPED, then DATA_MOVING at rx 14400; retrains 2: pass
+  the data both ways intact: pass
+back_silent: holding the back channel, the caller gone
+  the forward channel taken back yes; end 2 (ANS_ERR_HST_CARRIER)
+  our 0x26 1 s after the forward carrier went (+ its detection, < 100 ms): pass
+  the forward channel taken back 5 s after it went: pass
+  V90M_END_LOST 5 s after that (+ the back receivers' release, < 300 ms): pass
+  connected without a far signal at most 12 s: pass
+back_silent: the caller gone at our switch to the back channel
+  the forward channel taken back yes; end 2 (ANS_ERR_HST_CARRIER)
+  the forward channel taken back 3 s after the switch: pass
+  V90M_END_LOST 5 s after that: pass
+  connected without a far signal at most 12 s: pass
+retrain_failed: holding the back channel at 9600, the one rate agreed; the line at 3 dB SNR
+  our LNs 0x24 only 1; the caller's trainings 3, at 9600 3; end 8 (ANS_ERR_RETRAINS)
+  our 0x24 alone; the caller's trainings at 9600, three: pass
+  the end within 15 s of the noise: pass
+  the data intact: pass
+far_ld: holding the forward channel, the caller's carrier held 1000 ms after its LD
+  our endpoint had the LD: yes; end 3, error 0
+  when the back carrier went (within 300 ms): pass
+far_ld: holding the forward channel, the caller's carrier held 5000 ms after its LD
+  our endpoint had the LD: yes; end 3, error 0
+  2 s after our endpoint had the LD: pass
+far_ld: holding the back channel, the caller's carrier held 1000 ms after its LD
+  our endpoint had the LD: yes; end 3, error 0
+  when the forward carrier went (within 100 ms): pass
+ours: holding the forward channel: v90m_ec_release, then v90m_cleardown
+  end 4, error 0; the caller had LD 255; our transmit's peak in the last 500 ms 0
+  v90m_ec_tx_busy 0 within 1 s of the release: pass
+  ended within 200 ms of v90m_cleardown, both carriers stopped: pass
+  the caller had our LD 255: pass
+ours: holding the back channel: v90m_ec_release, then v90m_cleardown
+  end 4, error 0; the caller had LD 255; our transmit's peak in the last 500 ms 0
+  v90m_ec_tx_busy 0 within 1 s of the release: pass
+  ended within 200 ms of v90m_cleardown, both carriers stopped: pass
+  the caller had our LD 255: pass
+unlock_loop: holding the back channel at 12000, its lock lost every 4 s
+  the caller's trainings: 3 at 12000, then 4 at 9600; end 8 (ANS_ERR_RETRAINS)
+  3 retrains at 12000, then one rate lower: pass
+  4 at 9600 (the downshift and 3 retrains), then the end: pass
+  the end within 30 s of the downshift: pass
+  the data intact: pass
+levels -9 dBm0, +100 ppm: reversals 25, rate changes 5 (the caller asked 5), retrains 3; data 7744 to the caller, 11712 to us, 0 wrong
+  every octet delivered both ways, intact; the call up: pass
+  reversals and rate changes on the way (2 each at least): pass
+levels -9 dBm0, -100 ppm: reversals 25, rate changes 5 (the caller asked 5), retrains 3; data 8064 to the caller, 11456 to us, 0 wrong
+  every octet delivered both ways, intact; the call up: pass
+  reversals and rate changes on the way (2 each at least): pass
+levels -15 dBm0, +100 ppm: reversals 25, rate changes 5 (the caller asked 5), retrains 3; data 7744 to the caller, 10944 to us, 0 wrong
+  every octet delivered both ways, intact; the call up: pass
+  reversals and rate changes on the way (2 each at least): pass
+levels -15 dBm0, -100 ppm: reversals 25, rate changes 5 (the caller asked 5), retrains 3; data 7744 to the caller, 10944 to us, 0 wrong
+  every octet delivered both ways, intact; the call up: pass
+  reversals and rate changes on the way (2 each at least): pass
+levels -21 dBm0, +100 ppm: reversals 25, rate changes 5 (the caller asked 5), retrains 3; data 7744 to the caller, 10944 to us, 0 wrong
+  every octet delivered both ways, intact; the call up: pass
+  reversals and rate changes on the way (2 each at least): pass
+levels -21 dBm0, -100 ppm: reversals 25, rate changes 5 (the caller asked 5), retrains 3; data 7744 to the caller, 10944 to us, 0 wrong
+  every octet delivered both ways, intact; the call up: pass
+  reversals and rate changes on the way (2 each at least): pass
+levels -27 dBm0, +100 ppm: reversals 25, rate changes 5 (the caller asked 5), retrains 3; data 7744 to the caller, 10944 to us, 0 wrong
+  every octet delivered both ways, intact; the call up: pass
+  reversals and rate changes on the way (2 each at least): pass
+levels -27 dBm0, -100 ppm: reversals 25, rate changes 5 (the caller asked 5), retrains 3; data 8064 to the caller, 11456 to us, 0 wrong
+  every octet delivered both ways, intact; the call up: pass
+  reversals and rate changes on the way (2 each at least): pass
+levels -33 dBm0, +100 ppm: reversals 25, rate changes 5 (the caller asked 5), retrains 3; data 7744 to the caller, 10944 to us, 0 wrong
+  every octet delivered both ways, intact; the call up: pass
+  reversals and rate changes on the way (2 each at least): pass
+levels -33 dBm0, -100 ppm: reversals 25, rate changes 5 (the caller asked 5), retrains 3; data 7744 to the caller, 10944 to us, 0 wrong
+  every octet delivered both ways, intact; the call up: pass
+  reversals and rate changes on the way (2 each at least): pass
+back_silent_pending: the caller gone with a followed change pending at 1 s
+  no 0x2R of ours at 1 s over the pending change: pass
+retrain_ignored: holding the back channel at 14400, v90m_retrain; the caller never trains for our 0x2R
+  our LNs from the retrain: 0x26 3, 0x25 3, 0x24 3, 0x23 3, 0x22 3; end 8
+  only 0x2R of ours, never a rate up: pass
+  each agreed rate HST_RC_FAILS times, 14400 down to 4800: pass
+  then V90M_END_RETRAIN_FAILED: pass
+max_down_low: max_down_bps 4000, an HST caller, the endpoint linked
+  our transmit over 8 s: the same as with HST off; ANS_V22 entered at the same sample
+  no ANS_HST_WAIT under a ceiling below 4800: pass
+  the caller hears exactly what it hears with HST off: pass
+max_down_low: max_down_bps 4799, an HST caller, the endpoint linked
+  our transmit over 8 s: the same as with HST off; ANS_V22 entered at the same sample
+  no ANS_HST_WAIT under a ceiling below 4800: pass
+  the caller hears exactly what it hears with HST off: pass
+rc_late_switch: rc_late planted holding back, then our reversal
+  switches 2; rc_late after our switch to the forward channel 0
+  a switch of role forgets rc_late: pass
+retrain_untaken: holding back, our 0x1R never acknowledged, then v90m_retrain
+  our 0x1R out (tries 4); v90m_retrain's request untaken: counted failed 3001 ms on; the end 8 45002 ms on; a 0x2R of ours sent: no
+  the untaken request a failed retrain HST_RC_UNTAKEN_MS on: pass
+  V90M_END_RETRAIN_FAILED within 50 s, no 0x2R ever sent: pass
+test_answer_hst: 553 checks, 0 failures

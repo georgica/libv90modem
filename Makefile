@@ -160,7 +160,10 @@ TESTS    := test_g711 test_noise test_filt test_resamp test_channel test_v21 tes
 # runner (check-arm) runs each case as its own job
 SPLIT_TESTS := test_p34 test_orig_v92 test_orig_seeds test_orig_bell test_hstcall
 # the public API, against the library as it is installed
-API_TESTS := test_api test_ec_fields test_reneg test_diag test_mnp_call test_ec_hstlink test_answer_hst
+# test_answer_hst runs as six programs from one source (-DHST_PART=k: its
+# cases shared out, none much over 30 s on x86-64; the final review's m7)
+HST_PARTS := 1 2 3 4 5 6
+API_TESTS := test_api test_ec_fields test_reneg test_diag test_mnp_call test_ec_hstlink $(addprefix test_answer_hst_,$(HST_PARTS))
 SUBS     := v34 v90 v92 v42 v32
 
 .PHONY: test-x2-courier test-k56-sm56 test-fixtures test-examples all lib dev install uninstall clean check check-arm check-ubsan test test-arm test-all test-times test-api test-interop examples bench-v90 bench-v34 bench-v90a bench-v90c bench-v92c replay
@@ -331,9 +334,10 @@ $(BUILD)/api_test_mnp_call: test/api/test_mnp_call.c $(DEV) include/v90modem.h
 $(BUILD)/api_test_ec_hstlink: test/api/test_ec_hstlink.c $(DEV) include/v90modem.h api/v90modem_priv.h
 	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -Iapi -o $@ $< $(DEV) $(LDLIBS)
 # the HST answering branch against sim/hstcall and the legacy callers,
-# reading the modem's phases (api/v90modem_priv.h): the development archive alone
-$(BUILD)/api_test_answer_hst: test/api/test_answer_hst.c $(DEV) include/v90modem.h api/v90modem_priv.h $(HDRS)
-	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(EXTRA_CPPFLAGS) $(API_INC) -Iapi -o $@ $< $(DEV) $(LDLIBS)
+# reading the modem's phases (api/v90modem_priv.h): the development archive
+# alone; part k of its cases (HST_PARTS)
+$(BUILD)/api_test_answer_hst_%: test/api/test_answer_hst.c $(DEV) include/v90modem.h api/v90modem_priv.h $(HDRS)
+	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L -DHST_PART=$* $(EXTRA_CPPFLAGS) $(API_INC) -Iapi -o $@ $< $(DEV) $(LDLIBS)
 # every error an engine's header defines has a name (tools/check-diag-names.sh)
 .PHONY: check-diag-names
 check-diag-names: $(BUILD)/api_test_diag tools/check-diag-names.sh
@@ -353,8 +357,8 @@ $(BUILD)/arm/api_test_mnp_call: test/api/test_mnp_call.c include/v90modem.h $(AR
 	$(ARM_CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -static -o $@ $< $(BUILD)/arm/$(NAME)-dev.a $(LDLIBS)
 $(BUILD)/arm/api_test_ec_hstlink: test/api/test_ec_hstlink.c include/v90modem.h api/v90modem_priv.h $(ARM_API_LIBS)
 	$(ARM_CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -Iapi -static -o $@ $< $(BUILD)/arm/$(NAME)-dev.a $(LDLIBS)
-$(BUILD)/arm/api_test_answer_hst: test/api/test_answer_hst.c include/v90modem.h api/v90modem_priv.h $(HDRS) $(ARM_API_LIBS)
-	$(ARM_CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -Iapi -static -o $@ $< $(BUILD)/arm/$(NAME)-dev.a $(LDLIBS)
+$(BUILD)/arm/api_test_answer_hst_%: test/api/test_answer_hst.c include/v90modem.h api/v90modem_priv.h $(HDRS) $(ARM_API_LIBS)
+	$(ARM_CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L -DHST_PART=$* $(API_INC) -Iapi -static -o $@ $< $(BUILD)/arm/$(NAME)-dev.a $(LDLIBS)
 $(BUILD)/api_test_%: test/api/test_%.c $(STATIC) $(DEV) include/v90modem.h api/v90modem_fields.h api/v90modem_diag.h
 	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -o $@ $< $(STATIC) $(DEV) $(LDLIBS)
 $(BUILD)/arm/api_test_%: test/api/test_%.c include/v90modem.h api/v90modem_fields.h api/v90modem_diag.h $(ARM_API_LIBS)
@@ -424,9 +428,9 @@ check: test-all test-api test-examples test-fixtures check-symbols check-soname 
 # HST's BinModem profile (-DHST_PROFILE_BM; docs/history/hst-facts.md
 # "Training"), a test build only: HST_BM_TESTS, library code and all, built
 # with it in $(BUILD)/bm and run there; their logs in $(BUILD)/log/bm, their
-# golden files test/golden/out/bm/<program>.txt. api_test_answer_hst runs
+# golden files test/golden/out/bm/<program>.txt. api_test_answer_hst_1..3 run
 # its `rates` and `rev_caller` cases there (its BinModem set; Task 21)
-HST_BM_TESTS := test_hst_fwd test_hstcall api_test_answer_hst
+HST_BM_TESTS := test_hst_fwd test_hstcall api_test_answer_hst_1 api_test_answer_hst_2 api_test_answer_hst_3
 .PHONY: check-hst-bm
 check-hst-bm:
 	@$(MAKE) -s BUILD=$(BUILD)/bm EXTRA_CPPFLAGS="$(strip $(EXTRA_CPPFLAGS) -DHST_PROFILE_BM)" $(addprefix $(BUILD)/bm/,$(HST_BM_TESTS))

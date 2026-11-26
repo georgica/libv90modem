@@ -740,15 +740,18 @@ static void rates_one(int code, int back, int start, uint32_t seed)
     data_checks(code, back, 1);
 }
 
-static void rates(void)
+/* codes lo..hi, each with the back channel at 450 and at 300; and with
+ * start300 the caller that starts its back channel at 300 */
+static void rates_part(int lo, int hi, int start300)
 {
     int code;
-    for (code = 2; code <= 6; code++) {
+    for (code = lo; code <= hi; code++) {
         rates_one(code, 450, 0, 100u + (uint32_t)code);
         rates_one(code, 300, 0, 200u + (uint32_t)code);
     }
-    rates_one(6, 300, 300, 300u);
+    if (start300) rates_one(6, 300, 300, 300u);
 }
+static void rates(void) { rates_part(2, 6, 1); }
 
 /* ===================== hst96, plain_mnp, max_down, alaw ===================== */
 static void hst96(void)
@@ -2361,71 +2364,124 @@ static void levels(void)
 }
 
 #define NCASES 37
+/* The program is built as several (make: api_test_answer_hst_<k>, from
+ * this file with -DHST_PART=k), so that none runs much over 30 s on
+ * x86-64 (the whole set took 187 s; the final review's m7). With no case
+ * named, part k runs its share of the cases, in the whole set's order;
+ * `rates` is shared out by code (its sub-cases RATES_23, RATES_45,
+ * RATES_6). Any part, given a case number (1..NCASES; 1 the whole of
+ * `rates`), runs that case alone. HST_PART 0 (a build without it) is the
+ * whole set. The BinModem profile's build (-DHST_PROFILE_BM, make
+ * check-hst-bm) runs its own set, likewise shared out over parts 1..3 */
+#ifndef HST_PART
+#define HST_PART 0
+#endif
+enum { RATES_23 = 101, RATES_45, RATES_6 };
+#if HST_LONG_V17
+/* the BinModem profile's set (Task 21, Task 22b review M4, Task 23):
+ * `rates`, `rev_caller`, `rev_stale_3r`, `retrain_ignored`, `up` and
+ * `recovery` (the 0x3R by training both ways, recovery) */
+static int in_part(int c)
+{
+    switch (HST_PART) {
+    case 1: return c == RATES_23;
+    case 2: return c == RATES_45;
+    case 3: return c == RATES_6 || c == 12 || c == 33 || c == 34 || c == 19 || c == 23;
+    default: return c >= RATES_23 || c == 12 || c == 33 || c == 34 || c == 19 || c == 23;
+    }
+}
+#else
+static int in_part(int c)
+{
+    switch (HST_PART) {
+    case 1: return c == RATES_23;
+    case 2: return c == RATES_45;
+    case 3: return c == RATES_6;
+    case 4: return c >= 2 && c <= 11;
+    case 5: return c >= 12 && c <= 24;
+    case 6: return c >= 25 && c <= NCASES;
+    default: return 1;
+    }
+}
+#endif
+static void run_case(int c)
+{
+    switch (c) {
+    case RATES_23: rates_part(2, 3, 0); break;
+    case RATES_45: rates_part(4, 5, 0); break;
+    case RATES_6: rates_part(6, 6, 1); break;
+    case 1: rates(); break;
+    case 2: hst96(); break;
+    case 3: plain_mnp(); break;
+    case 4: unlinked(); break;
+    case 5: max_down(); break;
+    case 6: lr_in_training(); break;
+    case 7: no_lr(); break;
+    case 8: lost_fwd(); break;
+    case 9: legacy_unchanged(); break;
+    case 10: alaw(); break;
+    case 11: block_size(); break;
+    case 12: rev_caller(); break;
+    case 13: rev_ours(); break;
+    case 14: rev_back300(); break;
+    case 15: rev_many(); break;
+    case 16: rev_lost(); break;
+    case 17: snr(); break;
+    case 18: rev_ours_la(); break;
+    case 19: up(); break;
+    case 20: down(); break;
+    case 21: retrain_by_2R(); break;
+    case 22: max_up(); break;
+    case 23: recovery(); break;
+    case 24: fallback(); break;
+    case 25: retrain_back(); break;
+    case 26: back_silent(); break;
+    case 27: retrain_failed(); break;
+    case 28: far_ld(); break;
+    case 29: ours(); break;
+    case 30: unlock_loop(); break;
+    case 31: levels(); break;
+    case 32: back_silent_pending(); break;
+#if HST_LONG_V17
+    case 33: rev_stale_3r(); break;       /* the BinModem profile's own */
+#endif
+    case 34: retrain_ignored(); break;
+    case 35: max_down_low(); break;
+    case 36: rc_late_switch(); break;
+    case 37: retrain_untaken(); break;
+    default: break;
+    }
+}
+
 int main(int argc, char **argv)
 {
+    /* the whole set's order; the BinModem profile's (its own, below) */
+    static const int order[] = { RATES_23, RATES_45, RATES_6, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+                                 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 34, 35, 36, 37 };
+    static const int order_bm[] = { RATES_23, RATES_45, RATES_6, 12, 33, 34, 19, 23 };
     int only;
+    size_t i;
     if (argc > 1 && !strcmp(argv[1], "--cases")) { printf("%d\n", NCASES); return 0; }
     only = argc > 1 ? atoi(argv[1]) : 0;
+    verbose = getenv("HST_VERBOSE") != NULL;
 #if HST_LONG_V17
-    /* the BinModem profile's build (make check-hst-bm): `rates` and
-     * `rev_caller`, and (Task 22b review M4) `up` and `recovery`, the
-     * 0x3R by training both ways and recovery, unless a case is named */
     if (!only) {
         printf("test_answer_hst: the HST answering branch through the API, the BinModem profile (W %d ms)\n", HST_W_MS);
-        rates();
-        rev_caller();
-        rev_stale_3r();
-        retrain_ignored();
-        up();
-        recovery();
+        if (HST_PART) printf("  (part %d of 3)\n", HST_PART);
+        for (i = 0; i < sizeof order_bm / sizeof order_bm[0]; i++) if (in_part(order_bm[i])) run_case(order_bm[i]);
         CHECK_EQ_I(proc_err, 0);
         if (O.m) v90m_destroy(O.m);
         if (O.ec) v90m_ec_destroy(O.ec);
         T_REPORT("test_answer_hst");
     }
+#else
+    (void)order_bm;
 #endif
-    verbose = getenv("HST_VERBOSE") != NULL;
     printf("test_answer_hst: the HST answering branch through the API (W %d ms)\n", HST_W_MS);
+    if (!only && HST_PART) printf("  (part %d of 6)\n", HST_PART);
     CHECK_EQ_I(V90M_END_HST_FAILED, V90M_END_K56_FAILED + 1);
-    if (!only || only == 1) rates();
-    if (!only || only == 2) hst96();
-    if (!only || only == 3) plain_mnp();
-    if (!only || only == 4) unlinked();
-    if (!only || only == 5) max_down();
-    if (!only || only == 6) lr_in_training();
-    if (!only || only == 7) no_lr();
-    if (!only || only == 8) lost_fwd();
-    if (!only || only == 9) legacy_unchanged();
-    if (!only || only == 10) alaw();
-    if (!only || only == 11) block_size();
-    if (!only || only == 12) rev_caller();
-    if (!only || only == 13) rev_ours();
-    if (!only || only == 14) rev_back300();
-    if (!only || only == 15) rev_many();
-    if (!only || only == 16) rev_lost();
-    if (!only || only == 17) snr();
-    if (!only || only == 18) rev_ours_la();
-    if (!only || only == 19) up();
-    if (!only || only == 20) down();
-    if (!only || only == 21) retrain_by_2R();
-    if (!only || only == 22) max_up();
-    if (!only || only == 23) recovery();
-    if (!only || only == 24) fallback();
-    if (!only || only == 25) retrain_back();
-    if (!only || only == 26) back_silent();
-    if (!only || only == 27) retrain_failed();
-    if (!only || only == 28) far_ld();
-    if (!only || only == 29) ours();
-    if (!only || only == 30) unlock_loop();
-    if (!only || only == 31) levels();
-    if (!only || only == 32) back_silent_pending();
-#if HST_LONG_V17
-    if (only == 33) rev_stale_3r();       /* the BinModem profile's own (above) */
-#endif
-    if (!only || only == 34) retrain_ignored();
-    if (!only || only == 35) max_down_low();
-    if (!only || only == 36) rc_late_switch();
-    if (!only || only == 37) retrain_untaken();
+    if (only) run_case(only);
+    else for (i = 0; i < sizeof order / sizeof order[0]; i++) if (in_part(order[i])) run_case(order[i]);
     CHECK_EQ_I(proc_err, 0);
     if (O.m) v90m_destroy(O.m);
     if (O.ec) v90m_ec_destroy(O.ec);

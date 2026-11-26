@@ -1,66 +1,5 @@
 test_answer_hst: the HST answering branch through the API, the BinModem profile (W 650 ms)
-rates: code 2, back 450, start 450
-  connected: HST 1, tx 7200 rx 450; now tx 4800 rx 450; retrains 1, reversals 0; MNP hst 1 rates 0x04 back300 0
-  data: 16384 of 16384 octets to the caller, 16384 of 16384 to us, 0 wrong
-  CONNECTED as HST at the opening rate: pass
-  in data at the best agreed rate and the back speed: pass
-  the post-agreement retrain: DATA_STOPPED, then DATA_MOVING: pass
-  RATES with the best agreed rate: pass
-  the data both ways, intact: pass
-rates: code 2, back 300, start 450
-  connected: HST 1, tx 7200 rx 450; now tx 4800 rx 300; retrains 1, reversals 0; MNP hst 1 rates 0x04 back300 1
-  data: 16384 of 16384 octets to the caller, 16384 of 16384 to us, 0 wrong
-  CONNECTED as HST at the opening rate: pass
-  in data at the best agreed rate and the back speed: pass
-  the post-agreement retrain: DATA_STOPPED, then DATA_MOVING: pass
-  RATES with the best agreed rate: pass
-  the data both ways, intact: pass
-rates: code 3, back 450, start 450
-  connected: HST 1, tx 7200 rx 450; now tx 7200 rx 450; retrains 1, reversals 0; MNP hst 1 rates 0x0C back300 0
-  data: 16384 of 16384 octets to the caller, 16384 of 16384 to us, 0 wrong
-  CONNECTED as HST at the opening rate: pass
-  in data at the best agreed rate and the back speed: pass
-  the post-agreement retrain: DATA_STOPPED, then DATA_MOVING: pass
-  the data both ways, intact: pass
-rates: code 3, back 300, start 450
-  connected: HST 1, tx 7200 rx 450; now tx 7200 rx 300; retrains 1, reversals 0; MNP hst 1 rates 0x0C back300 1
-  data: 16384 of 16384 octets to the caller, 16384 of 16384 to us, 0 wrong
-  CONNECTED as HST at the opening rate: pass
-  in data at the best agreed rate and the back speed: pass
-  the post-agreement retrain: DATA_STOPPED, then DATA_MOVING: pass
-  the data both ways, intact: pass
-rates: code 4, back 450, start 450
-  connected: HST 1, tx 7200 rx 450; now tx 9600 rx 450; retrains 1, reversals 0; MNP hst 1 rates 0x1C back300 0
-  data: 16384 of 16384 octets to the caller, 16384 of 16384 to us, 0 wrong
-  CONNECTED as HST at the opening rate: pass
-  in data at the best agreed rate and the back speed: pass
-  the post-agreement retrain: DATA_STOPPED, then DATA_MOVING: pass
-  RATES with the best agreed rate: pass
-  the data both ways, intact: pass
-rates: code 4, back 300, start 450
-  connected: HST 1, tx 7200 rx 450; now tx 9600 rx 300; retrains 1, reversals 0; MNP hst 1 rates 0x1C back300 1
-  data: 16384 of 16384 octets to the caller, 16384 of 16384 to us, 0 wrong
-  CONNECTED as HST at the opening rate: pass
-  in data at the best agreed rate and the back speed: pass
-  the post-agreement retrain: DATA_STOPPED, then DATA_MOVING: pass
-  RATES with the best agreed rate: pass
-  the data both ways, intact: pass
-rates: code 5, back 450, start 450
-  connected: HST 1, tx 7200 rx 450; now tx 12000 rx 450; retrains 1, reversals 0; MNP hst 1 rates 0x3C back300 0
-  data: 16384 of 16384 octets to the caller, 16384 of 16384 to us, 0 wrong
-  CONNECTED as HST at the opening rate: pass
-  in data at the best agreed rate and the back speed: pass
-  the post-agreement retrain: DATA_STOPPED, then DATA_MOVING: pass
-  RATES with the best agreed rate: pass
-  the data both ways, intact: pass
-rates: code 5, back 300, start 450
-  connected: HST 1, tx 7200 rx 450; now tx 12000 rx 300; retrains 1, reversals 0; MNP hst 1 rates 0x3C back300 1
-  data: 16384 of 16384 octets to the caller, 16384 of 16384 to us, 0 wrong
-  CONNECTED as HST at the opening rate: pass
-  in data at the best agreed rate and the back speed: pass
-  the post-agreement retrain: DATA_STOPPED, then DATA_MOVING: pass
-  RATES with the best agreed rate: pass
-  the data both ways, intact: pass
+  (part 3 of 3)
 rates: code 6, back 450, start 450
   connected: HST 1, tx 7200 rx 450; now tx 14400 rx 450; retrains 1, reversals 0; MNP hst 1 rates 0x7C back300 0
   data: 16384 of 16384 octets to the caller, 16384 of 16384 to us, 0 wrong
@@ -125,4 +64,4 @@ recovery: the caller's receiver drops out of data; 2 x T401: our short training
   a retrain: DATA_STOPPED, DATA_MOVING; retrains 2; the caller's receiver at 14400: pass
   retrains 2, reversals 0; LNs ours 0, last 0x00, the caller's last 0x00, violations 0; data 4096 to the caller, 768 to us, 0 wrong
   the data both ways intact, and moving again: pass
-test_answer_hst: 236 checks, 0 failures
+test_answer_hst: 116 checks, 0 failures
