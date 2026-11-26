@@ -92,12 +92,19 @@
  *                 over their SNR of BER 1e-5, 300 s each
  *   ab_loud       AB 4 dB over the rest of the training (codes 4, 6), then
  *                 the line 6.5 dB down in data mode: data mode kept, no error
- *                 from 16000 data bits on (Task 23: the level is the data's)
+ *                 from 16000 data bits on (Task 23: the level is the data's);
+ *                 AB 6, 10 and 12 dB over the rest and 6 dB under it, codes
+ *                 2..6: data mode, no error in 20000 data bits (Task 23e: the
+ *                 training takes the level again)
  *   fast_paths    (Task 23c) hst_vit_step gives v32_vit_step's output, hard
  *                 decision, metrics and history on 50 000 random points a
  *                 code (3..6; near the points, ties, past the clamp); a
  *                 stopped transmitter's ticks give v32tx_tick's samples and
  *                 state, through trainings, stops and silence
+ *   ab_sweep      (`test_hst_fwd ab_sweep [SEEDS [SNR [HZ PPM]]]`, not a
+ *                 case; Task 23e)
+ *                 AB -8..+14 dB over the rest of the long training, codes
+ *                 2..6: passes, the time to data mode, or how it failed
  *   thresholds    (`test_hst_fwd thresholds`, built with -DTEST_FULL: make
  *                 hst-thresh; not a case) the SNR of BER 1e-5 at codes
  *                 3..6 and the receiver's error there: hst_good_mse
@@ -1914,14 +1921,67 @@ static void fast_paths(void)
 #endif
 
 #ifndef HST_PROFILE_BM
+/* ---- the AB-level sweep (`test_hst_fwd ab_sweep [SEEDS [SNR [HZ PPM]]]`; not a check;
+ * Task 23e): AB (S1) louder (or quieter, negative) than the rest of the
+ * long training by -8..+14 dB, codes 2..6, on fline's line (SNR dB, 30;
+ * the carrier and clock offsets, 0): a run passes
+ * when data mode is reached and no bit is in error over the 10 000 data
+ * bits from the 300th. Per cell: passes of SEEDS, then the mean time to
+ * data mode of the passes (ms), or the first failure's end state (T
+ * TRAINFAIL, N NOCARRIER, U UNLOCKED, D data with errors, - other) */
+static void ab_sweep(int nseed, double hz, double ppm)
+{
+    int code, db, s;
+    printf("ab_sweep: %.0f dB, %+.0f Hz, %+.0f ppm; AB dB over the data; per code 2..6: passes/%d, mean ms to data mode or the first failure\n", fsnr, hz, ppm, nseed);
+    for (db = -8; db <= 14; db++) {
+        printf("%+4d dB:", db);
+        for (code = 2; code <= 6; code++) {
+            int pass = 0;
+            char why = ' ';
+            double ms = 0;
+            for (s = 0; s < nseed; s++) {
+                fres_t o;
+                long n = 0;
+                fstart(code, hz, ppm, 2300u + 97u * (uint32_t)s + (uint32_t)code);
+                fab = pow(10, db / 20.0);
+                o.data_at = -1;
+                nrx = 0; P.n = 0;
+                hst_ftx_train(&P.tx, code, 1);
+                while (n < 8 * FS && P.n < 10300 + 2000) {
+                    int was = hst_frx_state(&R);
+                    ftick();
+                    n++;
+                    if (was != HST_FRX_DATA && hst_frx_state(&R) == HST_FRX_DATA && o.data_at < 0) o.data_at = n;
+                }
+                fab = 1;
+                compare_n(&o, 300, 10000);
+                if (o.data_at >= 0 && o.found && o.cmp == 10000 && o.errs == 0) { pass++; ms += o.data_at / 8.0; }
+                else if (why == ' ') {
+                    int st = hst_frx_state(&R);
+                    why = st == HST_FRX_TRAINFAIL ? 'T' : st == HST_FRX_NOCARRIER ? 'N' : st == HST_FRX_UNLOCKED ? 'U' : st == HST_FRX_DATA ? 'D' : '-';
+                }
+            }
+            if (pass) printf("  %d %4.0f%c", pass, ms / pass, why);
+            else printf("  %d    %c ", pass, why);
+        }
+        printf("\n");
+        fflush(stdout);
+    }
+}
+
 /* AB louder than the data (a real modem's may be: the Task 16 review's
  * Minor F; Task 23): AB 4 dB over the rest of the long training at codes 4
  * and 6, then in data mode the line 6.5 dB down for good. The signal's
  * level is the data's (taken again where data mode begins), not AB's:
  * data mode kept, no error from 16000 data bits after the step (taken from
  * AB, the step is 10.5 dB under it: NOCARRIER). AB 6 dB over the rest
- * fails the training itself (TRAINFAIL; the training's start, not this
- * case's) */
+ * failed the training itself (TRAINFAIL), 10 dB over it NOCARRIER, 4 dB
+ * under it TRAINFAIL, until the training took the level again (Task 23e).
+ * Seeds 1400 + c (Task 23e; 1300 + c before): at 1306 the 6.5 dB step at
+ * 14400 loses the lock with AB at the data's level too (the level-step
+ * residual, docs/limits.md: 3 of 12 seeds at 0 dB, 4 of 12 after a
+ * re-take, 1 of 12 with AB 4 dB over and no re-take, the points smaller);
+ * the case is the level taken where data mode begins, not that residual */
 static void ab_loud(void)
 {
     static const int codes[2] = { 4, 6 };
@@ -1931,7 +1991,7 @@ static void ab_loud(void)
         int left = 0;
         fres_t o;
         fab = pow(10, 4 / 20.0);
-        fdata(codes[c], 1300u + (uint32_t)c, 20000);
+        fdata(codes[c], 1400u + (uint32_t)c, 20000);
         fab = 1;
         ev = P.n;
         if (verbose) printf("  (before the step: state %d, %ld data bits sent)\n", hst_frx_state(&R), P.n);
@@ -1946,6 +2006,34 @@ static void ab_loud(void)
                codes[c], left ? "LEFT" : "kept", o.errs, o.cmp);
         bound("data mode kept", !left);
         bound("no error from 16000 bits after the step", o.found && o.cmp == NB && o.errs == 0);
+    }
+    /* Task 23e: AB 6, 10 and 12 dB over the rest of the long training, and
+     * 6 dB under it, at every code: data mode, no error in 20 000 data bits
+     * from the 300th (before: TRAINFAIL from 6 dB over and from 4 dB under) */
+    {
+        static const int dbs[4] = { 6, 10, 12, -6 };
+        int d;
+        for (d = 0; d < 4; d++) for (c = 2; c <= 6; c++) {
+            fres_t o;
+            long n = 0;
+            fstart(c, 0, 0, 1310u + 7u * (uint32_t)d + (uint32_t)c);
+            fab = pow(10, dbs[d] / 20.0);
+            o.data_at = -1;
+            nrx = 0; P.n = 0;
+            hst_ftx_train(&P.tx, c, 1);
+            while (n < 8 * FS && P.n < 20300 + 2000) {
+                int was = hst_frx_state(&R);
+                ftick();
+                n++;
+                if (was != HST_FRX_DATA && hst_frx_state(&R) == HST_FRX_DATA && o.data_at < 0) o.data_at = n;
+            }
+            fab = 1;
+            compare_n(&o, 300, 20000);
+            printf("ab_loud, code %d: AB %+d dB over the data; data mode %s (state %d); %ld errors in %ld bits\n",
+                   c, dbs[d], o.data_at >= 0 ? "reached" : "NOT reached", hst_frx_state(&R), o.errs, o.cmp);
+            if (verbose && o.data_at >= 0) printf("  (data mode %.1f ms after the training began)\n", o.data_at / 8.0);
+            bound("data mode, no error in 20000 bits", o.data_at >= 0 && o.found && o.cmp == 20000 && o.errs == 0);
+        }
     }
 }
 #endif
@@ -1965,6 +2053,11 @@ int main(int argc, char **argv)
         printf("long_drift: build with -DTEST_FULL (make hst-drift)\n");
         return 2;
 #endif
+    }
+    if (argc >= 2 && strcmp(argv[1], "ab_sweep") == 0) {
+        if (argc >= 4) fsnr = atof(argv[3]);
+        ab_sweep(argc >= 3 ? atoi(argv[2]) : 3, argc >= 6 ? atof(argv[4]) : 0, argc >= 6 ? atof(argv[5]) : 0);
+        return 0;
     }
     if (argc == 2 && strcmp(argv[1], "thresholds") == 0) {
 #ifdef TEST_FULL

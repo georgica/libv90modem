@@ -282,6 +282,39 @@ static const int32_t lock_mse[7] = { 0, 0, 17238, 3439, 1724, 825, 423 };
 /* the matched filter's gain, chosen so that A..D come out near HST_FRX_U
  * per unit after qamrx's AGC (measured: test_hst_fwd, acq_*) */
 #define MF_GAIN    29
+/* The training's level (Task 23e). qamrx's gain is set from AB's power,
+ * and pref from AB's level; a far end may send AB louder or quieter than
+ * the rest (V.32-family modems often send their training segments at
+ * another level than data). The rest's points then come at another scale
+ * from A..D's: 6 dB under them, every point was off the 4 (OFF2_MAX, 2.5
+ * units, against A..D's 6.3) and nothing was adapted (TRAINFAIL); 10 dB
+ * under, the clamp (10 dB under pref) held, and NOCARRIER; 4 dB over,
+ * off again. So in training:
+ * - pref starts 6 dB under AB's level (the clamp 16 dB under AB, the
+ *   absolute -48 dBm0 as always), taken again at a re-take and where data
+ *   mode begins;
+ * - while LV_OFF or more of the last 8 points are off (the training
+ *   stuck: nothing adapted on them) and their mean power is over 3 dB off
+ *   A..D's (40 units^2) for LV_N symbols in a row, the next LV_M symbols'
+ *   power is measured; over 1 dB off, qamrx's gain is set by the root of
+ *   the ratio, the equaliser's line and the last 8 points scaled with it
+ *   (the points at once at the new scale, not after the line's 24
+ *   symbols), pref taken from the power now, the first start's measure
+ *   begun again; nothing adapted on that symbol. At most LV_MAX times a
+ *   training (a line of noise alone is bounded).
+ * Why each part (test_hst_fwd ab_sweep, test_hstcall sweep): on a steep
+ * edge the first start's points drift 3 dB or more while its equaliser
+ * adapts, and a re-take there lost a training at 500 Hz order 10: hence
+ * the off points; the 8 points at the trigger hold the S1 -> S2
+ * transient (5.5 dB for a 4 dB step), and code 5 on a 20 dB line then
+ * passed 4 in 10 instead of 8: hence the measure after it. A level 3 to 5
+ * dB off that leaves the points on trained before, and is left to the
+ * equaliser */
+#define LV_N       8
+#define LV_M       16
+#define LV_OFF     5
+#define LV_MAX     4
+#define LV_PT      ((int64_t)40 * U * U)
 #define E_MAX      ((int64_t)1 << 22)
 /* The data mode's gain loop, on qamrx's input (the equaliser, the carrier
  * and the timing then see the scale they were trained on), from the
@@ -385,6 +418,8 @@ static void train_reset(hst_frx_t *r)
     for (i = 0; i < 4; i++) { r->dir[i].reg = 0; r->ones[i] = 0; }
     r->trn = -1;
     r->sig = r->err = 0;
+    r->lvw = r->lvn = 0;
+    r->lvp = 0;
 }
 
 void hst_frx_init(hst_frx_t *r)
@@ -508,7 +543,7 @@ static void start(hst_frx_t *r)
     }
     r->state = HST_FRX_TRAIN;
     train_reset(r);
-    r->pref = r->pw;
+    r->pref = r->pw / 4;              /* 6 dB under AB's: the rest may be quieter (LV_*) */
     r->mfs = !r->eq.valid && !HST_FMF_BM;
     r->mfn = 0;
     r->mft = r->n40;
@@ -559,6 +594,73 @@ static int mf_choose(hst_frx_t *r)
     return 1;
 }
 #endif
+
+/* The training's level (LV_*): a point's power, |z| under 2^22 first (the
+ * squares fit), held at 16 times A..D's */
+static int64_t lv_pow(int32_t zr0, int32_t zi0)
+{
+    int64_t zr = zr0, zi = zi0, p;
+    zr = zr > E_MAX ? E_MAX : zr < -E_MAX ? -E_MAX : zr;
+    zi = zi > E_MAX ? E_MAX : zi < -E_MAX ? -E_MAX : zi;
+    p = zr * zr + zi * zi;
+    return p > 16 * LV_PT ? 16 * LV_PT : p;
+}
+
+static int16_t lv_scale(int32_t x, int32_t gn, int32_t go)
+{
+    int64_t v = (int64_t)x * gn;
+    v = v >= 0 ? (v + go / 2) / go : -((-v + go / 2) / go);
+    return (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+}
+
+/* LV_*, a training symbol: 1 when the level has been taken again */
+static int level(hst_frx_t *r)
+{
+    int64_t p = 0, q;
+    int32_t go = r->q.gain, gn;
+    uint32_t w;
+    int k, n;
+    if (r->lvn >= LV_MAX || r->nsym < 8) return 0;
+    if (r->lvw >= LV_N) {
+        /* measuring: LV_M symbols' power, whatever they are */
+        r->lvp += lv_pow(r->hzr[0], r->hzi[0]);
+        if (++r->lvw < LV_N + LV_M) return 0;
+        p = r->lvp / LV_M;
+        r->lvw = 0;
+        r->lvp = 0;
+        r->lvn++;
+        /* within 1 dB (5/4 either way), or no signal: nothing to take */
+        if ((5 * p >= 4 * LV_PT && 4 * p <= 5 * LV_PT) || 64 * p < LV_PT) return 0;
+        /* the gain by the root of LV_PT / p (Q14, within 1/4 .. 8), held to
+         * qamrx_sync's range; everything scaled by exactly new / old */
+        q = isqrt_s64((LV_PT << 28) / p);
+        gn = (int32_t)(((int64_t)go * q + 8192) >> 14);
+        gn = gn < 16 ? 16 : gn > 16384 ? 16384 : gn;
+        if (gn == go) return 0;
+        r->q.gain = gn;
+        for (k = 0; k < 2 * QRX_NTAP; k++) r->q.x[k] = lv_scale(r->q.x[k], gn, go);
+        for (k = 0; k < 8; k++) {     /* held as lv_pow does: under 2^25 after */
+            int64_t zr = r->hzr[k], zi = r->hzi[k];
+            zr = zr > E_MAX ? E_MAX : zr < -E_MAX ? -E_MAX : zr;
+            zi = zi > E_MAX ? E_MAX : zi < -E_MAX ? -E_MAX : zi;
+            r->hzr[k] = (int32_t)(zr * gn / go);
+            r->hzi[k] = (int32_t)(zi * gn / go);
+        }
+        r->q.zr = r->hzr[0]; r->q.zi = r->hzi[0];
+        r->pref = r->pw;
+        if (r->mfs) { r->mfn = 0; r->mfp[0] = r->mfp[1] = r->mfq[0] = r->mfq[1] = 0; }
+        return 1;
+    }
+    /* watching: most of the last 8 off, and their power over 3 dB off */
+    for (n = 0, w = r->offw; w; w &= w - 1) n++;
+    if (n < LV_OFF) { r->lvw = 0; return 0; }
+    for (k = 0; k < 8; k++) p += lv_pow(r->hzr[k], r->hzi[k]);
+    p /= 8;
+    /* in range, or too little to be a level (under -18 dB: no signal) */
+    if ((2 * p >= LV_PT && p <= 2 * LV_PT) || 64 * p < LV_PT) { r->lvw = 0; return 0; }
+    ++r->lvw;
+    return 0;
+}
 
 /* AB: both band-edge tones, a sample (the power is the tick's); 1 when it
  * has been there AB_RUN samples */
@@ -895,9 +997,15 @@ static void symbol(hst_frx_t *r)
         trn_watch(r, st);
     }
     if (r->state == HST_FRX_TRAIN) {
-        int64_t er = zr - dr, ei = zi - di, thr = r->mse0 * OFF2_MSE;
+        int64_t er, ei, thr = r->mse0 * OFF2_MSE;
         uint32_t w;
         int off, n;
+        if (level(r)) {
+            /* the level taken again: nothing decided or adapted on this point */
+            clock_only(r);
+            return;
+        }
+        er = zr - dr; ei = zi - di;
         thr = thr < OFF2_MIN ? OFF2_MIN : thr > OFF2_MAX ? OFF2_MAX : thr;
         off = er * er + ei * ei > thr;
         r->offw = ((r->offw << 1) | (uint32_t)off) & 0xFFu;

@@ -494,7 +494,12 @@ int16_t hst_gf_tick(hst_gf_t *g, int16_t in);
  *          start's high-pass reads AB early) (the band's lower edge: a
  *          steep high-pass at 550 to 600 Hz on the line left ours some 4 dB
  *          under its error, and it never trained; test_hstcall fwd_edge and
- *          its sweep)
+ *          its sweep). Every training: 5 or more of the last 8 points
+ *          off and their power over 3 dB off A..D's for 8 symbols, the
+ *          next 16 symbols' power takes the level again (qamrx's gain, its
+ *          equaliser line and the points scaled; at most 4 times a
+ *          training): AB may come louder or quieter than the rest
+ *          (test_hst_fwd ab_loud, ab_sweep; Task 23e)
  *   DATA   at code 3..6, once more than 3 of the last 8 points are off the
  *          4 points: the rate's set through v32_vit_t; at code 2, the 4
  *          points, once S and S-bar are over. Either only when the error
@@ -506,9 +511,10 @@ int16_t hst_gf_tick(hst_gf_t *g, int16_t in);
  * and three states the receiver ends in by itself, each listening for AB
  * again as IDLE does (what to do about them is the scheme's):
  *   NOCARRIER  in training or data, the power low for HST_FRX_LOSS_MS:
- *          under -48 dBm0, or 10 dB under the signal's level (taken at the
- *          start and again where data mode begins, AB being louder than
- *          the data on some far ends; followed only while the receiver is well and within 3
+ *          under -48 dBm0, or 10 dB under the signal's level (taken 6 dB
+ *          under AB's at the start, again at a training's level re-take and
+ *          where data mode begins, AB being louder than the data on some
+ *          far ends; followed only while the receiver is well and within 3
  *          dB of it, and set again by a level step's gain: held, not
  *          decaying, so that line noise left after the carrier is not taken
  *          for it). Low for HST_FRX_CLAMP_MS, or 10 dB under at once: no
@@ -608,6 +614,11 @@ typedef struct {
     int32_t    mfn;                   /* ... symbols measured */
     int64_t    mfp[2], mfq[2];        /* ... each start's |z|^2 and |z|^4, summed (scaled) */
     int32_t    mft;                   /* ... n40 as AB's would be now (the symbol timing) */
+    /* the training's level (TRAIN; AB may come louder or quieter than the rest) */
+    int32_t    lvw;                   /* symbols the last 8 points' power has been over 3 dB
+                                       * off A..D's */
+    int32_t    lvn;                   /* the level's re-takes this training */
+    int64_t    lvp;                   /* ... the points' power summed while measuring */
     /* TRN, Table 4 read directly under each quarter turn (code 2) */
     v32_scr_t  dir[4];
     int32_t    ones[4];               /* ones in a row out of each */

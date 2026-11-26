@@ -6380,3 +6380,62 @@ milestone gate (verify-phase, ports, ARM) is Task 26's.
   identical: case 26 is not in the profile); `tools/replay-proof.sh
   check` 742 identical; `tools/bench-hashes.sh check` 19 identical.
   x86-64 tests only (owner rule); ARMv5 for the cost runs alone.
+
+## hst 23e: first training copes with an AB louder or quieter than the data (2026-11-25)
+
+- **Cause (measured, `test_hst_fwd ab_sweep`, and a probe of the
+  receiver's state per 16 symbols).** qamrx's gain is set from AB's power
+  at the start, and the carrier's level (`pref`) from AB's level. With AB 6
+  dB over the rest, the training's points after AB came 6.5 dB under A..D's
+  (6.3 units against the off gate's 2.5): 16 of 16 off from symbol 79 on,
+  `mse0` frozen, nothing adapted: TRAINFAIL. From 10 dB over, the power
+  is under `pref` / 10: the clamp held every symbol and the off count ran
+  out: NOCARRIER. 4 dB under, the points 4 dB over: off again, TRAINFAIL.
+  Pass edge before: AB 3 dB under to 5 dB over the rest (3 seeds, codes
+  2..6, 30 dB; at +7 Hz -100 ppm, 3 under to 9 over).
+- **Fix (modem/hst_fwd.c, training only).** `start` takes `pref` 6 dB
+  under AB's power (the relative clamp 16 dB under AB). `level`, on each
+  training symbol: while 5 or more of the last 8 points are off and their
+  mean power is over 3 dB off A..D's (40 units^2) for 8 symbols in a row,
+  the next 16 symbols' power is measured; if over 1 dB off, qamrx's gain
+  is set by the root of the ratio, the equaliser's line and the last 8
+  points scaled by exactly new / old, `pref` taken from the power now,
+  the first start's measure (`mf_choose`) begun again, nothing adapted on
+  that symbol. At most 4 a training. hst_frx_t: `lvw`, `lvn`, `lvp` (16
+  octets). Nothing per sample, nothing in data mode.
+- **Two first versions rejected by the sweeps.** Taking the level on any
+  3 dB miss for 8 symbols fired on steep edges, where the first start's
+  points drift 3 dB while its equaliser adapts (23b's sweep, ours hp
+  500/10 code 3: 5/5 -> 4/5); hence "most of the last 8 off". Taking it
+  from the 8 points at the trigger measured the S1 -> S2 transient (5.5
+  dB for a 4 dB step); on a 20 dB line code 5 then passed 4 of 10 at AB
+  +4 dB; hence the 16 symbols' measure after the trigger.
+- **After:** every cell from AB 8 dB under to 14 dB over, codes 2..6,
+  passes (3 seeds, 30 dB; 2 seeds at +7 Hz -100 ppm). 20 dB line, 10
+  seeds: codes 2..4 10/10 at every level; code 5 after a re-take 5..8/10
+  as at equal levels (8/10 at 0 dB, 5/10 at -1 dB), code 6 0 at any level
+  but +2/+3 (1..2 of 10). Before, AB 2..5 dB over did better there (code 5
+  10/10): the points start smaller, a smaller step for the equaliser; a
+  re-taken training is an equal-level one.
+- **Tests.** `ab_loud` (case 25) gains AB +6, +10, +12 and -6 dB, codes
+  2..6, data mode and no error in 20000 bits: 20 failures before (TRAINFAIL
+  at +6 and -6, NOCARRIER at +10 and +12). Its seeds move from 1300 + c to
+  1400 + c: at 1306 the 6.5 dB step at 14400 loses the lock with AB at
+  the data's level as well (3 of 12 seeds at 0 dB; 4 of 12 after a re-take;
+  1 of 12 with AB 4 dB over and no re-take); its two lines are unchanged.
+  `test_hst_fwd ab_sweep [SEEDS [SNR [HZ PPM]]]`: the sweep (not a check).
+- **No worse elsewhere.** 23b's edge sweeps (`test_hstcall sweep 5`,
+  `sweep 5 v17`), `make hst-thresh` and `make hst-drift`: output identical
+  to BASE 5926573's (built from `git archive` in build/tmp/base). The
+  re-take never fires on a training at the data's level.
+- **CPU.** Training only: a population count of the last 8 decisions'
+  off bits a symbol, 8 squares while 5 or more are off, one scaling of
+  the 144-sample line at a re-take. `hst_frx_tick` and the data path are
+  unchanged, so holding forward and back are as at 23c (no ARM run).
+- **Checks (x86-64).** `make golden`: 158 of 158 identical after
+  re-recording `test/golden/out/test/test_hst_fwd.txt` (40 new lines of
+  case 25, count 214 -> 234; its two existing ab_loud lines unchanged);
+  check-hst-bm in it (bm goldens identical). `tools/replay-proof.sh check`
+  742 identical; `tools/bench-hashes.sh check` 19 identical. TEST_SHORT
+  (-DTEST_FORCE_SHORT) case 25 passes; clang -pedantic and gcc -Wconversion
+  compile hst_fwd.c cleanly.

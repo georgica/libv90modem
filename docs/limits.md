@@ -649,8 +649,27 @@ Measured against `sim/hstcall` only; no real HST modem has called it yet.
   again where data mode begins, so a far end whose AB is up to 4 dB over
   its data loses nothing (`test_hst_fwd` `ab_loud`: AB 4 dB over, then a
   6.5 dB step down in data, kept; from AB's level it was a carrier loss).
-  AB 6 dB over the rest fails our training itself (TRAINFAIL at codes 4
-  and 6): the training's start, Task 23b's.
+  Our training itself (Task 23e) now takes the level again from the
+  training's own points: qamrx's gain is set from AB's power; when 5 or
+  more of the last 8 points are off and their power stays over 3 dB off
+  A..D's for 8 symbols, the next 16 symbols' power sets the gain again
+  (the equaliser's line and the points scaled by the root of the ratio; at
+  most 4 times a training); the carrier's level starts 6 dB under AB's (the
+  relative clamp 16 dB under AB) and is taken again then. Before, the pass
+  edge was AB 3 dB under to 5 dB over the rest: 6 to 9 dB over gave
+  TRAINFAIL (every point off the 4, nothing adapted), 10 dB and more
+  NOCARRIER (the clamp 10 dB under AB's level), 4 dB under TRAINFAIL. Now
+  `test_hst_fwd ab_sweep` passes every cell from AB 8 dB under to 14 dB
+  over, codes 2..6 (3 seeds, 30 dB; 2 seeds at +7 Hz -100 ppm). On a 20 dB
+  line (10 seeds) a re-taken training does as an equal-level one does
+  (code 5 5..8 of 10, 8 at 0 dB); with AB 2 to 5 dB over and no re-take
+  code 5 did better (10 of 10), the points starting smaller (a smaller
+  equaliser step): the training's own scale on a noisy line is untuned.
+  Limits: measured on our own caller only, a real Courier's AB level
+  against its data is unknown; a level 3 to 5 dB off that leaves the points
+  on the 4 is not taken (the equaliser takes it, a slower training at code
+  2); a level step of 10 to 16 dB later in a training is not clamped (a cut
+  under -48 dBm0 still is); its points are off and nothing adapts on them.
 - **The level-step residuals** (Task 16: about 5 in 96 level steps lose
   the forward receiver's lock; 14400 recovering slowly from some 100 ms
   dropouts): left as they are. An UNLOCKED is now a retrain at once (0x2R,
