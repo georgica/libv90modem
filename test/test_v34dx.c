@@ -266,7 +266,7 @@ int main(void)
             CHECK_EQ_I(pair_to_data(9000), 1);
             CHECK_EQ_I(P.a.far_on, ms[k] > 160);
             /* where the canceller's taps begin: the far one's (v34dx.c FAR_LEAD), or the near one's */
-            lag = P.a.far_on ? P.a.ecd.delay + P.a.cfg.rtd - V34DX_FAR_LEAD : P.a.ecd.delay;
+            lag = P.a.far_on ? P.a.ecd.delay + P.a.far_rtd - V34DX_FAR_LEAD : P.a.ecd.delay;
             sinks_reset(); pair_run(8000L * 4);
             mse_db = 10 * log10((P.a.up.rx.mse + 1e-9) / 65536.0);
             /* (the report's A->C is the calling side's downstream, not checked here: 31200 at
