@@ -40,6 +40,18 @@ Added:
   `v90m_diag` keep their size, and a program built against 0.6.0 or 0.6.1
   runs on 0.6.2's shared library (SONAME `libv90modem.so.0.6`).
 
+Fixed:
+- Answering role, x2 offered: a caller whose CM offers V.34 and no PCM got
+  a JM whose carrier was inverted after every JM for the whole of V.8. A
+  strict V.8 receiver (two WebTV boxes, hardware V.34 modems) never
+  decoded it, went on sending CM and never sent CJ; we went on to Phase 2
+  after 5 s and the call failed there (`P2N_ERR_INFO0`). 14 of 21 such
+  live calls failed, none of 31 with a plain JM. The JM is now inverted
+  only for its first 2 s (`V8A_X2_FLIP_MS`); the JMs that begin later are
+  plain. An x2 client still sees the inverted JMs first (the clients on
+  record answer within about 1.1 s), and x2 is still offered in Phase 2.
+  Simulation and the replay corpus: every recorded call identical.
+
 ## 0.6.1 (2026-11-24)
 
 Added:
