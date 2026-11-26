@@ -387,10 +387,8 @@ Measured against `sim/hstcall` only; no real HST modem has called it yet.
   100 ms or more; the least is 150 ms (the 300 bit/s caller at -26 dBm0 500
   ms late, found at 1850 ms). The cap is at the ceiling the controller set
   (2000 ms): a caller slower than 500 ms, or a dropout later in a slow
-  start, can still meet it. With the caller at most 300 ms late, W 450 and
-  a cap of 1900 would do (least slack 160 ms; the earlier sweep); W 400
-  leaves lines short at any cap, since their energy stage is not yet there
-  when the wait ends. With this task's first choice, 700 and 1500, the
+  start, can still meet it. W 400 leaves lines short at any cap, since
+  their energy stage is not yet there when the wait ends. With this task's first choice, 700 and 1500, the
   slack was 10 ms on the clean 300 bit/s lines and 60 ms under the cap
   with the caller on time, and a later caller fell to V.22bis. Every line
   here is found through the extension once past W: the energy stage holds
@@ -555,11 +553,12 @@ Measured against `sim/hstcall` only; no real HST modem has called it yet.
   | 0, 0 | 0 / 0 | 1 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 1 / 1 | 2 / 1 | 0 / 0 |
   | 0, +100 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 5 / 5 | 4 / 4 | 1 / 1 |
   | 0, -100 | 11 / 0 | 7 / 0 | 8 / 0 | 2 / 0 | 0 / 0 | 32 / 0 | 1 / 1 | 0 / 0 | 0 / 0 |
-  | +7, -100 | 10 / 0 | 27 / 0 | 13 / 0 | 4 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+  | +7, -100 | 10 / 0 | 27 / 0-1 | 13 / 0 | 4 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
   | -7, +100 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 7 / 7 | 78 / 78 | 0 / 0 | 0 / 1 | 0 / 0 |
   | +7, +100 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 3 / 3 | 0 / 0 | 0 / 0 | 0 / 0 | 2 / 2 |
   | -7, -100 | 12 / 0 | 3 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 74 / 74 | 0 / 0 | 6 / 0 | 0 / 0 |
 
+  (+7 Hz, -100 ppm at 550/10: 0 or 1 of 80 between runs of the grid.)
   No edge, hp 500/4 and hp 300/10: 0 at every offset, before and now.
   What is left:
   - 550 Hz order 6 with the carrier 7 Hz off and the clock +100 ppm: 7
@@ -721,13 +720,28 @@ Measured against `sim/hstcall` only; no real HST modem has called it yet.
   the new request, and superseded once that copy has gone: not at its
   T401, which holding back is 11 s at 450/9600 and more at 300 (our
   transmit rate is the back channel's), well over the 4 s bound (that
-  bound does not run while the request waits). The failure mode if the guess is wrong: our N(SA) one ahead of
+  bound does not run while the request waits; the wait itself is bounded
+  next). The failure mode if the guess is wrong: our N(SA) one ahead of
   the far V(RA), so the far end acknowledges every later LN, a 0x1R too,
   and acts on none, for the rest of the call (`v42/test/test_ec_hst`
   `attn_lost`: our LN lost, then a new request: both reach the far end in
   order; the rule without the evidence fails it so). Task 23 and the
   interop runs (R2) watch for a far end that acknowledges attentions and
   does nothing.
+- **A request behind our own 0x1R** (the final review's m2; `hst.h`
+  `HST_RC_UNTAKEN_MS`, [OURS]). The supersede above covers 0x2R/0x3R
+  only: while our 0x1R waits for its LNA, holding back, the endpoint takes
+  no request of the pump's. Such a request untaken for 3 s counts as a
+  failed retrain (an 0x2R: asked again, 3 failures then one agreed rate
+  lower, at the lowest the end) or is dropped (an 0x3R). A far end that
+  never acknowledges our 0x1R thus ends the call with
+  `V90M_END_RETRAIN_FAILED` some 9 s an agreed rate after our first
+  request (45 s from 14400 with five rates agreed; `test_answer_hst`
+  `retrain_untaken`), where before the request waited for that LN's N400
+  x T401, some 2 min at 450 bit/s. The cost: a far end that delays its LNA
+  to our 0x1R by 3 s or more (an LNA lost, resent at T401) while our
+  receiver asks for a retrain steps the rate down for nothing; never
+  seen in simulation.
 - **The armed receiver's S detection** (`hst_frx_arm_switch`,
   `hst_frx_arm_train`; Task 22b, which found both limits of 22a's): a
   training is seen in data mode as S or S-bar, 16 symbols each the point

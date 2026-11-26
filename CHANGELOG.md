@@ -10,22 +10,73 @@ this library's own answering modem, never against a real modem or server.
 
 ## 0.7.0 (unreleased)
 
-Includes 0.6.2 (below: the opt-in V.34 transmit cap with
-`v90m_get_v34_cap`, x2's plain JM after 2 s, the V.34 Phase 3/4 time
-limits, `v90m_ec_tx_busy` and the closing flag).
+Includes the changes of 0.6.2-rc1 (below: the opt-in V.34 transmit cap
+with `v90m_get_v34_cap`, x2's plain JM after 2 s, the V.34 Phase 3/4 time
+limits, `v90m_ec_tx_busy` and the closing flag); there was no final 0.6.2.
 
-Added (work in progress; simulation, own answerer and the replay corpus):
+Tried against: simulated lines and callers (`sim/hstcall`, written from
+the published facts, and `sim/mnppeer`) with this library's own answering
+modem; the replay corpus of recorded calls (every recording identical);
+and BinModem, a software HST modem, calling over SIP into a local test
+server. No real HST modem (a U.S. Robotics Courier) has called it, and no
+recorded HST call from one is in the corpus yet.
+
+Changed, the ABI: rebuild against the new header and link again.
+- `v90m_stats` (`reversals`, appended), `v90m_ec_cfg` (`mnp`, appended)
+  and `v90m_ec_status` (`protocol` and the MNP / HST fields, appended)
+  grow, and `v90m_ec_cfg_default` writes the larger struct: a program
+  built against 0.6 would be overrun by 0.7's library. The SONAME is
+  `libv90modem.so.0.7` (the version's minor, as every 0.x); a program
+  linked against `.so.0.6` does not load this one.
+- `v90m_ec_mem_size()` is 50448 on x86-64 (49792 in 0.6.0; 50200 on
+  32-bit ARM), under `V90M_EC_MEM_SIZE` (50 KiB, unchanged).
+  `V90M_MEM_SIZE` and `v90m_mem_size()` are unchanged.
+
+Changed, behaviour (all of it only where a host turns the new parts on;
+with `V90M_MOD_HST` not offered and `mnp.enable` 0, the default, every
+call is as in 0.6.2-rc1):
+- Answering with HST offered and an MNP endpoint linked: a caller that
+  sends neither CM nor AA (V.22bis, V.21, Bell 103 without V.8) hears our
+  V.22bis or V.21 650 ms later than before, up to 2 s later while there
+  is energy in the 250-500 Hz band (the wait for an HST back channel).
+  Callers that send CM or AA are answered exactly as before.
+- HST is not offered when `max_down_bps` is 1..4799 (under its lowest
+  rate): the modem then answers as without `V90M_MOD_HST`, linked or not.
+  From 4800 up the call opens at 9600 and takes the best agreed rate
+  under the ceiling in the retrain after MNP's LRs; a plain MNP agreement
+  (no HST rate in common) has no such retrain and stays at 9600.
+- `v90m_destroy` and `v90m_reset` also end an HST link: call them before
+  the memory of a modem in the caller's memory is reused.
+- On an HST call: `v90m_retrain` holding the fast channel sends our short
+  training, holding the back channel our MNP attention 0x2R at the rate
+  in force; `v90m_cleardown` (after `v90m_ec_release` and
+  `v90m_ec_tx_busy` 0) keeps the line 30 ms (fast channel) or 200 ms
+  (back channel) for MNP's LD, then stops both carriers;
+  `V90M_END_RETRAIN_FAILED` also ends an HST call whose retrains at the
+  lowest agreed rate failed (3 within 10 s, or the 4th loss of data mode
+  within 30 s). No HST call stays connected without the far modem's
+  signal for more than 12 s (`V90M_END_LOST`); the far modem's LD ends it
+  with `V90M_END_CLEARDOWN_FAR`.
+- `v90m_ec_release` under MNP sends LD 255 and is `V90M_EC_DISCONNECTED`
+  at once; wait for `v90m_ec_tx_busy` 0 before stopping the line.
+- The host pattern for an HST call (link before the first sample, reset
+  at `CONNECTED`, or feed from the first sample and never reset, not
+  both): docs/error-control.md.
+
+Added (simulation, own answerer, the replay corpus and BinModem as above):
 - Answering role: HST, U.S. Robotics' asymmetric modem, as its answering
   side: `V90M_MOD_HST` (0x0400, not in the defaults; calling:
   `V90M_ENOTSUP`), offered only with an MNP endpoint linked by
   `v90m_ec_link_hst`; `V90M_CONN_HST`, `V90M_END_HST_FAILED`,
   `ANS_ERR_HST_LINK`, `ANS_ERR_HST_CARRIER`; channel reversals, rate
-  changes by marks and retrains (include/v90modem.h, `V90M_MOD_HST`).
+  changes by marks and retrains (include/v90modem.h, `V90M_MOD_HST`;
+  docs/api.md).
 - Error control: MNP (V.42 Annex A) in the endpoint, off by default
-  (`v90m_ec_cfg.mnp`); `v90m_ec_status.protocol` and the MNP / HST fields;
-  `v90m_ec_set_rates`. With MNP, `v90m_ec_tx_busy` also counts an LD owed.
-- `v90m_stats.reversals` (appended; `v90m_stats` grows): HST channel
-  reversals, this call.
+  (`v90m_ec_cfg.mnp`: `enable`, `k`, `n401`, `opt`, `framing`,
+  `t401_min_ms`, `n400`); `v90m_ec_status.protocol` (`V90M_EC_PROTO_*`)
+  and the MNP / HST fields; `v90m_ec_set_rates`. With MNP,
+  `v90m_ec_tx_busy` also counts an LD owed.
+- `v90m_stats.reversals` (appended): HST channel reversals, this call.
 
 ## 0.6.2-rc1 (2026-11-25)
 

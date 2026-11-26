@@ -110,6 +110,11 @@ next call starts it afresh. An endpoint neither reset nor linked again
 starts again by itself only when the next call is an HST call (it sees
 the new call's mailbox); a following non-HST call would meet the last
 call's state, as with any endpoint that is not reset.
+Use one pattern or the other, not both: a host that feeds the endpoint
+before `CONNECTED` does not reset it at `CONNECTED`. Once the endpoint has
+sent a bit, a reset is a fresh start: the LR it took during our training
+and the MNP link begun on it are dropped, and the call then rests on the
+caller repeating its LR within that window.
 A frame half-received when the endpoint is reset is lost, and the caller
 repeats it (an LR, within the HST window of our training's end plus 5 s).
 
