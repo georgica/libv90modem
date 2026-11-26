@@ -72,4 +72,16 @@ extern const int32_t hst_fmf[HST_FMF_STARTS][HST_FMF_N][2];
 extern const int16_t hst_guard_f[HST_GUARD_FN];
 extern const int16_t hst_guard_i[HST_GUARD_IN];
 
+/* V.32 bis's signal sets at 7200 to 14400 (v32/v32_tabs.c, rates 1 to 4):
+ * each subset Y0 Y1 Y2 (labels k << rate ..) lies on one square grid,
+ * hst_vgrid_step[rate - 1] units apart on both axes, from
+ * hst_vgrid_org[rate - 1][k] (x, y), hst_vgrid_dim[..][k] (columns,
+ * rows) of it; hst_vgrid_idx[..][k][column * rows + row] is the point's
+ * label there, -1 none (the set's corners). For hst_vit_step */
+#define HST_VG_N 20              /* cells of a subset's grid at most */
+extern const int8_t hst_vgrid_step[4];
+extern const int8_t hst_vgrid_org[4][8][2];
+extern const int8_t hst_vgrid_dim[4][8][2];
+extern const int8_t hst_vgrid_idx[4][8][HST_VG_N];
+
 #endif

@@ -93,6 +93,11 @@
  *   ab_loud       AB 4 dB over the rest of the training (codes 4, 6), then
  *                 the line 6.5 dB down in data mode: data mode kept, no error
  *                 from 16000 data bits on (Task 23: the level is the data's)
+ *   fast_paths    (Task 23c) hst_vit_step gives v32_vit_step's output, hard
+ *                 decision, metrics and history on 50 000 random points a
+ *                 code (3..6; near the points, ties, past the clamp); a
+ *                 stopped transmitter's ticks give v32tx_tick's samples and
+ *                 state, through trainings, stops and silence
  *   thresholds    (`test_hst_fwd thresholds`, built with -DTEST_FULL: make
  *                 hst-thresh; not a case) the SNR of BER 1e-5 at codes
  *                 3..6 and the receiver's error there: hst_good_mse
@@ -1844,6 +1849,71 @@ static void zero_isi_start(void)
 #endif
 
 #ifndef HST_PROFILE_BM
+/* ---- fast_paths (Task 23c): the CPU cut's two shortcuts, against what
+ * they replace ---- */
+static uint32_t fp_r = 0x13579bdu;
+static int32_t fp_rand(int32_t span)
+{
+    fp_r = fp_r * 1664525u + 1013904223u;
+    return (int32_t)((fp_r >> 8) % (uint32_t)(2 * span + 1)) - span;
+}
+
+static void fast_paths(void)
+{
+    static v32_vit_t a, b;
+    static hst_ftx_t t;
+    static v32tx_t ref;
+    src_t s = { 0x0badcafeu, 0 };
+    long n, diff = 0, steps = 0, sdiff = 0, quiet = 0;
+    int rate, i, k;
+    for (rate = 1; rate <= 4; rate++) {
+        v32_vit_init(&a, rate);
+        v32_vit_init(&b, rate);
+        for (n = 0; n < 50000; n++) {
+            /* mostly near the points, some anywhere (past the clamp too) */
+            int32_t span = (n & 7) == 7 ? 40000 : 12 * V32_UNIT, zr = fp_rand(span), zi = fp_rand(span);
+            int ha = -1, hb = -1, oa, ob;
+            /* ties: on a whole unit (half-way between two of a subset's
+             * columns or rows, or on one), one coordinate or both */
+            if ((n & 15) == 3 || (n & 15) == 5) zr = zr / V32_UNIT * V32_UNIT;
+            if ((n & 15) == 3 || (n & 15) == 9) zi = zi / V32_UNIT * V32_UNIT;
+            oa = v32_vit_step(&a, zr, zi, &ha);
+            ob = hst_vit_step(&b, zr, zi, &hb);
+            {
+                int bad = oa != ob || ha != hb || a.pos != b.pos || a.n != b.n;
+                for (k = 0; k < 8; k++) bad |= a.pm[k] != b.pm[k];
+                for (i = 0; i < 32; i++) for (k = 0; k < 8; k++) bad |= a.hist[i][k] != b.hist[i][k];
+                diff += bad;
+            }
+            steps++;
+        }
+    }
+    printf("fast_paths: hst_vit_step against v32_vit_step, codes 3..6: %ld steps, %ld different\n", steps, diff);
+    bound("hst_vit_step gives v32_vit_step's decisions, metrics and history", steps == 200000 && diff == 0);
+    /* the transmitter stopped and rung out: the same samples and state as
+     * v32tx_tick's, through a training, a stop, silence and a training again */
+    hst_ftx_init(&t, 3000, src_bit, &s);
+    for (k = 0; k < 3; k++) {
+        if (k) hst_ftx_train(&t, 3 + k, 0);
+        for (n = 0; n < 8000; n++) {
+            int16_t y;
+            if (t.seg == HST_SEG_OFF) {
+                ref = t.tx;
+                y = hst_ftx_tick(&t);
+                if (v32tx_tick(&ref) != y || ref.acc != t.tx.acc || ref.rot != t.tx.rot || ref.nsym != t.tx.nsym
+                    || ref.newsym != t.tx.newsym || memcmp(ref.br, t.tx.br, sizeof ref.br) || memcmp(ref.bi, t.tx.bi, sizeof ref.bi))
+                    sdiff++;
+                quiet++;
+            } else (void)hst_ftx_tick(&t);
+            if (n == 3000) hst_ftx_stop(&t);
+        }
+    }
+    printf("fast_paths: a stopped transmitter, %ld ticks against v32tx_tick, %ld different\n", quiet, sdiff);
+    bound("a stopped transmitter gives v32tx_tick's samples and state", quiet > 15000 && sdiff == 0);
+}
+#endif
+
+#ifndef HST_PROFILE_BM
 /* AB louder than the data (a real modem's may be: the Task 16 review's
  * Minor F; Task 23): AB 4 dB over the rest of the long training at codes 4
  * and 6, then in data mode the line 6.5 dB down for good. The signal's
@@ -1914,7 +1984,7 @@ int main(int argc, char **argv)
         return 2;
 #endif
     }
-    only = t_case_arg(argc, argv, 25);
+    only = t_case_arg(argc, argv, 26);
 #endif
     verbose = getenv("HST_VERBOSE") != NULL;
     if (T_CASE(only, 1)) pulse_points();
@@ -1948,6 +2018,7 @@ int main(int argc, char **argv)
     if (T_CASE(only, 23)) marks_missed();
     if (T_CASE(only, 24)) long_drift();
     if (T_CASE(only, 25)) ab_loud();
+    if (T_CASE(only, 26)) fast_paths();
 #endif
     T_REPORT("test_hst_fwd");
 }

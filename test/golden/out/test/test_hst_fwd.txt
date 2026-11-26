@@ -233,4 +233,8 @@ ab_loud, code 4: AB 4 dB over the data, then the line 6.5 dB down; data mode kep
 ab_loud, code 6: AB 4 dB over the data, then the line 6.5 dB down; data mode kept; from 16000 data bits after it 0 errors in 100000 bits
   data mode kept: pass
   no error from 16000 bits after the step: pass
-test_hst_fwd: 212 checks, 0 failures
+fast_paths: hst_vit_step against v32_vit_step, codes 3..6: 200000 steps, 0 different
+  hst_vit_step gives v32_vit_step's decisions, metrics and history: pass
+fast_paths: a stopped transmitter, 17998 ticks against v32tx_tick, 0 different
+  a stopped transmitter gives v32tx_tick's samples and state: pass
+test_hst_fwd: 214 checks, 0 failures

@@ -914,20 +914,39 @@ CPU"); 0.5.0's in brackets:
   M** (14 441 425; the reversal, rate-change, watchdog and cleardown
   logic of Tasks 21 to 23 in the per-sample path since Task 19's count;
   not split further).
-- **HST holding the back channel (Task 23): 38.44 M instructions a
-  second, over the 30 M target** (`make cost-hst`: `tools/rec_hst -R`,
-  the caller taking the forward channel and keeping it, our endpoint
-  writing nothing; `rig/bench_hst -k`, the second from 1 s into the
-  caller's data at 14400 coming in; 2688 octets received in 3 s). The
-  forward receiver alone is 25.43 M (`cost-hst-fwd`); the rest is our
-  back transmitter, MNP receiving at 14400 with the HST link, G.711 and
-  the API's per-sample work (not split: one ARMv5 run was allowed).
-  Two such calls do not fit the box's 122 M with headroom. Not acted on
-  in Task 23: the spec's levers (the equaliser at T/2 instead of T/3, a
-  cheaper guard filter) are the forward receiver's, which Task 23b is
-  changing (its training start), and each needs an ARMv5 count to show.
-- **The 0x3R parallel decode (Task 23's run): 32.04 M a second for its 20
-  ms** (643 690 instructions, the forward receiver alone; target 40 M).
+- **HST holding the back channel: 29.29 M instructions a second**
+  (target 30 M; `make cost-hst`: `tools/rec_hst -R`, the caller taking
+  the forward channel and keeping it, our endpoint writing nothing;
+  `rig/bench_hst -k`, the second from 1 s into the caller's data at 14400
+  coming in; 2688 octets received in 3 s). Task 23's run was 38.44 M.
+  Task 23c's profile of that second (`tools/qprof`): the forward receiver
+  25.5 M (its trellis decoder `v32_vit_step` 9.35 M, qamrx's interpolator,
+  equaliser output and update 9.5 M, the guard 3.14 M), our idle forward
+  transmitter 2.87 M (`v32tx_tick` filtering a line of zeros), the back
+  transmitter 1.72 M, the HST link polled at every bit 2.3 M
+  (`link_poll`, `mnp_hst_poll`), G.711 1.65 M, the answerer's and the
+  API's per-sample work and MNP the rest. Two cuts, both with the same
+  output to the bit (every golden, bench hash and replay identical):
+  the trellis decoder as `hst_vit_step` (each subset's nearest point by
+  rounding on its grid, `hst_vgrid_*`; the add-compare-select written
+  out): 9.35 -> 3.32 M; the forward transmitter stopped and rung out keeps
+  its count alone: 2.87 -> 0.15 M. The forward receiver alone in 14400
+  data is now 19.37 M (cost-hst-fwd's -r). Not done, the next levers: the
+  link polled per tick rather than per bit (about 2 M, in v42/), a
+  shorter interpolator for HST in qamrx (about 1.6 M, changes the
+  receiver's output). The equaliser at T/2 is not one: qamrx's equaliser
+  is pass-band, and at 4800 Hz a 600-3000 Hz signal's image falls on
+  1800-4200 Hz, half the band (Task CPU-frx measured 5.4 dB through the
+  receiver's start against 33.0 at T/3).
+- **The 0x3R parallel decode: 31.98 M a second for its 20 ms, the whole
+  modem** (target 40 M; Task 23's run 32.04 M for the forward receiver
+  alone, about 45 M on this basis). `make cost-hst` gives it as the
+  forward receiver's 20 ms (cost-hst-fwd's -p: 443 923 instructions,
+  22.05 M a second, the two trellis decoders and the 24 points replayed
+  into the new one) plus the rest of holding back (holding back less the
+  forward receiver alone in 14400 data: 9.92 M).
+- **HST holding the forward channel after Task 23c: 14.47 M** (target 15
+  M; 14.44 M before it: the transmitter's stopped test on every sample).
 
 ## Not implemented
 

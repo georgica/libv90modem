@@ -410,7 +410,11 @@ typedef struct {
     int32_t  d0;                      /* V.17: the state of the bridge's first symbol */
     int32_t  marks;                   /* a switch by marks: its symbols still to begin, 0 none */
     int32_t  mcode;                   /* ... and the code it switches to */
+    int32_t  quiet;                   /* symbols begun since stopped (HST_SEG_OFF: each silent), to
+                                       * HST_FTX_QUIET: from there v32tx's line is all zero and
+                                       * hst_ftx_tick keeps its count alone (Task 23c) */
 } hst_ftx_t;
+#define HST_FTX_QUIET (V32_TXL_MAX + V32_TXD)
 
 /* level = RMS of the line signal (16-bit sample units); getbit gives the
  * data. Silent until hst_ftx_train. */
@@ -640,6 +644,11 @@ void hst_frx_set_code(hst_frx_t *r, int code);
 /* one line sample; returns the number of bits decided, in r->bits[] */
 int  hst_frx_tick(hst_frx_t *r, int16_t x);
 int  hst_frx_state(const hst_frx_t *r);
+/* v32_vit_step's twin, the receiver's (Task 23c): the same decisions,
+ * metrics and history (test_hst_fwd fast_paths), each subset's nearest
+ * point found by rounding on the subset's grid (hst_vgrid_*), the
+ * add-compare-select written out; rates 1..4 */
+int  hst_vit_step(v32_vit_t *v, int32_t zr, int32_t zi, int *hard);
 /* the forward carrier (the guard's output): in training and data, not low
  * (NOCARRIER's measure) for HST_FRX_CLAMP_MS; else over -45 dBm0 (the
  * pump's watchdogs, Task 23) */

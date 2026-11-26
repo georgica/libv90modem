@@ -48,6 +48,7 @@ void hst_ftx_init(hst_ftx_t *t, int level, v32_getbit_fn getbit, void *user)
     t->d0 = 0;
     t->marks = 0;
     t->mcode = t->code;
+    t->quiet = 0;
 }
 
 /* Under HST_PROFILE_BM every training is V.17's long train, the opening
@@ -85,6 +86,7 @@ void hst_ftx_stop(hst_ftx_t *t)
 {
     v32tx_set_mode(&t->tx, V32_TX_SILENCE);
     t->seg = HST_SEG_OFF;
+    t->quiet = 0;
     t->left = 0;
     t->marks = 0;
 }
@@ -157,6 +159,26 @@ static void next_symbol(hst_ftx_t *t)
 
 int16_t hst_ftx_tick(hst_ftx_t *t)
 {
+    int16_t y;
+    if (t->seg == HST_SEG_OFF) {
+        if (t->quiet < HST_FTX_QUIET) {
+            /* stopped (silence from the next symbol on: hst_ftx_stop, hst_ftx_init) */
+            y = v32tx_tick(&t->tx);
+            t->quiet += t->tx.newsym;
+            return y;
+        }
+        /* stopped and rung out: v32tx_tick on a line of zero symbols (every
+         * one HST_FTX_QUIET back is a silent one; past the pulse's history
+         * v32tx_set_pulse cleared them) is 0, with its count, its carrier's
+         * quarter turns and its shift of zeros; the count and the turns
+         * alone here (Task 23c: the transmitter idle while we hold the back
+         * channel; test_hst_fwd fast_paths) */
+        v32tx_t *x = &t->tx;
+        x->newsym = 0;
+        if (x->acc >= 10) { x->acc -= 10; x->rot = (x->rot + 1) & 3; x->nsym++; x->newsym = 1; }
+        x->acc += 3;
+        return 0;
+    }
     if (v32tx_symbol_due(&t->tx)) next_symbol(t);
     return v32tx_tick(&t->tx);
 }
@@ -590,6 +612,100 @@ static void trn_watch(hst_frx_t *r, int st)
         for (k = 0; k < 4 && r->trn < 0; k++) if (r->ones[k] >= TRN_RUN) r->trn = k;
 }
 
+/* v32_vit_step (v32/v32_viterbi.c), its results to the bit (test_hst_fwd
+ * fast_paths). There a point's distance is (dx >> 2)^2 + (dy >> 2)^2, dx
+ * = z - c V32_UNIT: as V32_UNIT is a multiple of 4, dx >> 2 is (z >> 2) -
+ * c V32_UNIT / 4 exactly, so the distance is the plain squared distance
+ * from w = z >> 2 to the point at V32_UNIT / 4 a unit, separable in x and
+ * y. Each subset is searched there in label order and its first nearest
+ * point kept. Here a subset's points lie on one square grid (hst_vgrid_*):
+ * on the whole grid the nearest cell is each coordinate's nearest column
+ * and row, alone the nearest when neither coordinate is half-way between
+ * two; when that cell holds a point it is the subset's only nearest, so
+ * v32_vit_step's. Otherwise (half-way, or a corner the set lacks) the
+ * subset's points are searched as v32_vit_step does. The add-compare-
+ * select and the trace back are its lines */
+#define VG_U (V32_UNIT / 4)
+typedef char vg_u_whole[(V32_UNIT % 4 == 0) ? 1 : -1];
+typedef char vg_steps[(8 * VG_U == 1 << 10 && 4 * VG_U == 1 << 9) ? 1 : -1];
+/* the nearest of n grid lines `st` units apart from o, to a, in w's units;
+ * -1 half-way between two */
+static int vg_near(int32_t a, int o, int n, int sh)
+{
+    int32_t d = a - o * VG_U, q, r, half = (int32_t)1 << (sh - 1);
+    if (d <= 0) return 0;
+    q = d >> sh;
+    if (q >= n - 1) return n - 1;
+    r = d & ((half << 1) - 1);
+    return r < half ? (int)q : r > half ? (int)q + 1 : -1;
+}
+int hst_vit_step(v32_vit_t *v, int32_t zr, int32_t zi, int *hard)
+{
+    const int8_t (*c)[2] = v32_constel(v->rate);
+    int per = 1 << v->rate, i, k, s, best, g = v->rate - 1;
+    int sh = hst_vgrid_step[g] == 8 ? 10 : 9;     /* the grid's step in w's units, 2^sh */
+    int32_t bm[8], nm[8], lim = 16 * V32_UNIT, min, wr, wi;
+    int bl[8];
+    uint16_t *h = v->hist[v->pos];
+
+    if (zr > lim) zr = lim; else if (zr < -lim) zr = -lim;
+    if (zi > lim) zi = lim; else if (zi < -lim) zi = -lim;
+    wr = zr >> 2; wi = zi >> 2;                   /* (an arithmetic shift, DESIGN.md: v32_vit_step's) */
+    /* nearest point of each subset Y0 Y1 Y2 */
+    for (k = 0; k < 8; k++) {
+        const int8_t *o = hst_vgrid_org[g][k], *n = hst_vgrid_dim[g][k];
+        int ix = vg_near(wr, o[0], n[0], sh), iy = vg_near(wi, o[1], n[1], sh), l = -1;
+        int32_t dx, dy;
+        if (ix >= 0 && iy >= 0) l = hst_vgrid_idx[g][k][ix * n[1] + iy];
+        if (l >= 0) {
+            dx = wr - c[l][0] * VG_U; dy = wi - c[l][1] * VG_U;
+            bm[k] = dx * dx + dy * dy; bl[k] = l;
+        } else {
+            int32_t b = 0x7fffffff;
+            for (i = k * per, l = 0; i < (k + 1) * per; i++) {
+                int32_t d;
+                dx = wr - c[i][0] * VG_U; dy = wi - c[i][1] * VG_U;
+                d = dx * dx + dy * dy;
+                if (d < b) { b = d; l = i; }
+            }
+            bm[k] = b; bl[k] = l;
+        }
+    }
+    best = 0;
+    for (i = 1; i < 8; i++) if (bm[i] < bm[best]) best = i;
+    if (hard) *hard = bl[best];
+
+    /* add, compare, select: v32_vit_step's loop over s = 0..7, y = 0..3 in its
+     * order, the next state v32_trellis_next(s, y) written out; the first
+     * branch into each state (from states 0 and 1) is taken outright, as
+     * there (a metric is under 2^29, below its start of 0x7fffffff) */
+#define ACS_SET(s, y, ns) (nm[ns] = v->pm[s] + bm[((s) & 1) << 2 | (y)], h[ns] = (uint16_t)(bl[((s) & 1) << 2 | (y)] << 3 | (s)))
+#define ACS(s, y, ns) do { int32_t m_ = v->pm[s] + bm[((s) & 1) << 2 | (y)]; \
+        if (m_ < nm[ns]) { nm[ns] = m_; h[ns] = (uint16_t)(bl[((s) & 1) << 2 | (y)] << 3 | (s)); } } while (0)
+    ACS_SET(0, 0, 0); ACS_SET(0, 1, 3); ACS_SET(0, 2, 2); ACS_SET(0, 3, 1);
+    ACS_SET(1, 0, 4); ACS_SET(1, 1, 5); ACS_SET(1, 2, 7); ACS_SET(1, 3, 6);
+    ACS(2, 0, 1); ACS(2, 1, 2); ACS(2, 2, 3); ACS(2, 3, 0);
+    ACS(3, 0, 7); ACS(3, 1, 6); ACS(3, 2, 4); ACS(3, 3, 5);
+    ACS(4, 0, 2); ACS(4, 1, 1); ACS(4, 2, 0); ACS(4, 3, 3);
+    ACS(5, 0, 6); ACS(5, 1, 7); ACS(5, 2, 5); ACS(5, 3, 4);
+    ACS(6, 0, 3); ACS(6, 1, 0); ACS(6, 2, 1); ACS(6, 3, 2);
+    ACS(7, 0, 5); ACS(7, 1, 4); ACS(7, 2, 6); ACS(7, 3, 7);
+#undef ACS_SET
+#undef ACS
+    min = nm[0]; best = 0;
+    for (s = 1; s < 8; s++) if (nm[s] < min) { min = nm[s]; best = s; }
+    for (s = 0; s < 8; s++) {
+        int32_t m = nm[s] - min;
+        v->pm[s] = m > (1 << 28) ? (1 << 28) : m;
+    }
+    v->pos = (v->pos + 1) & 31;
+    v->n++;
+    if (v->n < V32_VDEPTH) return -1;
+    s = best;
+    for (i = 1; i < V32_VDEPTH; i++) s = v->hist[(v->pos - i) & 31][s] & 7;
+    return v->hist[(v->pos - V32_VDEPTH) & 31][s] >> 3;
+}
+
 static void put_bit(hst_frx_t *r, int b)
 {
     if (r->nbits < 8) r->bits[r->nbits++] = (uint8_t)b;
@@ -614,7 +730,7 @@ static void data_bits(hst_frx_t *r, int label)
  * to *dr, *di */
 static void vit_point(hst_frx_t *r, int32_t zr, int32_t zi, int32_t *dr, int32_t *di)
 {
-    int hard, x, y, out = v32_vit_step(&r->vit, zr / 2, zi / 2, &hard);
+    int hard, x, y, out = hst_vit_step(&r->vit, zr / 2, zi / 2, &hard);
     v32_point(r->code - 2, hard, &x, &y);
     *dr = x * U; *di = y * U;
     if (out >= 0) data_bits(r, out);
@@ -970,7 +1086,7 @@ static void sw_start(hst_frx_t *r, const v32_scr_t *d0, int y0)
     for (k = 0; k < 8; k++) r->vit2.pm[k] = 0;
     for (k = V32_VDEPTH - 1; k >= 0; k--) {
         int j = (r->sw_pos - 1 - k) & (HST_SW_RING - 1);
-        out = v32_vit_step(&r->vit2, r->sw_zr[j] / 2, r->sw_zi[j] / 2, NULL);
+        out = hst_vit_step(&r->vit2, r->sw_zr[j] / 2, r->sw_zi[j] / 2, NULL);
     }
     r->sw_win = HST_SW_WIN;
     r->sw_run = 0;
@@ -1012,12 +1128,12 @@ static int sw_symbol(hst_frx_t *r, int32_t zr, int32_t zi, int32_t *dr, int32_t 
     int hard, x, y, out, win = r->sw_win != 0;
     r->sw_zr[r->sw_pos] = zr; r->sw_zi[r->sw_pos] = zi;
     r->sw_pos = (r->sw_pos + 1) & (HST_SW_RING - 1);
-    out = v32_vit_step(&r->vit, zr / 2, zi / 2, &hard);
+    out = hst_vit_step(&r->vit, zr / 2, zi / 2, &hard);
     v32_point(r->code - 2, hard, &x, &y);
     *dr = x * U; *di = y * U;
     if (out >= 0) sw_watch(r, out);
     if (!win) return r->sw_win != 0 || (r->sw_ones >= HST_SW_HOLD && r->sw_ones < HST_SW_IDLE);
-    sw_new(r, v32_vit_step(&r->vit2, zr / 2, zi / 2, NULL));
+    sw_new(r, hst_vit_step(&r->vit2, zr / 2, zi / 2, NULL));
     if (r->sw_run >= HST_SW_RUN) {
         /* the switch: the new code's decoders are the receiver's */
         r->vit = r->vit2;

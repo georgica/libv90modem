@@ -6325,3 +6325,58 @@ milestone gate (verify-phase, ports, ARM) is Task 26's.
   157 of 158 identical, `test/test_hstcall.txt` re-recorded (the two runs'
   6 lines, count 114 -> 118). CPU path: one add at the restart (no ARM
   run). x86-64 only.
+
+## hst 23c: CPU cut: holding back ≤ 30 M, the 0x3R switch ≤ 40 M (2026-11-25)
+
+- **Measure.** `tools/qprof` over ARMv5 qemu (`-d in_asm,exec,nochain`)
+  of `bench_hst -k`'s counted second (holding back, 38.50 M with the
+  bench's loop) and `-p`'s 20 ms (the 0x3R window, 644 712). Holding
+  back: `v32_vit_step` 9.35 M, qamrx 9.84 M (`produce` 4.06, `eq_out`
+  3.23, `qamrx_update` 2.19, `qamrx_tick` 0.36), the guard 3.14 M,
+  **`v32tx_tick` 2.87 M** (our forward transmitter, stopped, filtering a
+  line of zeros), `hst_btx_tick` 1.72 M, `hst_frx_tick` 1.53 M, tick_hst
+  1.38 M, the link polled at every bit 2.30 M (`mnp_hst_poll` 1.26,
+  `link_poll` 1.05), G.711 1.65 M. The 0x3R window: `v32_vit_step` 51 %
+  (two decoders and the 24 points replayed into the new one).
+- **Cut 1, the idle forward transmitter** (`hst_ftx_tick`): once stopped
+  and HST_FTX_QUIET (36) symbols on, v32tx's line is all zero; the tick
+  keeps v32tx's count, quarter turns and newsym alone and gives 0.
+  2.87 -> 0.15 M. Same samples and state as v32tx_tick (`test_hst_fwd`
+  case 26 `fast_paths`).
+- **Cut 2, the trellis decoder** (`hst_vit_step`, modem/hst_fwd.c, used
+  by the receiver in place of `v32_vit_step`; v32/ untouched).
+  v32_vit_step's distance is the plain squared distance from z >> 2 to
+  the point at 128 a unit, and each subset of V.32 bis's 7200-14400 sets
+  lies on one square grid (`hst_vgrid_*`, tools/gen_hst_tabs.py, read
+  from v32/v32_tabs.c): each coordinate rounded to its column and row;
+  half-way, or a corner the cross-shaped set lacks, the subset searched
+  as before. The add-compare-select written out in v32_vit_step's order.
+  First try (each coordinate's square once a symbol, a sum of two a
+  point): 9.35 -> 8.04 M only; the grid 4.23 M; written-out ACS 3.32 M.
+  Its decisions, metrics and history equal v32_vit_step's on 200 000
+  points (codes 3..6, near the points, ties, past the clamp); mutations
+  of the tie rule and of the clamp fail it (17 751 and 200 000 steps).
+- **Effect on the receiver: none** (both cuts give the same output to
+  the bit). `make hst-thresh` and `make hst-drift`: output identical to
+  BASE 8568967's. 23b's sweeps (`test_hstcall sweep 5`, `sweep 5 v17`):
+  identical. Every golden but test_hst_fwd's identical; bench hashes,
+  replay proof identical.
+- **ARMv5 `make cost-hst ARM_CC=$A5`**: holding forward **14.47 M**
+  (14 466 039; BASE 14 442 039: the stopped test each sample); holding
+  back **29.29 M** (29 288 955; 38.44 M); the 0x3R decode **31.98 M**
+  for 20 ms on the whole modem (the forward receiver's 443 923 in 20 ms,
+  22.05 M a second, plus the rest of holding back 9.92 M = holding back
+  less the forward receiver alone at 14400, 19.37 M). On that basis BASE
+  was about 45 M. `make cost-hst` now prints that figure (one more count,
+  bench_hst -r).
+- **Not taken:** the link polled per tick (about 2 M; v42/), a shorter
+  HST interpolator in qamrx (about 1.6 M; changes the output), T/2
+  (impossible for a pass-band equaliser: at 4800 Hz the 600-3000 Hz
+  band's image covers 1800-4200 Hz; CPU-frx measured 5.4 dB), the 22c gain
+  leak and the 23b selection (training only; not in either window).
+- **Checks.** `make golden`: ALL HOST CHECKS PASS, 158 of 158 identical
+  after re-recording `test/golden/out/test/test_hst_fwd.txt` (case 26's 4
+  lines, count 212 -> 214); `make check-hst-bm` pass (bm goldens
+  identical: case 26 is not in the profile); `tools/replay-proof.sh
+  check` 742 identical; `tools/bench-hashes.sh check` 19 identical.
+  x86-64 tests only (owner rule); ARMv5 for the cost runs alone.

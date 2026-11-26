@@ -52,6 +52,7 @@
 #                        channel: data at 14400 (forward transmitter, back receivers, MNP);
 #                        of one holding the back channel (rec_hst -R, bench_hst -k:
 #                        forward receiver, back transmitter, MNP); and the 0x3R parallel decode
+#                        on the whole modem (its 20 ms plus the rest of holding back)
 #   make bench-v90       record a simulated V.90 call, replay it on the host and
 #                        under qemu, through the internals and the public API
 #   make bench-x2        the same for x2 (a call of the simulated client); cost-x2 counts
@@ -993,7 +994,10 @@ hst-drift: $(BUILD)/libtest.a
 # forward channel and keeping it, bench_hst -k, the second from 1 s into
 # its data at 14400 coming in (the forward receiver, our back transmitter,
 # MNP); and the parallel decode of a 0x3R switch (cost-hst-fwd's -p, 20
-# ms, as a rate a second) ----
+# ms, as a rate a second) on the whole modem's basis (Task 23c): the
+# forward receiver's rate in those 20 ms plus the rest of holding back,
+# which is holding back less the forward receiver alone in data at 14400
+# (cost-hst-fwd's -r) ----
 HST_REC := $(BUILD)/hst_call.rec
 HST_BACK_REC := $(BUILD)/hst_back.rec
 .PHONY: bench-hst cost-hst
@@ -1017,15 +1021,21 @@ cost-hst: $(BUILD)/rec_hst $(BUILD)/bench_hst $(BUILD)/bench_hst.arm
 	    | awk -v pc="/00000000$$pc/" 'BEGIN { k = 0 } /^Trace/ { if (index($$0, pc)) k++; n[k]++ } END { print n[1] + 0 }'); \
 	 echo "$$h" | sed -n '1p'; \
 	 echo "cost-hst: holding back $$(awk -v c=$$c 'BEGIN { printf "%.2f", c / 1e6 }') M/s ($$c ARM instructions in a second of the caller's data at 14400)"; \
+	 back=$$c; \
 	 r=$(BUILD)/hst_fwd.rec; $(abspath $(BUILD))/bench_hst -f $$r > /dev/null || exit 1; \
 	 loop=$$($(CNT) $(abspath $(BUILD))/bench_hst.arm -n $$r 2>&1 >/dev/null \
 	    | awk -v pc="/00000000$$pc/" 'BEGIN { k = 0 } /^Trace/ { if (index($$0, pc)) k++; n[k]++ } END { print n[1] + 0 }'); \
+	 h=$$($(abspath $(BUILD))/bench_hst -r $$r); a=$$($(QEMU) $(abspath $(BUILD))/bench_hst.arm -r $$r); \
+	 [ "$$h" = "$$a" ] || { echo "bench_hst -r: host '$$h', target '$$a'"; exit 1; }; \
+	 frx=$$($(CNT) $(abspath $(BUILD))/bench_hst.arm -r $$r 2>&1 >/dev/null \
+	    | awk -v pc="/00000000$$pc/" 'BEGIN { k = 0 } /^Trace/ { if (index($$0, pc)) k++; n[k]++ } END { print n[1] + 0 }'); \
+	 frx=$$((frx - loop)); \
 	 s=$(BUILD)/hst_sw.rec; $(abspath $(BUILD))/bench_hst -s $$s > /dev/null || exit 1; \
 	 h=$$($(abspath $(BUILD))/bench_hst -p $$s); a=$$($(QEMU) $(abspath $(BUILD))/bench_hst.arm -p $$s); \
 	 [ "$$h" = "$$a" ] || { echo "bench_hst -p: host '$$h', target '$$a'"; exit 1; }; \
 	 c=$$($(CNT) $(abspath $(BUILD))/bench_hst.arm -p $$s 2>&1 >/dev/null \
 	    | awk -v pc="/00000000$$pc/" 'BEGIN { k = 0 } /^Trace/ { if (index($$0, pc)) k++; n[k]++ } END { print n[1] + 0 }'); \
-	 echo "cost-hst: the 0x3R parallel decode $$(awk -v c=$$c -v l=$$loop 'BEGIN { printf "%.2f", (c * 50 - l) / 1e6 }') M/s for 20 ms ($$c ARM instructions in its 20 ms, the forward receiver alone)"
+	 echo "cost-hst: the 0x3R parallel decode $$(awk -v c=$$c -v l=$$loop -v b=$$back -v f=$$frx 'BEGIN { printf "%.2f", (c * 50 - l + b - f) / 1e6 }') M/s for 20 ms, the whole modem ($$c ARM instructions in its 20 ms for the forward receiver alone, $$((c * 50 - loop)) a second; with the rest of holding back, $$((back - frx)): holding back less the forward receiver in data at 14400, $$frx)"
 $(BUILD)/rec_hst: tools/rec_hst.c rig/hst_side.h $(SIM_SRC) $(MODEM_SRC) $(API_SRC) $(V42_SRC) api/v90modem_diag.h $(HDRS) $(wildcard v42/*.h)
 	@mkdir -p $(BUILD)
 	$(CC) $(T_CFLAGS) -Iinclude -Iapi -o $@ tools/rec_hst.c $(API_SRC) $(SIM_SRC) $(MODEM_SRC) $(V42_SRC) $(LDLIBS)

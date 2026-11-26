@@ -102,6 +102,15 @@ The forward channel (hst-facts.md "Forward channel"):
                  tab_guard); run by hst_gf_tick (modem/hst_fwd.c), which
                  uses their symmetry.
 
+The trellis decoder (Task 23c):
+
+  hst_vgrid_*    V.32 bis's signal sets at 7200 to 14400, read from
+                 v32/v32_tabs.c: each of the 8 subsets lies on one square
+                 grid (4 or 8 units apart), and the grid's cells hold the
+                 labels (-1 where the cross-shaped set has no point), so
+                 that hst_vit_step finds a subset's nearest point by
+                 rounding each coordinate (modem/hst_fwd.c).
+
 To add a table: write a function that returns (header lines, source
 lines) and append it to TABLES.
 
@@ -771,7 +780,83 @@ def tab_guard():
     return h, c
 
 
-TABLES = (tab_bstep, tab_bpulse, tab_bpf, tab_fpulse, tab_fmf_bm, tab_fmf, tab_guard)
+# ---------------- the trellis decoder's subsets as grids ----------------
+def v32_constel(name):
+    """a V.32 bis signal set (v32/v32_tabs.c), its points in label order"""
+    import re
+    with open("v32/v32_tabs.c") as f:
+        m = re.search(r"v32_%s\[(\d+)\]\[2\] = \{(.*?)\};" % name, f.read(), re.S)
+    if not m:
+        die("no v32_%s in v32/v32_tabs.c" % name)
+    pts = [(int(a), int(b)) for a, b in re.findall(r"\{\s*(-?\d+),\s*(-?\d+)\}", m.group(2))]
+    if len(pts) != int(m.group(1)):
+        die("v32_%s: %d points read" % (name, len(pts)))
+    return pts
+
+
+VG_N = 20                     # cells of a subset's grid at most
+
+
+def tab_vgrid():
+    sets = ("c7200", "c9600", "c12000", "c14400")
+    org, dim, idx, step = [], [], [], []
+    for r, name in enumerate(sets, 1):
+        c = v32_constel(name)
+        per = 1 << r
+        st = None
+        for k in range(8):
+            pts = c[k * per:(k + 1) * per]
+            xs = sorted(set(x for x, _ in pts))
+            ys = sorted(set(y for _, y in pts))
+            d = set(b - a for v in (xs, ys) for a, b in zip(v, v[1:]))
+            if len(d) != 1 or (st is not None and d != {st}):
+                die("vgrid: rate %d subset %d is not one grid" % (r, k))
+            st = d.pop()
+            nx = (xs[-1] - xs[0]) // st + 1
+            ny = (ys[-1] - ys[0]) // st + 1
+            if nx * ny > VG_N:
+                die("vgrid: rate %d subset %d: %d cells" % (r, k, nx * ny))
+            cell = [-1] * VG_N
+            for j, (x, y) in enumerate(pts):
+                cell[(x - xs[0]) // st * ny + (y - ys[0]) // st] = k * per + j
+            org += [xs[0], ys[0]]
+            dim += [nx, ny]
+            idx += cell
+        if st not in (4, 8):
+            die("vgrid: rate %d: step %d" % (r, st))
+        step.append(st)
+    h = ["/* V.32 bis's signal sets at 7200 to 14400 (v32/v32_tabs.c, rates 1 to 4):",
+         " * each subset Y0 Y1 Y2 (labels k << rate ..) lies on one square grid,",
+         " * hst_vgrid_step[rate - 1] units apart on both axes, from",
+         " * hst_vgrid_org[rate - 1][k] (x, y), hst_vgrid_dim[..][k] (columns,",
+         " * rows) of it; hst_vgrid_idx[..][k][column * rows + row] is the point's",
+         " * label there, -1 none (the set's corners). For hst_vit_step */",
+         define("HST_VG_N", VG_N, "cells of a subset's grid at most"),
+         "extern const int8_t hst_vgrid_step[4];",
+         "extern const int8_t hst_vgrid_org[4][8][2];",
+         "extern const int8_t hst_vgrid_dim[4][8][2];",
+         "extern const int8_t hst_vgrid_idx[4][8][HST_VG_N];"]
+    def nest(vals, per, inner, width):
+        """a rate's row a line, its subsets in braces of `inner` values"""
+        out = []
+        for i in range(0, len(vals), per):
+            r = vals[i:i + per]
+            out.append("    { " + ", ".join("{ " + ", ".join("%*d" % (width, v) for v in r[j:j + inner]) + " }"
+                                            for j in range(0, len(r), inner)) + " },")
+        return out
+    c = ["const int8_t hst_vgrid_step[4] = {"] + rows(step, 4, 3) + ["};",
+         "const int8_t hst_vgrid_org[4][8][2] = {"] + nest(org, 16, 2, 2) + ["};",
+         "const int8_t hst_vgrid_dim[4][8][2] = {"] + nest(dim, 16, 2, 1) + ["};",
+         "const int8_t hst_vgrid_idx[4][8][HST_VG_N] = {"]
+    for r in range(4):
+        c += ["    {"] + ["      { " + ", ".join("%3d" % v for v in idx[(r * 8 + k) * VG_N:(r * 8 + k + 1) * VG_N]) + " },"
+                         for k in range(8)] + ["    },"]
+    c += ["};"]
+    sys.stderr.write("gen_hst_tabs: vgrid: steps %s\n" % step)
+    return h, c
+
+
+TABLES = (tab_bstep, tab_bpulse, tab_bpf, tab_fpulse, tab_fmf_bm, tab_fmf, tab_guard, tab_vgrid)
 
 
 def main():
