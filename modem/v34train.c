@@ -154,7 +154,14 @@ int sres_symbol(sres_t *s, qamrx_t *r)
 
     switch (s->state) {
     case SRES_WAIT:
-        s->cnt = e > half / 2 ? s->cnt + 1 : 0;
+        /* S alternates between two points, and where the line passes the
+         * two edges of the band unequally and the timing has drifted, one
+         * of the two comes out strong and the other weak, symbol after
+         * symbol. So a symbol counts by itself, as ever, or with the one
+         * before it (sr: that symbol's energy), the pair holding the power
+         * of S between them */
+        s->cnt = (e > half / 2 || e + s->sr > half) ? s->cnt + 1 : 0;
+        s->sr = e;
         if (s->cnt >= SRES_ON + SRES_SKIP) { s->state = SRES_PHASE; s->cnt = 0; s->sr = s->si = 0; }
         qamrx_update(r, zr, zi, 0, 12);
         return 0;
@@ -174,7 +181,10 @@ int sres_symbol(sres_t *s, qamrx_t *r)
         return 0;
 
     case SRES_TIME:
-        if (e < half / 4) {                                 /* it went away again */
+        /* it went away again: this symbol, and the pair it makes with the
+         * one before (sr, si: that symbol, or the mean of SRES_PHASE), as in
+         * SRES_WAIT */
+        if (e < half / 4 && e + s->sr * s->sr + s->si * s->si < half / 2) {
             qamrx_update(r, zr, zi, 0, 12);
             sres_init(s);
             return 0;

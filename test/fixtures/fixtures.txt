@@ -15,3 +15,13 @@ usr7.raw.xz  -9            modulation 7, 54666 bit/s down, 40000 up   U.S. Robot
 usr6.raw.xz  -9 -u 32000   modulation 7, 54666 bit/s down, 32000 up   U.S. Robotics 5686, firmware 5.4.62       2026-11-16
 x2r2.raw.xz  -9 -u 33600   modulation 4, 54666 bit/s down, 28800 up   U.S. Robotics 56K of 1998, flash 5.1.4    2026-11-16
 x2b.raw.xz   -9 -u 33600   modulation 5, 28800 bit/s down, 28800 up   U.S. Robotics 56K of 1998, flash 5.1.4    2026-11-16
+#
+# usrc1 is a call that did not connect, kept for what the modem makes of its
+# Phase 3: the caller's S in answer to Jd came half a symbol late on a line
+# that tilts the band, and was not taken (P34_ERR_NO_S2 at 14.033 s) before
+# the fix of 2026-11-25; with it Jd' and the DIL follow at 11.867 s. The
+# recording ends there: the caller had given up (its Tone A from 12.5 s).
+# From a packet capture at the answering host (RTP, G.711 mu-law, through
+# an FXS gateway); the host sent through v90m_process_linear and its own
+# G.711 encoder, so the transmit differs from the replay's in rounding.
+usrc1.raw.xz -r 3000 -d 0 -s 0   modulation 0, 0 bit/s down, 0 up   U.S. Robotics Courier V.Everything, FXS gateway   2026-11-25
