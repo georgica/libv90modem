@@ -27,6 +27,11 @@
  *                the same budgets
  *   late_drop_300  a 40 ms dropout 300 ms into the preamble and a 20 ms one
  *                at 200 ms (the Task 13 review's N3 rows): within 650 ms
+ *   courier      a back channel as a Courier was recorded sending one
+ *                ([REC]: 17 symbols of preamble, then flags) at -6, -9 and
+ *                -12 dBm0, the detector started at many phases against it:
+ *                450 within W from at least 95 % of them, within W - 100
+ *                ms from 90 %
  *   v22bis       a V.22bis caller (sim/callpeer, no V.8) against the
  *                library's answerer: 9 s of what the answerer hears (the
  *                echo of its ANSam, then the caller's start-up and data,
@@ -48,6 +53,7 @@
 #include "../sim/channel.h"
 #include "../sim/callpeer.h"
 #include "../sim/g711.h"
+#include "../sim/hstcall.h"
 
 #define FS 8000
 #define PI 3.14159265358979323846
@@ -376,6 +382,79 @@ static void v22bis(void)
     bound("never fires", !fired);
 }
 
+/* courier: a back channel as a Courier was recorded sending one
+ * (hst-facts.md `Back channel`, [REC]; synthetic, from the measured
+ * figures, not the recording): sim/hstcall's transmitter at 450 (375 Hz,
+ * 150 baud, its RRC 0.35), a preamble of 17 symbols of scrambled ones (the
+ * recording's 110-120 ms), then scrambled HDLC flags, at -6, -9 and -12
+ * dBm0 (the recording: -12.1), on two lines (+-7 Hz, +-100 ppm, noise 20
+ * dB under the signal). The detector started afresh at COUR_STARTS
+ * phases, from 300 ms before the signal's start to 6 s into it (as the
+ * wait may begin anywhere against a caller's start): at least 95 % fire
+ * 450 within W, HST_W_MS, and 90 % with 100 ms to spare. 0.7.2's GAIN0
+ * (-20 dBm0), its baseband from before the carrier at another level from
+ * the rest (rx_block), failed its first acquisition more often: 78 % with
+ * 100 ms to spare here, and on the recording itself the detector,
+ * started afresh at 262 points through the call, fired within W from 37 %
+ * of them (49 % now; the report's 63-point set: 12 of 63) */
+#define COUR_LEN   (7 * FS)
+#define COUR_ON    (FS / 2)
+#define COUR_STEP  211
+#define COUR_STARTS ((COUR_ON - 300 * 8 + 6 * FS) / COUR_STEP)
+static int16_t cour_y[COUR_LEN];
+static int cour_flag;
+static int cour_bit(void *u) { (void)u; return (0x7E >> (cour_flag++ & 7)) & 1; }
+static void courier(void)
+{
+    static const double lv[3] = { -6, -9, -12 };
+    static const int line[2] = { 0, 3 };
+    static chan_t ch;
+    static hst_det_t d;
+    static hc_btx tx;
+    int l, c, i, in_w = 0, in_w100 = 0, total = 0, wrong = 0;
+    long worst = 0;
+    for (l = 0; l < 3; l++)
+        for (c = 0; c < 2; c++) {
+            long n = 0, t0;
+            int lin = 0, lin100 = 0, ln = 0;
+            hc_btx_init(&tx, 450, rms_of(lv[l]), cour_bit, NULL);
+            tx.pre = 17;
+            cour_flag = 0;
+            chan_init(&ch, offs[line[c]].hz, offs[line[c]].ppm, rms_of(lv[l]) / 10, 0xC0u + (uint32_t)(10 * l + c));
+            while (n < COUR_LEN) {
+                int16_t y[4];
+                int k, m;
+                if (n == COUR_ON) hc_btx_start(&tx);
+                m = chan_push(&ch, hc_btx_tick(&tx), y);
+                for (k = 0; k < m && n < COUR_LEN; k++) cour_y[n++] = y[k];
+            }
+            for (i = 0; i < COUR_STARTS; i++) {
+                long st, at;
+                int got = 0;
+                t0 = COUR_ON - 300 * 8 + (long)i * COUR_STEP;
+                st = t0 > COUR_ON ? t0 : COUR_ON;
+                hst_det_init(&d);
+                for (n = t0; n < COUR_LEN && !(got = hst_det_tick(&d, cour_y[n])); n++) ;
+                at = (n - st) / 8;
+                ln++;
+                if (got != HST_DET_450) { wrong += got != 0; continue; }
+                if (at <= HST_W_MS) lin++;
+                if (at <= HST_W_MS - 100) lin100++;
+                if (at > worst) worst = at;
+            }
+            if (verbose)
+                printf("  (%+.0f dBm0, %+.0f Hz %+.0f ppm: %d of %d within %d ms, %d within %d)\n", lv[l], offs[line[c]].hz,
+                       offs[line[c]].ppm, lin, ln, HST_W_MS, lin100, HST_W_MS - 100);
+            in_w += lin; in_w100 += lin100; total += ln;
+        }
+    printf("courier: a Courier's back channel (17 symbols of preamble, then flags) at -6, -9 and -12 dBm0, 2 lines, %d starts each\n",
+           COUR_STARTS);
+    if (verbose) printf("  (%d of %d within W, %d within W - 100 ms; the latest %ld ms)\n", in_w, total, in_w100, worst);
+    bound("never the other speed", wrong == 0);
+    bound("450 within W from at least 95 % of the starts", in_w * 100 >= 95 * total);
+    bound("and within W - 100 ms (the slack W was sized with) from at least 90 %", in_w100 * 100 >= 90 * total);
+}
+
 static void pos_450(void) { positive(450); }
 static void pos_300(void) { positive(300); }
 static void imp_450(void) { impaired(450); }
@@ -383,7 +462,7 @@ static void imp_300(void) { impaired(300); }
 
 int main(int argc, char **argv)
 {
-    int only = t_case_arg(argc, argv, 8);
+    int only = t_case_arg(argc, argv, 9);
     verbose = getenv("HST_VERBOSE") != NULL;
     if (T_CASE(only, 1)) pos_450();
     if (T_CASE(only, 2)) pos_300();
@@ -393,5 +472,6 @@ int main(int argc, char **argv)
     if (T_CASE(only, 6)) imp_450();
     if (T_CASE(only, 7)) imp_300();
     if (T_CASE(only, 8)) late_drop();
+    if (T_CASE(only, 9)) courier();
     T_REPORT("test_hst_det");
 }

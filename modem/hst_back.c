@@ -172,7 +172,9 @@ static int32_t fir_fold(const int16_t *h, int32_t n, const int16_t *w)
 #define HOLD_BLKS 6                   /* blocks 9 dB under the mean the AGC holds its gain through */
 #define HOLD_SYMS 8                   /* symbols 9 dB under the mean the symbol power's mean holds through */
 #define AGC_RMS   4096                /* the band's RMS after the AGC */
-#define GAIN0     ((int32_t)((AGC_RMS * 65536LL) / 1577))   /* until a carrier: -20 dBm0 */
+#define GAIN0     ((int32_t)((AGC_RMS * 65536LL) / 6278))   /* until a carrier: -8 dBm0, unclipped to
+                                        * some 0 dBm0 (0.7.2's -20 clipped a -12 dBm0 caller, [REC]);
+                                        * rx_block rescales it once the carrier comes */
 #define DEG12     143165577u          /* 12 degrees, 2^32 a turn */
 #define LOCK_WIN  0xFFFFu             /* lock: 15 of the last 16 decisions on the grid */
 #define LOCK_MIN  15
@@ -306,10 +308,11 @@ static void rx_release(hst_brx_t *r)
 static void rx_block(hst_brx_t *r)
 {
     int64_t p = r->bpw / BLK;
+    int32_t g0 = r->gain, on = 0;
     r->bpw = 0;
     if (!r->cd) {
         r->cnt = p >= CD_ON_PW ? r->cnt + 1 : 0;
-        if (r->cnt >= CD_BLKS) { r->cd = 1; r->cnt = 0; r->ps = p; r->nhold = 0; rx_acquire(r); }
+        if (r->cnt >= CD_BLKS) { r->cd = 1; r->cnt = 0; r->ps = p; r->nhold = 0; rx_acquire(r); on = 1; }
     } else {
         r->cnt = p < CD_OFF_PW ? r->cnt + 1 : 0;
         if (r->cnt >= CD_OFF_BLKS) {
@@ -326,6 +329,23 @@ static void rx_block(hst_brx_t *r)
     if (r->cd) {
         int32_t rms = r->ps <= 0 ? 0 : r->ps <= (int64_t)UINT32_MAX ? (int32_t)isqrt_u32((uint32_t)r->ps) : isqrt_s64(r->ps);
         r->gain = (int32_t)(AGC_RMS * 65536) / (rms > 16 ? rms : 16);
+    }
+    if (on && r->gain != g0) {
+        /* the baseband the matched filter still holds from before the
+         * carrier came, at the gain of then (GAIN0, or the last carrier's),
+         * taken to the new gain: the acquisition's first strobes reach 8
+         * symbols back, and a far end louder or quieter than GAIN0's level
+         * came into them at another scale from the rest (0.7.2, GAIN0 at
+         * -20 dBm0: a Courier's back channel at -12 dBm0, hst-facts.md
+         * `Back channel` [REC], clipped there, and failed its first
+         * acquisition at any start more often than not, each retry some
+         * 270 ms; test_hst_det `courier`) */
+        int32_t i;
+        for (i = 0; i < r->zn; i++) {
+            int64_t a = (int64_t)r->zr[i] * r->gain / g0, b = (int64_t)r->zi[i] * r->gain / g0;
+            r->zr[i] = (int16_t)(a > 32767 ? 32767 : a < -32767 ? -32767 : a);
+            r->zi[i] = (int16_t)(b > 32767 ? 32767 : b < -32767 ? -32767 : b);
+        }
     }
 }
 

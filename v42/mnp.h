@@ -192,6 +192,10 @@ typedef struct {
     int brk_wait;                /* our destructive LN is out, its LNA not in */
     uint8_t vsa, vra;
     int lna_due; uint8_t lna_nr;
+    uint8_t attn_cmp;            /* HST: attn_rx is what an LN with N(SA) V(RA) - 1 is compared with
+                                    (the same code a repeat, another a new attention); 0 forgotten:
+                                    such an LN is new (on_ln, on_lna, mnp_hst_poll). In lna_nr's
+                                    padding: the struct keeps its size on every target */
     int lnq[MNP_LNQ], lnq_n;
     int attn_tx, attn_rx;        /* the last LN type sent, received */
 

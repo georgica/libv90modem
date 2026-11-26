@@ -73,7 +73,8 @@ typedef int (*hc_getbit_fn)(void *user);
  * eighths of a turn; points at 22.5 + 45 k degrees; scrambler 1 + x^-14 +
  * x^-17 with no 64-ones rule; phase and scrambler from zero at each start
  * [BM]. Pulse: root-raised-cosine, beta 0.35, +-4 symbols with a Hann taper
- * [BM's shape]. Preamble: 60 symbols of scrambled ones [BM]. */
+ * [BM's shape]. Preamble: 60 symbols of scrambled ones [BM] (hc_btx.pre;
+ * hstcall's bpre_syms 17: a Courier's, as recorded [REC]). */
 #define HC_BPRE   60
 #define HC_BSPAN  4                       /* symbols each side */
 #define HC_B450_T3 160                    /* a symbol in thirds of a sample at 8000 Hz */
@@ -96,6 +97,7 @@ typedef struct {
     int      phase;                       /* eighths of a turn */
     uint32_t scr;                         /* line bits, the newest in bit 0 */
     int      npre;                        /* preamble symbols left */
+    int      pre;                         /* the preamble's symbols (hc_btx_init: HC_BPRE) */
     hc_bsym  ring[HC_BRING];
     int      rpos, rn;
     long     nsym;
@@ -190,6 +192,7 @@ typedef struct {
     int      bridge;                      /* bridge bits sent */
     int      on, ring;                    /* making symbols; symbols left ringing out */
     int      bm;                          /* BinModem's shape (hc_ftx_bm) */
+    int      courier;                     /* the Courier's short training (hc_ftx_courier) */
     double   gb[5][3], ga[5][2], gz[5][2];   /* its high-pass: 5 sections, b, a, state */
     hc_getbit_fn getbit; void *user;
 } hc_ftx;
@@ -200,6 +203,15 @@ void   hc_ftx_bm(hc_ftx *t);
 /* after hc_ftx_init: the root-raised-cosine at roll-off b (V.17's: 0.25),
  * the same span and taper, at the same level */
 void   hc_ftx_rolloff(hc_ftx *t, double b);
+/* after hc_ftx_init: every training not V.17's is the one a Courier was
+ * recorded sending (hst-facts.md `Training`, [REC]): AB 72, CD 8, TRN 192
+ * (long or short alike), TRN's scrambler not reset but carrying on from
+ * the line bits of AB and CD (Table 4's dibits of the states sent). The
+ * recorded 4-symbol marker (A C C B) between CD and TRN is not sent */
+#define HC_CR_AB  72
+#define HC_CR_CD   8
+#define HC_CR_TRN 192
+void   hc_ftx_courier(hc_ftx *t);
 /* from the next symbol: a training (v17: V.17's long train), then data at code 2..6 */
 void   hc_ftx_train(hc_ftx *t, int code, int long_form, int v17);
 /* 0x3R: 36 symbols of ones at the code in force, then 36 at new_code, then data */
@@ -361,6 +373,13 @@ typedef struct {
                               0x2R, binmodem-facts.md `Online fallback`, [BM]) */
     int     drop_ln;       /* the first N LNs from the answerer are lost: no LNA, nothing done
                               (mnppeer's drop_ln; the final review's m2) */
+    /* the Courier as recorded (hst-facts.md, [REC]; 0.7.3) */
+    int     ln_nsa_fixed;  /* every LN of its own with N(SA) 1, a new attention told by its code
+                              alone (mnppeer's ln_nsa_fixed; `Rate changes`) */
+    int     bpre_syms;     /* its back preamble, symbols (0: HC_BPRE); 17 is the recording's 110-120
+                              ms at 150 baud (`Back channel`) */
+    int     courier_train; /* its forward trainings the recorded one (hc_ftx_courier: AB 72, CD 8,
+                              TRN 192, the scrambler carried on; `Training`) */
 } hstcall_cfg;
 
 /* back 450, start 450, rates 0x7C (codes 2..6), flags 0x01, level -12 */

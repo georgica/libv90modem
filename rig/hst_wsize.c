@@ -22,6 +22,10 @@
  *   edge      the caller's signal through a 300 Hz 4th-order Butterworth
  *             high-pass (a line's lower edge; the Task 13 review's M1), at
  *             +-7 Hz, -26 dBm0, two seeds
+ *   courier   450 with a Courier's short preamble (17 symbols: the
+ *             recording's 110-120 ms, hst-facts.md `Back channel`, [REC])
+ *             at its levels, -6, -9 and -12 dBm0, the four lines, two
+ *             seeds (0.7.3)
  * Every line again with the caller 50, 100, 200, 300, 400 and 500 ms
  * slower to start (its signal delayed). hstcall itself starts 30-45 ms
  * after our tone stops; the firmware's caller starts "once the tone has
@@ -53,6 +57,7 @@ typedef struct {
     int hp;                           /* the 300 Hz high-pass */
     int delay;                        /* ms the caller's signal reaches us later than hstcall's
                                          own start (30-45 ms after our tone): a slower caller */
+    int pre;                          /* the back preamble, symbols (0: hstcall's) */
 } line_t;
 
 typedef struct { double b0, b1, b2, a1, a2, x1, x2, y1, y2; } biq_t;
@@ -117,6 +122,7 @@ static int run_line(const line_t *ln, uint8_t *e)
     v32line_init(&L, &lc);
     hstcall_defaults(&hc);
     hc.back_bps = hc.start_bps = ln->bps; hc.level_dbm0 = (int)ln->dbm0;
+    hc.bpre_syms = ln->pre;
     hstcall_init(&HC, &hc);
     memset(&P, 0, sizeof P); P.ln = ln; P.back_at = -1;
     hp_init(&P.hp[0], 300, 0.5412); hp_init(&P.hp[1], 300, 1.3066);
@@ -143,7 +149,7 @@ static int run_line(const line_t *ln, uint8_t *e)
 typedef struct { int lines, latest, never, miss[NW], miss_ext[NW]; } tally_t;
 
 /* every line's detection and energy, for the slack table */
-#define NLINES 1600
+#define NLINES 2000
 static int16_t fired_of[NLINES];
 static uint8_t e_of[NLINES][LISTEN_MS + 1];
 static int nlines;
@@ -275,6 +281,21 @@ int main(void)
             }
             snprintf(what, sizeof what, "edge +%d", dly);
             report(what, bps, &t);
+        }
+        {
+            static const double clv[3] = { -6, -9, -12 };
+            tally_t t;
+            memset(&t, 0, sizeof t);
+            for (i = 0; i < 3; i++) for (j = 0; j < 4; j++) for (s = 0; s < 2; s++) {
+                line_t ln;
+                memset(&ln, 0, sizeof ln);
+                ln.bps = 450; ln.dbm0 = clv[i]; ln.hz = offs[j].hz; ln.ppm = offs[j].ppm; ln.seed = 4000u + (uint32_t)(i * 8 + j * 2 + s);
+                ln.delay = dly; ln.pre = 17;
+                memset(e, 0, sizeof e);
+                count(&t, run_line(&ln, e), e);
+            }
+            snprintf(what, sizeof what, "courier +%d", dly);
+            report(what, 450, &t);
         }
     }
     slack_table();

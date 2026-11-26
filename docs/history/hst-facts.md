@@ -24,6 +24,12 @@ its bullet or table row:
 - `[OURS]`: our guess or decision, with its reason. A recording or a test
   settles it. When a recording settles one, the tag becomes `[OURS ->
   observed]` and the recording's hash is named (section `Recordings`).
+- `[REC]`: observed in the Retrocet 2024 public recording (section
+  `Recordings`, row REC: a Courier V.Everything calling a Courier I-Modem,
+  connected at 16800 HST), measured by us from its audio
+  (`build/hst-recording-report.md`; the audio and our derived files are not
+  in this repository). A value from another source that the recording
+  confirms is tagged `[X -> REC]`, X its first source.
 
 Citations:
 
@@ -53,6 +59,7 @@ What the answerer does, and what we do:
 | value | source | tag |
 |---|---|---|
 | Plain 2100 Hz answer tone (V.25 style), no phase reversals, no V.8. | BF §1 | [FW] |
+| Not on the recorded path: the answering I-Modem sent ANSam (2100 Hz, reversals every 450 ms, 15 Hz AM), the caller V.8's CM offering V.22/V.22bis only, the answerer JM with the same content. The [FW] row may hold for `B1` or another unit; the recording's S-registers are unknown. | `Recordings` REC | [REC] |
 | The Courier's DSP entry for the answering side is 0xC29D: answer tone, then the forward transmitter and the back receiver start together. | BF §1 | [FW] |
 | The answerer holds the fast (forward) channel at the start; the caller has the back channel. | BF §1, §4; PS §1.4 item 3 | [FW] |
 | With `B1` the Courier answers with a Bell 2225 Hz tone and no V.32 tones; with `B0` with the V.25 2100 Hz sequence plus V.32 tones ("takes slightly longer"). | PS §1.4, §2.3 | [PUB] |
@@ -68,11 +75,13 @@ What the answerer does, and what we do:
 | BinModem ends the call if MNP is not up 60 s after it goes off hook (`NO ANSWER` if no tone was heard, else `NO CARRIER`). | BF §1 | [BM] |
 | Front panel: AA goes out at the answering end while the channels are reversed; HS is off during link negotiation. | PS §1.4 item 7; BF §4 | [PUB] |
 | We keep ANSam (2100 Hz with reversals) for every caller, after V.8 and the existing CM and AA listening; we send no plain 2100 Hz and no 2225 Hz tone. Reason: the box answers every caller on one number, and V.8 callers must be untouched. | SPEC D9 | [OURS] |
-| We assume a Courier caller accepts ANSam as an answer tone (Couriers call V.34 answerers, which send ANSam). If wrong, an HST caller never starts its back channel and the call goes V.22bis as in 0.6.0: nothing is lost. | spec "Conflicts" row 1 | [OURS] |
-| After ANSam ends with no CM and no AA, stay silent up to W = 400 ms (at most 700 ms, only if simulation shows misses) and run the back-channel detector; if it fires, enter `ANS_HST`, else V.22bis or V.21 as today. | SPEC D9, D25 | [OURS] |
+| We assume a Courier caller accepts ANSam as an answer tone (Couriers call V.34 answerers, which send ANSam). If wrong, an HST caller never starts its back channel and the call goes V.22bis as in 0.6.0: nothing is lost. The recorded Courier caller accepted ANSam: it sent CM. | spec "Conflicts" row 1; `Recordings` REC | [OURS -> REC] |
+| After ANSam ends with no CM and no AA, stay silent for W = 650 ms (`HST_W_MS`), and on up to 2000 ms (`HST_W_MAX_MS`) while the detector's energy stage holds, and run the back-channel detector; if it fires, enter `ANS_HST`, else V.22bis or V.21 as today. W was sized in Task 18 so that every line of `make hst-wsize` keeps 100 ms between its detection and the wait's end (`docs/limits.md`); the spec's first guess was 400 ms. | SPEC D9, D25; `docs/limits.md` | [OURS] |
 | `ANS_HST` is the point of no return; a false detection costs a V.22bis call (no LR, so `NO_EC`). | spec "The answering sequence" | [OURS] |
 | Backstop: no MNP link within 15 s of entering `ANS_HST` ends the call `V90M_END_HST_FAILED`. | spec "Retrain, watchdogs" | [OURS] |
 | The forward channel starts straight after the tone, with no V.22bis stage first, unless R1 shows a V.22bis carrier. | spec "Conflicts" row 2 | [OURS] |
+| The recorded start-up goes through V.22bis and V.42: ANSam; V.8 (CM and JM, V.22bis only); V.22bis at 2400/2400; V.42 detection (ODP, then ADP "E C"); an LAPM XID exchange (command and response, 56 octets each) whose user data subfield carries a USR "HST" parameter set (section `LR and 0xC0`); then a DM (`01 0F`) from the caller; both V.22bis carriers off; 0.93 s of silence; the answerer's HST forward channel starts blind (AB, CD, TRN at 9600), and the caller's back channel follows 75 ms later at the tap. There is no LR (section `Establishment`). The manual's "train at 2400 bps, negotiate error control, then shift up and train at 9600" is this path. | `Recordings` REC; PS §1.4 | [REC] |
+| We do not take that path in 0.7.3: a caller with CM goes V.22bis and V.42 as in 0.6.0, our XID response carries no "HST" set, and `ANS_HST_WAIT` is never entered for it. Parsing the XID's "HST" set, the DM switch, the blind forward start and MNP with no LR are the 0.8.0 gap. | `build/hst-recording-report.md` "Proposed fixes" 5 | [OURS] |
 | Opening rate of the forward channel, before MNP agrees on rates: 9600 (`HST_OPEN_CODE` 4). Reason: the manual says the modems "shift up and train at 9600". | PS §1.4; spec "Forward training" | [OURS] |
 | BinModem's opening rate is 7200; used by us only under `-DHST_PROFILE_BM`. | BF §1 | [BM] |
 
@@ -83,12 +92,13 @@ firmware's DSP (BF §3).
 
 | variant | NCO increment | polyphase step | tick rate | symbol rate | carrier | bit rate | source | tag |
 |---|---|---|---|---|---|---|---|---|
-| fast | 0x6AAA | 6 of 72 taps | 300/s | 150 baud | 375 Hz | 450 bit/s | BF §3 | [FW] |
+| fast | 0x6AAA | 6 of 72 taps | 300/s | 150 baud | 375 Hz | 450 bit/s | BF §3; REC (375.000 Hz, 150.0 baud) | [FW -> REC] |
 | slow | 0x638E | 4 of 72 taps | 200/s | 100 baud | 350 Hz | 300 bit/s | BF §3 | [FW] |
 
 - Phase step for each tribit, in eighths of a turn. The firmware keeps the
   eight steps packed in the 32-bit constant 0x43705261, one nibble each,
-  lowest nibble first (BF §3). [FW]
+  lowest nibble first (BF §3). Every recorded back-channel frame passes its
+  CRC with this table. [FW -> REC]
 
   | tribit t | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
   |---|---|---|---|---|---|---|---|---|
@@ -99,12 +109,13 @@ firmware's DSP (BF §3).
 - The DSP's tick rate is twice the symbol rate: alternate ticks are zeros, so
   a symbol takes two ticks (BF §3). [FW]
 - Bits are sent least significant bit first everywhere on the Courier (BF §0,
-  §3). [FW]
+  §3); the recorded back channel's HDLC frames decode LSB first. [FW -> REC]
 - Within a tribit the first bit sent is the tribit's least significant bit:
-  inferred from "LSB first", not confirmed (BF §3). [BM]
+  inferred from "LSB first" (BF §3), and the order that decodes the
+  recording. [BM -> REC]
 - Scrambler 1 + x^-14 + x^-17, self-synchronising: output = input XOR
-  out[n-14] XOR out[n-17]; the descrambler uses the received history (BF §3).
-  [FW]
+  out[n-14] XOR out[n-17]; the descrambler uses the received history (BF §3);
+  the recording descrambles with it. [FW -> REC]
 - The shaping filter has 72 taps and its start-up lasts 17 ticks; coefficients and
   contents are unknown (BF §3). [FW]
 - Carriers by role: originate-mode transmitter 375 Hz (450 bit/s) or 350 Hz
@@ -138,22 +149,32 @@ firmware's DSP (BF §3).
   (spec "Back channel"). [OURS]
 - Our preamble: 300 ms of scrambled ones, phase and scrambler starting at
   zero; our receivers never rely on it (spec "Back channel"). [OURS]
-- Our scrambler: `modem/scramble.[ch]` reused if its V.22bis rule (invert
-  after 64 ones) can be switched off; nothing says HST has the rule, so it
-  is off (spec "Back channel"). [OURS]
-- Our receiver: 250 to 500 Hz band-pass, AGC, 32-bit NCO to baseband,
-  decimation to 1600 Hz, matched RRC, Gardner timing at 2 samples a symbol,
-  differential decisions; carrier detect with hysteresis on symbol power;
-  thresholds from simulation (spec "Back channel"). [OURS]
-- Both receivers (450 and 300) run while we hold the forward channel; before
-  agreement the locked one's bits are used, 450 preferred (spec "Back
-  channel"). [OURS]
-- The detector that starts `ANS_HST` demands a locked 8-DPSK demodulator, not
-  band energy (spec "Detecting the caller's back channel"). [OURS]
+- The recorded caller's back channel: about 110 to 120 ms of scrambled ones
+  (at least 34 descrambled ones after the descrambler's 17 bits), then
+  scrambled HDLC flags, at -12.1 dBm0 at the tap; its spectrum -2 to -5 dB
+  over 300 to 450 Hz, -13.7 dB at 475 Hz, -35 dB at 500 Hz, the best matched
+  filter an RRC of beta 0.2 to 0.35 (ours, 0.35, consistent). `sim/hstcall`'s
+  `bpre_syms` 17 sends that preamble. [REC]
+- Our receivers before the carrier is detected (0.7.3): `GAIN0` at -8 dBm0
+  (0.7.2: -20, which clipped the recorded -12 dBm0 caller), and the baseband
+  the matched filter holds from before the carrier taken to the new gain when
+  the carrier comes (0.7.2 left it at the old one). On the recording the
+  lone 450 receiver's first confirmed lock came 1.20 s after the back
+  channel's start at any level over about -23.5 dBm0, 0.35 s under; now
+  0.39 s at every level. Started afresh at 262 points through the call, the
+  detector fires within W from 49 % of them at the recorded level (0.7.2:
+  37 %). What still holds it back there is the recording's error, 6 to 8
+  degrees RMS through our receiver against the 7 degrees `HST_BRX_RMS`
+  allows a lock (Opus-coded audio; the report's own demodulator measured
+  3.5 degrees). A synthetic Courier at -6 to -12 dBm0 (`test_hst_det`
+  `courier`) fires within W from 97 % of its start phases, and within W less
+  100 ms from 93 % (0.7.2: 78 %). [OURS]
 
 ## Forward channel
 
-- Symbol rate 2400 baud, carrier 1800 Hz (BF §2). [FW]
+- Symbol rate 2400 baud, carrier 1800 Hz (BF §2); the recorded answerer's
+  forward channel too, its symbol clock locked to the network's 8 kHz.
+  [FW -> REC]
 - A secondary source agrees (2400 baud forward at 1800 Hz, 350 Hz and 300
   baud back); unverified, from a snippet of a Cloudflare-blocked page (PS
   §1.2). [PUB]
@@ -177,10 +198,15 @@ firmware's DSP (BF §3).
   above; 4800 "QAM" alone) (PS §1.1; P2 "Receiver 103 routines"). [PUB]
 - Scrambler 1 + x^-18 + x^-23 (V.32's calling-modem polynomial, "GPC"), the
   same polynomial whichever end sends, since the forward channel carries one
-  transmitter at a time (BF §2). [FW]
+  transmitter at a time (BF §2); the recorded TRN descrambles to ones with
+  it, and with no other of 48 combinations of mapping, bit order and
+  polynomial. [FW -> REC]
 - Bit order: least significant bit first (BF §2). [FW]
 - Pulse: flat out to 1100 Hz from the carrier, -3 dB at 1200 Hz from the
-  carrier, -36 dB at 1400 Hz from the carrier (BF §2). [FW]
+  carrier, -36 dB at 1400 Hz from the carrier (BF §2). The recording: flat
+  to +-1100 Hz, -4.0 / -4.3 dB at 600 / 3000 Hz, -22.8 / -21.3 dB at +-1300,
+  -34 / -26.5 dB at 400 / 3200 Hz: our beta 1/12 is a little narrower.
+  [FW -> REC]
 - So the forward channel fills about 600 to 3000 Hz and leaves the band below
   about 450 Hz free for the back channel; the two channels are kept apart by
   frequency alone, with no echo canceller (BF §2, §0). [FW]
@@ -205,10 +231,15 @@ firmware's DSP (BF §3).
   receiver (BF §2). [BM]
 - Rates we offer: forward 4800, 7200, 9600, 12000, 14400; 16800 deferred
   until a Courier recording shows its 256-point set; back 450 and 300 (SPEC
-  D2, the owner's). [OURS]
+  D2, the owner's). The public recording does not show it: through Opus
+  (some 14 dB SNR on the forward channel) the 12000, 14400 and 16800 sets
+  cannot be told apart, so 0.7.3 still does not offer 16800, though the
+  recorded Couriers offered it (rates 0xFC) and the caller asked for it
+  (0x37). [OURS]
 - Our receiver, built on `qamrx` (2400 baud, carrier 3/4): guard high-pass
   and carrier detect in 600 to 3000 Hz; AB detection on both band-edge tones
-  (600 and 3000 Hz) for 40 ms; decision-directed training on the 4 points A
+  (600 and 3000 Hz) for 40 ms, or (0.7.3) for 16 ms and then ended, as a
+  Courier's 72-symbol AB does (section `Training`); decision-directed training on the 4 points A
   to D; data once more than 3 of 8 points fall off the 4-point grid; stored
   equaliser per direction (SPEC D10, D12; spec "Forward channel: receiver").
   [OURS]
@@ -217,7 +248,8 @@ firmware's DSP (BF §3).
 
 - The Courier's forward start-up is 180 symbols, then 72, then either 200
   or 3096 (written 180 + 72 + 200 or 3096). The contents of the segments and the rule that picks the 200 or the 3096 form
-  are not known (BF §2; BF "Open questions" 1). [FW]
+  are not known (BF §2; BF "Open questions" 1). Not seen in REC (below).
+  [FW]
 - There is no in-band rate signal: the rates are agreed in the LR's 0xC0
   before the forward retrain, unlike V.32's R sequences (BF §2). [BM]
 - In the firmware, a change of rate alters the bits sent per symbol with no
@@ -226,8 +258,27 @@ firmware's DSP (BF §3).
   `TRN1 N1 Tf` (N1 = 1600 symbols, for a 16-point eye at 3200 baud), and has
   quick and full retrains and "quick turnaround" with stored echo canceller
   and equaliser (PS §1.3; P3 "Modem Training"). [PUB]
+- The recorded answerer's first training (the only one in the recording):
+  AB 72 symbols (30 ms), CD 8, then 4 symbols A C C B, then TRN, about 189
+  symbols (193 from the end of CD), then data: about 113 ms in all. HST.bis's
+  AB 72 and CD 8 (P3) with a short TRN; the [FW] 180 + 72 + 200 or 3096 was
+  not seen. The 4 symbols descramble to `01 10 01 01`; unexplained, perhaps a
+  marker. [REC]
+- Its TRN: scrambled ones under GPC, the dibits mapped by V.32's Table 4 (00
+  A, 01 B, 11 C, 10 D, the first bit the left digit) on all four points from
+  its first symbol; the scrambler is not reset at TRN but carries on from the
+  line bits of AB and CD (the descrambled bits are ones from symbol 111 with
+  CD's dibits as the history). [REC]
+- Our receiver (0.7.3) acquires on that training: a 72-symbol AB starts it
+  (`HST_FRX_AB_MIN_MS` 16), and it needs nothing of the TRN's length or its
+  scrambler's start (`test_hstcall` `fwd_to_ours`, codes 4 to 6;
+  `test_answer_hst` `courier`). `sim/hstcall`'s `courier_train` sends it
+  (`hc_ftx_courier`). [OURS]
 - We send, provisionally, V.32's segment generators with the firmware's
-  lengths (spec "Forward training"). [OURS]
+  lengths (spec "Forward training"). 0.7.3 keeps them: a Courier receiver's
+  tolerance of our 1.4 s long training is unknown, the golden files and
+  BinModem's interop rest on it; matching the recorded training (AB 72, CD
+  8, a short TRN, the scrambler carried on) is for 0.8.0. [OURS]
 
   | segment | symbols | contents |
   |---|---|---|
@@ -251,7 +302,8 @@ firmware's DSP (BF §3).
   the 4 points A to D (spec "Forward channel: receiver"). V.32's own TRN
   begins with 256 symbols on A and C alone, for V.32's receiver. The scrambler (v32tx's, `answer` 0: GPC) starts
   from zero at each training and runs on into the data (hst 15 in
-  PROGRESS.md). [OURS]
+  PROGRESS.md). The mapping is as recorded; the reset is not (the recorded
+  scrambler carries on from AB and CD, above). [OURS]
 - BinModem sends V.17's long train (section `V.17 long train`) and V.17's
   turn-off (32 symbols of ones, 48 quiet): stand-ins, not HST (BF §2). [BM]
 - The `-DHST_PROFILE_BM` test build: opening code 3 (7200), every training
@@ -468,6 +520,13 @@ LI  LR  c1  p1: len 6 "1,0,0,0,0,255"  p2: 3  p3: k = 8  p4: N401 = 0x0040 = 64
   [FW]
 - flags: bit 0 (0x01) is HST; bit 3 (0x08) is the 300 bit/s back channel; any
   other bits are unknown (BF §5). [FW]
+- On the recorded path the parameter travels in a V.42 XID, not an LR: in
+  the user data subfield (GI 0xFF, no length), a USR set with PI 0xFF =
+  "HST", then PI 0xC0, length 2, flags 0x07 and rates 0xFC (codes 2 to 7,
+  4800 to 16800), and PI 0xF1 = 0x06 (unknown). Both ends sent the same set
+  (the response's N401 aside). Flags 0x07: bit 0 HST, bits 1 and 2
+  unknown, bit 3 (back at 300) clear. Rates 0xFC: both Couriers offered
+  16800. [REC]
 - rates: a bit mask, bit n set when rate code n (2400 x n bit/s) is acceptable,
   n = 2..7. Examples: 7200 to 14400 is 0x78; 9600 only is 0x10; all six rates
   0xFC (BF §5). [FW]
@@ -478,7 +537,7 @@ LI  LR  c1  p1: len 6 "1,0,0,0,0,255"  p2: 3  p3: k = 8  p4: N401 = 0x0040 = 64
   call gets 300); the agreed rates are the AND of both masks, then AND 0xFC;
   the best rate is the highest bit set, 7 down to 2 (BF §5). [BM]
 - Our merge: rates = ours AND theirs AND 0x7C, so 16800 is never agreed (spec
-  "HST profile"). [OURS]
+  "HST profile"); 0.7.3 still so (section `Forward channel`). [OURS]
 - Our offer: flags 0x01; rates = the codes n = 2..6 with 2400 x n <=
   `max_down_bps` (0x7C at the default), because the mask governs our fast
   channel at connect; `max_up_bps` does not trim the mask and is enforced at
@@ -520,6 +579,11 @@ As responder (we answer), from Annex A.7.1 (PS §3.1):
   (BF §5). [BM]
 - A repeated LR to the originator is confirmed again in the standard layout
   (BF §5). [BM]
+- On the recorded path there is no LR on the HST channels: MNP starts in the
+  data phase, the caller's first frame an LA with N(R) 0 and credit 8 (`05
+  00 08`), 0.33 s after its back channel began. The parameters were agreed
+  in the XID (section `LR and 0xC0`). Our D18 and D19 below do not meet that
+  path; the 0.8.0 gap (section `Call start`). [REC]
 - On an HST-linked call the endpoint hunts for an LR from the first sample,
   not from `CONNECTED`; T400 and the start-stop fallback do not apply; the
   window is our training's end plus 5 s; with no LR the endpoint ends with
@@ -569,7 +633,20 @@ As responder (we answer), from Annex A.7.1 (PS §3.1):
   "Frames, data transfer"). [OURS]
 - Attention codes on HST: 0x1R asks for the forward channel at rate code R,
   0x3R asks the forward holder to change to rate R; the low nibble is the rate
-  code (BF §4, §5, §6). [FW]
+  code (BF §4, §5, §6). The recorded caller sent 0x35, 0x36 and 0x37, each
+  followed by a change of the forward constellation. [FW -> REC]
+- The recorded caller sent those three LNs all with N(SA) 1 (`06 01 35`, `06
+  01 36`, `06 01 37`, some 1.9 s apart), and the answerer carried out each.
+  Annex A steps V(SA) on each LNA, so a second LN with the same N(SA) is a
+  repeat (an LNA, nothing done). [REC]
+- Ours (0.7.3), on HST: an LN whose N(SA) is the last one taken (V(RA) - 1)
+  but whose code differs from that LN's is a new attention: acted on and
+  acknowledged, V(RA) left as it is. The same code again is a repeat, as in
+  Annex A (an LNA alone), until our own LN is acknowledged, a reversal, or
+  a change of the forward rate to other than that code's R: then the same
+  code is a new request too (the 0.7.3 review's I1; `test_ec_hst`
+  `attn_same_code`). Off HST, Annex A unchanged (`v42/mnp.c` `on_ln`;
+  `test_ec_hst` `attn_same_nsa`; `sim/mnppeer`'s `ln_nsa_fixed`). [OURS]
 - The patent's three examples of LN type octets: `atn_reverse_9600 equ 14h`
   (reversal at 9600), `atn_retrain_7200 equ 23h` (fall back to 7200 with a
   retrain), `atn_upshift_9600 equ 34h` (speed increase to 9600). The low
@@ -594,6 +671,9 @@ As responder (we answer), from Annex A.7.1 (PS §3.1):
 - BinModem sends no LT frame while a handover or rate change is waiting to
   finish (BF §4). [BM]
 - HST session defaults: window 8, max data 64, class 3 (BF §5). [BM]
+- The recorded caller's LAs carry credit 8 (`05 N(R) 08`), its first N(R) 0;
+  idle, it sent the same LA again every 1.85 s or so (harmless with our
+  "once per N(R)" rule below). [REC]
 - On HST a repeated N(R) sends us back once per N(R) value; a loss of the
   LT sent again is left to T401. Read literally, A.7.3.5 a sends us back
   at every LA the loss draws, and on the slow back channel they come one
@@ -725,6 +805,8 @@ As responder (we answer), from Annex A.7.1 (PS §3.1):
 - Upshift: decided at 10 s intervals; if signal quality is good for 90 % of
   the interval a speed-up is requested; a speed-up request is inhibited for an
   interval after a speed-down request (P2:534; PS §1.5). [PUB]
+- The recorded caller asked far faster after the connect: 0x35, 0x36, 0x37
+  about 1.9 s apart (9600 to 16800 in 4 s). [REC]
 - Downshift: whenever 15 frame errors occur within a 10 s interval that begins
   at the first error, and on "three failed attempts" to retrain within ten
   seconds (P2:536-538; PS §1.5). [PUB]
@@ -738,7 +820,8 @@ As responder (we answer), from Annex A.7.1 (PS §3.1):
   constant mark at the newly requested speed; marks are not otherwise sent,
   fill characters of a unique value fill the gaps (P2:561). [PUB]
 - In the firmware a rate change needs no new training: only the bits per
-  symbol change (BF §2, §6). [FW]
+  symbol change (BF §2, §6). Recorded: no AB, CD, TRN or gap; the
+  constellation changes 60 to 220 ms after each LN. [FW -> REC]
 - Our 0x3R as holder: finish the frame; 15 ms (36 symbols) of ones at the old
   rate; switch the encoder's rate index (scrambler, differential and trellis
   states continue); 15 ms of ones at the new rate; resume (spec "Rate
@@ -896,11 +979,22 @@ training are recorded: they precede any frame.
 
 ## Recordings
 
-None made yet. A row is added for each, with its hash; each item a recording
-settles is re-tagged `[OURS -> observed]` in its section above.
+R1 to R3 not made yet. A row is added for each, with its hash; each item a
+recording settles is re-tagged `[OURS -> observed]` in its section above.
+
+REC is public: the Retrocet 2024 recording (YouTube), a Courier
+V.Everything on a Cisco IAD2431 FXS, over PRI to Asterisk (Dialogic Diva),
+then over PRI to the answering Courier I-Modem; connected at 16800 HST.
+Asterisk recorded the caller on the left channel and the answerer on the
+right; Opus at 48 kHz stereo. The second clip holds the first (from 33.3
+ms earlier). Its audio, our cuts and our analysis tools stay out of the
+repository (third-party audio; `build/hst-recording-report.md`, untracked);
+every test written from it is synthetic, from the measured figures. Items
+it settles are tagged `[REC]` or `[X -> REC]` above.
 
 | id | date | setup | file in HSTRECS | sha256 | cut | settles |
 |---|---|---|---|---|---|---|
+| REC | 2024 (published) | public: https://www.youtube.com/watch?v=itkYiepHEJY ("US Robotics Courier HST", 30.7 s: dial to the gap before HST) and https://youtu.be/NwTigdJsMFs ("After Connecting", 34.6 s: the same, then the HST phase) | not kept | `itkYiepHEJY.webm` cbb2974f3feeff9212803c2b88524054fa34e868e4aba814f297a63c7084467c; `NwTigdJsMFs.webm` e3cb1e52b8614c2d507bb1d511835c7151df8f54054919d391705fff85b4d916 | the second clip from 19.0 s | the start-up path; back channel; forward training; XID "HST" set; LN N(SA); no LR |
 | R1 | not yet made | | | | | |
 | R2 | not yet made | | | | | |
 | R3 | not yet made | | | | | |
@@ -918,10 +1012,10 @@ and T400 (750 ms, held for an LR's start) stay as they are until R3.
 | item | provisional value | settled by |
 |---|---|---|
 | ANSam accepted by a Courier caller (Q1) | assumed | R2 |
-| the answerer's tone, gap, V.22bis stage, opening rate (Q2) | ANSam; 400 ms window; none; 9600 | R1 |
-| forward training contents and long/short rule (Q3) | V.32 S, S-bar and TRN, 180, 72, 3096 or 200 | R1, R2 |
+| the answerer's tone, gap, V.22bis stage, opening rate (Q2) | ANSam; W 650 ms (to 2000 ms on energy); none; 9600 | R1. REC: ANSam and V.8 with a V.22bis and V.42 XID stage, then 0.93 s and a blind forward start; 9600 likely; the XID path is 0.8.0 |
+| forward training contents and long/short rule (Q3) | V.32 S, S-bar and TRN, 180, 72, 3096 or 200 | R1, R2. REC: the contents and the scrambler's carrying on; a first training of AB 72, CD 8, TRN ~189 (we receive it; our own sending is for 0.8.0); the long form not seen |
 | forward pulse and level | RRC beta = 1/12 from three points | R1 |
-| back pulse, preamble, start, tribit order (Q4) | 35 % RRC; 300 ms scrambled ones; tribit LSB first | R2; R1 after a reversal |
+| back pulse, preamble, start, tribit order (Q4) | 35 % RRC; 300 ms scrambled ones; tribit LSB first | R2; R1 after a reversal. REC: the tribit order; RRC 0.2 to 0.35; a caller's preamble of 110 to 120 ms |
 | 0xC0 bits other than 0 and 3; parameter 8; the layout a Courier sends (Q5) | ignored; both offered, every layout received | R1, R2 |
 | NAK, LTA, LT1-3, LTR, LTDR ids (Q6) | counted and dropped | FIG. 5; R2 |
 | rate change without retrain: marks, state continuity (Q7) | 0x3R with 15 ms marks, 0x2R retrain, recovery | R2 |
@@ -929,7 +1023,8 @@ and T400 (750 ms, held for an LR's start) stay as they are until R3.
 | mode 2 FCS initial value and octet order; T400 (Q8) | CRC-16/ARC, low octet first; 750 ms | R3 |
 | the 300 bit/s back-channel switch (Q9) | by LR flag, after the confirming LA plus 250 ms | R2 |
 | low-band loss through ATAs (Q10) | none assumed | R2 |
-| 16800 set; the 1986 HST (Q11) | not implemented; assumed the same | out of scope |
+| 16800 set; the 1986 HST (Q11) | not implemented; assumed the same | out of scope. REC: offered (0xFC) and asked for (0x37), the set not measurable through Opus |
+| LN N(SA) on HST | a new code with the last N(SA) is a new attention (0.7.3) | REC (seen as the caller); R2 for our side's LNs to a Courier |
 | symbol rate at 9600 | 2400 baud (HST.bis's 3200 is a later modem) | R1 |
 | answer tone, 2100 or 2225 Hz | ANSam | R1, R2 |
 | the Table A.9 N401 = 256 column and `MNP_TRT_MS` | formula; 1000 ms | R3 (time to the first LA) |

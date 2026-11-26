@@ -140,6 +140,7 @@ void hc_btx_init(hc_btx *t, int bps, double level, hc_getbit_fn getbit, void *us
         t->gain[lane] = level / sqrt(e / (2.0 * T3 / 3.0));
     }
     t->lane = bps == 300;
+    t->pre = HC_BPRE;
     t->getbit = getbit; t->user = user;
 }
 
@@ -148,7 +149,7 @@ void hc_btx_start(hc_btx *t)
     t->on = 1;
     t->phase = 0;
     t->scr = 0;
-    t->npre = HC_BPRE;
+    t->npre = t->pre;
     t->next3 = 3 * t->n + HC_BSPAN * bt3(t->lane);
 }
 
@@ -379,6 +380,8 @@ void hc_ftx_rolloff(hc_ftx *t, double b)
     ftx_pulse(t, level, b);
 }
 
+void hc_ftx_courier(hc_ftx *t) { t->courier = 1; }
+
 void hc_ftx_bm(hc_ftx *t)
 {
     double K = tan(PI * 560.0 / 8000.0);
@@ -397,7 +400,7 @@ static void ftx_seg(hc_ftx *t, int seg)
 {
     t->seg = seg;
     t->left = seg >= HC_FS_S1 && seg <= HC_FS_S4 ? t->lens[seg - HC_FS_S1] : seg == HC_FS_DATA || seg == HC_FS_OFF ? 0 : 36;
-    if (seg == HC_FS_S3 && !t->v17) t->scr = 0;
+    if (seg == HC_FS_S3 && !t->v17 && !t->courier) t->scr = 0;
     if (seg == HC_FS_S2 && t->v17) t->scr = 0x2ECDD5u;    /* `V.17 long train` */
 }
 
@@ -406,6 +409,7 @@ void hc_ftx_train(hc_ftx *t, int code, int long_form, int v17)
     t->v17 = v17;
     t->code = t->next_code = code < 2 ? 2 : code > 6 ? 6 : code;
     if (v17) { t->lens[0] = 256; t->lens[1] = 2976; t->lens[2] = 64; t->lens[3] = 48; }
+    else if (t->courier) { t->lens[0] = HC_CR_AB; t->lens[1] = HC_CR_CD; t->lens[2] = HC_CR_TRN; t->lens[3] = 0; }
     else { t->lens[0] = 180; t->lens[1] = 72; t->lens[2] = long_form ? 3096 : 200; t->lens[3] = 0; }
     t->bridge = 0;
     t->on = 1;
@@ -480,6 +484,13 @@ static void ftx_symbol(hc_ftx *t, double *x, double *y)
         break;
     default:
         break;
+    }
+    if (st >= 0 && t->courier && !t->v17 && (t->seg == HC_FS_S1 || t->seg == HC_FS_S2)) {
+        /* the Courier's AB and CD go into the scrambler's line bits, as
+         * Table 4's dibits (00 A, 01 B, 11 C, 10 D, the first bit the left
+         * digit): TRN's scrambler carries on from them [REC] */
+        static const int t4[4] = { 0, 1, 3, 2 };
+        t->scr = t->scr << 2 | (uint32_t)t4[st];
     }
     if (st >= 0) {
         *x = t->pts[0][st_lab[st]][0]; *y = t->pts[0][st_lab[st]][1];
@@ -1006,6 +1017,7 @@ void hstcall_init(hstcall_t *c, const hstcall_cfg *cfg)
     hc_btx_init(&c->btx, c->back_bps, c->level, hc_bit, c);
     hc_ftx_init(&c->ftx, c->level, hc_bit, c);
     if (c->cfg.bm_training) hc_ftx_bm(&c->ftx);
+    if (c->cfg.courier_train) hc_ftx_courier(&c->ftx);
     hc_frx_init(&c->frx, c->fwd_code);
     hc_brx_init(&c->brx, c->cfg.back_bps);
     memset(&m, 0, sizeof m);
@@ -1018,6 +1030,7 @@ void hstcall_init(hstcall_t *c, const hstcall_cfg *cfg)
     m.t401_ms = 3000; m.n400 = 15;           /* BinModem's HST session [BM] */
     m.confirm_la_standard = 1;                /* [BM] */
     m.drop_ln = c->cfg.drop_ln;
+    m.ln_nsa_fixed = c->cfg.ln_nsa_fixed;
     m.seed = 0x48535443u;
     mnppeer_init(&c->mnp, &m);
 }
@@ -1060,6 +1073,7 @@ static int tone_block(hstcall_t *c, double x)
 static void start_back(hstcall_t *c, int code)
 {
     hc_btx_init(&c->btx, c->back_bps, c->level, hc_bit, c);
+    if (c->cfg.bpre_syms > 0) c->btx.pre = c->cfg.bpre_syms;
     hc_btx_start(&c->btx);
     hc_frx_set_code(&c->frx, code);
     frx_listen(&c->frx);

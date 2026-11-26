@@ -365,36 +365,42 @@ Measured against `sim/hstcall` only; no real HST modem has called it yet.
   caller 50 to 500 ms later [OURS: the bound]. The lines: 450 and 300 bit/s
   at -9 / -26 / -43 dBm0, +-7 Hz, +-100 ppm (24 a speed); one 20 or 40 ms
   dropout 100-300 ms into the preamble at +-7 Hz (84 a speed); a 300 Hz
-  4th-order high-pass, a line's lower edge (4 a speed): 1568 lines. The
-  latest detections, ms from the wait's start:
+  4th-order high-pass, a line's lower edge (4 a speed); and (0.7.3) a
+  Courier's back channel as recorded (hst-facts.md `Back channel`, [REC]):
+  450 with a 17-symbol preamble at -6 / -9 / -12 dBm0, the four offsets,
+  two seeds (24): 1736 lines. The latest detections, ms from the wait's
+  start (0.7.3, with the back receivers' baseband rescaled when the carrier
+  comes; 0.7.2's figures where they differ in brackets):
 
-  | caller later by | 450 levels | 300 levels | 450 dropout | 300 dropout | 450 edge | 300 edge |
-  |---|---|---|---|---|---|---|
-  | 0 ms | 430 | 690 | 690 | 1440 | 860 | 580 |
-  | 50 ms | 940 | 1400 | 740 | 1060 | 900 | 630 |
-  | 100 ms | 650 | 1400 | 790 | 1110 | 940 | 700 |
-  | 200 ms | 690 | 970 | 890 | 1220 | 1060 | 800 |
-  | 300 ms | 1230 | 1040 | 990 | 1740 | 1140 | 880 |
-  | 400 ms | 950 | 1400 | 1090 | 1410 | 1260 | 980 |
-  | 500 ms | 950 | 1850 | 1190 | 1510 | 1360 | 1080 |
+  | caller later by | 450 levels | 300 levels | 450 dropout | 300 dropout | 450 edge | 300 edge | 450 Courier |
+  |---|---|---|---|---|---|---|---|
+  | 0 ms | 430 | 690 | 690 | 1440 | 860 | 580 | 410 |
+  | 50 ms | 940 | 1400 | 740 | 1060 | 900 | 630 | 740 |
+  | 100 ms | 650 | 1400 | 790 | 1110 | 940 | 700 | 940 |
+  | 200 ms | 690 | 970 | 890 | 1220 | 1060 | 800 | 680 |
+  | 300 ms | 1230 | 1510 (1040) | 990 | 1740 | 1140 | 880 | 940 |
+  | 400 ms | 940 (950) | 1400 | 1090 | 1410 | 1240 (1260) | 980 | 950 |
+  | 500 ms | 940 (950) | 1850 | 1190 | 1510 | 1360 | 1080 | 950 |
 
   (A lock lost and won again in the acquisition makes the latest jump: it
   is not monotonic in the delay.) The slack of a line is the time from its
   detection to the end of the wait that would have applied to it: the
   first ms from W on without the energy stage, or the cap. Lines with less
-  than 100 ms of slack (missed included), of 1568:
+  than 100 ms of slack (missed included), of 1736 (0.7.3; 0.7.2's 1568
+  lines without the Courier's gave 466 450 249 233 36 20 at a cap of 1500,
+  464 448 240 224 16 0 at 2000, the same least slack):
 
   | cap | W 400 | W 450 | W 500 | W 550 | W 600 | W 650 ... 1000 | least slack at W 650 |
   |---|---|---|---|---|---|---|---|
-  | 1500 | 466 | 450 | 249 | 233 | 36 | 20 | -350 (missed) |
-  | 1600 | 465 | 449 | 241 | 225 | 28 | 12 | -250 (missed) |
-  | 1700 | 465 | 449 | 241 | 225 | 19 | 3 | -150 (missed) |
-  | 1800 | 465 | 449 | 241 | 225 | 19 | 3 | -50 (missed) |
-  | 1900 | 464 | 448 | 240 | 224 | 18 | 2 | 50 |
-  | 2000 | 464 | 448 | 240 | 224 | 16 | 0 | 150 |
+  | 1500 | 516 | 500 | 276 | 260 | 39 | 23 | -350 (missed) |
+  | 1600 | 514 | 498 | 266 | 250 | 29 | 13 | -250 (missed) |
+  | 1700 | 513 | 497 | 265 | 249 | 19 | 3 | -150 (missed) |
+  | 1800 | 513 | 497 | 265 | 249 | 19 | 3 | -50 (missed) |
+  | 1900 | 512 | 496 | 264 | 248 | 18 | 2 | 50 |
+  | 2000 | 512 | 496 | 264 | 248 | 16 | 0 | 150 |
 
   W 650 with a cap of 2000 ms is the least pair that leaves every line
-  100 ms or more; the least is 150 ms (the 300 bit/s caller at -26 dBm0 500
+  100 ms or more (0.7.3: the Courier's lines too, so W stays); the least is 150 ms (the 300 bit/s caller at -26 dBm0 500
   ms late, found at 1850 ms). The cap is at the ceiling the controller set
   (2000 ms): a caller slower than 500 ms, or a dropout later in a slow
   start, can still meet it. W 400 leaves lines short at any cap, since
@@ -675,6 +681,18 @@ Measured against `sim/hstcall` only; no real HST modem has called it yet.
   found it). Every end has its `v90m_get_diag` error: `ANS_ERR_HST_LINK`
   (no MNP link in 15 s), `ANS_ERR_HST_CARRIER` (the watchdogs' LOST),
   `ANS_ERR_RETRAINS` (RETRAIN_FAILED), 0 for an orderly cleardown.
+- **A dropout in a long AB starts the forward receiver** (0.7.3, the
+  review's M1): the AB stage starts the receiver when AB ends after 16 ms
+  (`HST_FRX_AB_MIN_MS`, a Courier's 72-symbol AB), and a silent dropout in
+  a long AB ends it too: the receiver starts in the gap. Over a sweep of
+  our 180-symbol AB with a dropout of 5 to 40 ms at 40 to 76 ms into the
+  training (codes 4 and 6, 208 cells x 6 line variants), runs that reach
+  data clean went from 661 (0.7.2, which restarted AB and often never
+  started) to 1080 of 1248, but runs that reach data with a burst of bit
+  errors from 3 to 118: 10 ms dropouts at 52 to 58 ms enter data at some
+  139 ms with errors MNP takes back. Requiring AB to end into CD (power
+  held) would give the gain up with the burst; holding the AB count
+  through a short power drop instead is for 0.8.0.
 - **AB louder than the data** (the Task 16 review's Minor F): the forward
   receiver's level, against which a fade or a loss is judged, is taken
   again where data mode begins, so a far end whose AB is up to 4 dB over

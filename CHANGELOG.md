@@ -8,6 +8,58 @@ change is listed here. Rebuild against the new header with every version;
 "Simulation and own answerer only" means: tried against simulated lines and
 this library's own answering modem, never against a real modem or server.
 
+## 0.7.3 (2026-11-26)
+
+HST fixes from a public recording of a real call (a Courier V.Everything
+calling a Courier I-Modem at 16800 HST, Retrocet 2024; docs/history/
+hst-facts.md, section `Recordings`). The ABI of 0.7.2 kept: no struct
+changes size, `v90m_mem_size()` unchanged (x86-64 106320, 32-bit ARM
+106016), the SONAME stays `libv90modem.so.0.7`. Simulation and the
+recording's measured figures only; no real HST modem has called us.
+
+Changed, behaviour (HST calls only, `V90M_MOD_HST` offered and linked):
+- MNP on HST: an LN with the N(SA) of the last one taken but a new
+  attention code is now a new attention, acted on and acknowledged. The
+  recorded Courier sent its upshifts 0x35, 0x36 and 0x37 all with N(SA) 1;
+  0.7.2 took the second and third for repeats (an LNA, no switch). The same
+  code again is still a repeat, until the state it asked for has changed
+  another way (our own LN acknowledged, a reversal, a retrain or switch to
+  another rate): then it is a new request too. Off HST nothing changes.
+- The forward receiver starts on a short AB: 16 ms of it, then its end (a
+  Courier's AB is 72 symbols, 30 ms), besides 40 ms as before. It reaches
+  data on the recorded Courier's training (AB 72, CD 8, TRN 192, the
+  scrambler carried on from AB and CD) at 9600 to 14400; 0.7.2 never
+  started on it. Longer ABs (ours, V.17's) start at 40 ms as before, to the
+  sample.
+- The back receivers (and so `ANS_HST_WAIT`'s detector): their gain before
+  a carrier is set for -8 dBm0 (-20 before), and what their matched filter
+  holds from before the carrier is taken to the carrier's gain when it
+  comes. A caller louder than -20 dBm0 (the recorded one: -12) failed its
+  first acquisition more often than not; on the recording the first lock
+  came 1.20 s after the back channel's start, now 0.39 s, at any level.
+  No earlier test output, replay or bench hash changes. In `make
+  hst-wsize` the latest detection of one 300 bit/s line (levels, the
+  caller 300 ms late) came 470 ms later (1510 ms), still within the
+  2000 ms cap with 490 ms of slack; W stays 650 ms (to 2000 on energy),
+  every line, the Courier's short preamble added, keeping 100 ms
+  (docs/limits.md).
+
+Not changed (for 0.8.0, docs/history/hst-facts.md):
+- Our own forward training (180 + 72 + 3096 or 200, the scrambler from
+  zero): the recorded one is shorter, but a Courier's tolerance of ours is
+  unknown.
+- 16800: still not offered (rates mask 0x7C); the recorded Couriers
+  offered it (0xFC) but its set cannot be measured through the recording.
+- The recorded start-up (V.8, V.22bis, a V.42 XID carrying a USR "HST"
+  set, a DM, then HST with no LR) is not followed: such a caller gets a
+  V.22bis LAPM call from us, as in 0.7.0.
+
+Tests and tools: `sim/mnppeer` `ln_nsa_fixed`; `sim/hstcall`
+`ln_nsa_fixed`, `bpre_syms`, `courier_train` (`hc_ftx_courier`); new cases
+test_ec_hst `attn_same_nsa`, test_hstcall `fwd_to_ours` (the Courier's
+training), test_hst_det `courier`, test_answer_hst `courier`; `hst-scan
+-f` reports a short AB's real start.
+
 ## 0.7.2 (2026-11-26)
 
 Changed, behaviour (answering with `V90M_MOD_K56` only):
