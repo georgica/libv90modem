@@ -196,15 +196,19 @@ typedef enum {
 #define V90M_MOD_HST      0x0400u
 /* Bits 0-15 of .modulations are modulations (V90M_MOD_*); bits 16 and up
  * are options (V90M_OPT_*), never modulations. */
-/* Not a modulation: an option bit in .modulations. Answering, V.34 (and
- * V.34 selected by a V.90 caller's INFO1a): by default our MP's maximum
- * transmit rate is the lower of max_down_bps and the caller's own
+/* Not a modulation: an option bit in .modulations, off by default.
+ * Answering, V.34 (and V.34 selected by a V.90 caller's INFO1a): cap our
+ * V.34 transmit at the caller's own INFO1 projection. Our MP's maximum
+ * transmit rate is then the lower of max_down_bps and the caller's
  * projection for it (INFO1c, or INFO1a bits 30:33, at the symbol rate in
  * use), at start-up and at every retrain; V.34 takes the lower of the two
  * MPs, so a caller whose MP asks for more than its own line probe gets
- * what the probe said. This bit turns that off: our MP then offers
- * max_down_bps (or all the engine can), as before 0.7.0. Calling: ignored. */
-#define V90M_OPT_V34_NO_TX_CAP 0x10000u
+ * what the probe said. Without it our MP offers max_down_bps (or all the
+ * engine can), as in 0.6. Meant to be set per call by a host that has seen
+ * a caller's box ask above its own projection and fail error control
+ * (v90m_stats.v34_proj_bps / v34_ask_bps; docs/answering.md). Calling:
+ * ignored. */
+#define V90M_OPT_V34_TX_CAP 0x10000u
 
 /* the modulation of a connection (v90m_state.modulation) */
 typedef enum {
@@ -415,6 +419,15 @@ typedef struct {
                                    or the far end's) (answering: V.34, V.90, V.92, x2, K56flex; calling:
                                    V.32bis, V.34, V.90, V.92) */
     unsigned   reversals;       /* (appended) HST: channel reversals, this call; 0 otherwise */
+    /* (appended, 0.7.0) answering, V.34 (and V.34 selected by a V.90
+     * caller's INFO1a), our transmit direction, from the last Phase 2 and
+     * Phase 4 (kept after the end, until v90m_reset); all 0 on any other
+     * call, calling, or before V.34 training began: */
+    int        v34_proj_bps;    /* the caller's own projection, bit/s (2400 x INFO1c / INFO1a
+                                   bits 30:33 at the symbol rate in use); 0 = none */
+    int        v34_ask_bps;     /* the caller's MP's maximum, bit/s; 0 until its MP came */
+    int        v34_capped;      /* 1: V90M_OPT_V34_TX_CAP lowered our MP's offer below what it
+                                   would have been without it (v34_proj_bps below our ceiling) */
 } v90m_stats;
 void     v90m_get_stats(const v90m_t *m, v90m_stats *st);
 

@@ -11,11 +11,6 @@
 #                                     trace that differs; only the sets REF's
 #                                     own proof has (hst: -H, new in 0.7.0)
 #
-# Every set runs with -C (V.34 transmit not capped at the caller's INFO1
-# projection, new in 0.7.0): the recordings were made before the cap, and
-# the echo they hold is of the MP sent then. (diff: with -C only where REF's
-# tool has it.)
-#
 # RECS (default /home/georgica/sync-build/live-050) holds the recordings; they
 # are private and never in the repository: test/golden/recordings.sha256 is
 # checked first. V90M_NO_RECS=1 skips the proof (exit 0). BUILD (default
@@ -35,7 +30,6 @@ if [ "${1:-}" = --job ]; then
     hst) o="-H" ;;
     *) exit 2 ;;
     esac
-    o="$o ${RP_NOCAP:-}"
     w=$RP_OUT/$set/$rec.d
     mkdir -p "$w" || exit 2
     if [ "$RP_USEB" = 1 ]; then b="-b $RP_OUT/$set/$rec.bits"; else b=; fi
@@ -93,7 +87,7 @@ run_all() {
     rm -rf "$2"; mkdir -p "$2" || exit 1
     for s in $SETS; do mkdir -p "$2/$s"; done
     for s in $SETS; do for r in $RECLIST; do echo "$s $r"; done; done |
-        RP_TOOL=$1 RP_OUT=$2 RP_USEB=$3 RP_NOCAP=${4:-} RP_RECS=$RECS xargs -P "$JOBS" -L 1 sh "$SELF" --job ||
+        RP_TOOL=$1 RP_OUT=$2 RP_USEB=$3 RP_RECS=$RECS xargs -P "$JOBS" -L 1 sh "$SELF" --job ||
         { echo "replay proof: a job failed to run"; exit 1; }
     if [ -n "$(find "$2" -name '*.timeout' | head -1)" ]; then
         echo "replay proof: replays timed out:"; find "$2" -name '*.timeout' | sort | head -10 | sed 's/^/  /'
@@ -110,7 +104,7 @@ hashes() {
 
 make -s "$BUILD/v90m-replay" BUILD="$BUILD" >&2 || { echo "replay proof: build failed"; exit 1; }
 OUT=$BUILD/replay
-run_all "$BUILD/v90m-replay" "$OUT" 1 -C
+run_all "$BUILD/v90m-replay" "$OUT" 1
 hashes "$OUT" > "$BUILD/replay.sha256.now"
 
 case $mode in
@@ -145,8 +139,7 @@ diff)
     SETS=$rs
     NRUNS=$(( $(echo "$RECLIST" | wc -l) * $(echo $SETS | wc -w) ))
     ROUT=$rd/out
-    if grep -q '"-C"' "$rd/tools/v90m_replay.c" 2>/dev/null; then rc=-C; else rc=; fi
-    run_all "$rd/build/v90m-replay" "$ROUT" 0 $rc
+    run_all "$rd/build/v90m-replay" "$ROUT" 0
     hashes "$ROUT" > "$rd/hashes"
     nd=0
     for s in $SETS; do for r in $RECLIST; do

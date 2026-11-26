@@ -8,13 +8,10 @@
 # data mode (the recording modem's own data bits), except x2b: recorded
 # before the fixes of 2026-11-16 for that modem, it is answered differently
 # from 18.4 s on, and goes on to connect at V.34 as the modem does today.
-# All were recorded before 0.7.0's V.34 transmit cap: -C replays them
-# without it (with it our MP differs from the one sent, and the echo the
-# recording holds no longer matches).
-cxa.raw.xz   -C -9 -u 33600 modulation 7, 50666 bit/s down, 25333 up   Conexant CX93001 (USB), AT+PIG=0          2026-11-16
-v34a.raw.xz  -C             modulation 5, 31200 bit/s down, 28800 up   Conexant CX93001 (USB), V.34 forced       2026-11-15
-v21a.raw.xz  -C             modulation 1, 300 bit/s down, 300 up       Conexant CX93001 (USB), V.21 forced       2026-11-15
-usr7.raw.xz  -C -9          modulation 7, 54666 bit/s down, 40000 up   U.S. Robotics 5686, firmware 5.4.62       2026-11-16
-usr6.raw.xz  -C -9 -u 32000 modulation 7, 54666 bit/s down, 32000 up   U.S. Robotics 5686, firmware 5.4.62       2026-11-16
-x2r2.raw.xz  -C -9 -u 33600 modulation 4, 54666 bit/s down, 28800 up   U.S. Robotics 56K of 1998, flash 5.1.4    2026-11-16
-x2b.raw.xz   -C -9 -u 33600 modulation 5, 28800 bit/s down, 28800 up   U.S. Robotics 56K of 1998, flash 5.1.4    2026-11-16
+cxa.raw.xz   -9 -u 33600   modulation 7, 50666 bit/s down, 25333 up   Conexant CX93001 (USB), AT+PIG=0          2026-11-16
+v34a.raw.xz                modulation 5, 31200 bit/s down, 28800 up   Conexant CX93001 (USB), V.34 forced       2026-11-15
+v21a.raw.xz                modulation 1, 300 bit/s down, 300 up       Conexant CX93001 (USB), V.21 forced       2026-11-15
+usr7.raw.xz  -9            modulation 7, 54666 bit/s down, 40000 up   U.S. Robotics 5686, firmware 5.4.62       2026-11-16
+usr6.raw.xz  -9 -u 32000   modulation 7, 54666 bit/s down, 32000 up   U.S. Robotics 5686, firmware 5.4.62       2026-11-16
+x2r2.raw.xz  -9 -u 33600   modulation 4, 54666 bit/s down, 28800 up   U.S. Robotics 56K of 1998, flash 5.1.4    2026-11-16
+x2b.raw.xz   -9 -u 33600   modulation 5, 28800 bit/s down, 28800 up   U.S. Robotics 56K of 1998, flash 5.1.4    2026-11-16

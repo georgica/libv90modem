@@ -260,11 +260,11 @@ static void test_errors(void)
         bad = c; bad.max_up_bps = -1;      CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
         bad = c; bad.echo_delay = -2;      CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
         bad = c; bad.modulations |= 0x800; CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);   /* 0x100 is x2, 0x200 K56flex, 0x400 HST now */
-        /* the V.34 transmit cap's switch: an option bit, not a modulation */
-        bad = c; bad.modulations = V90M_OPT_V34_NO_TX_CAP; CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
-        bad = c; bad.modulations |= V90M_OPT_V34_NO_TX_CAP;
+        /* the V.34 transmit cap (opt-in): an option bit, not a modulation */
+        bad = c; bad.modulations = V90M_OPT_V34_TX_CAP; CHECK(v90m_create(&bad, &err) == NULL); CHECK_EQ_I(err, V90M_EINVAL);
+        bad = c; bad.modulations |= V90M_OPT_V34_TX_CAP;
         m = v90m_create(&bad, &err); CHECK(m != NULL); CHECK_EQ_I(err, V90M_OK); v90m_destroy(m);
-        bad.role = V90M_ROLE_ORIGINATE; bad.modulations = V90M_MOD_V34 | V90M_OPT_V34_NO_TX_CAP;     /* calling: ignored */
+        bad.role = V90M_ROLE_ORIGINATE; bad.modulations = V90M_MOD_V34 | V90M_OPT_V34_TX_CAP;     /* calling: ignored */
         m = v90m_create(&bad, &err); CHECK(m != NULL); CHECK_EQ_I(err, V90M_OK); v90m_destroy(m);
 
         m = v90m_init(mem.b, sizeof mem.b, &c, &err);
@@ -290,6 +290,7 @@ static void test_errors(void)
         v90m_get_stats(m, &sx);
         CHECK_EQ_I(sx.snr_db10, -1); CHECK_EQ_I(sx.rtd, -1); CHECK_EQ_I(sx.echo_delay, -1);
         CHECK_EQ_I(sx.retrains, 0); CHECK_EQ_I(sx.renegotiations, 0); CHECK_EQ_I(sx.reversals, 0);
+        CHECK_EQ_I(sx.v34_proj_bps, 0); CHECK_EQ_I(sx.v34_ask_bps, 0); CHECK_EQ_I(sx.v34_capped, 0);
         v90m_destroy(m);
     }
     v90m_destroy(NULL);
@@ -669,6 +670,8 @@ static void test_originate(void)
                 CHECK(strcmp(got_c, "from the answerer") == 0);
                 CHECK(strcmp(got_a, "from the caller") == 0);
                 CHECK(st.snr_db10 > 300); CHECK(st.rtd >= 0 && st.rtd < 40); CHECK_EQ_I(st.retrains, 0);
+                { v90m_stats sv; v90m_get_stats(an.m, &sv);     /* not V.34: none */
+                  CHECK_EQ_I(sv.v34_proj_bps, 0); CHECK_EQ_I(sv.v34_ask_bps, 0); CHECK_EQ_I(sv.v34_capped, 0); }
                 CHECK_EQ_I(cl.ev[0], V90M_EV_CONNECTED);
                 CHECK_EQ_I(v90m_cleardown(cl.m), V90M_ESTATE);     /* V.32bis has no cleardown in data mode */
                 CHECK_EQ_I(v90m_retrain(cl.m), V90M_OK);            /* 7.1 */
@@ -736,6 +739,11 @@ static void test_originate(void)
                 CHECK(strcmp(got_c, "from the answerer") == 0);
                 CHECK(strcmp(got_a, "from the caller") == 0);
                 CHECK(st.snr_db10 > 300); CHECK(st.rtd >= 0 && st.rtd < 40); CHECK_EQ_I(st.retrains, 0);
+                /* our V.34 transmit direction: the caller's projection and its
+                 * MP's ask, answering only; the cap is off by default */
+                CHECK_EQ_I(g1.v34_proj_bps, 0); CHECK_EQ_I(g1.v34_ask_bps, 0); CHECK_EQ_I(g1.v34_capped, 0);
+                CHECK(g2.v34_proj_bps >= 24000 && g2.v34_proj_bps <= 33600 && g2.v34_proj_bps % 2400 == 0);
+                CHECK(g2.v34_ask_bps >= sa.tx_bps); CHECK_EQ_I(g2.v34_capped, 0);
                 CHECK_EQ_I(cl.ev[0], V90M_EV_CONNECTED);
                 CHECK_EQ_I(v90m_retrain(cl.m), V90M_OK);            /* 11.5.1.1 */
                 nc = na = 0;

@@ -1,7 +1,7 @@
 /* v90m-fields: what the calling modem of a recorded call sent, field by
  * field and phase by phase, as the library's answering side decodes it.
  *
- *   v90m-fields [-a] [-9] [-C] [-u BPS] [-d BPS] [-l DBM0] [-e SAMPLES] [-P CODE] RECORDING
+ *   v90m-fields [-a] [-9] [-u BPS] [-d BPS] [-l DBM0] [-e SAMPLES] [-P CODE] RECORDING
  *
  * The options and the recording format are v90m-replay's (tools/README.md):
  * the answering modem is set up as the recording modem was and run over the
@@ -64,7 +64,6 @@ static int level_rms(int dbm0)
     return (int)v;
 }
 
-static int opt_nocap;   /* -C: as v90m-replay's */
 static int opt_alaw, opt_v92, opt_dbm0 = -12, opt_up, opt_down = 56000, opt_echo = -1, opt_code;
 static int ones(void *u) { (void)u; return 1; }
 static void drop(void *u, int b) { (void)u; (void)b; }
@@ -437,8 +436,7 @@ static void watch(answer_t *a, long i)
 static void configure(v90m_cfg *c, int lin)
 {
     v90m_cfg_default(c);
-    c->modulations = V90M_MOD_V21 | V90M_MOD_V22 | V90M_MOD_V32BIS | V90M_MOD_V34 | V90M_MOD_V90 | (opt_v92 ? V90M_MOD_V92 : 0)
-                     | (opt_nocap ? V90M_OPT_V34_NO_TX_CAP : 0);
+    c->modulations = V90M_MOD_V21 | V90M_MOD_V22 | V90M_MOD_V32BIS | V90M_MOD_V34 | V90M_MOD_V90 | (opt_v92 ? V90M_MOD_V92 : 0);
     c->tx_level = level_rms(opt_dbm0);
     c->max_down_bps = opt_down;
     c->max_up_bps = opt_up ? opt_up : opt_v92 ? 48000 : 33600;
@@ -462,7 +460,6 @@ int main(int argc, char **argv)
         const char *o = argv[arg];
         if (!strcmp(o, "-a")) opt_alaw = 1;
         else if (!strcmp(o, "-9")) opt_v92 = 1;
-        else if (!strcmp(o, "-C")) opt_nocap = 1;
         else if (arg + 1 < argc && !strcmp(o, "-u")) opt_up = atoi(argv[++arg]);
         else if (arg + 1 < argc && !strcmp(o, "-d")) opt_down = atoi(argv[++arg]);
         else if (arg + 1 < argc && !strcmp(o, "-l")) opt_dbm0 = atoi(argv[++arg]);
@@ -471,7 +468,7 @@ int main(int argc, char **argv)
         else break;
     }
     if (arg >= argc || !(f = fopen(argv[arg], "rb"))) {
-        fprintf(stderr, "usage: v90m-fields [-a] [-9] [-C] [-u BPS] [-d BPS] [-l DBM0] [-e SAMPLES] [-P CODE] RECORDING\n");
+        fprintf(stderr, "usage: v90m-fields [-a] [-9] [-u BPS] [-d BPS] [-l DBM0] [-e SAMPLES] [-P CODE] RECORDING\n");
         return 2;
     }
     len = (long)fread(file, 1, sizeof file, f);

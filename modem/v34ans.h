@@ -31,8 +31,8 @@ typedef struct {
     int x2;                 /* offer x2 in Phase 2 (p2ans_cfg.x2): V.8 made our JM x2's */
     uint8_t k56;            /* K56flex was agreed in V.8bis (answer_t.k56_agreed): Phase 2
                                (p2ans_cfg.k56) may flag INFO1a, first and in a retrain */
-    uint8_t no_tx_cap;      /* 1: our MP's transmit ceiling is max_tx_rate alone, not capped
-                               at the caller's INFO1c / INFO1a projection (v34_tx_ceiling) */
+    uint8_t tx_cap;         /* 1: our MP's transmit ceiling capped at the caller's INFO1c /
+                               INFO1a projection (v34_tx_ceiling); 0: max_tx_rate alone */
 } v34ans_cfg;
 
 typedef enum {

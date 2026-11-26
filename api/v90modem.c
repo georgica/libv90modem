@@ -104,7 +104,7 @@ void v90m_cfg_default(v90m_cfg *cfg)
 static int check_cfg(const v90m_cfg *c)
 {
     if (c->role != V90M_ROLE_ANSWER && c->role != V90M_ROLE_ORIGINATE) return V90M_EINVAL;
-    if (c->modulations & ~(V90M_MOD_ALL | V90M_OPT_V34_NO_TX_CAP)) return V90M_EINVAL;
+    if (c->modulations & ~(V90M_MOD_ALL | V90M_OPT_V34_TX_CAP)) return V90M_EINVAL;
     if (c->max_tx_code < 0 || c->max_tx_code > 31 || c->tx_level < 0 || c->tx_level > V90M_TX_LEVEL_MAX
         || c->max_down_bps < 0 || c->max_up_bps < 0 || c->echo_delay < -1)
         return V90M_EINVAL;
@@ -117,7 +117,7 @@ static int check_cfg(const v90m_cfg *c)
     if ((c->modulations & V90M_MOD_K56) && !(c->modulations & V90M_MOD_V34)) return V90M_ENOTSUP;
     if (c->role == V90M_ROLE_ORIGINATE) {
         if (!(c->modulations & V90M_MOD_ORIG)) return V90M_ENOTSUP;
-        if (c->modulations & ~(V90M_MOD_ORIG | V90M_OPT_V34_NO_TX_CAP)) return V90M_ENOTSUP;     /* the option: ignored */
+        if (c->modulations & ~(V90M_MOD_ORIG | V90M_OPT_V34_TX_CAP)) return V90M_ENOTSUP;     /* the option: ignored */
         /* V.92 is V.90's start-up with PCM upstream on top */
         if ((c->modulations & V90M_MOD_V92) && !(c->modulations & V90M_MOD_V90)) return V90M_ENOTSUP;
     } else {
@@ -180,7 +180,7 @@ static void setup(v90m_t *m, const v90m_cfg *cfg)
         memset(&ac, 0, sizeof ac);
         ac.level = cfg->tx_level;
         ac.modes = modes_of(cfg->modulations);
-        if (cfg->modulations & V90M_OPT_V34_NO_TX_CAP) ac.modes |= ANS_MODE_V34_NO_TX_CAP;
+        if (cfg->modulations & V90M_OPT_V34_TX_CAP) ac.modes |= ANS_MODE_V34_TX_CAP;
         ac.getbit = cfg->getbit;
         ac.putbit = cfg->putbit;
         ac.user = cfg->user;
@@ -489,6 +489,8 @@ void v90m_get_stats(const v90m_t *m, v90m_stats *st)
         st->echo_delay = answer_echo_delay(a);
         st->retrains = (unsigned)a->retrains;
     }
+    st->v34_proj_bps = st->v34_ask_bps = st->v34_capped = 0;
+    if (!orig) answer_v34_tx_cap(&m->u.a, &st->v34_proj_bps, &st->v34_ask_bps, &st->v34_capped);
     if (st->snr_db10 < 0) st->snr_db10 = m->last_snr;
     if (st->rtd < 0) st->rtd = m->last_rtd;
 }

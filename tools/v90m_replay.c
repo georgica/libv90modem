@@ -2,7 +2,7 @@
  * it made of it, phase by phase. The tool to run on a recording that comes
  * with a bug report (README: "Reporting a bug").
  *
- *   v90m-replay [-a] [-9] [-x] [-k] [-B] [-H] [-M] [-F] [-C] [-u BPS] [-d BPS] [-l DBM0 | -r RMS] [-e SAMPLES] [-P CODE] [-s SAMPLE] [-b FILE] RECORDING
+ *   v90m-replay [-a] [-9] [-x] [-k] [-B] [-H] [-M] [-F] [-u BPS] [-d BPS] [-l DBM0 | -r RMS] [-e SAMPLES] [-P CODE] [-s SAMPLE] [-b FILE] RECORDING
  *
  *   -a          A-law line (mu-law otherwise)
  *   -9          V.92 offered (PCM upstream up to 48000 bit/s unless -u)
@@ -34,11 +34,6 @@
  *               length, address, control and frame type (SABME, UA, I with
  *               N(S) / N(R), RR, XID, ...), and whether its FCS (16 or
  *               32 bits) held; a count of them at the end
- *   -C          V.34: our transmit not capped at the caller's own INFO1c /
- *               INFO1a projection (V90M_OPT_V34_NO_TX_CAP), as before 0.7.0:
- *               for a recording made before the cap (else our MP differs
- *               from the one sent, and the echo in the recording is of the
- *               other)
  *   -u, -d BPS  upstream / downstream rate ceilings (33600 or 48000; 56000)
  *   -l DBM0     transmit level (default -12); a decimal such as -14.4 is
  *               accepted, to 0.01 dB (the library's level is an rms value,
@@ -329,7 +324,6 @@ static void hst_report(const v90m_state *st)
     if (H.det) printf("HST: reversals %u; the end %d\n", H.reversals, (int)st->end);
 }
 
-static int opt_nocap;   /* -C */
 static int opt_alaw, opt_v92, opt_x2, opt_k56, opt_bell, opt_hst, opt_hund = -1200, opt_up, opt_down = 56000, opt_echo = -1, opt_code;
 static long opt_rms;    /* -r, 0 = from opt_hund */
 
@@ -338,7 +332,7 @@ static void configure(v90m_cfg *c, int lin)
     v90m_cfg_default(c);
     c->modulations = V90M_MOD_V21 | V90M_MOD_V22 | V90M_MOD_V32BIS | V90M_MOD_V34 | V90M_MOD_V90 | (opt_v92 ? V90M_MOD_V92 : 0)
                      | (opt_x2 ? V90M_MOD_X2 : 0) | (opt_k56 ? V90M_MOD_K56 : 0)
-                     | (opt_bell ? V90M_MOD_BELL103 | V90M_MOD_BELL212A : 0) | (opt_hst ? V90M_MOD_HST : 0) | (opt_nocap ? V90M_OPT_V34_NO_TX_CAP : 0);
+                     | (opt_bell ? V90M_MOD_BELL103 | V90M_MOD_BELL212A : 0) | (opt_hst ? V90M_MOD_HST : 0);
     c->tx_level = opt_rms ? (int)opt_rms : level_rms(opt_hund);
     c->max_down_bps = opt_down;
     c->max_up_bps = opt_up ? opt_up : opt_v92 ? 48000 : 33600;
@@ -372,7 +366,6 @@ int main(int argc, char **argv)
         else if (!strcmp(o, "-H")) opt_hst = 1;
         else if (!strcmp(o, "-M")) opt_mark = 1;
         else if (!strcmp(o, "-F")) opt_frames = 1;
-        else if (!strcmp(o, "-C")) opt_nocap = 1;
         else if (arg + 1 < argc && !strcmp(o, "-b")) bits_path = argv[++arg];
         else if (arg + 1 < argc && !strcmp(o, "-u")) opt_up = atoi(argv[++arg]);
         else if (arg + 1 < argc && !strcmp(o, "-d")) opt_down = atoi(argv[++arg]);
@@ -386,12 +379,11 @@ int main(int argc, char **argv)
         else break;
     }
     if (bad || arg >= argc || !(f = fopen(argv[arg], "rb"))) {
-        fprintf(stderr, "usage: v90m-replay [-a] [-9] [-x] [-k] [-B] [-H] [-M] [-F] [-C] [-u BPS] [-d BPS] [-l DBM0 | -r RMS] [-e SAMPLES] [-P CODE] [-s SAMPLE] [-b FILE] RECORDING\n"
+        fprintf(stderr, "usage: v90m-replay [-a] [-9] [-x] [-k] [-B] [-H] [-M] [-F] [-u BPS] [-d BPS] [-l DBM0 | -r RMS] [-e SAMPLES] [-P CODE] [-s SAMPLE] [-b FILE] RECORDING\n"
                         "  -l: a number with up to two decimals, e.g. -14.4; -r: the transmit rms, 1..16384;\n"
                         "  -s: a sample index, 0 or more; -B: Bell 103 and 212A offered too;\n"
                         "  -H: HST offered, the V.42 endpoint linked (MNP on);\n"
-                        "  -M: mark only in data mode; -F: print the caller's V.42 frames;\n"
-                        "  -C: V.34 transmit not capped at the caller's INFO1 projection (V90M_OPT_V34_NO_TX_CAP)\n");
+                        "  -M: mark only in data mode; -F: print the caller's V.42 frames\n");
         return 2;
     }
     len = (long)fread(file, 1, sizeof file, f);
