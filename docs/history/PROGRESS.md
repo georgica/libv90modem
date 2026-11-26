@@ -6439,3 +6439,32 @@ milestone gate (verify-phase, ports, ARM) is Task 26's.
   742 identical; `tools/bench-hashes.sh check` 19 identical. TEST_SHORT
   (-DTEST_FORCE_SHORT) case 25 passes; clang -pedantic and gcc -Wconversion
   compile hst_fwd.c cleanly.
+
+## 0.7.0: x2's inverted JM only at first; a plain JM to a caller still sending CM (2026-11-25)
+
+- **Cause (WebTV report, finding 1; measurements only).** With x2 offered,
+  a CM with V.34 and no PCM got a JM whose carrier was inverted after
+  every JM, for the whole of V.8. Two WebTV boxes (hardware V.34 modems,
+  strict V.8 receivers) never decoded it: no CJ, CM until they hung up; we
+  left V.8 after `V8A_JM_MS` (5 s) and Phase 2 failed after its 10 s
+  (`P2N_ERR_INFO0`). 14 of 21 inverted-JM calls failed, 0 of 31 plain.
+- **In simulation.** `test_v8ans` case 6: the library's own caller with
+  `v8rx.jm_flip` 0 and WebTV's CM (V.34, V.32bis, V.22bis, V.23, V.21, no
+  PCM, no access octet), x2 offered on mu-law: before, `V8A_RES_NO_CJ`
+  after 5.000 s, 25 JMs, the caller never got JM (the production
+  signature); 4 checks failing. `test_answer_x2` case 1b, the whole call
+  (sim/v34peer over line34, its V.8 receiver strict): before, V.8 result 3,
+  no data; 5 checks failing.
+- **Fix (modem/v8ans.c, `V8A_JM`).** The sign flips at the end of a JM
+  only while `t < V8A_X2_FLIP_MS` (2000 ms); a JM that begins later is
+  sent with sign +. x2 (`v8ans_x2`) and the access octet are unchanged, so
+  Phase 2 still offers x2. After: CJ 2.74 s after the JM began (13 JMs),
+  V.34 28800 / 28800, no bit errors, the same rates as without x2.
+- **x2 kept.** The callers that take the inversion answer well inside 2 s
+  (boxB profile Q 1.07 s, the simulated callers 0.74 s); test_v8ans case 5
+  (each JM's sign checked sample by sample), test_answer_x2, test_x2rec
+  unchanged. Replay proof: 742 runs identical; in the x2 set, the 6
+  recordings whose CM has no PCM all had CJ within 0.64 s of the JM.
+- **Golden.** test_v8ans and test_answer_x2: one new line each (the new
+  cases) and the check counts (50 -> 60, 518 -> 526). Bench hashes 19
+  identical.

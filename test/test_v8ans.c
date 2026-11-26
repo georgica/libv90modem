@@ -12,18 +12,22 @@
 
 typedef struct {
     int ans_result, selected, done_at;
-    int first_tx, ansam_start, jm_start, post_start;
+    int first_tx, ansam_start, jm_start, post_start, jm_end;
     int cm_sent_at_jm, caller_done, quiet_ok, post_quiet;
     v8_menu_t cm, jm_seen;
     int caller_got_jm;
     int x2;                 /* v8ans_x2() at the end */
     int njm_tx;             /* JM samples sent (in jm_tx) */
+    int neg_first, neg_last;    /* JM samples (from the JM's start) sent with jm_sign -1 */
     int wrap[64], nwrap;    /* indices into jm_tx where a JM begins again */
 } outcome;
 
 /* x2 (modem/v8ans, docs/history/x2-facts.md "Phase 1"): 0 not offered,
  * 1 offered on a mu-law line, 2 offered on an A-law line */
 static int g_x2;
+/* 1: the caller cannot take an inverted JM (v8rx jm_flip 0), as a hardware
+ * V.34 modem's strict V.8 receiver */
+static int g_strict;
 #define JM_MAX (5 * FS)
 static int16_t jm_tx[2][JM_MAX];
 static int g_slot;          /* which jm_tx the run fills */
@@ -45,9 +49,10 @@ static void run(const v8_menu_t *caller_cm, const v8_menu_t *local,
     channel_init(&ch, &cfg);
     v8ans_init(&ans, FS, AMP, local);
     if (g_x2) v8ans_offer_x2(&ans, g_x2 == 2);
-    if (caller_cm) v8call_init(&call, FS, AMP, caller_cm);
+    if (caller_cm) { v8call_init(&call, FS, AMP, caller_cm); if (g_strict) call.rx.jm_flip = 0; }
     memset(o, 0, sizeof *o);
-    o->first_tx = o->ansam_start = o->jm_start = o->post_start = o->done_at = -1;
+    o->first_tx = o->ansam_start = o->jm_start = o->post_start = o->done_at = o->jm_end = -1;
+    o->neg_first = o->neg_last = -1;
     o->quiet_ok = 1; o->post_quiet = 1;
 
     for (n = 0; n < max_s * FS; n++) {
@@ -61,10 +66,12 @@ static void run(const v8_menu_t *caller_cm, const v8_menu_t *local,
           if (was_post && atx != 0) o->post_quiet = 0;
           if (was_jm && o->njm_tx < JM_MAX) {
               if (pos != 0 && ans.jmpos == 0 && o->nwrap < 64) o->wrap[o->nwrap++] = o->njm_tx + 1;
+              if (ans.jm_sign < 0) { if (o->neg_first < 0) o->neg_first = o->njm_tx; o->neg_last = o->njm_tx; }
               jm_tx[g_slot][o->njm_tx++] = atx;
           } }
         if (atx != 0 && o->first_tx < 0) o->first_tx = n;
         if (st != prev) {
+            if (prev == V8A_JM) o->jm_end = n;
             if (st == V8A_ANSAM) o->ansam_start = n;
             if (st == V8A_JM) { o->jm_start = n; o->cm_sent_at_jm = caller_cm ? call.cm_sent : 0; }
             if (st == V8A_POST) o->post_start = n;
@@ -206,6 +213,33 @@ int main(void)
         g_x2 = 1; g_slot = 1; run(&cm, &local, -55.0, 0.2, 15, &o1);
         CHECK_EQ_I(o1.x2, 0);
         g_x2 = 0;
+    }
+
+    /* 6. x2 offered, and a caller that cannot take the inverted JM (WebTV
+     *    boxes: a CM of V.34, V.32bis, V.22bis, V.23, V.21, no PCM, no access
+     *    octet; a strict V.8 receiver). The JM is inverted only at first
+     *    (V8A_X2_FLIP_MS), then plain: the caller takes it, sends CJ, V.34. */
+    {
+        memset(&cm, 0, sizeof cm);
+        cm.call_function = V8_CALLF_DATA;
+        cm.modes = V8_MOD_V34 | V8_MOD_V32 | V8_MOD_V22 | V8_MOD_V23 | V8_MOD_V21; cm.n_mod_octets = 3;
+        g_strict = 1;
+        g_x2 = 0; g_slot = 0; run(&cm, &local, -55.0, 0.2, 15, &o);       /* no x2: as today */
+        CHECK_EQ_I(o.ans_result, V8A_RES_OK); CHECK_EQ_I(o.selected, V8_SEL_V34);
+        g_x2 = 1; g_slot = 1; run(&cm, &local, -55.0, 0.2, 15, &o);
+        printf("  strict caller, x2 offered: result %d, selected %d, x2 %d, JM %d ms, %d JMs\n",
+               o.ans_result, o.selected, o.x2, o.jm_end >= 0 ? (o.jm_end - o.jm_start) * 1000 / FS : -1, o.nwrap);
+        CHECK_EQ_I(o.ans_result, V8A_RES_OK);
+        CHECK_EQ_I(o.selected, V8_SEL_V34);
+        CHECK_EQ_I(o.x2, 1);                                    /* Phase 2 still offers x2 */
+        CHECK(o.caller_done && o.caller_got_jm);
+        CHECK(o.jm_end > 0 && o.jm_end - o.jm_start < FS * 3); /* CJ within ~2.5 s */
+        CHECK(o.jm_end - o.jm_start > V8A_X2_FLIP_MS * FS / 1000);
+        /* inverted at first; after V8A_X2_FLIP_MS (and the JM then under way)
+         * the sign stays + */
+        CHECK(o.neg_first >= 0);
+        CHECK(o.neg_last >= 0 && o.neg_last < V8A_X2_FLIP_MS * FS / 1000 + (o.wrap[1] - o.wrap[0]));
+        g_strict = 0; g_x2 = 0;
     }
 
     T_REPORT("v8ans");
