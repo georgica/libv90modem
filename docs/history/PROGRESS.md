@@ -6702,3 +6702,12 @@ its fixes into 0.7.1.
   port matrix, riscv64 and the CPU costs not run for this release).
 
 `v90m_mem_size()` 106320, `v90m_ec_mem_size()` 50448 (x86-64).
+
+## release 0.7.1
+
+- Version 0.7.1 in the Makefile, the header (0, 7, 1), test_api (701),
+  README, docs/api.md, getting-started.md (`.so.0.7.1`, SONAME unchanged
+  `.so.0.7`: 0.7.1 is ABI-additive), testing.md and call_loop's golden.
+- CHANGELOG 0.7.1 (2026-11-26): v90m_get_restarts, v90m_restarts,
+  v90m_cause and v90m_cause_name; sizes unchanged on every pinned target;
+  no rebuild needed for 0.7.0 builds.

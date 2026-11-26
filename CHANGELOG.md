@@ -8,7 +8,7 @@ change is listed here. Rebuild against the new header with every version;
 "Simulation and own answerer only" means: tried against simulated lines and
 this library's own answering modem, never against a real modem or server.
 
-## 0.7.1 (unreleased)
+## 0.7.1 (2026-11-26)
 
 Added, the API (the ABI of 0.7.0 kept: no struct changes size, the SONAME
 stays `libv90modem.so.0.7`, a program built against 0.7.0 runs on it):
