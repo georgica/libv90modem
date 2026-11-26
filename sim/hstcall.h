@@ -206,7 +206,8 @@ void   hc_ftx_rolloff(hc_ftx *t, double b);
 /* after hc_ftx_init: every training not V.17's is the one a Courier was
  * recorded sending (hst-facts.md `Training`, [REC]): AB 72, CD 8, TRN 192
  * (long or short alike), TRN's scrambler not reset but carrying on from
- * the line bits of AB and CD (Table 4's dibits of the states sent) */
+ * the line bits of AB and CD (Table 4's dibits of the states sent). The
+ * recorded 4-symbol marker (A C C B) between CD and TRN is not sent */
 #define HC_CR_AB  72
 #define HC_CR_CD   8
 #define HC_CR_TRN 192

@@ -22,7 +22,9 @@ Changed, behaviour (HST calls only, `V90M_MOD_HST` offered and linked):
   attention code is now a new attention, acted on and acknowledged. The
   recorded Courier sent its upshifts 0x35, 0x36 and 0x37 all with N(SA) 1;
   0.7.2 took the second and third for repeats (an LNA, no switch). The same
-  code again is still a repeat; off HST nothing changes.
+  code again is still a repeat, until the state it asked for has changed
+  another way (our own LN acknowledged, a reversal, a retrain or switch to
+  another rate): then it is a new request too. Off HST nothing changes.
 - The forward receiver starts on a short AB: 16 ms of it, then its end (a
   Courier's AB is 72 symbols, 30 ms), besides 40 ms as before. It reaches
   data on the recorded Courier's training (AB 72, CD 8, TRN 192, the
@@ -35,9 +37,12 @@ Changed, behaviour (HST calls only, `V90M_MOD_HST` offered and linked):
   comes. A caller louder than -20 dBm0 (the recorded one: -12) failed its
   first acquisition more often than not; on the recording the first lock
   came 1.20 s after the back channel's start, now 0.39 s, at any level.
-  No earlier test output, replay or bench hash changes; W stays 650 ms
-  (to 2000 on energy): `make hst-wsize`, with the Courier's short
-  preamble added, still leaves every line 100 ms (docs/limits.md).
+  No earlier test output, replay or bench hash changes. In `make
+  hst-wsize` the latest detection of one 300 bit/s line (levels, the
+  caller 300 ms late) came 470 ms later (1510 ms), still within the
+  2000 ms cap with 490 ms of slack; W stays 650 ms (to 2000 on energy),
+  every line, the Courier's short preamble added, keeping 100 ms
+  (docs/limits.md).
 
 Not changed (for 0.8.0, docs/history/hst-facts.md):
 - Our own forward training (180 + 72 + 3096 or 200, the scrambler from

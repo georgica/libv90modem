@@ -394,8 +394,9 @@ static void v22bis(void)
  * 450 within W, HST_W_MS, and 90 % with 100 ms to spare. 0.7.2's GAIN0
  * (-20 dBm0), its baseband from before the carrier at another level from
  * the rest (rx_block), failed its first acquisition more often: 78 % with
- * 100 ms to spare here, and on the recording itself the detector fired
- * within W at 12 of 63 starts */
+ * 100 ms to spare here, and on the recording itself the detector,
+ * started afresh at 262 points through the call, fired within W from 37 %
+ * of them (49 % now; the report's 63-point set: 12 of 63) */
 #define COUR_LEN   (7 * FS)
 #define COUR_ON    (FS / 2)
 #define COUR_STEP  211

@@ -397,18 +397,18 @@ static void attn_same_nsa(void)
     run(100);
     CHECK(peer_ln(0x34, 3000));
     r34 = S.L.rate_order;
-    S.L.rate_order = 0; S.L.epoch++;
+    S.L.rate_order = 0; S.L.fwd_code = 4; S.L.epoch++;   /* the switch done */
     run(200);
     CHECK(peer_ln(0x35, 3000));
     r35 = S.L.rate_order;
-    S.L.rate_order = 0; S.L.epoch++;
+    S.L.rate_order = 0; S.L.fwd_code = 5; S.L.epoch++;
     run(200);
     CHECK(peer_ln(0x35, 3000));          /* the same again: a repeat */
     rep = S.L.rate_order;
     run(200);
     CHECK(peer_ln(0x36, 3000));
     r36 = S.L.rate_order;
-    S.L.rate_order = 0; S.L.epoch++;
+    S.L.rate_order = 0; S.L.fwd_code = 6; S.L.epoch++;
     nsa1 = P.vsa == 1 && E.l.mnp.vra == 2;
     CHECK_EQ_I(r34, 0x34);
     CHECK_EQ_I(r35, 0x35);
@@ -419,6 +419,52 @@ static void attn_same_nsa(void)
     CHECK_EQ_I((int)E.l.mnp.violations, 0);
     printf("attn_same_nsa: LNs 34, 35, 35, 36 all N(SA) 1: rate_order %02X, %02X, %s for the repeat, %02X; V(RA) 2 throughout %d\n",
            r34, r35, rep ? "an order" : "none", r36, nsa1);
+}
+
+/* the Courier's same code again (the 0.7.3 review's I1): its 0x36 taken,
+ * then the same 0x36 once more (an LNA lost: the switch to 14400 done, the
+ * rate it asked for in force) is a repeat; after our own 0x25 is
+ * acknowledged its next 0x36 is a new request; so is one after a retrain
+ * at another rate (the epoch, fwd_code 5) */
+static void attn_same_code(void)
+{
+    mnp_peer_cfg pc = peer_courier();
+    int r36, rep, ours = -1, r36b, r36c, t;
+    pc.ln_nsa_fixed = 1;
+    hst_setup(pc, 14400, 450, 127, 0x7C, 6);
+    S.L.fwd_code = 4;
+    CHECK(connect(5000) > 0);
+    data_reset();
+    run(100);
+    CHECK(peer_ln(0x36, 3000));
+    r36 = S.L.rate_order;
+    S.L.rate_order = 0; S.L.fwd_code = 6; S.L.epoch++;   /* switched to 14400 */
+    run(300);
+    CHECK(peer_ln(0x36, 3000));
+    rep = S.L.rate_order;
+    run(300);
+    S.L.ln_req = 0x25;                                     /* our own fallback, acknowledged */
+    for (t = 0; t < 3000 && ours < 0; t++) { step(); ours = mnppeer_get_ln(&P); }
+    run(1000);
+    S.L.rate_order = 0; S.L.fwd_code = 5; S.L.epoch++;   /* the caller retrained at 12000 */
+    run(300);
+    CHECK(peer_ln(0x36, 3000));
+    r36b = S.L.rate_order;
+    S.L.rate_order = 0; S.L.fwd_code = 6; S.L.epoch++;
+    run(300);
+    S.L.fwd_code = 5; S.L.epoch++;                         /* a retrain at 12000 (recovery's or 0x2R's) */
+    run(300);
+    CHECK(peer_ln(0x36, 3000));
+    r36c = S.L.rate_order;
+    S.L.rate_order = 0;
+    CHECK_EQ_I(r36, 0x36);
+    CHECK_EQ_I(rep, 0);
+    CHECK_EQ_I(ours, 0x25);
+    CHECK_EQ_I(r36b, 0x36);
+    CHECK_EQ_I(r36c, 0x36);
+    CHECK_EQ_I((int)E.l.mnp.violations, 0);
+    printf("attn_same_code: 36 taken (order %02X), again at 14400: %s; our 25, then its 36: order %02X; "
+           "after a retrain at 12000, its 36: order %02X\n", r36, rep ? "an order" : "a repeat", r36b, r36c);
 }
 
 /* attention the pump asks for: our LN, LTs held until the epoch, the
@@ -925,6 +971,7 @@ int main(void)
     mailbox();
     attn_in();
     attn_same_nsa();
+    attn_same_code();
     attn_out();
     hold_bound();
     layout_learn();

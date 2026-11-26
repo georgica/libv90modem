@@ -6841,8 +6841,8 @@ measured figures.
   now finds the answerer's training (AB from 6.851 s, 78 symbols counted
   with the guard's delay; then unlocked, the Opus-coded data) and
   reports a short AB's start from `abrun` instead of a fixed 40 ms.
-- **Back channel at real levels** (finding 5). Two causes of the 1.07 s
-  first lock: `GAIN0`, -20 dBm0, clipped the 16-bit baseband of a -12 dBm0
+- **Back channel at real levels** (finding 5). Two causes of the 1.20 s
+  first lock (1.07 s in the report, from another onset mark): `GAIN0`, -20 dBm0, clipped the 16-bit baseband of a -12 dBm0
   caller before the carrier detect; and that baseband, still in the
   matched filter's 8 symbols when the acquisition starts, stayed at
   `GAIN0`'s scale against the AGC's from then on. Now `GAIN0` is for -8
@@ -6881,3 +6881,26 @@ measured figures.
   V.8 / V.22bis / XID / DM start-up (0.8.0). hst-facts.md: REC added as a
   source, confirmed values re-tagged `[X -> REC]`, the XID path, the
   training, the LN pattern, the LA credit; W's row fixed (400 to 650).
+
+### 0.7.3 fix round 1 (the review's I1, M1, M3)
+
+- I1: the "same code is a repeat" memory went stale. `mnp_t.attn_cmp`
+  (a `uint8_t` in `lna_nr`'s padding: `v90m_ec_mem_size` unchanged, x86-64
+  50448, ARMv5 and ARMv7 50200) says whether `attn_rx` is still what a
+  same-N(SA) LN is compared with. It is cleared when our own LN's LNA is
+  taken, at a role change (a reversal), and at an epoch whose forward code
+  is not the remembered code's R (a retrain or a switch elsewhere); a
+  repeat after the far end's own change (its R in force) stays a repeat.
+  `attn_rx` as reported is unchanged. test_ec_hst `attn_same_code`: 36
+  taken; 36 again at 14400 a repeat; our 25 acknowledged, then its 36 an
+  order; after a retrain at 12000, its 36 an order (the reviewer's
+  ec_stale scratch now gives order 36). `attn_same_nsa`'s stub now moves
+  `fwd_code` with each switch, as the pump does.
+- M1: documented in docs/limits.md, not changed: requiring AB to end into
+  CD (power held) would also give up the dropout runs it rescued (661 to
+  1080 clean of 1248); holding the AB count through a short drop is for
+  0.8.0.
+- M3: PROGRESS 1.20 s; test_hst_det's comment names the 262-point set;
+  CHANGELOG names the one hst-wsize cell that moved (1040 to 1510 ms);
+  hstcall.h says the 4-symbol marker is not sent; hst-facts' [FW]
+  training row "Not seen in REC".

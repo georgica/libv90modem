@@ -373,14 +373,19 @@ static void on_ln(mnp_t *m, int nsa, int code)
     if (nsa == m->vra && m->hst) {                        /* attention, not a break */
         m->vra++;
         m->attn_rx = code;
+        m->attn_cmp = 1;
         hst_attn(m, code);
-    } else if (m->hst && m->attn_rx != 0 && nsa == (uint8_t)(m->vra - 1) && code != m->attn_rx) {
+    } else if (m->hst && nsa == (uint8_t)(m->vra - 1) && (!m->attn_cmp || code != m->attn_rx)) {
         /* HST: the last N(SA) with a new code is a new attention, not a
          * repeat. A Courier sent 0x35, 0x36 and 0x37 all with N(SA) 1, and
          * each was carried out (hst-facts.md `Rate changes`, [REC]); Annex
          * A would take the second and third for repeats of the first. V(RA)
-         * stays; the same code again is a repeat (below: an LNA alone) */
+         * stays; the same code again is a repeat (below: an LNA alone),
+         * unless the state it asked for has since changed another way
+         * (attn_cmp 0: our own LN acknowledged, a reversal, the forward
+         * rate moved off it), when the same code is a new request too */
         m->attn_rx = code;
+        m->attn_cmp = 1;
         hst_attn(m, code);
     } else if (nsa == m->vra) {                           /* A.7.4.3 */
         /* no room: neither taken nor acknowledged; it comes again */
@@ -408,6 +413,7 @@ static void on_lna(mnp_t *m, int nr)
         } else if (m->hst && m->hst_role == HST_ROLE_BACK && ((m->ln_code >> 4) == 2 || (m->ln_code >> 4) == 3)) {
             m->rate_order = m->ln_code;                   /* ours granted: the receiver follows */
         }
+        if (m->hst) m->attn_cmp = 0;                      /* our change taken: the far end's last code is stale */
         m->vsa++;
         m->ln_code = -1;
         m->ln_send = 0;
@@ -785,7 +791,7 @@ void mnp_hst_poll(mnp_t *m, hst_link_t *L, unsigned ms, size_t queued)
     if (!m->hst || m->state != MNP_S_CONNECTED) return;
 
     /* the pump's state: a role taken anew starts the far end's time */
-    if (L->role != m->hst_role) { m->hst_role = L->role; m->far_ms = 0; }
+    if (L->role != m->hst_role) { m->hst_role = L->role; m->far_ms = 0; m->attn_cmp = 0; }
     else if (m->hst_role == HST_ROLE_BACK && m->far_ms < 1000000) m->far_ms += t;
     m->hst_cap = L->cap_up_code;
     if (L->epoch != m->hst_epoch) {
@@ -793,6 +799,10 @@ void mnp_hst_poll(mnp_t *m, hst_link_t *L, unsigned ms, size_t queued)
          * granted above the cap is followed by our 0x2R now */
         m->hst_epoch = L->epoch;
         m->attn_hold = 0;
+        /* the far end's last code compared against no more once the change
+         * done is not that code's: a reversal (any role change), a rate
+         * other than its R (a retrain or a rate change of another's) */
+        if (m->attn_cmp && ((m->attn_rx >> 4) == 1 || (m->attn_rx & 15) != L->fwd_code)) m->attn_cmp = 0;
         m->la_due = 1;          /* the LAs in flight at the switch are lost: acknowledge anew [OURS] */
         if (L->tx_bps > 0 && L->rx_bps > 0) mnp_set_rates(m, L->tx_bps, L->rx_bps);
         if (m->cap_due == 1 && m->hst_role == HST_ROLE_BACK) m->cap_due = 2;

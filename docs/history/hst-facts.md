@@ -248,7 +248,8 @@ firmware's DSP (BF §3).
 
 - The Courier's forward start-up is 180 symbols, then 72, then either 200
   or 3096 (written 180 + 72 + 200 or 3096). The contents of the segments and the rule that picks the 200 or the 3096 form
-  are not known (BF §2; BF "Open questions" 1). [FW]
+  are not known (BF §2; BF "Open questions" 1). Not seen in REC (below).
+  [FW]
 - There is no in-band rate signal: the rates are agreed in the LR's 0xC0
   before the forward retrain, unlike V.32's R sequences (BF §2). [BM]
 - In the firmware, a change of rate alters the bits sent per symbol with no
@@ -641,7 +642,10 @@ As responder (we answer), from Annex A.7.1 (PS §3.1):
 - Ours (0.7.3), on HST: an LN whose N(SA) is the last one taken (V(RA) - 1)
   but whose code differs from that LN's is a new attention: acted on and
   acknowledged, V(RA) left as it is. The same code again is a repeat, as in
-  Annex A (an LNA alone). Off HST, Annex A unchanged (`v42/mnp.c` `on_ln`;
+  Annex A (an LNA alone), until our own LN is acknowledged, a reversal, or
+  a change of the forward rate to other than that code's R: then the same
+  code is a new request too (the 0.7.3 review's I1; `test_ec_hst`
+  `attn_same_code`). Off HST, Annex A unchanged (`v42/mnp.c` `on_ln`;
   `test_ec_hst` `attn_same_nsa`; `sim/mnppeer`'s `ln_nsa_fixed`). [OURS]
 - The patent's three examples of LN type octets: `atn_reverse_9600 equ 14h`
   (reversal at 9600), `atn_retrain_7200 equ 23h` (fall back to 7200 with a

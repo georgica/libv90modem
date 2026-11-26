@@ -681,6 +681,18 @@ Measured against `sim/hstcall` only; no real HST modem has called it yet.
   found it). Every end has its `v90m_get_diag` error: `ANS_ERR_HST_LINK`
   (no MNP link in 15 s), `ANS_ERR_HST_CARRIER` (the watchdogs' LOST),
   `ANS_ERR_RETRAINS` (RETRAIN_FAILED), 0 for an orderly cleardown.
+- **A dropout in a long AB starts the forward receiver** (0.7.3, the
+  review's M1): the AB stage starts the receiver when AB ends after 16 ms
+  (`HST_FRX_AB_MIN_MS`, a Courier's 72-symbol AB), and a silent dropout in
+  a long AB ends it too: the receiver starts in the gap. Over a sweep of
+  our 180-symbol AB with a dropout of 5 to 40 ms at 40 to 76 ms into the
+  training (codes 4 and 6, 208 cells x 6 line variants), runs that reach
+  data clean went from 661 (0.7.2, which restarted AB and often never
+  started) to 1080 of 1248, but runs that reach data with a burst of bit
+  errors from 3 to 118: 10 ms dropouts at 52 to 58 ms enter data at some
+  139 ms with errors MNP takes back. Requiring AB to end into CD (power
+  held) would give the gain up with the burst; holding the AB count
+  through a short power drop instead is for 0.8.0.
 - **AB louder than the data** (the Task 16 review's Minor F): the forward
   receiver's level, against which a fade or a loss is judged, is taken
   again where data mode begins, so a far end whose AB is up to 4 dB over
