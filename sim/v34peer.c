@@ -73,7 +73,14 @@ int16_t v34peer_tick(v34peer_t *p, int16_t rx)
         break;
     case VP_TRAINING:
     case VP_DATA:
-        out = v34dx_tick(&p->dx, rx);
+        if (p->hold > 0) { p->hold--; break; }
+        {
+            v34dx_state was = p->dx.state;
+            out = v34dx_tick(&p->dx, rx);
+            if (p->cfg.s_after_j_ms > 0 && was == DX_P3_RX && p->dx.state == DX_P3_TX) {
+                p->hold = 8 * p->cfg.s_after_j_ms; out = 0;
+            }
+        }
         if (p->dx.state == DX_DATA) {
             if (p->state == VP_TRAINING) p->connects++;
             p->state = VP_DATA;

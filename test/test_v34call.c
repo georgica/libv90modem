@@ -189,6 +189,31 @@ int main(void)
     lc = base; lc.d_ca = 200; lc.d_ac = 240; lc.far_a = 0.1; lc.io_delay = 96;
     good_call("far echo 55 ms late, same", &lc, &ac, &pc, 5, 21600, 0);
     CHECK_EQ_I(A.m.dx.far_on, 1);
+    /* our echo 150 ms late (a VoIP leg before the hybrid: 1200 samples;
+     * the rest of a 1569-sample round trip after it, #21), our own delay
+     * unknown, and a caller that sends S 470 ms after it hears our J (WebTV
+     * report, finding 2: the boxes' S began 649-970 ms after our J). The
+     * time limits of Phases 3 and 4 keep the whole round trip; only the far
+     * canceller's lag takes our own path off (v34dx.c ec_schedule) */
+    {
+        int p2rtd;
+        lc = base; lc.io_delay = 1200; lc.d_ca = lc.d_ac = 184;
+        ac.io_delay = -1;
+        v34peer_default(&pc, 3000); pc.s_after_j_ms = 470;
+        call_init(&lc, &ac, &pc);
+        while (L.n < 8000L * 12 && !(A.phase == 1 && A.m.state == V34A_TRAINING)) call_run(8);
+        p2rtd = A.m.p2.rtd;
+        CHECK_EQ_I(call_to_data(25000), 1);
+        printf("  echo 150 ms late, S 470 ms after J: data %d at %.1f s, retrains %d / %d (ours / the caller's), rtd %d, echo delay %d\n",
+               A.m.state == V34A_DATA, L.n / 8000.0, A.m.retrains, C.retrains, p2rtd, (int)A.m.dx.ecd.delay);
+        CHECK_EQ_I(A.m.retrains, 0); CHECK_EQ_I(C.retrains, 0); CHECK_EQ_I(A.m.connects, 1);
+        CHECK_NEAR(p2rtd, 1569, 20);
+        CHECK_EQ_I(A.m.dx.cfg.rtd, p2rtd);                  /* the limits' round trip, whole */
+        /* the far canceller as before: past the near echo by the rest */
+        CHECK_EQ_I(A.m.dx.far_rtd, p2rtd - A.m.dx.ecd.delay - 8);
+        CHECK_EQ_I(A.m.dx.far_on, 1);
+        pc.s_after_j_ms = 0;
+    }
     ac.io_delay = 0;
     for (k = 0; k < 3; k++) {
         static const int snr[3] = { 34, 28, 22 }, need[3] = { 19200, 14400, 9600 };

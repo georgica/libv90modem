@@ -6468,3 +6468,36 @@ milestone gate (verify-phase, ports, ARM) is Task 26's.
 - **Golden.** test_v8ans and test_answer_x2: one new line each (the new
   cases) and the check counts (50 -> 60, 518 -> 526). Bench hashes 19
   identical.
+
+## 0.7.0: V.34 Phase 3/4 time limits keep the whole round trip when the echo comes late (2026-11-25)
+
+- **Cause (WebTV report, finding 2).** `v34dx.c` `ec_schedule`, with
+  `rtd_has_io` (our own path's delay unknown, `io_delay` -1): at the start
+  of the fast echo step it overwrote `cfg.rtd` with `rtd - ecd.delay - 8`,
+  the far echo's lag past the near one. The same `cfg.rtd` sets the limits
+  of `DX_P3_J` (600 ms + rtd + MD), `DX_P3_RX` (2800 ms + 2 rtd) and Phase 4
+  (2500 ms + 3 rtd). Live (#21): 1569 -> 357, the J limit 645 ms, the
+  caller's S at 649 ms: five retrains, call lost.
+- **In simulation.** `sim/v34peer` gains `s_after_j_ms`: the call-side
+  engine waits, silent, that long after it heard J before its S (the boxes:
+  S 649-970 ms after our J began). `test_v34call`: line34 `io_delay` 1200
+  (echo 150 ms late), `d_ca = d_ac = 184` (round trip 1569, as #21), our
+  delay unknown, `s_after_j_ms` 470. Before: rtd 1569 -> 369, 4 retrains
+  of ours, 3 of the caller's, no data in 25 s (5 checks failing).
+- **Fix.** v34dx_t gains `far_rtd` (int32_t, in the 4-octet hole after
+  `pw_res`: `sizeof (v34dx_t)` 23032 as before, v90m_mem_size 106320).
+  `v34dx_init` sets it to `cfg.rtd`; `ec_schedule` takes our delay off it
+  (as it did off `cfg.rtd`) and `far_on` and the far canceller's reference
+  read it. `cfg.rtd` stays whole for the limits. After: data at 10.5 s,
+  no retrain; `far_rtd` = rtd - echo delay - 8 and `far_on` as before.
+  test_v34dx's far-echo lag check reads `far_rtd`.
+- **Replay proof.** 2 recordings x 7 sets, .txt only (.bits identical):
+  ab_cc_v34, our retrain from `DX_P3_J` 12.229 -> 12.262 s (its round
+  trip 263 samples, all taken off before since the echo delay was longer:
+  the limit + 33 ms); x1, our retrain from Phase 4 16.812 -> 16.911 s (the
+  3-round-trip limit, + 99 ms). The same retrain in
+  each, everything after it identical but for the count of transmit
+  samples that differ from the recording (the recordings were made with
+  the old limits). Re-recorded: test/golden/replay.sha256 (14 lines).
+- **Golden.** test_v34call: one new line (the case) and its count 296 ->
+  304; every other program identical. Bench hashes 19 identical.

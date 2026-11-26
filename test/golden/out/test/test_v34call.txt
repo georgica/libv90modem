@@ -7,6 +7,7 @@
   loop past anything real        3200 sym/s  A->C  4800 bit/s   24000 bits   0 err   C->A  4800 bit/s   24000 bits   0 err  (data at 7.9 s)
   strong echo, own delay unknown 3200 sym/s  A->C 28800 bit/s  144000 bits   0 err   C->A 21600 bit/s  108000 bits   0 err  (data at 8.4 s)
   far echo 55 ms late, same      3200 sym/s  A->C 28800 bit/s  144000 bits   0 err   C->A 28800 bit/s  144000 bits   0 err  (data at 8.7 s)
+  echo 150 ms late, S 470 ms after J: data 1 at 10.5 s, retrains 0 / 0 (ours / the caller's), rtd 1569, echo delay 1193
   noise 34 dB down               3200 sym/s  A->C 24000 bit/s  192000 bits   0 err   C->A 21600 bit/s  172800 bits   0 err  (data at 8.1 s)
   noise 28 dB down               3200 sym/s  A->C 19200 bit/s  153600 bits   0 err   C->A 19200 bit/s  153600 bits   0 err  (data at 8.1 s)
   noise 22 dB down               3200 sym/s  A->C 12000 bit/s   96000 bits   0 err   C->A 12000 bit/s   96000 bits   0 err  (data at 8.1 s)
@@ -20,4 +21,4 @@
   retrain: data again 5.6 s later;  after the caller's retrain     3200 sym/s  A->C 28800 bit/s  115200 bits   0 err   C->A 28800 bit/s  115200 bits   0 err  (data at 18.5 s)
   retrain: data again 8.8 s later;  caller lost in Phase 3         3200 sym/s  A->C 28800 bit/s  115200 bits   0 err   C->A 28800 bit/s  115200 bits   0 err  (data at 17.3 s)
   after two renegotiations       3200 sym/s  A->C 28800 bit/s   85896 bits   0 err   C->A 16800 bit/s   50400 bits   0 err  (data at 12.6 s)
-v34call: 296 checks, 0 failures
+v34call: 304 checks, 0 failures

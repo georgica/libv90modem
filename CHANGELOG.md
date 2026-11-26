@@ -21,6 +21,17 @@ Fixed:
   plain. An x2 client still sees the inverted JMs first (the clients on
   record answer within about 1.1 s), and x2 is still offered in Phase 2.
   Simulation and the replay corpus: every recorded call identical.
+- V.34, either role, our own sample path's delay unknown (`io_delay` -1):
+  once the echo delay was found in Phase 3, the round trip used for the
+  Phase 3 and 4 time limits was replaced by the round trip less that
+  delay. Over a VoIP leg whose echo came back 150 ms late, the wait for the
+  caller's S after our J fell from 796 to 645 ms while the caller's S began
+  at 649 ms: five retrains and the call lost (WebTV). The limits now keep
+  the whole round trip from Phase 2; only the far echo canceller's lag
+  takes our own delay off, as before. A caller lost in Phase 3 or 4 is
+  noticed up to one, two or three echo delays later. Simulation: a caller
+  that sends S 470 ms after our J, our echo 150 ms late: data at the first
+  training (four retrains, no data, before).
 
 ## 0.6.1 (2026-11-24)
 
