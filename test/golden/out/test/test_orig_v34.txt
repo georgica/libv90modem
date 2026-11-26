@@ -1,6 +1,6 @@
   good line, no codec                3200 sym/s  C->A 31200 bit/s  124800 bits 0 err  A->C 28800 bit/s  115200 bits 0 err  SNR 37.7 dB, rtd 371
   realistic line (mu-law, -100 ppm, 1 Hz) 3200 sym/s  C->A 21600 bit/s   86400 bits 0 err  A->C 24000 bit/s   96000 bits 0 err  SNR 31.7 dB, rtd 404
-  retrain begun by the caller: data again 5.7 s later;  after our retrain                  3200 sym/s  C->A 24000 bit/s   95940 bits 0 err  A->C 24000 bit/s   96000 bits 0 err  SNR 31.3 dB, rtd 404
+  retrain begun by the caller: data again 5.7 s later;  after our retrain                  3200 sym/s  C->A 24000 bit/s   95940 bits 0 err  A->C 24000 bit/s   96000 bits 0 err  SNR 31.4 dB, rtd 404
   realistic line, again              3200 sym/s  C->A 21600 bit/s   86400 bits 0 err  A->C 24000 bit/s   96000 bits 0 err  SNR 31.7 dB, rtd 404
   retrain begun by the answerer: data again 5.7 s later;  after the answerer's retrain       3200 sym/s  C->A 24000 bit/s   95940 bits 0 err  A->C 24000 bit/s   96000 bits 0 err  SNR 31.1 dB, rtd 404
   good line, renegotiations          3200 sym/s  C->A 31200 bit/s  124800 bits 0 err  A->C 28800 bit/s  115200 bits 0 err  SNR 37.7 dB, rtd 371

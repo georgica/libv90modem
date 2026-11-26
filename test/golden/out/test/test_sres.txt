@@ -1,3 +1,4 @@
   3200 clean, 6 gaps / phases / +-90 ppm: resumed 6 of 6, worst mse after 300 symbols -30.0 dB
   3000, 32 dB, 6 gaps / phases / +-60 ppm: worst mse after 300 symbols -29.1 dB
-sres: 56 checks, 0 failures
+  tilted line (high-pass 500 Hz), -50 ppm, 16 timing phases: resumed 16 of 16
+sres: 104 checks, 0 failures
