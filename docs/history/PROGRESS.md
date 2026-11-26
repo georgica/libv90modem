@@ -3915,3 +3915,40 @@ reference written from the 68040 manual, in normal mode and with
 A newer gcc (m68k moved to LRA in 14) was not tried; the bug was not
 reported upstream (the owner's call; a draft is kept outside the
 repository).
+
+## release 0.6.2-rc1: the WebTV fixes from the HST work, without HST (2026-11-25)
+
+Branch `v062` from v0.6.1 (e453519). Backported, without anything HST or
+MNP:
+
+- the opt-in V.34 transmit cap (hst-b 8d424fd, 3807ac9, 418610e, as one
+  commit): `V90M_OPT_V34_TX_CAP` (0x10000 in `v90m_cfg.modulations`),
+  answering only, off by default. Its status is not in `v90m_stats`
+  (which keeps its size within 0.6) but in a new function and struct, as
+  `v90m_get_diag`: `void v90m_get_v34_cap(const v90m_t *m, v90m_v34_cap
+  *c)`, `v90m_v34_cap` = `{ int proj_bps; int ask_bps; int capped; }`.
+  hst-b's status read the ask 0 after an orderly end (the cleardown's MP
+  exchange clears `dx.got_far_mp`; the caller's cleardown MP has no
+  rate): `v34ans_t.far_ask` (a byte beside `from_v90`, now `uint8_t`)
+  keeps the ask data mode last began with. test_api runs box B's shape
+  through the API (a simulated caller on a mu-law line, INFO1c 28800, MP
+  31200): off 31200 capped 0, on 28800 capped 1, kept after our
+  cleardown, 0 after `v90m_reset`;
+- x2's inverted JM only for the first 2 s (hst-c 8f7b5df, d7debbe);
+- the V.34 Phase 3/4 limits keep the whole round trip (hst-c 10f3e83):
+  the replay manifest changes in 12 lines, ab_cc_v34 and x1 in each of
+  the 6 sets (14 on hst, which has a 7th set), the same hashes as hst-c's;
+  the traces differ only in the retrain's time (12.229 -> 12.262 s,
+  16.812 -> 16.911 s) and the counts of differing samples;
+- `v90m_ec_tx_busy` up to the closing flag's last bit (hst 6c7e118's
+  v42 part); hst's MNP mode-3 test becomes test_v42 release_busy (LAPM).
+
+`v90m_mem_size()` 106320 (x86-64), `V90M_MEM_SIZE` unchanged; the
+hst-c `far_rtd` uses the padding hole before `sdet`.
+
+Gates (the owner: an rc now, x86-64 only): `make golden` ALL HOST CHECKS
+PASS, 142 programs identical; `tools/replay-proof.sh check` 636 runs
+identical; `tools/bench-hashes.sh check` 17 identical; SONAME
+`libv90modem.so.0.6`, `v90m_get_v34_cap` exported. Not run: `make verify`, `make verify-phase` (ARMv5, ports,
+riscv64, Windows, costs), check-arm; for the final 0.6.2 or 0.7.0.
+

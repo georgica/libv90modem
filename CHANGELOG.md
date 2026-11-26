@@ -8,7 +8,13 @@ change is listed here. Rebuild against the new header with every version;
 "Simulation and own answerer only" means: tried against simulated lines and
 this library's own answering modem, never against a real modem or server.
 
-## 0.6.2 (unreleased)
+## 0.6.2-rc1 (2026-11-25)
+
+A release candidate, for the ISP's WebTV calls: checked on x86-64 only
+(`make golden`, the replay proof). The all-platform verification (ARMv5,
+the port matrix, riscv64, Windows, the costs) is deferred to the final
+0.6.2 or 0.7.0. The library's version is 0.6.2 (`v90m_version()`), its
+SONAME `libv90modem.so.0.6`.
 
 Added:
 - Answering role, V.34 (and V.34 selected by a V.90 caller's INFO1a): an
