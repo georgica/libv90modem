@@ -21,8 +21,9 @@ Fixed:
   V.Everything behind an FXS gateway (-51 ppm, 3 s of silence). A symbol
   now counts by itself, as before, or as a pair with the one before it.
   Seen on the recording `test/fixtures/usrc1.raw.xz`: Jd' and the DIL now
-  follow 17 ms into the caller's S. Not yet tried on a live call: the
-  recording ends there, so whether that modem then connects is not known.
+  follow 17 ms into the caller's S. On a live call through an AudioCodes
+  MP-124E the Courier now connects at V.90, 49333 / 26400 (one short
+  call so far).
   The other fixtures replay as before; `test_orig_v34`'s retrain by the
   caller takes its S one count sooner (SNR 31.3 to 31.4 dB in its
   output).
