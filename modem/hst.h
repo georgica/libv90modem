@@ -773,7 +773,11 @@ void hst_frx_arm_train(hst_frx_t *r, int code);
  * failed one is tried again at the same rate). A retrain fails when the
  * receiver is not in data at its rate HST_RC_BOUND_MS after the request
  * left (or the LNA came), when its training ends without data, or when
- * the data mode it reached is lost within HST_RC_HOLD_MS [OURS] */
+ * the data mode it reached is lost within HST_RC_HOLD_MS [OURS]. Not
+ * failed: an 0x3R followed (the holder's own, or the LNA to ours) that
+ * was never carried out, the receiver in data at the rate in force
+ * throughout HST_RC_BOUND_MS: dropped, the rate kept (BinModem's stale
+ * 0x3R, binmodem-facts.md `Online fallback`) [OURS] */
 #define HST_UP_MS        10000
 #define HST_UP_PCT          90
 #define HST_DOWN_ERRS       15

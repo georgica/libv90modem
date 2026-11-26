@@ -353,6 +353,12 @@ typedef struct {
                               on every rate change (`Rate changes`, [BM]), the rest of the call ours:
                               holding back, on the LNA to its 0x3R its receiver listens for a
                               training at R (the equaliser kept), as one that restarts would */
+    int     stale_3r;      /* a rate code 2..6 (else off): BinModem's fallback in the 400 ms between the
+                              LNA to its 0x1R and its training (binmodem-facts.md `Online fallback`, [BM]):
+                              on that LNA it sends LN 0x3R at this code, which goes once it holds forward,
+                              and does nothing on that LN's LNA (no change, no training) */
+    int     ignore_2r;     /* an 0x2R from the answerer gets its LNA and nothing more (BinModem has no
+                              0x2R, binmodem-facts.md `Online fallback`, [BM]) */
 } hstcall_cfg;
 
 /* back 450, start 450, rates 0x7C (codes 2..6), flags 0x01, level -12 */
