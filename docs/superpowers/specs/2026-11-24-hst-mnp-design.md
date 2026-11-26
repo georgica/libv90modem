@@ -786,6 +786,17 @@ own 0x2R at the cap.
   no switch within 2 s, or a training instead, the generic acquisition
   takes over.
 - **Executing 0x2R as holder:** the short training at R.
+- **An 0x3R never carried out [OURS]:** holding the back channel, an
+  0x3R we follow (the holder's own, or the LNA to ours) after which the
+  holder neither switches nor trains, our receiver in data at the rate in
+  force for the whole 4 s bound, is dropped: the rate in force kept, no
+  failed retrain counted, the LTs go again. Reason: BinModem's fallback can
+  ask 0x3R in its own turnaround, from our carrier as it stops, and then,
+  holding forward, never acts on it (binmodem-facts.md `Online fallback`);
+  counted as failed, it started our 0x2R step-down on a clean line and
+  ended the call RETRAIN_FAILED (Task 24 run 3, F1). An 0x2R is not
+  dropped so: a retrain asked for and acknowledged but never trained is
+  a failed one, and the step-down below stands.
 - **Recovery [OURS]:** holding the forward channel, with the back channel
   showing the far end alive but nothing we send acknowledged for
   2 × T401, send the short training at the current rate. This also covers

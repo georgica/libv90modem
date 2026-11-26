@@ -141,6 +141,9 @@
  *               lost every 4 s (10 dB SNR for 0.8 s), each retrain holding
  *               data over 2 s: 3 retrains, then one rate lower (0x24); at
  *               9600, the lowest agreed, 3 more and V90M_END_RETRAIN_FAILED
+ *   retrain_ignored  retrain_back against a caller that acknowledges our
+ *               0x2R and never trains: 3 failed retrains at each agreed
+ *               rate, 14400 down to 4800, then V90M_END_RETRAIN_FAILED
  *   levels      -9 to -33 dBm0 in 6 dB steps (both ways, the line without
  *               loss), +-100 ppm, 25 dB SNR, 60 s each (TEST_SHORT 10 s)
  *               with reversals (both ends behind) and the caller's 0x3R and
@@ -151,7 +154,7 @@
  *
  * Built with -DHST_PROFILE_BM (make check-hst-bm) the caller trains as
  * BinModem (V.17's long train) and, with no case named, only `rates`,
- * `rev_caller`, `rev_stale_3r`, `up` and `recovery` run: the switch then 20 ms plus V.17's
+ * `rev_caller`, `rev_stale_3r` (33), `retrain_ignored`, `up` and `recovery` run: the switch then 20 ms plus V.17's
  * turn-off after the LNA drained; a 0x3R carried out by a training both
  * ways (HST_3R_TRAINS: data stops for each); recovery from the caller's
  * receiver dropping out of data.
@@ -1887,6 +1890,45 @@ static void retrain_back(void)
     bound("the data both ways intact", C.bad == 0 && O.bad == 0 && C.r == O.to_send && O.r > 4000 && O.end_ms < 0);
 }
 
+/* retrain_ignored: retrain_back against a caller that acknowledges our
+ * 0x2R and never trains (hstcall ignore_2r, BinModem's way): each counts
+ * as a failed retrain HST_RC_BOUND_MS on, HST_RC_FAILS at a rate then one
+ * agreed rate lower, and at the lowest V90M_END_RETRAIN_FAILED; only 0x2R
+ * of ours, never up, each rate tried HST_RC_FAILS times (the stale-0x3R
+ * rule, rev_stale_3r, drops an 0x3R alone) */
+static void retrain_ignored(void)
+{
+    hstcall_cfg hc;
+    our_cfg oc = hst_ours();
+    v90m_state st;
+    long t0;
+    int k, n_at[7] = { 0 }, mono = 1, only2r = 1;
+    hc_defaults(&hc);
+    hc.rev_backlog = 64; hc.ignore_2r = 1;
+    printf("retrain_ignored: holding the back channel at 14400, v90m_retrain; the caller never trains for our 0x2R\n");
+    rc_call(&hc, &oc, 100000000L, 2048, 2302u);
+    C.after_fwd = 1;
+    run_ms(60000L, holding_back_data);
+    run_ms(now_ms + 2000, ended);
+    t0 = now_ms;
+    CHECK_EQ_I(v90m_retrain(O.m), V90M_OK);
+    run_ms(now_ms + 150000L, ended);
+    v90m_get_state(O.m, &st);
+    for (k = 0; k < RC.nln; k++) {
+        if (RC.ln_ms[k] < t0) continue;
+        if ((RC.ln[k] & 0xF0) != 0x20) only2r = 0;
+        else n_at[RC.ln[k] & 7]++;
+        if (k > 0 && RC.ln_ms[k - 1] >= t0 && (RC.ln[k] & 15) > (RC.ln[k - 1] & 15)) mono = 0;
+    }
+    printf("  our LNs from the retrain: 0x26 %d, 0x25 %d, 0x24 %d, 0x23 %d, 0x22 %d; end %d%s\n",
+           n_at[6], n_at[5], n_at[4], n_at[3], n_at[2], (int)st.end, O.end_ms >= 0 ? "" : " (still up)");
+    if (verbose) printf("  (v90m_retrain at %ld ms, the end at %ld)\n", t0, O.end_ms);
+    bound("only 0x2R of ours, never a rate up", only2r && mono);
+    bound("each agreed rate HST_RC_FAILS times, 14400 down to 4800",
+          n_at[6] == HST_RC_FAILS && n_at[5] == HST_RC_FAILS && n_at[4] == HST_RC_FAILS && n_at[3] == HST_RC_FAILS && n_at[2] == HST_RC_FAILS);
+    bound("then V90M_END_RETRAIN_FAILED", O.end_ms >= 0 && st.end == V90M_END_RETRAIN_FAILED);
+}
+
 /* back_silent: the watchdogs. Holding the back channel, every carrier of
  * the caller's off: our 0x26 1 s on, the forward channel taken back 5 s
  * on (a retrain), V90M_END_LOST 5 s after that (ANS_ERR_HST_CARRIER); and
@@ -2193,7 +2235,7 @@ static void levels(void)
         }
 }
 
-#define NCASES 32
+#define NCASES 34
 int main(int argc, char **argv)
 {
     int only;
@@ -2208,6 +2250,7 @@ int main(int argc, char **argv)
         rates();
         rev_caller();
         rev_stale_3r();
+        retrain_ignored();
         up();
         recovery();
         CHECK_EQ_I(proc_err, 0);
@@ -2251,6 +2294,10 @@ int main(int argc, char **argv)
     if (!only || only == 30) unlock_loop();
     if (!only || only == 31) levels();
     if (!only || only == 32) back_silent_pending();
+#if HST_LONG_V17
+    if (only == 33) rev_stale_3r();       /* the BinModem profile's own (above) */
+#endif
+    if (!only || only == 34) retrain_ignored();
     CHECK_EQ_I(proc_err, 0);
     if (O.m) v90m_destroy(O.m);
     if (O.ec) v90m_ec_destroy(O.ec);

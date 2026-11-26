@@ -605,6 +605,15 @@ BinModem's version [OWN] (`S:519-564`):
   it asked for is never trained.
 - **0x2R:** no handling at all. It gets the LNA every LN gets, and nothing
   else happens (`S:566-611`, the catch-all arm at `S:611`).
+- **What this leaves for us** (our note, not a BinModem fact): we drop a
+  stale 0x3R only when our receiver stays in data for the whole 4 s bound
+  (spec "Rate changes"). If the receiver unlocks even briefly in those 4 s
+  (a marginal line), the follow counts as a failed retrain. Our 0x2R
+  step-down then starts, and against BinModem, which never trains for an
+  0x2R, it runs down to `RETRAIN_FAILED`. The same holds for any retrain we
+  ask BinModem for while it holds forward (`v90m_retrain`, frame errors).
+  This comes from BinModem having no 0x2R; we keep the step-down as
+  specified.
 
 ### Cleardown
 

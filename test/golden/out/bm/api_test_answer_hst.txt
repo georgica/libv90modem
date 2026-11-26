@@ -102,6 +102,11 @@ rev_stale_3r: the caller's 0x1R, then its 0x35 once it holds forward, never carr
   no LN of ours, the call up at 14400: pass
   one retrain more, data stopped that once: pass
   the data both ways, intact: pass
+retrain_ignored: holding the back channel at 14400, v90m_retrain; the caller never trains for our 0x2R
+  our LNs from the retrain: 0x26 3, 0x25 3, 0x24 3, 0x23 3, 0x22 3; end 8
+  only 0x2R of ours, never a rate up: pass
+  each agreed rate HST_RC_FAILS times, 14400 down to 4800: pass
+  then V90M_END_RETRAIN_FAILED: pass
 up: our switch by training to 9600 as holder; then holding back, 10 s good: our 0x35, then 0x36
   our switches by marks 0: 0 to 0; our trainings 3; switches 1
   holding forward, the caller's 0x34: our short training at 9600 (HST_3R_TRAINS), RATES tx 9600: pass
@@ -120,4 +125,4 @@ recovery: the caller's receiver drops out of data; 2 x T401: our short training
   a retrain: DATA_STOPPED, DATA_MOVING; retrains 2; the caller's receiver at 14400: pass
   retrains 2, reversals 0; LNs ours 0, last 0x00, the caller's last 0x00, violations 0; data 4096 to the caller, 768 to us, 0 wrong
   the data both ways intact, and moving again: pass
-test_answer_hst: 225 checks, 0 failures
+test_answer_hst: 236 checks, 0 failures
