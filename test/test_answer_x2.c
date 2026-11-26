@@ -751,6 +751,7 @@ int main(void)
     CHECK_EQ_I(o1.tx, o0.tx); CHECK_EQ_I(o1.rx, o0.rx); CHECK_EQ_I(o1.sym, o0.sym);
     CHECK_EQ_I(o0.bad, 0); CHECK_EQ_I(o1.bad, 0);
 
+#ifndef TEST_SHORT     /* on ARM under qemu (test.h): cases 1, 3 and 4 */
     /* 1b. WebTV's CM (V.34, V.32bis, V.22bis, V.23, V.21; no PCM, no access
      *     octet) from a strict V.8 receiver that cannot take the inverted JM:
      *     the JM is inverted only for V8A_X2_FLIP_MS, then plain; the caller
@@ -766,7 +767,6 @@ int main(void)
         CHECK_EQ_I(A.modulation, ANS_MOD_V34);
         CHECK_EQ_I(o1.tx, o0.tx); CHECK_EQ_I(o1.rx, o0.rx); CHECK_EQ_I(o1.bad, 0);
     }
-#ifndef TEST_SHORT     /* on ARM under qemu (test.h): cases 1, 3 and 4 */
     /* its CM carries the PSTN access octet: the JM gives it back with the
      * digital-network bit; still V.34 */
     slot = 1; v34_call(base | ANS_MODE_X2, 1, 1, &o1);

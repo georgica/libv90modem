@@ -6460,13 +6460,18 @@ milestone gate (verify-phase, ports, ARM) is Task 26's.
   sent with sign +. x2 (`v8ans_x2`) and the access octet are unchanged, so
   Phase 2 still offers x2. After: CJ 2.74 s after the JM began (13 JMs),
   V.34 28800 / 28800, no bit errors, the same rates as without x2.
-- **x2 kept.** The callers that take the inversion answer well inside 2 s
-  (boxB profile Q 1.07 s, the simulated callers 0.74 s); test_v8ans case 5
+- **x2 kept.** The x2 client answers well inside 2 s: the live USR x2
+  client's CJ came 0.773 s after the JM began (live-x2 ppp1 and ppp2), the
+  recorded corpus 0.606-0.641 s, the simulated callers 0.74 s. Non-x2
+  callers that did take the inversion live were slow (WebTV 1.47-3.87 s);
+  the plain JM after 2 s helps them too. The live x2 call (ppp1) replays
+  byte-identical with the old and the new code. test_v8ans case 5
   (each JM's sign checked sample by sample), test_answer_x2, test_x2rec
   unchanged. Replay proof: 742 runs identical; in the x2 set, the 6
   recordings whose CM has no PCM all had CJ within 0.64 s of the JM.
 - **Golden.** test_v8ans and test_answer_x2: one new line each (the new
-  cases) and the check counts (50 -> 60, 518 -> 526). Bench hashes 19
+  cases) and the check counts (50 -> 60, 518 -> 526). test_answer_x2's case
+  1b, a whole call, runs only where TEST_SHORT is not set (not on ARM). Bench hashes 19
   identical.
 
 ## 0.7.0: V.34 Phase 3/4 time limits keep the whole round trip when the echo comes late (2026-11-25)
@@ -6491,7 +6496,8 @@ milestone gate (verify-phase, ports, ARM) is Task 26's.
   read it. `cfg.rtd` stays whole for the limits. After: data at 10.5 s,
   no retrain; `far_rtd` = rtd - echo delay - 8 and `far_on` as before.
   test_v34dx's far-echo lag check reads `far_rtd`.
-- **Replay proof.** 2 recordings x 7 sets, .txt only (.bits identical):
+- **Replay proof.** 2 recordings x 7 sets, .txt only (their .bits files
+  are empty: these replays decide no bits, so the evidence is the trace):
   ab_cc_v34, our retrain from `DX_P3_J` 12.229 -> 12.262 s (its round
   trip 263 samples, all taken off before since the echo delay was longer:
   the limit + 33 ms); x1, our retrain from Phase 4 16.812 -> 16.911 s (the
