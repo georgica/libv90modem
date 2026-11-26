@@ -29,9 +29,29 @@
 /* the FCS of 7.2.7 (CRC-16/X.25) over n octets; sent low octet first */
 uint16_t v8bis_fcs16(const uint8_t *o, int n);
 
+/* The NS block's version octet (blk[7]; docs/history/k56-facts.md "NS
+ * block", and "Versions"): bit 6 (0x40) set by the digital modem (the
+ * server), clear in a client's; bits 0 to 4 a mask of K56flex versions, bit 0
+ * version 1, bit 1 version 2; bit 5 (0x20) a flag of the sender's, no
+ * version. A client keeps the highest version bit its mask and our offer
+ * share, and drops a CL that shares none without a word. */
+#define V8B_VER_DIGITAL 0x40
+#define V8B_VER_FLAG    0x20
+#define V8B_VER_MASK    0x1f
+#define V8B_VERS_1      0x01
+#define V8B_VERS_2      0x02
+#define V8B_VERS_BOTH   (V8B_VERS_1 | V8B_VERS_2)
+
 /* our CL, FCS not included: the real server's, with the NS block of the
- * given form; returns the octet count (16 or 13) */
-int v8bis_cl_octets(int ns_form, uint8_t *o);
+ * given form; returns the octet count (16 or 13). vers: the versions the
+ * 9-octet block offers (V8B_VERS_*: its version octet is 0x40 | vers; the
+ * real server's was 0x42, version 2 alone); the 7-octet block keeps SM56's
+ * 0x61 whatever vers says */
+int v8bis_cl_octets(int ns_form, int vers, uint8_t *o);
+
+/* the versions that CL offers in fact (its version octet's bits 0..4):
+ * vers for the 9-octet block, version 1 alone for the 7-octet one (0x61) */
+int v8bis_cl_versions(int ns_form, int vers);
 
 /* ACK(1): one octet; returns 1 */
 int v8bis_ack1_octets(uint8_t *o);
@@ -68,5 +88,13 @@ int v8bis_cl_is_k56(const uint8_t *blk, int len);
  * block with L > 6, blk[1] == 0xb5, blk[2] == 2 and blk[6] & 1; 0 for
  * anything else, a message that does not parse included. */
 int v8bis_ms_is_k56(const uint8_t *o, int n);
+
+/* the version octet (blk[7]) of the block v8bis_ms_is_k56 finds, 0..255;
+ * -1 when there is none */
+int v8bis_ms_version(const uint8_t *o, int n);
+
+/* the version a version octet selects: the highest of its version bits
+ * (bits 0 to 4: 1 to 5), 0 with none of them set */
+int v8bis_version_of(int octet);
 
 #endif

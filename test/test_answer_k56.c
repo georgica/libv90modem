@@ -66,7 +66,13 @@
  *     V.92's rates move a step with the line's noise, and from there on it
  *     sends the same octets), the x2 client (sim/x2call) with x2 offered
  *     too;
- *   - an A-law line: not one transmit sample differs (no CRe).
+ *   - an A-law line: not one transmit sample differs (no CRe);
+ *   - K56flex versions (0.7.2, k56_version_tests): our CL 0x43 against a
+ *     client of versions 1 and 2 (it selects 2: the K56flex call of 0.7.1's
+ *     0x42, the same rates and data), SM56 (echoes 0x03: agreed), a client
+ *     of version 1 alone (NAK(3), V.34 as without K56flex; against 0x42 it
+ *     drops our CL), and that client with ANS_MODE_K56_V1 (acknowledged,
+ *     our start-up runs). The tests above run with 0.7.1's CL (CL43).
  * A click in data mode (Task 20: 0.75 ms of full scale on the line to us,
  * 4 s into data mode): the upstream clean from 2 s after it.
  * The delays K56flex adds before our ANSam are printed (docs/limits.md). */
@@ -157,6 +163,18 @@ typedef struct {
 
 static int V34PEER_UP;  /* the same client without K56flex (sim/v34peer): its upstream rate */
 static int K_INFO1C = 1, K_UP3000 = 0;  /* the client's options (k56call_cfg), for k_call */
+static int K_VERS = 0;                  /* k56call_cfg.vers, for k_call */
+/* in k_call's modes and kd_opts.modes: 0.7.2's CL (versions 1 and 2, 0x43).
+ * Without it the tests written before 0.7.2 keep 0.7.1's CL
+ * (ANS_MODE_K56_V2_ONLY): the 0x43 CL is one bit longer, and every later
+ * sample of the simulated calls would move (their outputs are golden);
+ * k56_version_tests runs the new CL against the old */
+#define CL43 0x80000000u
+static unsigned cl_modes(unsigned modes)
+{
+    if ((modes & ANS_MODE_K56) && !(modes & CL43)) modes |= ANS_MODE_K56_V2_ONLY;
+    return modes & ~CL43;
+}
 
 static void k_call(unsigned modes, int v8bis, int cm_pcm, int secs, k_outcome *o)
 {
@@ -170,12 +188,12 @@ static void k_call(unsigned modes, int v8bis, int cm_pcm, int secs, k_outcome *o
     memset(&UA, 0, sizeof UA); memset(&UC, 0, sizeof UC); UA.tx = 1; UC.tx = 77;
     rng_seed(&rng, 4242);
     memset(&ac, 0, sizeof ac);
-    ac.level = 3000; ac.modes = modes; ac.getbit = p_get; ac.putbit = p_put; ac.user = &UA;
+    ac.level = 3000; ac.modes = cl_modes(modes); ac.getbit = p_get; ac.putbit = p_put; ac.user = &UA;
     answer_init(&A, &ac);
     answer_v90_line(&A, 0, 0, 0);
     k56call_default(&kc, 3000);
     kc.v8bis = v8bis; kc.cm_pcm = cm_pcm;
-    kc.info1c_k56 = K_INFO1C; kc.up_sr_3000 = K_UP3000;
+    kc.info1c_k56 = K_INFO1C; kc.up_sr_3000 = K_UP3000; kc.vers = K_VERS;
     kc.getbit = p_get; kc.putbit = p_put; kc.user = &UC;
     k56call_init(&K, &kc);
     p1_reset();
@@ -206,7 +224,7 @@ static void k_call(unsigned modes, int v8bis, int cm_pcm, int secs, k_outcome *o
         if (end >= 0 && n == end) { UA.n = UA.bad = UC.n = UC.bad = 0; }
         if (end >= 0 && n > end && UA.n >= BITS && UC.n >= BITS) break;
     }
-    o->agreed = A.k56_agreed; o->sel = A.v8.selected; o->x2 = v8ans_x2(&A.v8);
+    o->agreed = ANS_K56_AGREED_OF(&A); o->sel = A.v8.selected; o->x2 = v8ans_x2(&A.v8);
     o->sr_diff = K.peer.p2.info0a.max_sr_diff; o->cme = K.peer.p2.info0a.cme;
     o->ok = A.connected && A.modulation == ANS_MOD_V34 && K.state == K56C_V34 && K.peer.state == VP_DATA;
     o->mod = A.modulation; o->down = A.bitrate; o->up = A.rx_bitrate;
@@ -370,6 +388,8 @@ typedef struct {
     int reneg_ms, reneg_rate, reneg_ms2, reneg_rate2, reneg_rate0;    /* k56call_cfg's */
     int retrain_ms, retrains, retrain_200;                          /* k56call_cfg's */
     int heavy_up, retrain_in_reneg;                                 /* k56call_cfg's */
+    int vers;               /* k56call_cfg's: 0 SM56, else a Rockwell controller's mask */
+    unsigned modes;         /* more answer_cfg.modes: CL43, ANS_MODE_K56_V1 */
     int hold;               /* seconds of data mode to run (no end at the data check) */
     int click_ms;           /* a click on the line to us this long into data mode (Task 20):
                                six samples of full-scale mu-law, 0x80 and 0x00 alternated */
@@ -443,7 +463,7 @@ static void kd_call(const kd_opts *ko, long secs, kd_out *o)
     p23_init(&DA, 0x1234567); p23_init(&DC, 0x7654321);
     rng_seed(&rng, 4242);
     memset(&ac, 0, sizeof ac);
-    ac.level = 3000; ac.modes = BASE | ANS_MODE_K56; ac.getbit = kd_aget; ac.putbit = kd_aput; ac.user = NULL;
+    ac.level = 3000; ac.modes = cl_modes(BASE | ANS_MODE_K56 | ko->modes); ac.getbit = kd_aget; ac.putbit = kd_aput; ac.user = NULL;
     answer_init(&A, &ac);
     answer_v90_line(&A, ko->echo_delay, ko->max_down, ko->max_up);
     k56call_default(&kc, 3000);
@@ -454,6 +474,7 @@ static void kd_call(const kd_opts *ko, long secs, kd_out *o)
     kc.reneg_rate2 = ko->reneg_rate2; kc.reneg_rate0 = ko->reneg_rate0;
     kc.retrain_ms = ko->retrain_ms; kc.retrains = ko->retrains; kc.retrain_200 = ko->retrain_200;
     kc.heavy_up = ko->heavy_up; kc.retrain_in_reneg = ko->retrain_in_reneg;
+    kc.vers = ko->vers;
     kc.getbit = kd_cget; kc.putbit = kd_cput; kc.user = NULL;
     k56call_init(&K, &kc);
     o->rn_at = o->reneg_seen = o->rt_at = o->k56rt_at = -1;
@@ -1203,7 +1224,7 @@ static void v34peer_tests(void)
     printf("  V.34 caller without V.8bis, K56flex offered: %d / %d bit/s at %d baud, %ld bad (without: %d / %d at %d, %ld bad);"
            " ANSam %.3f s later\n", o1.tx, o1.rx, o1.sym, o1.bad, o0.tx, o0.rx, o0.sym, o0.bad, (o1.ansam_at - o0.ansam_at) / 8000.0);
     CHECK(o0.ok); CHECK(o1.ok);
-    CHECK_EQ_I(A.k56_offered, 1); CHECK_EQ_I(A.k56_agreed, 0);
+    CHECK_EQ_I(A.k56_offered, 1); CHECK_EQ_I(ANS_K56_AGREED_OF(&A), 0);
     CHECK_EQ_I(A.modulation, ANS_MOD_V34);
     CHECK_EQ_I(o1.tx, o0.tx); CHECK_EQ_I(o1.rx, o0.rx); CHECK_EQ_I(o1.sym, o0.sym);
     CHECK_EQ_I(o0.bad, 0); CHECK_EQ_I(o1.bad, 0);
@@ -1289,7 +1310,7 @@ static void orig_tests(void)
                " %" PRId64 " / %" PRId64 " fail (without: mod %d, %d / %d)\n", v92 ? "V.92" : "V.90", o1.mod, o1.down, o1.up,
                o1.bd, o1.bu, o1.fd, o1.fu, o0.mod, o0.down, o0.up);
         CHECK(o0.ok); CHECK(o1.ok);
-        CHECK_EQ_I(VL.ans.k56_offered, 1); CHECK_EQ_I(VL.ans.k56_agreed, 0);
+        CHECK_EQ_I(VL.ans.k56_offered, 1); CHECK_EQ_I(ANS_K56_AGREED_OF(&VL.ans), 0);
         CHECK_EQ_I(o1.mod, v92 ? ORIG_MOD_V92 : ORIG_MOD_V90); CHECK_EQ_I(o1.mod, o0.mod);
         CHECK_EQ_I(o1.down, o0.down); CHECK_EQ_I(o1.up, o0.up);
         CHECK_EQ_I(o1.hash, o0.hash);
@@ -1359,7 +1380,7 @@ static void x2_tests(void)
     printf("  x2 client, x2 and K56flex offered: %s %d / %d bit/s, down %ld bits %ld bad, up %ld bits %ld bad"
            " (without K56flex: %d / %d)\n", o1.ok ? "x2" : "NO DATA", o1.down, o1.up, DN.n, DN.bad, UP.n, UP.bad, o0.down, o0.up);
     CHECK(o0.ok); CHECK(o1.ok); CHECK_EQ_I(b0, 0);
-    CHECK_EQ_I(A.k56_offered, 1); CHECK_EQ_I(A.k56_agreed, 0);
+    CHECK_EQ_I(A.k56_offered, 1); CHECK_EQ_I(ANS_K56_AGREED_OF(&A), 0);
     CHECK_EQ_I(o1.mod, ANS_MOD_X2); CHECK_EQ_I(o1.down, o0.down); CHECK_EQ_I(o1.up, o0.up);
     CHECK(DN.n >= BITS); CHECK(UP.n >= BITS); CHECK_EQ_I(DN.bad, 0); CHECK_EQ_I(UP.bad, 0);
 }
@@ -1429,10 +1450,123 @@ static void k56_far_echo_tests(void)
     }
 }
 
+/* ---- K56flex versions (0.7.2; docs/history/k56-facts.md "Versions") ----
+ * Our CL offers versions 1 and 2 (0x43) unless ANS_MODE_K56_V2_ONLY (0x42,
+ * 0.7.1's). The client (sim/k56call): SM56 (echoes our octet less 0x40),
+ * or a Rockwell controller of mask vers (the highest version in common;
+ * none: our CL dropped without a word).
+ *   (a) a client of versions 1 and 2 against 0x43 selects version 2: the
+ *       K56flex call it gets against 0.7.1's 0x42, the same rates and the
+ *       data check both ways, no training octet wrong; SM56 likewise;
+ *   (b) a client of version 1 alone (the WebTV Plus) against 0x43 selects
+ *       version 1: NAK(3), not agreed, then V.34 at the rates the same
+ *       client gets without K56flex, and answer_t.k56 says chosen 1,
+ *       declined;
+ *   (c) the same with ANS_MODE_K56_V1 (experimental): ACK(1), and our
+ *       version-2 start-up runs; the simulated client has version 2's
+ *       pump whatever it selected, so this pins only that the start-up is
+ *       reached and what came of it (a real version-1 pump: unknown);
+ *   (d) 0.7.1's 0x42: the version-1 client drops it (no MS: V.34, as the
+ *       WebTV Plus was answered before 0.7.2); SM56 echoes 0x02, agreed. */
+static void k56_version_tests(void)
+{
+    kd_opts ko; kd_out o42, o43;
+    k_outcome r0, r1;
+    long dn42, dn43, un42, un43, ansam_r0;
+    int ver;
+
+    /* (a) versions 1 and 2, against 0.7.1's CL and against 0.7.2's */
+    kd_default(&ko); ko.rate = 1; ko.vers = 3;
+    kd_call(&ko, 60, &o42);
+    dn42 = DC.n; un42 = DA.n;
+    CHECK_EQ_I(K.cl_ver, 0x42); CHECK_EQ_I(K.ms_ver, 0x02);
+    CHECK_EQ_I(A.k56, ANS_K56_AGREED | ANS_K56_CL | ANS_K56_MS | (2u << ANS_K56_VER_SHIFT));
+    CHECK_EQ_I(o42.mod, ANS_MOD_K56); CHECK_EQ_I(DA.bad, 0); CHECK_EQ_I(DC.bad, 0); CHECK_EQ_I(seg_bad_sum(), 0);
+    kd_default(&ko); ko.rate = 1; ko.vers = 3; ko.modes = CL43;
+    kd_call(&ko, 60, &o43);
+    dn43 = DC.n; un43 = DA.n;
+    kd_report("K56flex client of versions 1 and 2, our CL 0x43", &o43);
+    printf("     CL %02X, its MS %02X, k56 %02X; against 0x42: %d / %d bit/s, data mode %.3f s later with 0x43\n",
+           K.cl_ver, K.ms_ver, A.k56, o42.down, o42.up, (o43.data_at - o42.data_at) / 8000.0);
+    CHECK_EQ_I(K.cl_ver, 0x43); CHECK_EQ_I(K.ms_ver, 0x02); CHECK_EQ_I(K.got_ack, 1); CHECK_EQ_I(K.got_nak3, 0);
+    CHECK_EQ_I(A.k56, ANS_K56_AGREED | ANS_K56_CL | ANS_K56_MS | (2u << ANS_K56_VER_SHIFT));
+    CHECK_EQ_I(o43.connected_once, 1); CHECK_EQ_I(o43.mod, ANS_MOD_K56);
+    CHECK_EQ_I(o43.down, o42.down); CHECK_EQ_I(o43.up, o42.up);
+    CHECK_EQ_I(o43.client_down, o42.client_down); CHECK_EQ_I(o43.client_up, o42.client_up);
+    CHECK(dn43 >= DBITS); CHECK(un43 >= DBITS); CHECK(dn42 >= DBITS); CHECK(un42 >= DBITS);
+    CHECK_EQ_I(DA.bad, 0); CHECK_EQ_I(DC.bad, 0); CHECK_EQ_I(seg_bad_sum(), 0);
+    CHECK_EQ_I(K.js_ok, 1); CHECK_EQ_I(K.mp_good, 16); CHECK_EQ_I(K.mpa_good, 16);
+    /* the CL one bit longer (its FCS stuffs one zero more): our ANSam 3.4
+     * ms later. Data mode moves more, either way by line delay: the
+     * simulated caller detects ANSam in 20 ms blocks (sim/v8call), and at
+     * the ANSam-to-JM cut its V.21 receiver may end on a garbage octet that
+     * is not mark (0xFE here) and drop our first JM, a JM period (200 ms)
+     * more. Here 0.220 s later; at other delays 0x43 is the earlier (the
+     * 0.7.2 review's sweep). An alignment artefact of the simulator: within
+     * 0.5 s either way */
+    CHECK(labs(o43.data_at - o42.data_at) <= MS(500));
+    /* SM56 against 0x43: its echo, 0x03, selects version 2 */
+    kd_default(&ko); ko.rate = 1; ko.modes = CL43;
+    kd_call(&ko, 60, &o43);
+    printf("  SM56 against our CL 0x43: its MS %02X, k56 %02X, %s %d / %d bit/s, %ld / %ld bad\n",
+           K.ms_ver, A.k56, o43.mod == ANS_MOD_K56 ? "K56flex" : "NOT K56FLEX", o43.down, o43.up, DC.bad, DA.bad);
+    CHECK_EQ_I(K.ms_ver, 0x03); CHECK_EQ_I(o43.mod, ANS_MOD_K56); CHECK_EQ_I(o43.down, o42.down);
+    CHECK_EQ_I(A.k56, ANS_K56_AGREED | ANS_K56_CL | ANS_K56_MS | (2u << ANS_K56_VER_SHIFT));
+    CHECK_EQ_I(DA.bad, 0); CHECK_EQ_I(DC.bad, 0);
+
+    /* (b) version 1 alone against 0x43: declined, V.34 as without K56flex */
+    K_VERS = 1;
+    k_call(BASE, K56C_V8BIS_FULL, 0, 40, &r0);
+    ansam_r0 = P1.ansam_at;
+    k_call(BASE | ANS_MODE_K56 | CL43, K56C_V8BIS_FULL, 0, 40, &r1);
+    k_report("K56flex client of version 1 alone, our CL 0x43", &r1);
+    ver = (int)((A.k56 & ANS_K56_VER_MASK) >> ANS_K56_VER_SHIFT);
+    printf("     CL %02X, its MS %02X, NAK(3) %d, k56 %02X (chosen %d); without K56flex %d / %d bit/s;"
+           " our ANSam %.3f s later than without K56flex\n",
+           K.cl_ver, K.ms_ver, K.got_nak3, A.k56, ver, r0.down, r0.up, (P1.ansam_at - ansam_r0) / 8000.0);
+    CHECK(r0.ok); CHECK_EQ_I(r0.bad, 0);
+    CHECK_EQ_I(K.cl_ok, 1); CHECK_EQ_I(K.cl_ver, 0x43); CHECK_EQ_I(K.sent_ms, 1); CHECK_EQ_I(K.ms_ver, 0x01);
+    CHECK_EQ_I(K.got_ack, 0); CHECK_EQ_I(K.got_nak, 0); CHECK_EQ_I(K.got_nak3, 1);
+    CHECK_EQ_I(r1.agreed, 0); CHECK_EQ_I(A.v34.cfg.k56, 0); CHECK_EQ_I(A.v34.p2.k56, 0);
+    CHECK_EQ_I(A.k56, ANS_K56_CL | ANS_K56_MS | ANS_K56_DECLINED | (1u << ANS_K56_VER_SHIFT));
+    CHECK_EQ_I(ver, 1);
+    CHECK(r1.ok); CHECK_EQ_I(r1.mod, ANS_MOD_V34); CHECK_EQ_I(r1.sel, V8_SEL_V34);
+    CHECK_EQ_I(r1.down, r0.down); CHECK_EQ_I(r1.up, r0.up); CHECK_EQ_I(r1.bad, 0);
+    CHECK_EQ_I(r1.k56_at, -1);
+
+    /* (d) the same client against 0.7.1's 0x42: no version in common, its CL
+     * dropped without a word: no MS, V.34 */
+    k_call(BASE | ANS_MODE_K56 | ANS_MODE_K56_V2_ONLY, K56C_V8BIS_FULL, 0, 40, &r1);
+    k_report("K56flex client of version 1 alone, our CL 0x42", &r1);
+    CHECK_EQ_I(K.got_cl, 1); CHECK_EQ_I(K.cl_ver, 0x42); CHECK_EQ_I(K.cl_ok, 0); CHECK_EQ_I(K.sent_ms, 0);
+    CHECK_EQ_I(K.got_ack, 0); CHECK_EQ_I(K.got_nak3, 0);
+    CHECK_EQ_I(A.k56, ANS_K56_CL);
+    CHECK(r1.ok); CHECK_EQ_I(r1.down, r0.down); CHECK_EQ_I(r1.up, r0.up); CHECK_EQ_I(r1.bad, 0);
+    K_VERS = 0;
+    /* SM56 against 0x42: its echo 0x02, agreed (0.7.1's exchange) */
+    k_call(BASE | ANS_MODE_K56 | ANS_MODE_K56_V2_ONLY, K56C_V8BIS_FULL, 0, 40, &r1);
+    CHECK_EQ_I(K.cl_ver, 0x42); CHECK_EQ_I(K.ms_ver, 0x02); CHECK_EQ_I(r1.agreed, 1);
+    CHECK_EQ_I(A.phase, ANS_K56);
+
+    /* (c) version 1 alone with ANS_MODE_K56_V1: acknowledged, our start-up
+     * runs; what came of it is pinned, not required */
+    kd_default(&ko); ko.rate = 1; ko.vers = 1; ko.modes = CL43 | ANS_MODE_K56_V1;
+    kd_call(&ko, 60, &o43);
+    kd_report("K56flex client of version 1 alone, ANS_MODE_K56_V1", &o43);
+    printf("     CL %02X, its MS %02X, ACK(1) %d, k56 %02X\n", K.cl_ver, K.ms_ver, K.got_ack, A.k56);
+    CHECK_EQ_I(K.cl_ver, 0x43); CHECK_EQ_I(K.ms_ver, 0x01); CHECK_EQ_I(K.got_ack, 1); CHECK_EQ_I(K.got_nak3, 0);
+    CHECK_EQ_I(A.k56, ANS_K56_AGREED | ANS_K56_CL | ANS_K56_MS | (1u << ANS_K56_VER_SHIFT));
+    CHECK(o43.k56_at > 0);
+    /* the simulated client's pump is version 2's: the call as (a)'s */
+    CHECK_EQ_I(o43.mod, ANS_MOD_K56); CHECK_EQ_I(o43.down, o42.down); CHECK_EQ_I(o43.up, o42.up);
+    CHECK_EQ_I(DA.bad, 0); CHECK_EQ_I(DC.bad, 0); CHECK_EQ_I(seg_bad_sum(), 0);
+}
+
 int main(void)
 {
     cfg_after_start_tests();
     k56_client_tests();
+    k56_version_tests();
     k56_data_tests();
     k56_rate_tests();
     k56_reneg_tests();

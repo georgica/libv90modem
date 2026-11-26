@@ -8,6 +8,43 @@ change is listed here. Rebuild against the new header with every version;
 "Simulation and own answerer only" means: tried against simulated lines and
 this library's own answering modem, never against a real modem or server.
 
+## 0.7.2 (2026-11-26)
+
+Changed, behaviour (answering with `V90M_MOD_K56` only):
+- Our V.8bis CL now offers K56flex versions 1 and 2 (the NS block's version
+  octet 0x43; 0x42, version 2 alone, before). A client that can do version
+  2 still selects it and gets the call it got before; SM56 echoes 0x03 and
+  is acknowledged as before. The CL is one bit longer on the line (its FCS
+  stuffs one more zero), so everything after it comes 3.3 ms later.
+- A client that selects version 1 (an early WebTV Plus, whose pump knows
+  version 1 alone and which dropped our 0x42 CL without a word) is now
+  declined with V.8bis NAK(3) and answered as without K56flex (V.8, then
+  V.90 or V.34, as it got before 0.7.2). Our K56flex start-up is version
+  2's; what version 1 differs in on the line is not known. Such a client
+  now hears our answer tone about 0.39 s sooner (3.420 s later than without K56flex,
+  on the agreed timing, against 3.807 s when it sent no MS).
+- Simulation only (and SM56 under emulation against 0x43): the WebTV Plus's
+  answer to NAK(3) is expected, from the disassembly of its controller
+  (V1.101), to be V.8 as before; no live call has been made.
+
+Added, the API (the ABI of 0.7.1 kept: no struct changes size, the SONAME
+stays `libv90modem.so.0.7`):
+- `v90m_get_k56(m, &k)` fills a new `v90m_k56`: the versions our CL offered
+  (`offered`, a mask), whether the client's MS selected K56flex
+  (`exchanged`), the version it chose (`chosen`: 0 none, 1, 2), and whether
+  we declined (`declined`) or acknowledged (`agreed`) it. Kept after the end
+  until `v90m_reset`. Simulation only.
+- `V90M_OPT_K56_V2_ONLY` (0x20000, an option bit in `.modulations`, off by
+  default): 0.7.1's exchange, the 0x42 CL and every selection acknowledged.
+- `V90M_OPT_K56_V1` (0x40000, off by default, **experimental**): a
+  version-1 selection is acknowledged and our version-2 start-up runs; for a
+  test number, it may fail in training (`V90M_END_K56_FAILED`).
+- `v90m_mem_size()` unchanged on every pinned target (x86-64 106320, 32-bit
+  ARM 106016; i386 105860): the report is one octet that was the
+  agreement flag's.
+- Tools: `v90m-replay -K` (0.7.1's CL, for calls 0.7.1 answered; the
+  replay proof's K56flex sets use it) and `-1` (`V90M_OPT_K56_V1`).
+
 ## 0.7.1 (2026-11-26)
 
 Added, the API (the ABI of 0.7.0 kept: no struct changes size, the SONAME

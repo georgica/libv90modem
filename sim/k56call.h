@@ -7,8 +7,15 @@
  *   2002 Hz held 100 ms, then its second segment) answered, 175 ms after
  *   it ends, with CRd (1529 + 2225 Hz 400 ms, 1900 Hz 100 ms); our CL
  *   received on V.21 channel 1 and its NS block checked with SM56's test
- *   (v8bis_cl_is_k56); 10 ms after it, SM56's MS on channel 2; then ACK(1)
- *   or NAK(1) received on channel 1. Per cfg.v8bis: the whole exchange, CRd
+ *   (v8bis_cl_is_k56); 10 ms after it, SM56's MS on channel 2, its version
+ *   octet our CL's less 0x40 (SM56 echoes it, choosing nothing); then
+ *   ACK(1), NAK(1) or NAK(3) received on channel 1. With cfg.vers (a
+ *   Rockwell controller's version mask, docs/history/k56-facts.md
+ *   "Versions"; its own code here) the CL's block is checked as that
+ *   controller does: the version octet with 0x40, and its bits 0..4 ANDed
+ *   with vers; none in common: the CL dropped without a word (no MS, as the
+ *   WebTV Plus does with vers 1); else the MS selects the highest common
+ *   version (its version octet 1 or 2). Per cfg.v8bis: the whole exchange, CRd
  *   and no MS (a V.92 modem), no V.8bis at all, or the MS with a bad FCS.
  *   V.8 as a caller (sim/v8call) from the start, as v34peer's own: CM with
  *   V.34, or with cm_pcm V.34 and the PCM octet of an analogue modem (SM56
@@ -89,6 +96,9 @@ typedef struct {
     int v8bis;              /* K56C_V8BIS_* */
     int cm_pcm;             /* CM offers PCM (V.90 analogue modem) as well */
     int info1c_k56;         /* once agreed, INFO1c says 0x001 (1) or 0x200 (0); k56call_default: 1 */
+    int vers;               /* 0: SM56's V.8bis (k56call_default); else a Rockwell
+                               controller's K56flex version mask (1: version 1 alone,
+                               as the WebTV Plus; 3: versions 1 and 2) */
     int up_sr_3000;         /* INFO0c without the 3200 carriers: at most 3000 baud up */
     /* K56flex (k56call_default: pad 0, rbs 0, j_octet -1, rate 13, up_mask 0x3fff) */
     int pad_mode;           /* the network's pad on our downstream: 0 none, 1 3 dB, 2 6 dB */
@@ -148,9 +158,12 @@ typedef struct {
     v8bis_rx_t  rx; uint8_t msg[V8B_MAXOCT];
     v21mod_t    mod; uint8_t bits[V8B_MAXBITS]; int nbits, pos; int32_t ms_at;
     int         got_cre;            /* the initiator's dual tone held 100 ms */
-    int         got_cl, cl_ok;      /* a CL came; its NS block passed SM56's test */
+    int         got_cl, cl_ok;      /* a CL came; its NS block passed SM56's test (vers:
+                                           the controller's, with a version in common) */
+    int         cl_ver;             /* our CL's version octet, -1 none */
+    int         ms_ver;             /* its MS's version octet, -1 none sent */
     int         sent_ms;
-    int         got_ack, got_nak;
+    int         got_ack, got_nak, got_nak3;
     /* V.8 and V.34 */
     v8call_t    v8;
     int         v8_sel;             /* what JM selected (v8_selected), -1 before */

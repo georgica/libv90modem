@@ -28,6 +28,7 @@ static const uint32_t crd_dph[3] = { DPH(1529), DPH(2225), DPH(1900) };
 
 /* NAK(1): type 1000, revision 1 (V.8bis Tables 3 and 4) */
 #define NAK1 0x18
+#define NAK3 0x1a       /* revision 1, NAK(3) */
 
 void v8bis_crd_init(v8bis_crd_t *d) { memset(d, 0, sizeof *d); }
 
@@ -93,7 +94,7 @@ static int crd_begun(const v8bis_crd_t *d)
     return pair_in(d, m, d->n, 1);
 }
 
-void v8bis_init(v8bis_t *b, int16_t amp, int ns_form)
+void v8bis_init(v8bis_t *b, int16_t amp, int ns_form, int vers, int accept_v1)
 {
     memset(b, 0, sizeof *b);
     b->state = V8B_SIL;
@@ -101,6 +102,9 @@ void v8bis_init(v8bis_t *b, int16_t amp, int ns_form)
     b->a_dual = (int16_t)((amp * CRE_DUAL_Q15) >> 15);
     b->a_tone = (int16_t)((amp * CRE_TONE_Q15) >> 15);
     b->ns_form = ns_form;
+    b->vers = v8bis_cl_versions(ns_form, vers);    /* as sent: NS7's 0x61 is version 1 alone */
+    b->accept_v1 = accept_v1 != 0;
+    b->ms_ver = -1;
     b->result = V8B_RES_NONE;
 }
 
@@ -190,7 +194,8 @@ v8b_state v8bis_tick(v8bis_t *b, int16_t rx, int16_t *tx)
         break;
     case V8B_GAP_CL:
         if (b->t >= MS(V8B_CL_GAP_MS)) {
-            send(b, o, v8bis_cl_octets(b->ns_form, o));
+            send(b, o, v8bis_cl_octets(b->ns_form, b->vers, o));
+            b->cl_sent = 1;
             go(b, V8B_CL);
         }
         break;
@@ -200,7 +205,14 @@ v8b_state v8bis_tick(v8bis_t *b, int16_t rx, int16_t *tx)
     case V8B_WAIT_MS:
         r = listen_tick(b, rx);
         if (r > 0 && (b->msg[0] & 15) == V8B_MSG_MS && v8bis_ms_is_k56(b->msg, r)) {
-            b->result = V8B_RES_AGREED;            /* ACK(1) to it (ruling C6) */
+            b->ms_ver = v8bis_ms_version(b->msg, r);
+            /* version 1 alone, offered among others: declined (9.5) unless
+             * accept_v1; any other choice, ACK(1) (ruling C6) */
+            if ((b->vers & V8B_VERS_1) && b->vers != V8B_VERS_1 && !b->accept_v1
+                && v8bis_version_of(b->ms_ver) == 1)
+                b->result = V8B_RES_DECLINED;
+            else
+                b->result = V8B_RES_AGREED;
             go(b, V8B_GAP_ACK);
         } else if (r < 0) {
             b->result = V8B_RES_NO_MS;             /* NAK(1) to an invalid frame (7.2.9, 9.8) */
@@ -213,7 +225,7 @@ v8b_state v8bis_tick(v8bis_t *b, int16_t rx, int16_t *tx)
     case V8B_GAP_ACK:
         if (b->t >= MS(V8B_ACK_GAP_MS)) {
             if (b->result == V8B_RES_AGREED) r = v8bis_ack1_octets(o);
-            else { o[0] = NAK1; r = 1; }
+            else { o[0] = b->result == V8B_RES_DECLINED ? NAK3 : NAK1; r = 1; }
             send(b, o, r);
             go(b, V8B_ACK);
         }

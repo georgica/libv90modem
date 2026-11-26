@@ -14,7 +14,7 @@ void ans_v34_cfg(const answer_t *a, v34ans_cfg *c)
     c->max_tx_rate = a->max_down; c->max_rx_rate = a->max_up;
     c->getbit = a->cfg.getbit; c->putbit = a->cfg.putbit; c->user = a->cfg.user;
     c->x2 = v8ans_x2(&a->v8);
-    c->k56 = (uint8_t)(a->k56_agreed != 0);
+    c->k56 = (uint8_t)ANS_K56_AGREED_OF(a);
     c->tx_cap = (a->cfg.modes & ANS_MODE_V34_TX_CAP) != 0;
 }
 

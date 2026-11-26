@@ -152,7 +152,7 @@ void trace_reset(void) { last_ph = last_v8 = last_p2 = last_v8b = -1; }
 void trace_a(answer_t *a, long src)
 {
     if (last_ph == ANS_V8BIS && a->phase != ANS_V8BIS)
-        printf("%7.3f s    V.8bis result %d, K56flex agreed %d\n", src / 8000.0, v8bis_result(&a->u.v8b), a->k56_agreed);
+        printf("%7.3f s    V.8bis result %d, K56flex agreed %d\n", src / 8000.0, v8bis_result(&a->u.v8b), ANS_K56_AGREED_OF(a));
     if ((int)a->phase != last_ph) { last_ph = (int)a->phase; printf("%7.3f s  modem phase %s (V.34 engine state %d error %d)\n", src / 8000.0, ph[last_ph], (int)a->v34.dx.state, a->v34.dx.error); }
     if (a->phase == ANS_V8BIS && (int)a->u.v8b.state != last_v8b) {
         last_v8b = (int)a->u.v8b.state; printf("%7.3f s    V.8bis state %d\n", src / 8000.0, last_v8b);

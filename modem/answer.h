@@ -24,7 +24,7 @@
  * it, ends the call with ANS_END_X2_FAILED.
  * K56flex (ANS_MODE_K56, with V8_MOD_V34, on a mu-law line): V.8bis comes
  * first (ANS_V8BIS: modem/v8bis), then V.8 as above whatever came of it. A
- * client whose MS carries the K56flex block is agreed (k56_agreed): x2 is
+ * client whose MS carries the K56flex block is agreed (k56): x2 is
  * then not offered, and V.34 is told (v34ans_cfg.k56). V.34's Phase 2 then
  * flags our INFO1a when the client's INFO1c takes K56flex up and the symbol
  * rate is 3200 (modem/p2ans): the point of no return, ANS_K56: modem/k56d
@@ -126,6 +126,14 @@ typedef enum {
 /* V.34: our MP's transmit ceiling capped at the caller's INFO1c / INFO1a
  * projection (v34ans_cfg.tx_cap) */
 #define ANS_MODE_V34_TX_CAP 0x1000000u
+/* with ANS_MODE_K56: our CL offers K56flex version 2 alone (the version
+ * octet 0x42, as 0.7.1 and the real server did) instead of versions 1 and 2
+ * (0x43), and every MS with the block is acknowledged, as in 0.7.1 */
+#define ANS_MODE_K56_V2_ONLY 0x2000000u
+/* with ANS_MODE_K56 (experimental): an MS that selects version 1 is
+ * acknowledged and K56flex's start-up (version 2's, modem/k56d) runs;
+ * without it such an MS gets NAK(3) and the call goes on as without K56flex */
+#define ANS_MODE_K56_V1 0x4000000u
 
 #define ANS_MOD_NONE   0
 #define ANS_MOD_V21    1
@@ -235,11 +243,22 @@ typedef struct {
      * hold its HST endpoint's address without growing (v90m_mem_size) */
     uint8_t    x2_offered;   /* ANS_MODE_X2 with V.34, on a mu-law line */
     uint8_t    k56_offered;  /* ANS_MODE_K56 with V.34, on a mu-law line: ANS_V8BIS first */
-    uint8_t    k56_agreed;   /* the client's MS carried the K56flex block (we sent ACK(1));
-                                x2 is then not offered in this call */
+    uint8_t    k56;          /* K56flex's V.8bis, ANS_K56_* below: ANS_K56_AGREED when the
+                                client's MS carried the K56flex block and we sent ACK(1)
+                                (x2 is then not offered in this call); the rest is read
+                                only for the report (v90m_get_k56) */
     callev_t   ev;           /* who began the retrains and renegotiations (v90m_get_restarts);
                                 in the holes the order above took away (16 bytes) */
 } answer_t;
+
+/* answer_t.k56: one octet, so that answer_t keeps its size on every target */
+#define ANS_K56_AGREED   0x01u  /* we sent ACK(1): K56flex agreed */
+#define ANS_K56_CL       0x02u  /* our CL went out */
+#define ANS_K56_MS       0x04u  /* the client's MS carried the K56flex block */
+#define ANS_K56_DECLINED 0x08u  /* ... selecting version 1: we sent NAK(3) */
+#define ANS_K56_VER_SHIFT 4     /* bits 4 to 6: the version its MS selected (v8bis_version_of), 0..5 */
+#define ANS_K56_VER_MASK 0x70u
+#define ANS_K56_AGREED_OF(a) (((a)->k56 & ANS_K56_AGREED) != 0)
 
 /* the HST engine shares the union and fits in it (the spec's "HST pump":
  * no growth of answer_t) */

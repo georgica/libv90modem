@@ -13,7 +13,11 @@
  *   the client's MS on channel 2 (1650 / 1850 Hz), until V8B_MS_WAIT_MS
  *     after our CL ended; V8B_ACK_GAP_MS after it, ACK(1) to an MS that
  *     carries the K56flex block (v8bis_ms_is_k56), NAK(1) to an invalid
- *     frame (7.2.9, 9.8; ruling C6), nothing to a valid frame without it.
+ *     frame (7.2.9, 9.8; ruling C6), nothing to a valid frame without it;
+ *     NAK(3) (9.5: a mode we do not support or have disabled) to an MS
+ *     whose block selects version 1 alone when our CL offered it among
+ *     others and accept_v1 is clear (docs/history/k56-facts.md
+ *     "Versions": we run version 2's start-up only).
  * The reverse of v8ans' V.21 setup: here we send on the low channel and
  * hear the high one. Done in every case; V.8 follows (v8ans, from its own
  * silence), with K56flex agreed or not.
@@ -31,7 +35,7 @@ typedef enum {
     V8B_CRD,        /* its pair held: until its 1900 Hz ends */
     V8B_GAP_CL, V8B_CL,
     V8B_WAIT_MS,    /* listening for its MS on channel 2 */
-    V8B_GAP_ACK, V8B_ACK,   /* ACK(1), or NAK(1) to an invalid frame */
+    V8B_GAP_ACK, V8B_ACK,   /* ACK(1), NAK(1) to an invalid frame, NAK(3) to version 1 */
     V8B_DONE
 } v8b_state;
 
@@ -39,6 +43,7 @@ typedef enum {
 #define V8B_RES_AGREED 1    /* its MS carried the K56flex block; we sent ACK(1) */
 #define V8B_RES_NO_CRD 2
 #define V8B_RES_NO_MS  3    /* none, a valid frame without the block, or an invalid frame */
+#define V8B_RES_DECLINED 4  /* its MS carried the block but selected version 1: NAK(3) */
 
 #define V8B_SIL_MS          400
 #define V8B_CRE_DUAL_MS     290
@@ -90,11 +95,20 @@ typedef struct {
     int         nbits, pos;
     uint8_t     msg[V8B_MAXOCT];
     int         ns_form;
+    int         vers;           /* the versions our CL offers (V8B_VERS_*), as sent
+                                   (v8bis_cl_versions: the 7-octet block, version 1) */
+    int         accept_v1;      /* an MS selecting version 1 is acknowledged too */
+    int         cl_sent;        /* our CL went out */
+    int         ms_ver;         /* the version octet of its MS's K56flex block, -1 none */
     int         result;
 } v8bis_t;
 
-/* amp: the peak of our messages (as v8ans' JM); ns_form: V8B_NS9 or V8B_NS7 */
-void      v8bis_init(v8bis_t *b, int16_t amp, int ns_form);
+/* amp: the peak of our messages (as v8ans' JM); ns_form: V8B_NS9 or
+ * V8B_NS7; vers: the versions our CL offers (V8B_VERS_BOTH, or V8B_VERS_2
+ * as the real server and 0.7.1 did; the 7-octet block offers version 1
+ * alone whatever vers says); accept_v1: acknowledge an MS that selects
+ * version 1 (else, with version 1 offered among others, it gets NAK(3)) */
+void      v8bis_init(v8bis_t *b, int16_t amp, int ns_form, int vers, int accept_v1);
 /* one sample in, one out; the state after this sample */
 v8b_state v8bis_tick(v8bis_t *b, int16_t rx, int16_t *tx);
 /* V8B_RES_*: final once the state is V8B_DONE */

@@ -297,11 +297,21 @@ a Rockwell or Lucent modem.
   it; `pump_underruns` on the first live heavy call is the check). Other
   mixes (32 states, or some options only) are
   not tried and end as a wrong B1 (`V90M_END_K56_FAILED`).
+- **K56flex version 1 is declined.** Our start-up is version 2's (from
+  0.7.2 our CL offers both, 0x43); a client that selects version 1 (an
+  early WebTV Plus) gets NAK(3) and V.34 or V.90, as without K56flex.
+  `V90M_OPT_K56_V1` accepts it, experimentally: what version 1 differs in
+  on the line is not known ([answering.md](answering.md), "K56flex
+  versions").
 - **Every caller hears our answer tone later.** V.8bis comes first (at
   least 400 ms of silence, CRe, the wait for CRd), so ANSam comes, against
   a call without K56flex: 1.790 s later for a caller without V.8bis,
   3.807 s later for a V.8bis caller without K56flex (CRd, no MS), 3.413 s
-  later for an agreed K56flex client (measured in the simulator). A caller
+  later for an agreed K56flex client (measured in the simulator with
+  0.7.1's CL; 0.7.2's 0x43 CL is one bit longer and adds 3 to 4 ms to the
+  last two); a client declined for version 1 is on the agreed timing, 3.420 s
+  with 0.7.2's CL (NAK(3) ends V.8bis where ACK(1) would; with 0.7.1's CL it sent
+  no MS and was on the 3.807 s one). A caller
   that gives up in that time is not known; the live calls with K56flex
   offered, before v90d offers it, are to show it.
 - **A line that answers with no ringing may meet SM56's blind-dial wait.**
