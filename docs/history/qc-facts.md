@@ -110,7 +110,10 @@ such a QC1a as no QC1a ("Readings").
   G.711-encoded (the encoder truncating, as G.711's does). Checked on
   2026-11-26 against all 2408 entries parsed from the V.92 text: floor 0
   differ, truncation toward zero 96, rounding 118 [OURS, computed]. `sim/qca`
-  uses floor; Task 2's `tools/gen_anspcm.py --check` repeats the comparison.
+  uses floor; Task 2's `tools/gen_anspcm.py --check` repeats the comparison
+  (2026-11-26: `2408 of 2408 entries equal`; with truncation 2312), and the
+  library's `modem/qc_tab.c` is that script's output: integer tables, no
+  libm at run time.
 - Transcribed values used by the tests [V.92 Table 8]: k 0..5 µ `A9 5D 29 C9
   AA 3D`, A `83 49 00 E1 80 15`; k 300 µ `5E`, A `4F`. Table 7 k 0..2 µ
   `A1 58 22`, A `88 76 08`, k 300 `59`/`74`; Table 9 k 0 `AF`/`9A`, k 300

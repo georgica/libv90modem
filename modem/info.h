@@ -67,7 +67,8 @@ typedef struct {
     uint8_t up_sr;                      /* analogue -> digital symbol rate index */
     uint8_t down_sr;                    /* V.34 only (V.90 carries the integer 6) */
     uint8_t min_pwr_red, add_pwr_red;   /* V.34 only */
-    uint8_t hi_carrier, preemph, max_rate; /* V.34 only */
+    uint8_t hi_carrier, preemph, max_rate; /* V.34 only; hi_carrier also bit 33
+                                         * of Table 19/V.92 (0 for V.90) */
     int16_t freq_off;
     /* V.92 PCM upstream (Table 18/V.92): bits 34:36 and 37:39 both carry 6.
      * v90 is 1 too (PCM downstream), up_sr is 6, md_len counts 276 symbols

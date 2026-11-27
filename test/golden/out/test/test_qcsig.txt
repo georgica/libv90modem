@@ -1,0 +1,10 @@
+uqts
+qc1a
+qca1d
+lm
+qts
+anspcm
+  0 of 2408 entries differ from sim/qca
+tonedet980
+table19
+test_qcsig: 140 checks, 0 failures
