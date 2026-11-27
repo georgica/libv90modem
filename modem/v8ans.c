@@ -1,4 +1,6 @@
+#include <string.h>
 #include "v8ans.h"
+#include "qc.h"
 
 #define MS(v, ms) ((int32_t)((int64_t)(ms) * (v)->fs / 1000))
 
@@ -18,6 +20,12 @@ void v8ans_init(v8ans_t *v, int fs, int16_t amp, const v8_menu_t *local)
     v->njm = v->jmpos = 0;
     v->result = V8A_RES_NONE; v->selected = 0;
     v->x2_offer = 0; v->x2 = 0; v->jm_sign = 1;
+    memset(&v->qc, 0, sizeof v->qc);
+}
+
+void v8ans_offer_qc(v8ans_t *v, int on)
+{
+    v->qc.aux = (uint8_t)(on ? v->qc.aux | V8A_QCX_OFFER : v->qc.aux & ~V8A_QCX_OFFER);
 }
 
 void v8ans_offer_x2(v8ans_t *v, int alaw) { v->x2_offer = !alaw; }
@@ -38,6 +46,44 @@ static void x2_jm(v8ans_t *v)
 
 static void go(v8ans_t *v, v8a_state s) { v->state = s; v->t = 0; }
 
+void v8ans_restart_ansam(v8ans_t *v)
+{
+    ansam_init(&v->ansam, v->fs, v->ansam.amp, 1);
+    v8rx_init(&v->rx, v->fs);
+    v->njm = v->jmpos = 0;
+    v->result = V8A_RES_NONE; v->selected = 0;
+    v->x2 = 0; v->jm_sign = 1;
+    v->qc.aux = (uint8_t)(v->qc.aux & ~(V8A_QCX_OFFER | V8A_QCX_TRACK));
+    v->qc.flags |= V8A_QC_FALLBACK;
+    go(v, V8A_ANSAM);
+}
+
+int v8ans_send_jm(v8ans_t *v, const uint8_t *oct, int n)
+{
+    v->njm = v8_frame(V8_SYNC_CM_JM, oct, n, v->jmbits, V8A_MAXBITS);
+    v->jmpos = 0;
+    if (v->njm == 0) {                          /* never an empty JM (F8) */
+        v->result = V8A_RES_NO_CM;
+        go(v, V8A_POST);
+    } else go(v, V8A_JM);
+    return v->njm;
+}
+
+/* a QC1a heard in V8A_ANSAM (v8rx_tick_qc): 1 when V.8 ends for it */
+static int qc1a_heard(v8ans_t *v)
+{
+    int w, p;
+    v->qc.flags |= V8A_QC_HEARD;
+    if (qc1a_parse(v->qc.oct, &w, &p) != 0 || w == QC_WXYZ_ONHOLD) {
+        v->qc.aux |= V8A_QCX_ONHOLD;            /* no modem-on-hold (qc-facts.md "Readings" 2) */
+        return 0;
+    }
+    if (!(v->qc.aux & V8A_QCX_OFFER)) return 0;
+    v->result = V8A_RES_QC;
+    go(v, V8A_DONE);
+    return 1;
+}
+
 v8a_state v8ans_tick(v8ans_t *v, int16_t rx, int16_t *tx)
 {
     int level, ev = 0, done;
@@ -47,7 +93,11 @@ v8a_state v8ans_tick(v8ans_t *v, int16_t rx, int16_t *tx)
     if (v->state == V8A_ANSAM || v->state == V8A_JM) {
         level = v21demod_tick(&v->dem, rx);
         if (v->dem.energy < v->squelch) level = 1;
-        ev = v8rx_tick(&v->rx, level);
+        if (v->state == V8A_ANSAM && !(v->qc.flags & V8A_QC_HEARD)) {
+            uint8_t st = (uint8_t)(v->qc.aux & V8A_QCX_TRACK);
+            ev = v8rx_tick_qc(&v->rx, level, &st, &v->qc.oct);
+            v->qc.aux = (uint8_t)((v->qc.aux & ~V8A_QCX_TRACK) | st);
+        } else ev = v8rx_tick(&v->rx, level);
     }
 
     switch (v->state) {
@@ -57,15 +107,14 @@ v8a_state v8ans_tick(v8ans_t *v, int16_t rx, int16_t *tx)
     case V8A_ANSAM:
         ansam_run(&v->ansam, tx, 1);
         v->t++;
+        if ((ev & V8RX_QC1A) && qc1a_heard(v)) break;
         if ((ev & V8RX_MENU) && v8_decode(v->rx.msg, v->rx.nmsg, &v->cm) == 0) {
             int n;
             v8_build_jm(&v->cm, &v->local, &v->jm);
             v->selected = v8_selected(&v->jm);
             x2_jm(v);
             n = v8_encode(&v->jm, oct, V8_MAX_OCTETS);
-            v->njm = v8_frame(V8_SYNC_CM_JM, oct, n, v->jmbits, V8A_MAXBITS);
-            v->jmpos = 0;
-            go(v, V8A_JM);
+            (void)v8ans_send_jm(v, oct, n);
         } else if (v->t >= MS(v, V8A_ANSAM_MS)) {
             v->result = V8A_RES_NO_CM;
             go(v, V8A_POST);

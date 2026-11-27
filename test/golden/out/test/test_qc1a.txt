@@ -1,0 +1,30 @@
+qc_ok
+  QC1a 1000 ms after ANSam: V8A_DONE 4 samples after its last stop bit was sent
+  QC1a 1250 ms after ANSam: V8A_DONE 4 samples after its last stop bit was sent
+every_uqts
+  WXYZ 1111 P 0 (octet 0xE8): on-hold, ignored; the CM's JM
+  WXYZ 1111 P 1 (octet 0xEC): on-hold, ignored; the CM's JM
+  WXYZ 0..14 x P 0, 1: 30 of 30 V8A_RES_QC with Table 2's octet (0xE0, the CM sync, among them)
+cm_only
+  24 callers (8 CMs at -9, -26, -43 dBm0): the same samples either way, 16 V8A_RES_OK
+echo
+  ANSam echoed at -6 dB, 5 ms, under a CM: the same samples either way
+noise
+  noise at -30 and -46 dBm0, 20 seeds: the same samples either way, 40 V8A_RES_NO_CM
+typed
+  64 bits before the CM: the same samples either way, the CM's JM
+qc1d
+  60 bits before the CM: the same samples either way, the CM's JM
+one_copy
+  30 bits before the CM: the same samples either way, the CM's JM
+two_differ
+  60 bits before the CM: the same samples either way, the CM's JM
+extra_char
+  64 bits before the CM: the same samples either way, the CM's JM
+ud_pattern
+  U D, ten marks, U D: heard as QC1a, octet 0x44 (the residue, docs/limits.md)
+jm_fits
+  everything offered, everything in the menu: a JM of 7 octets, 90 bits (at most 172)
+jm_too_long
+  15 octets: 170 bits sent; 16: V8A_RES_NO_CM, silence, done
+test_qc1a: 607 checks, 0 failures

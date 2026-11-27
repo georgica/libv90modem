@@ -34,6 +34,7 @@
 #                        (calling the library's own answerer; make check runs it)
 #   make crd-scan        K56flex's CRd detector over recorded calls (RECS=<dir>): no detection
 #   make hst-scan        HST's back-channel detector over recorded calls (RECS=<dir>): none
+#   make qc-scan         V.92's QC1a in recorded calls (RECS=<dir>): none
 #   make hst-wsize       sizing W, HST's wait after ANSam: detection times over levels,
 #                        dropouts and a line's lower edge (rig/hst_wsize.c), for docs/limits.md
 #   make hst-thresh      HST's thresholds of "good": BER against SNR at codes 3..6
@@ -154,7 +155,7 @@ TESTS    := test_g711 test_noise test_filt test_resamp test_channel test_v21 tes
             test_v22tx test_v22rx test_v22bis test_v14 test_answer test_info test_dpsk test_probe test_p2 test_qamrx test_ec test_ecdly test_v34train test_sres test_answer_v90 test_p34 test_pcmenc \
             test_v34mp test_p2ans test_v34mod test_v34dx test_v34call test_answer_v34 test_answer_v32 test_answer_v90_v34 \
             test_p2_v92 test_v92call test_answer_v92 test_v92real test_answer_lin \
-            test_anstone test_v8orig test_orig test_orig_v32 test_p2call test_orig_v34 test_v90arx test_v90arx_robust test_v90adec test_v90dil test_p2v90 test_v90a test_orig_v90 test_orig_v90_te test_orig_seeds test_orig_retrain test_pcmtx test_v92aseq test_p2v92a test_v92a test_orig_v92 test_belltone test_orig_bell test_realcheck test_x2_pad test_answer_x2 test_x2rec test_x2map test_x2tx test_k56tab test_k56enc test_k56tx test_v8bismsg test_v8bis test_answer_k56 test_clock test_shared test_fixmath test_v34up test_ans_table test_exact test_interp_bound test_v90arx_paths test_small_exact test_v92_hostile test_hst_back test_hst_det test_hst_fwd test_hstcall test_qca test_qcsig
+            test_anstone test_v8orig test_orig test_orig_v32 test_p2call test_orig_v34 test_v90arx test_v90arx_robust test_v90adec test_v90dil test_p2v90 test_v90a test_orig_v90 test_orig_v90_te test_orig_seeds test_orig_retrain test_pcmtx test_v92aseq test_p2v92a test_v92a test_orig_v92 test_belltone test_orig_bell test_realcheck test_x2_pad test_answer_x2 test_x2rec test_x2map test_x2tx test_k56tab test_k56enc test_k56tx test_v8bismsg test_v8bis test_answer_k56 test_clock test_shared test_fixmath test_v34up test_ans_table test_exact test_interp_bound test_v90arx_paths test_small_exact test_v92_hostile test_hst_back test_hst_det test_hst_fwd test_hstcall test_qca test_qcsig test_qc1a
 # the slowest programs, split by case: `prog --cases` prints the count, `prog N`
 # runs case N alone, no argument all of them (tools/split-check.sh); the ARM
 # runner (check-arm) runs each case as its own job
@@ -574,6 +575,25 @@ hst-scan: $(BUILD)/hst-scan
 	   grep 'back channel detected' $(BUILD)/hst-scan.out; \
 	   d=$$((d + $$(grep -c 'back channel detected' $(BUILD)/hst-scan.out))); n=$$((n + 1)); done; \
 	echo "hst-scan: $$n recordings, $$d back-channel detections"; [ $$d -eq 0 ]
+# V.92's QC1a (modem/v8rx v8rx_tick_qc, modem/v8ans) in what the answerer
+# heard in recorded calls (tools/qc_scan.c): RECS=<dir> of v90m-replay
+# recordings (*.raw, and *.raw.xz unpacked to $(BUILD)/tmp one at a time);
+# a recording listed may replay otherwise once QC is answered (the 0.7.4
+# plan's Global Constraints). Host only, not part of check.
+QC_SCAN_SRC := tools/qc_scan.c $(MODEM_SRC)
+$(BUILD)/qc-scan: $(QC_SCAN_SRC) $(HDRS)
+	@mkdir -p $(BUILD)
+	$(CC) $(T_CFLAGS) -o $@ $(QC_SCAN_SRC) $(LDLIBS)
+.PHONY: qc-scan
+qc-scan: $(BUILD)/qc-scan
+	@if [ -z "$(RECS)" ]; then echo "RECS not set (a directory of recordings)"; exit 1; fi; \
+	mkdir -p $(BUILD)/tmp; n=0; d=0; for f in $(RECS)/*.raw $(RECS)/*.raw.xz; do [ -f "$$f" ] || continue; \
+	   g="$$f"; case "$$f" in *.xz) g=$(BUILD)/tmp/qc-scan.raw; xz -dc "$$f" > "$$g" || exit 1;; esac; \
+	   $(abspath $(BUILD))/qc-scan "$$g" > $(BUILD)/qc-scan.out 2>&1; \
+	   r=$$?; rm -f $(BUILD)/tmp/qc-scan.raw; [ $$r -le 1 ] || { cat $(BUILD)/qc-scan.out; exit 1; }; \
+	   grep 'QC1a heard' $(BUILD)/qc-scan.out | sed "s|^[^:]*:|$$f:|"; \
+	   d=$$((d + (r == 1))); n=$$((n + 1)); done; \
+	echo "qc-scan: $$n recordings, $$d with a QC1a"; [ $$d -eq 0 ]
 # our K56flex encoder's octets and data bits at every rate, pad and robbed
 # mask (tools/k56enc_dump.c), for SM56's decoder harness outside the
 # repository (docs/history/k56-facts.md "Oracle"). Host only, not part of check.

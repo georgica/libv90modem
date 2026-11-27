@@ -6964,3 +6964,47 @@ measured figures.
   `make replay-proof`: 742 runs identical. `make bench-hashes`: 19
   identical. `make check-headers`: 113 compile alone; `check-diag-names`
   passes.
+
+## qc 3: hearing QC1a during ANSam (2026-11-26)
+
+- `modem/v8rx.[ch]`: `v8rx_tick_qc` (`V8RX_QC1A`), the same receiver as
+  `v8rx_tick` (one static step) plus the Table 2 tracker in the caller's
+  `*st`/`*oct`: twice ≥ 8 marks, 0x55, one information character that
+  `qc1a_parse` takes, the two equal; a framing error, a second character
+  before the marks, any other character after a preamble or a different
+  copy resets it. `modem/v8ans.[ch]`: `v8a_qc_t qc` carved after `jmbits`
+  (`V8A_MAXBITS` 172, `v8ans_qc_check`), `V8A_RES_QC`, `v8ans_offer_qc`,
+  `v8ans_restart_ansam`, and `v8ans_send_jm` (F8: a JM `v8_frame` cannot fit
+  ends V.8 with `V8A_RES_NO_CM`, no empty JM). Nothing calls
+  `v8ans_offer_qc` yet. `v32/Makefile`'s V.8 sources gain `modem/qc`, its
+  table and G.711 (the tracker needs `qc1a_parse`).
+- `make -s build/test_qc1a` before: `unknown type name 'v8a_qc_t'`,
+  `implicit declaration of function 'v8ans_offer_qc'`; after: `test_qc1a:
+  607 checks, 0 failures`. QC1a 1.0 s and 1.25 s (BinModem) after ANSam:
+  `V8A_DONE` 4 samples after the last stop bit was sent; 30 of 30 UQTS
+  WXYZ × P (0xE0 among them); WXYZ 1111 on-hold, the CM's JM; Review Focus 1
+  (24 CM-only callers, echo, 40 noise runs, typed, qc1d, one_copy,
+  two_differ, extra_char): the same samples offered or not; `ud_pattern`
+  heard (octet 0x44); JM at most 7 octets, 90 bits. Mutations of the
+  tracker (no extra-character reset, no copy compare, no `qc1a_parse`)
+  each fail the test. `test_v8ans` 60, `test_v8rx` 19, `test_v8orig` 58
+  unchanged.
+- `make golden`: ALL HOST CHECKS PASS; only the new
+  `test/golden/out/test/test_qc1a.txt` (168 programs identical).
+  `make replay-proof`: 742 runs identical. `make bench-hashes`: 19
+  identical. `make check-headers`: 113. ARM A5, A7 `api_test_api`: 1224
+  checks, 0 failures.
+- Evidence, `tools/qc_scan.c` (`make qc-scan RECS=<dir>`: v8ans with QC
+  offered, started 200 ms before the recorded answer tone, and the tracker
+  over the whole heard side; the two agree on every recording):
+  - `test/fixtures`: 8 recordings, **2 with a QC1a**: `usr6.raw.xz` and
+    `usr7.raw.xz` (U.S. Robotics 5686, 5.4.62), octet 0x88 (WXYZ 1001,
+    Ucode 78, P 0), heard 1.453 s and 1.439 s after the answer tone.
+  - private recordings (`live-050`, read by the tool only): 106
+    recordings, **54 with a QC1a**: 44 octet 0x88, 10 octet 0x8C (P 1),
+    heard 1.437–1.506 s (median 1.448 s) after the answer tone; sha256 of
+    the sorted list of their sha256s begins `f102bfd33dba617d`.
+  - Not empty, against the plan's "expected: none": real V.92 callers send
+    QC1a. Before Task 5 (Global Constraints, replay) the controller rules
+    on the replay and fixture lines of these recordings that change once a
+    run offering V.92 answers QC.

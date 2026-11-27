@@ -17,8 +17,9 @@ SIM_SRC := ../sim/v32call.c ../sim/v32line.c ../sim/g711.c ../sim/noise.c ../sim
            ../sim/resamp.c ../sim/channel.c
 SIM_HDR := ../sim/v32call.h ../sim/v32line.h ../sim/v32spec.h ../test/test.h test/calltest.h
 # V.8 hand-over test: the project's own V.8 answerer and calling V.8 peer
+# (and what v8rx's QC1a tracker needs: modem/qc, its tables and G.711)
 V8_SRC  := ../modem/v21.c ../modem/ansam.c ../modem/v8msg.c ../modem/async.c ../modem/v8rx.c \
-           ../modem/v8ans.c ../sim/v8call.c
+           ../modem/v8ans.c ../modem/qc.c ../modem/qc_tab.c ../v90/v90_pcm.c ../v90/v90_pcm_tab.c ../sim/v8call.c
 TESTS   := test_code test_viterbi test_tx test_ec test_rx test_startup test_call test_v8 test_acdet test_caller
 
 .PHONY: all test test-arm cost-arm tables clean build-tests build-tests-arm print-tests print-tests-arm
