@@ -7237,4 +7237,9 @@ the clang matrix are GitHub CI's).
   0.7.3, against 3.807 s), answering.md (QC1a one second after ANSam by the
   spec, about 1.25 s for BinModem), calling.md (calling side).
 - docs/history/qc-live.md: the runbook, every result row "not run yet".
-- live: pending (local test server being set up)
+- live: run 2026-11-27 against BinModem on a local server (nsdiald
+  `qc-local-test` 170f4a2, 127.0.0.1:5072): 30 of 30 QC requests accepted,
+  short Phase 2 on 19 of 19 calls with a `pcm_up=1` memo (A-law too), start-up
+  15.5 s full, 13.9-14.5 s QC, 11.7-12.0 s with short Phase 2; run 6 fell
+  back as designed; run 5's stale memos reached no recovery path. Details in
+  docs/history/qc-live.md. Other V.92 clients not yet tested live.

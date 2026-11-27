@@ -350,14 +350,16 @@ a Rockwell or Lucent modem.
 
 From 0.7.4.
 
-- **Simulation and own answerer only.** Every Quick Connect test is
-  against the simulated caller (`sim/qca`, written from the V.92 text) and
-  this library's own answerer. Recordings of real V.92 callers show that
-  they send a QC1a during our answer tone (the fixtures of two U.S.
-  Robotics 5686 calls, and about half of the private recordings), which
-  is all that is known: how a real caller answers our QCA1d, QTS and
-  ANSpcm has not been seen. The live check, with a BinModem build as the
-  peer and then a real modem, is still to be made.
+- **Tested in simulation and live against BinModem only.** The simulated
+  caller (`sim/qca`) is written from the V.92 text. Live, on a local test
+  server (docs/history/qc-live.md): BinModem's QC requests were accepted
+  30 of 30, and short Phase 2 ran on all 19 calls with a PCM-upstream memo
+  (mu-law and A-law). Recordings of real V.92 callers show that a U.S.
+  Robotics 5686 sends a QC1a during our answer tone (two fixtures, and about
+  half of the private recordings), but how it and the Conexant modems answer
+  our QCA1d, QTS and ANSpcm has not been seen: not yet tested live. The
+  live runs did not exercise our short-Phase-2 recovery or retrain; those
+  are proven in simulation only.
 - **A false QC1a is possible in one pattern.** A caller that sends no QC1a
   could still be taken for one if its signal holds, twice, at least 8
   marks, the character 0x55, one character with bits 0, 1 and 4 clear and

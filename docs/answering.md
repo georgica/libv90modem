@@ -311,8 +311,9 @@ version 1 alone) dropped it so, and connected in V.34 at 28800 at best
 
 ## V.92 Quick Connect
 
-From 0.7.4, simulation and own answerer only: no real V.92 caller has yet
-been through it ([limits.md](limits.md)). Quick Connect is part of
+From 0.7.4. Tried in simulation and live against BinModem on a local
+server (30 of 30 QC requests accepted); other V.92 clients (U.S. Robotics
+5686, Conexant) are not yet tested live ([limits.md](limits.md)). Quick Connect is part of
 `V90M_MOD_V92`: it is offered whenever `V90M_MOD_V90` and `V90M_MOD_V92`
 are both on, unless K56flex was agreed in the call or `V90M_OPT_NO_QC` is
 set. There is no other setting. A caller that sends no QC1a is answered

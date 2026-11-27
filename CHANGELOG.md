@@ -13,10 +13,13 @@ this library's own answering modem, never against a real modem or server.
 V.92 Quick Connect for the answering side, and an ACK(1) fix in V.8bis.
 The ABI of 0.7.3 kept: no struct changes size, `v90m_mem_size()` unchanged
 (x86-64 106320, 32-bit ARM 106016), `V90M_MEM_SIZE` 110592, the SONAME stays
-`libv90modem.so.0.7`. Simulation and own answerer only: no real V.92 caller
-has been through Quick Connect yet. What real V.92 callers send in our ANSam
-is known from recordings (a U.S. Robotics 5686 sends the QC1a); how they
-answer our QCA1d, QTS and ANSpcm is not.
+`libv90modem.so.0.7`. Quick Connect was tried in simulation and live against BinModem
+on a local test server: 30 of 30 QC requests accepted, and short Phase 2 on
+every call that had a PCM-upstream memo (19 of 19), including A-law
+([docs/history/qc-live.md](docs/history/qc-live.md)). Other V.92 clients
+(U.S. Robotics 5686, Conexant) are not yet tested live; a 5686 is known
+from recordings to send the QC1a, how it answers our QCA1d, QTS and ANSpcm
+is not.
 
 Added:
 - V.92 Quick Connect, answering (V.92 9.2.4.1, 9.2.4.3; docs/answering.md,
