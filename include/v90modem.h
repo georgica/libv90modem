@@ -241,6 +241,9 @@ typedef enum {
  * replay of a call answered by 0.7.3 or earlier needs (v90m-replay -Q).
  * 0x80000 is kept free. Calling: ignored. */
 #define V90M_OPT_NO_QC 0x100000u
+/* An option: report V90M_EV_NEGOTIATION (v90m_get_negotiation). Off, the
+ * event never comes; the report is kept either way. Both roles. */
+#define V90M_OPT_NEG_EVENTS 0x200000u
 
 /* the modulation of a connection (v90m_state.modulation) */
 typedef enum {
@@ -264,7 +267,11 @@ typedef enum {
     V90M_EV_RATES,              /* the rates or the modulation changed (renegotiation, retrain) */
     V90M_EV_DATA_STOPPED,       /* data stopped moving (retrain, rate renegotiation) */
     V90M_EV_DATA_MOVING,        /* data moves again both ways (error control: say so to V.42) */
-    V90M_EV_ENDED               /* the modem stopped: see v90m_state.end */
+    V90M_EV_ENDED,              /* the modem stopped: see v90m_state.end */
+    V90M_EV_NEGOTIATION         /* (appended; only with V90M_OPT_NEG_EVENTS) before data
+                                   mode is reached, something changed of what
+                                   v90m_get_negotiation or v90m_get_diag (phase, selected)
+                                   tell, or v90m_state.used_v8 */
 } v90m_event;
 typedef void (*v90m_event_fn)(void *user, v90m_event ev);
 
@@ -535,6 +542,50 @@ const char *v90m_err_name(int code);
  * "Bell 212A", "x2", "K56flex", "HST". */
 const char *v90m_phase_name(v90m_phase p);
 const char *v90m_conn_name(v90m_conn c);
+
+/* The negotiation (added in 0.7.5): what V.8 said, and which modulation the
+ * start-up is on and why, a fallback that has heard nothing yet included,
+ * where v90m_diag.selected stays V90M_CONN_NONE. Cheap, fine after every
+ * sample or at each V90M_EV_NEGOTIATION. trying and basis follow the call as
+ * v90m_diag.selected does and are kept after the end, until v90m_reset. */
+typedef enum {
+    V90M_BASIS_NONE = 0,    /* nothing yet (V.8 running, or a calling modem waiting
+                               for a pre-V.8 answerer's signal) */
+    V90M_BASIS_TRYING,      /* answering a caller without V.8: our fallback, nothing of
+                               the caller heard on it */
+    V90M_BASIS_HEARD,       /* the far modem's signal for it was heard */
+    V90M_BASIS_V8           /* chosen by V.8's JM */
+} v90m_basis;
+/* V.8's modulation modes, bit n = item n of Table 4/V.8 */
+#define V90M_V8_V34     0x0002u
+#define V90M_V8_V34HD   0x0004u
+#define V90M_V8_V32     0x0008u     /* V.32bis / V.32 */
+#define V90M_V8_V22     0x0010u     /* V.22bis / V.22 */
+#define V90M_V8_V17     0x0020u
+#define V90M_V8_V29     0x0040u
+#define V90M_V8_V27TER  0x0080u
+#define V90M_V8_V26TER  0x0100u
+#define V90M_V8_V26BIS  0x0200u
+#define V90M_V8_V23     0x0400u
+#define V90M_V8_V23HD   0x0800u
+#define V90M_V8_V21     0x1000u
+/* ... and its PCM modem availability */
+#define V90M_V8_PCM_ANALOG   1u     /* V.90 / V.92 analogue modem */
+#define V90M_V8_PCM_DIGITAL  2u     /* V.90 / V.92 digital modem */
+#define V90M_V8_PCM_V91      4u
+typedef struct {
+    int       far_menu;     /* the far modem's V.8 menu was received: answering its CM,
+                               calling its JM. 0: the four below are 0 */
+    unsigned  cm_modes;     /* V90M_V8_*: the calling modem's CM */
+    unsigned  cm_pcm;       /* V90M_V8_PCM_* of the CM */
+    unsigned  jm_modes;     /* ... and the answering modem's JM: what both offer */
+    unsigned  jm_pcm;
+    v90m_conn trying;       /* the modulation the start-up is on now; V.8's V.22 item and
+                               a V.22 start-up read V90M_CONN_V22BIS until the connection
+                               says which */
+    v90m_basis basis;       /* why */
+} v90m_negotiation;
+void     v90m_get_negotiation(const v90m_t *m, v90m_negotiation *n);
 
 /* The V.34 transmit cap's status (added in 0.6.2; V90M_OPT_V34_TX_CAP):
  * answering, V.34 (and V.34 selected by a V.90 caller's INFO1a), our

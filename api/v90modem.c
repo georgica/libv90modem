@@ -55,7 +55,8 @@ int16_t v90m_g711_decode(int alaw, uint8_t codeword) { return (int16_t)v90_octet
 /* ------------------------------------------------------------------ modem */
 struct v90m {
     v90m_cfg cfg;
-    int      owned;             /* from v90m_create: v90m_destroy frees it */
+    uint8_t  owned;             /* from v90m_create: v90m_destroy frees it */
+    neg_track_t neg;            /* v90m_get_negotiation (in the octets an int owned would take) */
     /* what the last sample left, to report changes */
     uint8_t  was_connected, was_moving, was_ended;
     uint8_t  busy;              /* inside v90m_process_*: a callback may be running */
@@ -88,7 +89,17 @@ struct v90m {
  * as their analogue modem) */
 #define V90M_MOD_ORIG (V90M_MOD_ALL & ~(V90M_MOD_X2 | V90M_MOD_K56 | V90M_MOD_HST))
 /* the option bits (bits 16 and up) */
-#define V90M_OPTS (V90M_OPT_V34_TX_CAP | V90M_OPT_K56_V2_ONLY | V90M_OPT_K56_V1 | V90M_OPT_NO_QC)
+#define V90M_OPTS (V90M_OPT_V34_TX_CAP | V90M_OPT_K56_V2_ONLY | V90M_OPT_K56_V1 | V90M_OPT_NO_QC \
+                   | V90M_OPT_NEG_EVENTS)
+
+/* V.8's modes and PCM bits go out as the engines have them */
+typedef char v90m_check_v8[(SAME(V90M_V8_V34, V8_MOD_V34) && SAME(V90M_V8_V34HD, V8_MOD_V34HD) && SAME(V90M_V8_V32, V8_MOD_V32)
+                            && SAME(V90M_V8_V22, V8_MOD_V22) && SAME(V90M_V8_V17, V8_MOD_V17) && SAME(V90M_V8_V29, V8_MOD_V29)
+                            && SAME(V90M_V8_V27TER, V8_MOD_V27TER) && SAME(V90M_V8_V26TER, V8_MOD_V26TER)
+                            && SAME(V90M_V8_V26BIS, V8_MOD_V26BIS) && SAME(V90M_V8_V23, V8_MOD_V23)
+                            && SAME(V90M_V8_V23HD, V8_MOD_V23HD) && SAME(V90M_V8_V21, V8_MOD_V21)
+                            && SAME(V90M_V8_PCM_ANALOG, V8_PCM_ANALOG) && SAME(V90M_V8_PCM_DIGITAL, V8_PCM_DIGITAL)
+                            && SAME(V90M_V8_PCM_V91, V8_PCM_V91)) ? 1 : -1];
 
 typedef char v90m_check_orig[(SAME(ORIG_MOD_V21, ANS_MOD_V21) && SAME(ORIG_MOD_V22, ANS_MOD_V22) && SAME(ORIG_MOD_V22BIS, ANS_MOD_V22BIS)
                               && SAME(ORIG_MOD_V32BIS, ANS_MOD_V32BIS) && SAME(ORIG_MOD_V34, ANS_MOD_V34)
@@ -156,7 +167,7 @@ static unsigned modes_of(unsigned mods)
 /* a checked cfg into m, whatever m held but owned */
 static void setup(v90m_t *m, const v90m_cfg *cfg)
 {
-    int owned = m->owned;
+    uint8_t owned = m->owned;
     /* the code underneath expects zeroed memory before answer_init */
     memset(m, 0, sizeof *m);
     m->owned = owned;
@@ -328,28 +339,48 @@ static void keep_measures(v90m_t *m, int orig)
 static uint8_t iphase_of(const v90m_t *m, int orig) { return (uint8_t)(orig ? m->u.o.phase : m->u.a.phase); }
 static void diag_track(v90m_t *m, int orig)
 {
-    if (orig) diag_track_orig(&m->diag, &m->u.o);
-    else diag_track_answer(&m->diag, &m->u.a);
+    if (orig) {
+        diag_track_orig(&m->diag, &m->u.o);
+        neg_track_orig(&m->neg, &m->u.o, m->diag.sel);
+    } else {
+        diag_track_answer(&m->diag, &m->u.a);
+        neg_track_answer(&m->neg, &m->u.a, m->diag.sel);
+    }
+}
+
+/* the diagnostics after a sample, and V90M_EV_NEGOTIATION where the host
+ * asked for it and something it reports changed before data mode (reached:
+ * data_reached as it was before this sample) */
+static inline void track(v90m_t *m, int orig, int reached)
+{
+    diag_track_t was = m->diag;
+    neg_track_t on = m->neg;
+    diag_track(m, orig);
+    if (!reached && (m->cfg.modulations & V90M_OPT_NEG_EVENTS)
+        && (m->diag.phase != was.phase || m->diag.sel != was.sel || m->neg.trying != on.trying
+            || m->neg.basis != on.basis || m->neg.flags != on.flags))
+        event(m, V90M_EV_NEGOTIATION);
 }
 
 /* after each sample: only reads the modem, on the side orig says */
 static inline void after(v90m_t *m, int orig)
 {
-    int moving, rx, connected = connected_of(m, orig), failed = failed_of(m, orig);
+    int moving, reached, rx, connected = connected_of(m, orig), failed = failed_of(m, orig);
     callev_t *ev = orig ? &m->u.o.ev : &m->u.a.ev;
     ev->now++;                  /* v90m_get_restarts' clock */
     if (!connected && !m->was_connected && !failed) {          /* start-up: nothing to report */
-        diag_track(m, orig);
+        track(m, orig, 0);
         return;
     }
     moving = moving_of(m, orig);
+    reached = m->data_reached;
     /* the diagnostics keep the last sample before the end; while data
      * moves in the same phase of the modem they cannot change (the phase
      * reached is data mode, and a retrain, which may stay in that phase of
      * the modem, stops the data first) */
     if (moving) m->data_reached = 1;
     if (!failed && !(moving && m->diag.phase == V90M_PHASE_DATA && m->diag.iphase == iphase_of(m, orig)))
-        diag_track(m, orig);
+        track(m, orig, reached);
     rx = rx_of(m, orig);
     /* kept only while data moves: a retrain's figures are not the call's */
     if (moving && connected && !failed && (uint8_t)(++m->meas_tick & 127) == 0) keep_measures(m, orig);
@@ -846,3 +877,25 @@ v42ec_t *v90m__ec(v90m_ec_t *e) { return &e->e; }
 typedef char v90m_check_mem[sizeof(struct v90m) <= V90M_MEM_SIZE ? 1 : -1];
 typedef char v90m_check_ec_mem[sizeof(struct v90m_ec) <= V90M_EC_MEM_SIZE ? 1 : -1];
 typedef char v90m_check_async_mem[sizeof(struct v90m_async) <= V90M_ASYNC_MEM_SIZE ? 1 : -1];
+
+/* the menus as the engine that ran V.8 has them (nothing changes them
+ * after V.8) */
+void v90m_get_negotiation(const v90m_t *m, v90m_negotiation *n)
+{
+    const v8_menu_t *cm, *jm;
+    if (!m || !n) return;
+    memset(n, 0, sizeof *n);
+    n->trying = (v90m_conn)m->neg.trying;
+    n->basis = (v90m_basis)m->neg.basis;
+    if (ORIGINATING(m)) {
+        if (!m->u.o.v8.jm_seen) return;
+        cm = &m->u.o.v8.cfg.local; jm = &m->u.o.v8.jm;
+    } else {
+        if (m->u.a.v8.njm <= 0) return;
+        cm = &m->u.a.v8.cm; jm = &m->u.a.v8.jm;
+    }
+    n->far_menu = 1;
+    n->cm_modes = cm->modes; n->jm_modes = jm->modes;
+    /* the three bits sent (V8_PCM_NO_V34_DATA is a local menu's own) */
+    n->cm_pcm = cm->has_pcm ? cm->pcm & 7u : 0; n->jm_pcm = jm->has_pcm ? jm->pcm & 7u : 0;
+}

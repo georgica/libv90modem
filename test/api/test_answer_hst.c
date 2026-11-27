@@ -317,6 +317,7 @@ static void our_event(void *u, v90m_event ev)
     case V90M_EV_DATA_STOPPED: if (!o->raw) v90m_ec_line_stopped(o->ec); break;
     case V90M_EV_DATA_MOVING: if (!o->raw) v90m_ec_line_restored(o->ec); break;
     case V90M_EV_ENDED: o->end_ms = now_ms; o->end = st.end; break;
+    case V90M_EV_NEGOTIATION: break;                    /* not asked for here */
     }
 }
 

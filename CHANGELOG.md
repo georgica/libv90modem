@@ -8,6 +8,21 @@ change is listed here. Rebuild against the new header with every version;
 "Simulation and own answerer only" means: tried against simulated lines and
 this library's own answering modem, never against a real modem or server.
 
+## Unreleased (0.7.5)
+
+Added, either role; nothing changes for a program that does not use it (no
+struct changes size; the transmitted and received signal are as 0.7.4's):
+- `v90m_get_negotiation` (`v90m_negotiation`, `v90m_basis`, `V90M_V8_*`):
+  whether the far modem's V.8 menu was received, the modes and PCM bits of
+  CM and JM, and the modulation the start-up is on with its reason: chosen
+  by V.8, heard, or a fallback tried on a caller without V.8 with nothing
+  heard yet.
+- `V90M_EV_NEGOTIATION`, appended to `v90m_event` and sent only with the new
+  option `V90M_OPT_NEG_EVENTS`: it, or the start-up diagnostics' phase or
+  modulation, changed before data mode. Source: a `switch` over
+  `v90m_event` without a `default` needs a case for it (`-Wswitch`).
+- Simulation and own answerer only.
+
 ## 0.7.4 (2026-11-27)
 
 V.92 Quick Connect for the answering side, and an ACK(1) fix in V.8bis.

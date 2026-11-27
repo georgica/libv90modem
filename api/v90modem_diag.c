@@ -144,6 +144,59 @@ static uint8_t dx_phase(const v34dx_t *dx)
 }
 static uint8_t legacy_phase(int connected) { return connected ? V90M_PHASE_DATA : V90M_PHASE_TRAIN; }
 
+/* the modulation the answering modem's start-up is on, and why; sel: the
+ * one chosen, as diag_track_answer has it */
+void neg_track_answer(neg_track_t *t, const answer_t *a, uint8_t sel)
+{
+    uint8_t on = t->trying, why = t->basis;
+    uint8_t got = a->used_v8 ? V90M_BASIS_V8 : V90M_BASIS_HEARD;
+    switch (a->phase) {
+    case ANS_V8: case ANS_V8BIS:
+        on = a->phase == ANS_V8 && a->v8.selected ? v8_choice(a->v8.selected, a->cfg.modes) : V90M_CONN_NONE;
+        why = on != V90M_CONN_NONE ? V90M_BASIS_V8 : V90M_BASIS_NONE;
+        break;
+    case ANS_V22:
+        on = a->connected ? (uint8_t)a->modulation : a->via_bell || answer_bell_tone(a) ? V90M_CONN_BELL212A : V90M_CONN_V22BIS;
+        why = !a->used_v8 && !a->connected && !a->via_bell && a->v22.state == V22S_WAIT ? V90M_BASIS_TRYING : got;
+        break;
+    case ANS_V21:
+        on = (uint8_t)a->fsk_mod;
+        why = !a->used_v8 && !a->connected && a->fsk_mod == ANS_MOD_V21 && !answer_v21_mark(a) ? V90M_BASIS_TRYING : got;
+        break;
+    case ANS_HST_WAIT:
+        on = V90M_CONN_HST; why = V90M_BASIS_TRYING;
+        break;
+    case ANS_FAILED:
+        break;
+    default:
+        on = sel; why = sel != V90M_CONN_NONE ? got : V90M_BASIS_NONE;
+        break;
+    }
+    t->trying = on; t->basis = why;
+    t->flags = (uint8_t)((a->v8.njm > 0 ? DG_NEG_MENU : 0) | (a->used_v8 ? DG_NEG_V8 : 0));
+}
+
+void neg_track_orig(neg_track_t *t, const orig_t *o, uint8_t sel)
+{
+    uint8_t on = t->trying, why = t->basis;
+    switch (o->phase) {
+    case ORIG_V8:
+        on = o->v8.selected ? v8_choice(o->v8.selected, o->cfg.modes) : V90M_CONN_NONE;
+        why = on != V90M_CONN_NONE ? V90M_BASIS_V8 : V90M_BASIS_NONE;
+        break;
+    case ORIG_LEGACY: case ORIG_BELL:
+        on = V90M_CONN_NONE; why = V90M_BASIS_NONE;
+        break;
+    case ORIG_FAILED:
+        break;
+    default:
+        on = sel; why = sel == V90M_CONN_NONE ? V90M_BASIS_NONE : o->used_v8 ? V90M_BASIS_V8 : V90M_BASIS_HEARD;
+        break;
+    }
+    t->trying = on; t->basis = why;
+    t->flags = (uint8_t)((o->v8.jm_seen ? DG_NEG_MENU : 0) | (o->used_v8 ? DG_NEG_V8 : 0));
+}
+
 void diag_track_answer(diag_track_t *t, const answer_t *a)
 {
     uint8_t ph = t->phase, sel = t->sel;
