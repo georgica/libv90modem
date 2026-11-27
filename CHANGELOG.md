@@ -8,6 +8,77 @@ change is listed here. Rebuild against the new header with every version;
 "Simulation and own answerer only" means: tried against simulated lines and
 this library's own answering modem, never against a real modem or server.
 
+## 0.7.4 (unreleased)
+
+V.92 Quick Connect for the answering side, and an ACK(1) fix in V.8bis.
+The ABI of 0.7.3 kept: no struct changes size, `v90m_mem_size()` unchanged
+(x86-64 106320, 32-bit ARM 106016), `V90M_MEM_SIZE` 110592, the SONAME stays
+`libv90modem.so.0.7`. Simulation and own answerer only: no real V.92 caller
+has been through Quick Connect yet. What real V.92 callers send in our ANSam
+is known from recordings (a U.S. Robotics 5686 sends the QC1a); how they
+answer our QCA1d, QTS and ANSpcm is not.
+
+Added:
+- V.92 Quick Connect, answering (V.92 9.2.4.1, 9.2.4.3; docs/answering.md,
+  "V.92 Quick Connect"). With `V90M_MOD_V90` and `V90M_MOD_V92` on, a QC1a
+  heard during our answer tone ends V.8 at once and is answered with QCA1d,
+  75 ms of silence, QTS and ANSpcm; the caller's TONEq (980 Hz, at least
+  100 ms) takes the call to Phase 2, and with none within 2 s of QCA1d's end
+  ANSam begins again and V.8 goes on as for any caller. ANSpcm's level is the
+  nearest of -9.5, -12, -15 and -18 dBm0 to our Phase 2 power, lowered while
+  above the maximum our INFO0d advertises. The data frame grid starts at
+  QTS and is kept through retrains. V.42's ODP / ADP is bypassed when both P
+  bits are set (9.2.5). A caller that sends no QC1a is answered as in 0.7.3.
+- Short Phase 2 (9.4.1) for the digital modem after Quick Connect (INFO0d
+  bit 26 only in such calls): Table 18 (PCM upstream) and Table 19 (V.34
+  upstream, with its carrier in bit 33, now read from INFO1a), no probing and
+  no INFO1d, and a recovery to the full Phase 2 after 2500 ms with no Tone A
+  reversal or no INFO1a we can serve. The call's first start-up after a
+  TONEq that does not reach data mode keeps PCM upstream on offer once.
+- `v90m_get_qc` and `v90m_qc`: what Quick Connect did in the call (QC1a
+  heard and its UQTS and P bit, accepted, the ANSpcm level, the TONEq time,
+  the fallback, the ODP bypass, short Phase 2, and whether V.8bis
+  acknowledged an MS for V.8). Ten ints, a struct and a function of their
+  own as `v90m_get_k56` (docs/api.md, "Quick Connect").
+- `V90M_OPT_NO_QC` (0x100000, off by default): a QC1a is not taken and the
+  call starts with V.8 as in 0.7.3. `v90m-replay -Q` is the same for a
+  replay.
+- `make qc-scan RECS=<dir>`: V.92's QC1a in recordings (a hit is not an
+  error). `make v8bis-scan RECS=<dir>`: V.8bis frames in recordings,
+  classified, and the MSs for V.8 that ask for ACK(1). The `qc:` line of
+  `v90m-replay`: what Quick Connect did in the replayed call, printed when a
+  QC1a was heard and the run could take it (`-9` without `-Q`).
+
+Changed, behaviour:
+- V.8bis, answering with `V90M_MOD_K56`: an MS that carries no K56flex block,
+  chooses data with V.8 to follow and asks for ACK(1) now gets ACK(1), 180 ms
+  after the MS (V.8bis 9.7, 9.9.1), and V.8 follows as after an agreed call.
+  0.7.3 sent nothing and went on at the MS's end. The caller's answer tone
+  therefore comes about 0.47 s later, 3.46 s later than without K56flex,
+  against 3.807 s for a caller that sent no MS. Every other
+  message is answered as before, and our CL is unchanged. Neither the
+  fixtures nor the 106 private recordings hold a V.8bis frame, so no
+  replay or bench hash moved.
+- A V.92 caller that sends a QC1a, with `V90M_MOD_V92` on, is now answered
+  with Quick Connect (above) where 0.7.3 answered it with V.8: its call
+  starts in a different way, and a replay of a recording of such a call
+  (two of the fixtures, about half of the private recordings, all of them
+  replayed with `-Q`) differs from the recording once Quick Connect is
+  taken. `V90M_OPT_NO_QC` gives 0.7.3's start back. Callers that send no
+  QC1a, and calls without `V90M_MOD_V92`, are byte for byte as in 0.7.3.
+- Quick Connect's short Phase 1 is shown as `V90M_PHASE_V8` in
+  `v90m_get_diag`: the public phase list is unchanged.
+
+Not changed: QC2a (a Quick Connect request in V.8bis), QC1d, modem-on-hold
+(a QC1a with WXYZ 1111 is ignored), Quick Connect for the calling side, and
+our V.8bis CL.
+
+Tests and tools: `test_qcsig`, `test_qca`, `test_qc1a`, `test_p2_qc`,
+`test_answer_qc`, `v90/test_txalign`, `api/test_qc`, and `test_v8bis`'s
+cases for an MS for V.8; the simulated QC caller (`sim/qca`, `sim/v8bisc`)
+and the Quick Connect facts (`docs/history/qc-facts.md`); `tools/gen_anspcm.py`
+for the ANSpcm tables (2408 entries, checked against the V.92 text).
+
 ## 0.7.3 (2026-11-26)
 
 HST fixes from a public recording of a real call (a Courier V.Everything

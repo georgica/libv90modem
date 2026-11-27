@@ -671,8 +671,11 @@ sample; both include the transmitter and the echo canceller).
 * A V.34 caller against a Phase 2 that offers V.92 is tested through Phase
   2 only (`test_p2_v92`: mode P2D_MODE_V34); the full V.34 call tests run
   the unchanged path without the V.92 offer.
-* Quick connect, modem-on-hold, fast parameter exchange (9.9), the silence
-  variants of rate renegotiation: not implemented.
+* Modem-on-hold, fast parameter exchange (9.9), the silence variants of
+  rate renegotiation: not implemented. Quick connect is not in this
+  directory either: from 0.7.4 the digital modem's side is in `modem/`
+  (`qcd`, `ans_qc.c`, short Phase 2 in `p2d`; docs/answering.md, "V.92
+  Quick Connect"); the analogue side has none.
 * No adaptation in data mode: the echo canceller is frozen after TRN1d,
   there is no equaliser or gain tracking on the upstream data, and the
   sampling phase is whatever Jp achieved. The simulated analogue clock is
@@ -798,8 +801,11 @@ sample; both include the transmitter and the echo canceller).
     Because of this the server offers V.92 only with `v42 = on`.
 50. V.8 (9.1; Table 5/V.8): Phase 1 of V.92 is V.90's, and the PCM
     category has one bit for "V.90 or V.92 digital modem". JM is not
-    changed by the V.92 setting. Quick connect is not implemented; the
-    short Phase 2 (INFO0d bit 26) is not asked for.
+    changed by the V.92 setting. Quick connect (from 0.7.4, the digital
+    modem's side only, in `modem/`, not here) takes the call past V.8 when
+    the caller's QC1a is heard during ANSam; the short Phase 2 (INFO0d
+    bit 26) is asked for only in a call that went through it. Without a
+    QC1a the full Phase 2 is run, INFO0d bit 26 clear, as before.
 51. Upstream ceiling. `max_up` of `answer_v90_line` (the `max_upstream`
     setting) limits the PCM upstream rate as it limits V.34's.
 52. A rate renegotiation can change the upstream rate alone (CPd carries
@@ -809,7 +815,10 @@ sample; both include the transmitter and the echo canceller).
 ### Not done, not verified
 
 * (Calls with a real V.92 modem: stage 4.)
-* Quick connect, modem on hold, the short Phase 2: not implemented.
+* Modem on hold: not implemented. Quick connect and the short Phase 2:
+  the digital modem's side is there from 0.7.4 (`modem/`, not in this
+  directory; simulation and own answerer only); the analogue side's, and
+  QC2a, are not implemented.
 * The simulated caller does not read the downstream rates of Jd; the
   `max_downstream` ceiling is checked in Jd only.
 * A V.92 call without error control (start-stop over PCM upstream) is not

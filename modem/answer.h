@@ -11,7 +11,9 @@
  * (Table 16), INFO1d takes the form of Table 17 with bit 70 = PCM upstream
  * on offer, and the caller's INFO1a decides (9.3/V.92): PCM upstream (Table
  * 18: Phases 3 and 4 and data mode of V.92, ../v92/v92_p34d), V.34 upstream
- * (V.90 as before) or V.34. No short Phase 2, no modem on hold.
+ * (V.90 as before) or V.34. No modem on hold. Short Phase 2 (INFO0d bit 26,
+ * 9.4.1) only in a call that came through Quick Connect's short Phase 1,
+ * below; any other call runs the full Phase 2.
  * V.92 Quick Connect (with ANS_MODE_V90 and ANS_MODE_V92, not after a
  * K56flex agreement, not with ANS_MODE_NO_QC): a QC1a heard during ANSam
  * (modem/v8ans) ends V.8 at once; ANS_QC (modem/ans_qc.c, modem/qcd) sends

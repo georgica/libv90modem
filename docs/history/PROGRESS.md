@@ -7192,3 +7192,21 @@ the recording goes on with its CM).
   check-headers 114, check-diag-names 119. ARM A5 and A7 `api_test_api`
   1224, 0 failures; A5 `api_test_qc` 0 failures, output identical to
   x86-64's.
+
+## qc 10: documentation (2026-11-27)
+
+- Written: docs/answering.md "V.92 Quick Connect", docs/limits.md "V.92
+  Quick Connect (answering)", docs/api.md "Quick Connect", docs/testing.md
+  "V.92 Quick Connect's checks", the 0.7.4 (unreleased) CHANGELOG section,
+  tools/README.md (qc-scan, v8bis-scan), v92/README.md, README.md and
+  DESIGN.md's stale "no quick connect" lines. Comments only in
+  modem/answer.h (the header's "No short Phase 2") and modem/v8bis.h
+  (`V8B_RES_NO_MS`).
+- Carried items: TONEq under echo (0.5 taken, 0.7 and up missed, clean
+  fallback); a run begun in the last 10 to 20 ms before the 2 s dropped; a
+  run begun before 2 s may finish up to about 2.1 s; the ACK(1) answer tone
+  at about 3.46 s (api.md, limits.md); CHANGELOG entries for
+  `make v8bis-scan` and the ACK(1) change.
+- `make check-version check-headers`, `make golden` (173 programs
+  identical), `make replay-proof` (742 identical), `make bench-hashes` (19
+  identical).

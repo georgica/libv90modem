@@ -45,7 +45,9 @@ typedef enum {
 #define V8B_RES_NONE   0
 #define V8B_RES_AGREED 1    /* its MS carried the K56flex block; we sent ACK(1) */
 #define V8B_RES_NO_CRD 2
-#define V8B_RES_NO_MS  3    /* none, a valid frame without the block, or an invalid frame */
+#define V8B_RES_NO_MS  3    /* no MS in time; or a message that is neither an MS with the K56flex
+                               block nor an MS for V.8 data (v8bis_ms_v8): nothing sent; or an
+                               invalid frame: NAK(1) */
 #define V8B_RES_DECLINED 4  /* its MS carried the block but selected version 1: NAK(3) */
 #define V8B_RES_V8     5    /* its MS was for data, the modulation left to V.8 (v8bis_ms_v8):
                                ACK(1) when it asked for it (ms_v8 2), else nothing */
