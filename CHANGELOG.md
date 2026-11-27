@@ -53,12 +53,11 @@ Changed, behaviour:
 - V.8bis, answering with `V90M_MOD_K56`: an MS that carries no K56flex block,
   chooses data with V.8 to follow and asks for ACK(1) now gets ACK(1), 180 ms
   after the MS (V.8bis 9.7, 9.9.1), and V.8 follows as after an agreed call.
-  0.7.3 sent nothing and went on at the MS's end. The caller's answer tone
-  therefore comes about 0.47 s later, 3.46 s later than without K56flex,
-  against 3.807 s for a caller that sent no MS. Every other
-  message is answered as before, and our CL is unchanged. Neither the
-  fixtures nor the 106 private recordings hold a V.8bis frame, so no
-  replay or bench hash moved.
+  0.7.3 sent nothing and went on at the MS's end. ANSam comes at about
+  3.46 s, about 0.47 s later than with 0.7.3, against 3.807 s for a caller
+  that sent no MS. Every other message is answered as before, and our CL
+  is unchanged. Neither the fixtures nor the 106 private recordings hold a
+  V.8bis frame, so no replay or bench hash moved.
 - A V.92 caller that sends a QC1a, with `V90M_MOD_V92` on, is now answered
   with Quick Connect (above) where 0.7.3 answered it with V.8: its call
   starts in a different way, and a replay of a recording of such a call

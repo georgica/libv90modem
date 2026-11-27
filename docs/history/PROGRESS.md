@@ -7210,3 +7210,31 @@ the recording goes on with its CM).
 - `make check-version check-headers`, `make golden` (173 programs
   identical), `make replay-proof` (742 identical), `make bench-hashes` (19
   identical).
+
+## qc 11a: proofs and the live runbook (2026-11-27)
+
+x86-64 only here (owner's direction: ARM, big-endian, riscv, Windows and
+the clang matrix are GitHub CI's).
+
+- `make check`: ALL HOST CHECKS PASS (includes test-fixtures, check-symbols,
+  check-soname, check-hst-bm, `api/test_qc`).
+- `make golden`: 173 programs identical. `git diff --stat v0.7.3 -- test/golden`
+  names only the planned files: api/test_qc, test_ans_table (19 to 20),
+  test_answer_qc, test_p2_qc, test_qc1a, test_qca, test_qcsig, test_v8bis,
+  v90/test_txalign.
+- `make replay-proof`: 742 runs identical. `make bench-hashes`: 19 identical.
+- `make check-headers check-diag-names check-version`: 114 headers, 119
+  diag names, version 0.7.3 everywhere.
+- The A-law short-Phase-2 QC call end to end is `alaw_short` in
+  `test/test_answer_qc.c` (from 0.7.4 task 7): the sim's v92 call is given
+  `alaw = 1` (its caller codec converts at the channel edge, sim/v92call.h),
+  QC1a to QCA1d, QTS, ANSpcm, TONEq, short Phase 2 (INFO0d bit 26, no full
+  Phase 2, no retrain), V.92 data 50666 down / 40000 up, 0 bad bits; its
+  golden is test/golden/out/test/test_answer_qc.txt. No sim change was
+  needed.
+- Docs wording from the Task 10 review: limits.md (a little under 0.8 s,
+  the Figure 3 worst case), CHANGELOG (ANSam about 3.46 s, 0.47 s later than
+  0.7.3, against 3.807 s), answering.md (QC1a one second after ANSam by the
+  spec, about 1.25 s for BinModem), calling.md (calling side).
+- docs/history/qc-live.md: the runbook, every result row "not run yet".
+- live: pending (local test server being set up)

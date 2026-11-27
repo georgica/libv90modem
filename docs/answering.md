@@ -321,8 +321,8 @@ exactly as in 0.7.3.
 - **What we listen for.** The V.8 receiver we already run during ANSam
   also looks for a QC1a (V.92 8.2.1, Table 2): two equal copies, each at
   least 8 marks, the character 0x55, one information character (WXYZ and
-  P, no QC1d bit) and at least 8 marks again. A V.92 modem sends it one to
-  one and a half seconds after our ANSam begins, before its CM. The
+  P, no QC1d bit) and at least 8 marks again. A V.92 modem sends it one second after our ANSam begins by the
+  spec (about 1.25 s for BinModem), before its CM. The
   first QC1a heard is the one acted on. A QC1a with WXYZ 1111 (a call
   coming off modem-on-hold) or an octet that is not an analogue modem's
   is ignored, and the CM behind it decides as always. QC1d is not
