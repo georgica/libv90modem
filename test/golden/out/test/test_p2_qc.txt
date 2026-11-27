@@ -18,5 +18,6 @@ peer_no_short D 2400: done 3.458 s, rtd 2403, v92 3
 no_rev D 2400: full after 2.500 s, done 6.171 s, rtd 2402, mode 2, v92 11
 no_info1a D 2400: full after 2.500 s, done 6.171 s, rtd 2403, mode 2, v92 11
 t19_3429 D 2400: full after 0.463 s, done 4.192 s, rtd 2403, mode 1, v92 11
+t18_no_pcm: full after 0.213 s, done 2.587 s, mode 1
 alaw_short: done 0.405 s, rtd 402
-p2_qc: 248 checks, 0 failures
+p2_qc: 255 checks, 0 failures

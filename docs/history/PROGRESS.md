@@ -7074,3 +7074,36 @@ DONE, so unaffected).
   identical. `make replay-proof`: 742 identical; `make bench-hashes`: 19
   identical; `check-headers` 114; `check-diag-names` 119. `api_test_api`
   x86-64 1234 checks, 0 failures; ARM A5, A7 1224, 0 failures.
+
+## qc 7: short Phase 2 in the answerer; the stale caller (2026-11-26)
+
+`modem/ans_v90.c`: `ans_start_p2` adds `p2d_offer_short` after
+`p2d_offer_v92` when `V8A_QC_TONEQ` is set (every call through short
+Phase 1: INFO0d bit 26 = 1, whatever INFO0a then asks; every other call's
+INFO0d as 0.7.3). At `P2D_DONE`: `SHORT_RAN` -> `V8A_QC_SHORT`,
+`SHORT_FULL` -> `V8A_QC_SHORT_FULL`; `v92_both` tests `P2D_V92_ON`.
+`start_p34` after `SHORT_RAN`: the upstream carrier is INFO1a's bit 33
+(Table 19), not `up_hi_carrier`. `tick_v92`: with `V8A_QC_ACCEPTED` and
+not `V8A_QCX_SPENT`, the first start-up that never reached data mode sets
+`SPENT` and keeps `pcm_up`; from the second on, 0.7.3's rule. Phases 3/4
+read no probing result of p2d (checked: none do). Carried: `modem/p2d.c`,
+a Table 18 INFO1a in short Phase 2 where we offer no PCM upstream now
+recovers to the full Phase 2 (9.4.1.2.3) instead of `P2D_ERR_PCM_UP`
+(`test_p2_qc` `t18_no_pcm`); `tools/trace.c` checks `p2n[]` against the
+state count at compile time.
+- `build/test_answer_qc` before: 509 checks, 33 failures (INFO0d bit 26
+  0; no short run; `stale_once` ended in V.90; carrier of `short_t19_lo`
+  3/5). After: 509 checks, 0 failures. Connected after answering:
+  qc_full 7.672 s, short_t18_dil0 6.043 s (1.629 s sooner), short_t19
+  5.426 s, alaw_short 6.129 s, short_no_rev 10.234 s. stale_once: 1
+  retrain (ours), INFO1d bit 70 1, V.92 data; stale_twice: 2, bit 70 1
+  then 0, V.90 data. plain_v92: 79952 octets sent, 0 differ with INFO0a
+  bit 27 0 and 1. Without the bit-33 rule, short_t19_lo fails (10).
+- `build/test_p2_qc` before: 255 checks, 3 failures (`t18_no_pcm`
+  P2D_FAILED); after: 0 failures (full after 0.213 s, done 2.587 s, V.90).
+- `make golden`: ALL HOST CHECKS PASS; re-recorded `test_answer_qc` (new
+  lines, `qc_full`/`alaw` gain their bit-26 line; no old line changed but
+  the count) and `test_p2_qc` (the `t18_no_pcm` line and the count); 170
+  programs identical. `make replay-proof`: 742 identical; `make
+  bench-hashes`: 19 identical; `check-headers` 114; `check-diag-names`
+  119. `api_test_api` x86-64 1234, ARM A5/A7 1224, 0 failures.

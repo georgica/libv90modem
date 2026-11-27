@@ -22,6 +22,7 @@ static const char info0d_073_a[]  = "1111011100100001111001010001001101110101000
 
 typedef struct {
     int     shrt;       /* p2d_offer_short() */
+    int     no_pcm;     /* p2d_offer_v92(p, 0): INFO1d bit 70 would say no PCM upstream */
     int     alaw;
     int     D;          /* round-trip delay of the line, samples */
     p2a_cfg ac;
@@ -67,7 +68,7 @@ static void run(const scen_t *s, run_t *r)
     dc.tx_dbm0 = -12; dc.max_tx_code = 23; dc.up_sr_mask = (1 << 3) | (1 << 4); dc.up_hi_carrier = 1 << 4;
     dc.alaw = s->alaw;
     p2d_init(&r->d, &dc);
-    p2d_offer_v92(&r->d, 1);
+    p2d_offer_v92(&r->d, !s->no_pcm);
     if (s->shrt) p2d_offer_short(&r->d);
     for (k = 0; k < INFO0D_BITS; k++) r->info0d[k] = (char)('0' + (k < r->d.tx.nbits ? r->d.tx.bits[k] : 9));
     r->info0d[INFO0D_BITS] = 0;
@@ -202,6 +203,21 @@ int main(void)
             }
         }
     }
+
+    /* ---- t18_no_pcm: a Table 18 INFO1a (PCM upstream) where we offer none:
+     * one we cannot serve, so as none (9.4.1.2.3, Readings 8); the full
+     * Phase 2's INFO1d (bit 70 = 0) then gives V.90 ---- */
+    memset(&s, 0, sizeof s);
+    s.D = 400; s.shrt = 1; s.no_pcm = 1;
+    caller(&s.ac, 1, 1);
+    run(&s, &r);
+    CHECK_EQ_I(r.d.state, P2D_DONE);
+    CHECK(r.d.v92 & P2D_V92_SHORT_FULL); CHECK(!(r.d.v92 & P2D_V92_SHORT_RAN));
+    CHECK(SEEN(&r, P2D_SHORT_INFO1A)); CHECK(SEEN(&r, P2D_INFO1D));
+    CHECK_EQ_I(r.d.mode, P2D_MODE_V90);
+    CHECK_EQ_I(r.a.info1d.sr[5].hi_carrier, 0);
+    printf("t18_no_pcm: full after %.3f s, done %.3f s, mode %d\n",
+           (r.full_at - r.rev_at) / 8000.0, r.d_done_at / 8000.0, r.d.mode);
 
     /* ---- alaw_short: INFO0d bit 39 (A-law), short Phase 2 done ---- */
     memset(&s, 0, sizeof s);

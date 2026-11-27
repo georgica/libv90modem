@@ -1,5 +1,6 @@
 qc_full
   qc_full                        QCA1d 0x87 5 samples after QC1a, 600 silent, QTS at 1.709 s, 959 ANSpcm codewords, TONEq at 197 ms, INFO0d 607 samples after ANSpcm
+  qc_full                        INFO0d bit 26 1, full Phase 2; connected 7.672 s after answering
   qc_full                        V.92: 50666 bit/s down, 38666 bit/s up; 152000 / 116000 bits, 0 / 0 bad
 lapm_off
   lapm_off                       QCA1d 0x83 4 samples after QC1a, 600 silent, QTS at 1.709 s, 959 ANSpcm codewords, TONEq at 197 ms, INFO0d 607 samples after ANSpcm
@@ -25,6 +26,7 @@ too_late
   too_late                       V.92: 50666 bit/s down, 38666 bit/s up; 152000 / 116000 bits, 0 / 0 bad
 alaw
   alaw                           QCA1d 0x87 5 samples after QC1a, 600 silent, QTS at 1.709 s, 959 ANSpcm codewords, TONEq at 197 ms, INFO0d 610 samples after ANSpcm
+  alaw                           INFO0d bit 26 1, full Phase 2; connected 7.762 s after answering
   alaw                           V.92: 50666 bit/s down, 40000 bit/s up; 152000 / 120000 bits, 0 / 0 bad
 v92_off
   v92_off                        V.90: 50666 bit/s down, 28800 bit/s up; 152000 / 86400 bits, 0 / 0 bad
@@ -33,4 +35,36 @@ no_qc_option
 k56_clears_qc
   K56flex agreed (SM56's MS): QC no longer offered
   K56flex not agreed (no V.8bis answer): QC still offered
-test_answer_qc: 269 checks, 0 failures
+short_t18_dil0
+  short_t18_dil0                 QCA1d 0x87 5 samples after QC1a, 600 silent, QTS at 1.709 s, 959 ANSpcm codewords, TONEq at 197 ms, INFO0d 607 samples after ANSpcm
+  short_t18_dil0                 INFO0d bit 26 1, short Phase 2; connected 6.043 s after answering
+  short_t18_dil0                 1.629 s sooner than qc_full's 7.672 s
+  short_t18_dil0                 V.92: 50666 bit/s down, 38666 bit/s up; 152000 / 116000 bits, 0 / 0 bad
+short_t19
+  short_t19                      QCA1d 0x87 5 samples after QC1a, 600 silent, QTS at 1.709 s, 959 ANSpcm codewords, TONEq at 197 ms, INFO0d 607 samples after ANSpcm
+  short_t19                      Table 19: 3200 symbols/s, carrier 3/5 of it
+  short_t19                      INFO0d bit 26 1, short Phase 2; connected 5.426 s after answering
+  short_t19                      V.90: 50666 bit/s down, 28800 bit/s up; 152000 / 86400 bits, 0 / 0 bad
+short_t19_lo
+  short_t19_lo                   QCA1d 0x87 5 samples after QC1a, 600 silent, QTS at 1.709 s, 959 ANSpcm codewords, TONEq at 197 ms, INFO0d 607 samples after ANSpcm
+  short_t19_lo                   Table 19: 3200 symbols/s, carrier 4/7 of it
+  short_t19_lo                   INFO0d bit 26 1, short Phase 2; connected 5.426 s after answering
+  short_t19_lo                   V.90: 50666 bit/s down, 28800 bit/s up; 152000 / 86400 bits, 0 / 0 bad
+alaw_short
+  alaw_short                     QCA1d 0x87 5 samples after QC1a, 600 silent, QTS at 1.709 s, 959 ANSpcm codewords, TONEq at 197 ms, INFO0d 610 samples after ANSpcm
+  alaw_short                     INFO0d bit 26 1, short Phase 2; connected 6.129 s after answering
+  alaw_short                     V.92: 50666 bit/s down, 40000 bit/s up; 152000 / 120000 bits, 0 / 0 bad
+stale_once
+  stale_once                     1 retrain(s), ours; INFO1d bit 70 1 after the first, 1 after the last
+  stale_once                     V.92: 50666 bit/s down, 38666 bit/s up; 152000 / 116000 bits, 0 / 0 bad
+stale_twice
+  stale_twice                    2 retrain(s), ours; INFO1d bit 70 1 after the first, 0 after the last
+  stale_twice                    V.90: 50666 bit/s down, 28800 bit/s up; 152000 / 86400 bits, 0 / 0 bad
+short_no_rev
+  short_no_rev                   QCA1d 0x87 5 samples after QC1a, 600 silent, QTS at 1.709 s, 959 ANSpcm codewords, TONEq at 197 ms, INFO0d 607 samples after ANSpcm
+  short_no_rev                   full Phase 2 after the short one; connected 10.234 s after answering
+  short_no_rev                   V.92: 50666 bit/s down, 38666 bit/s up; 152000 / 116000 bits, 0 / 0 bad
+plain_v92
+  INFO0a bit 27 0 and 1: INFO0d bit 26 0, full Phase 2; 79952 octets sent, 0 differ
+  plain_v92                      V.92: 50666 bit/s down, 38666 bit/s up; 152000 / 116000 bits, 0 / 0 bad
+test_answer_qc: 509 checks, 0 failures

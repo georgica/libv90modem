@@ -4,7 +4,9 @@
  * QC1a ahead of its CM, then sim/qca's QCA1d reader and its own QTS and
  * ANSpcm checks, TONEq, Phase 2), PRBS data both ways:
  *   - qc_full: QCA1d (P 1, LM 01: 0x87), 75 ms of silence, QTS and QTS\,
- *     ANSpcm until TONEq, 75 ms, Phase 2 (full), V.92 data; the 6-symbol
+ *     ANSpcm until TONEq, 75 ms, Phase 2 (INFO0d with bit 26, as in every
+ *     call through short Phase 1; the caller does not ask: full), V.92
+ *     data; the 6-symbol
  *     data frame grid from QTS's first symbol (8.3.6) and V.42's ODP/ADP
  *     bypassed by the two P bits (9.2.5);
  *   - lapm_off (P 0), v90_choice (V.34 upstream: V.90's Phase 3 on the
@@ -13,7 +15,13 @@
  *     marks are not TONEq), TONEq late (1.90 s: taken) and too late (2.10
  *     s): ANSam again 2 s after QCA1d, V.8, V.92 data;
  *   - v92_off and ANS_MODE_NO_QC: the QC1a heard, not taken, JM;
- *   - k56_clears_qc: an agreed K56flex client is never offered QC.
+ *   - k56_clears_qc: an agreed K56flex client is never offered QC;
+ *   - short Phase 2 (9.4.1): Table 18 with DIL N = 0 (and sooner to data
+ *     than qc_full), Table 19 on its own carrier (bit 33: high, low), A-law;
+ *   - Review Focus 3, the stale caller: its PCM upstream start-up fails
+ *     once (PCM upstream kept, V.92 data) or twice (taken away, V.90);
+ *     no Tone A reversal (9.4.1.2.2: the full Phase 2);
+ *   - plain_v92: no QC1a, INFO0a bit 27: no bit 26, the run unchanged.
  * Times are samples at our port (our tick index); the caller's (C.*_at)
  * are its own, 2 later for what we send (PORT). */
 #include <stdio.h>
@@ -64,6 +72,9 @@ static uint8_t rec[RECN];   /* what we sent, by tick */
 typedef struct {
     unsigned modes; int alaw;
     int lapm, pcm_up, deaf, no_toneq, toneq_delay_ms;
+    int no_qc;                      /* the caller sends no QC1a */
+    int short_p2, t19, sr, hi;      /* INFO0a bit 27; Table 19's INFO1a, its bits 34:36, 33 */
+    int dil_n, mute_pcm, no_rev;    /* the caller's DIL-segments; faults */
 } qscen;
 
 /* what the run saw, by tick (-1 not seen) */
@@ -74,6 +85,7 @@ static struct {
     long qts;               /* QTS's first */
     long back;              /* ANS_QC gave up: ANSam from the next tick */
     long toneq;             /* ANS_QC took TONEq */
+    long conn;              /* the first tick with connected */
     int  odp_at_back;       /* answer_odp_bypass on the tick of the fallback */
 } W;
 
@@ -95,7 +107,9 @@ static void start(const qscen *s)
     memset(&cc, 0, sizeof cc);
     cc.alaw = s->alaw; cc.v92 = 1; cc.pcm_up = s->pcm_up;
     cc.lapm = s->lapm; cc.qc_lapm = s->lapm;        /* one P for the call (F5) */
-    cc.qc = 1; cc.qc_wxyz = 5; cc.short_p2 = 0;
+    cc.qc = !s->no_qc; cc.qc_wxyz = 5; cc.short_p2 = s->short_p2;
+    cc.short_t19 = s->t19; cc.short_sr = s->sr; cc.short_hi = s->hi; cc.short_no_rev = s->no_rev;
+    cc.dil_n = s->dil_n; cc.mute_pcm = s->mute_pcm;
     cc.qc_deaf = s->deaf; cc.qc_no_toneq = s->no_toneq; cc.toneq_delay_ms = s->toneq_delay_ms;
     cc.echo_gain = 0.1; cc.echo_delay = 21;
     cc.getbit = p_get; cc.putbit = p_put; cc.user = &UC;
@@ -120,6 +134,7 @@ static void run(long samples)
         }
         if (was == ANS_QC && A.phase == ANS_V8) { W.back = now; W.odp_at_back = answer_odp_bypass(&A); }
         if (was == ANS_QC && A.phase == ANS_P2) W.toneq = now;
+        if (A.connected && W.conn < 0) W.conn = now;
         now++;
     }
 }
@@ -195,6 +210,8 @@ static void phase1_ok(const char *what, int alaw, int lapm)
            what, C.qca1d, W.hand + 1 - W.pre_end, W.qts / 8000.0, C.anspcm_n, tq_ms(), C.info0d_at - C.toneq_off);
 }
 
+static long full_conn = -1;     /* qc_full's time to connected */
+
 static void qc_full(int alaw)
 {
     qscen s;
@@ -211,6 +228,13 @@ static void qc_full(int alaw)
     CHECK_EQ_I(A.phase, ANS_V92); CHECK_EQ_I(A.modulation, ANS_MOD_V92);
     CHECK_EQ_I(answer_odp_bypass(&A), 1);
     CHECK_EQ_I(answer_hst_decided(&A), 1);
+    /* INFO0d is built before INFO0a is heard: bit 26 in every call through
+     * short Phase 1; a caller that does not ask has the full Phase 2 */
+    CHECK_EQ_I(C.d_short, 1);
+    CHECK_EQ_I(A.v8.qc.flags & (V8A_QC_SHORT | V8A_QC_SHORT_FULL), 0);
+    CHECK_EQ_I(A.p2.v92 & (P2D_V92_SHORT_RAN | P2D_V92_SHORT_FULL), 0);
+    if (!alaw) full_conn = W.conn;
+    printf("  %-30s INFO0d bit 26 %d, full Phase 2; connected %.3f s after answering\n", name, C.d_short, W.conn / 8000.0);
     grid_ok(1);
     data_ok(name, ANS_MOD_V92);
 }
@@ -357,6 +381,122 @@ static void k56_clears_qc(void)
     }
 }
 
+/* short Phase 2 (9.4.1) after short Phase 1: Table 18 (PCM upstream) or
+ * Table 19 (V.34 upstream, its carrier INFO1a's bit 33: there is no INFO1d) */
+static void short_p2(const char *name, int alaw, int t19, int sr, int hi)
+{
+    qscen s;
+    printf("%s\n", name);
+    scen(&s, V92); s.alaw = alaw; s.short_p2 = 1; s.dil_n = 0;
+    s.t19 = t19; s.sr = sr; s.hi = hi;
+    if (t19) s.pcm_up = 0;
+    start(&s);
+    CHECK_EQ_I(to_data(30000), 1);
+    phase1_ok(name, alaw, 1);
+    CHECK_EQ_I(C.d_short, 1);
+    CHECK_EQ_I(A.v8.qc.flags, ALLF | V8A_QC_SHORT);
+    CHECK(A.p2.v92 & P2D_V92_SHORT_RAN);
+    CHECK_EQ_I(A.p2.v92 & P2D_V92_SHORT_FULL, 0);
+    CHECK_EQ_I(C.phase2s, 1); CHECK_EQ_I(A.retrains, 0);
+    grid_ok(1);
+    if (t19) {
+        CHECK_EQ_I(A.phase, ANS_V90); CHECK_EQ_I(A.p2.mode, P2D_MODE_V90);
+        CHECK_EQ_I(A.p34.cfg.sym_rate, sr == 3 ? 3000 : 3200);
+        CHECK_EQ_I(A.p34.cfg.car_num, sr == 3 ? (hi ? 2 : 3) : (hi ? 3 : 4));
+        CHECK_EQ_I(A.p34.cfg.car_den, sr == 3 ? (hi ? 3 : 5) : (hi ? 5 : 7));
+        printf("  %-30s Table 19: %d symbols/s, carrier %d/%d of it\n", name, A.p34.cfg.sym_rate, A.p34.cfg.car_num, A.p34.cfg.car_den);
+    } else {
+        CHECK_EQ_I(A.phase, ANS_V92); CHECK_EQ_I(A.p2.mode, P2D_MODE_V92);
+    }
+    printf("  %-30s INFO0d bit 26 %d, short Phase 2; connected %.3f s after answering\n", name, C.d_short, W.conn / 8000.0);
+    if (!alaw && !t19) {
+        CHECK(full_conn > 0 && W.conn > 0 && W.conn < full_conn);
+        printf("  %-30s %.3f s sooner than qc_full's %.3f s\n", name, (full_conn - W.conn) / 8000.0, full_conn / 8000.0);
+    }
+    data_ok(name, t19 ? ANS_MOD_V90 : ANS_MOD_V92);
+}
+
+/* Review Focus 3: the caller's stored parameters no longer fit the line
+ * (its PCM upstream sends nothing, mute_pcm start-ups): our retrain. The
+ * first failed start-up of a QC call keeps PCM upstream (INFO1d bit 70 1),
+ * the second takes it away for the rest of the call (0.7.3's rule) */
+static void stale(const char *name, int mute)
+{
+    qscen s;
+    int bit70_1;
+    printf("%s\n", name);
+    scen(&s, V92); s.short_p2 = 1; s.dil_n = 0; s.mute_pcm = mute;
+    start(&s);
+    while (C.phase2s < 2 && now < 8L * 40000 && A.phase != ANS_FAILED && C.stage != VCL_FAILED) run(8);
+    CHECK_EQ_I(C.phase2s, 2);
+    bit70_1 = C.d_pcm_up;
+    CHECK_EQ_I(bit70_1, 1);
+    CHECK_EQ_I(to_data(40000), 1);
+    CHECK_EQ_I(A.v8.qc.flags, ALLF | V8A_QC_SHORT);
+    CHECK(A.v8.qc.aux & V8A_QCX_SPENT);
+    CHECK_EQ_I(A.retrains, mute); CHECK_EQ_I(A.ev.rt_far, 0);     /* ours */
+    CHECK_EQ_I(C.phase2s, 1 + mute);
+    CHECK_EQ_I(A.v92_both, 1);
+    CHECK_EQ_I(C.pcm_starts, 2);
+    CHECK_EQ_I(C.v90_starts, mute - 1);
+    CHECK_EQ_I(C.d_pcm_up, mute == 1);
+    CHECK_EQ_I(A.pcm_up, mute == 1);
+    printf("  %-30s %d retrain(s), ours; INFO1d bit 70 %d after the first, %d after the last\n",
+           name, A.retrains, bit70_1, C.d_pcm_up);
+    data_ok(name, mute == 1 ? ANS_MOD_V92 : ANS_MOD_V90);
+}
+
+/* no Tone A reversal after ours (9.4.1.2.2): the full Phase 2 */
+static void short_no_rev(void)
+{
+    qscen s;
+    printf("short_no_rev\n");
+    scen(&s, V92); s.short_p2 = 1; s.no_rev = 1;
+    start(&s);
+    CHECK_EQ_I(to_data(30000), 1);
+    phase1_ok("short_no_rev", 0, 1);
+    CHECK_EQ_I(A.v8.qc.flags, ALLF | V8A_QC_SHORT_FULL);
+    CHECK(A.p2.v92 & P2D_V92_SHORT_FULL);
+    CHECK_EQ_I(A.p2.v92 & P2D_V92_SHORT_RAN, 0);
+    CHECK_EQ_I(A.retrains, 0); CHECK_EQ_I(A.phase, ANS_V92);
+    printf("  %-30s full Phase 2 after the short one; connected %.3f s after answering\n", "short_no_rev", W.conn / 8000.0);
+    grid_ok(1);
+    data_ok("short_no_rev", ANS_MOD_V92);
+}
+
+/* a V.92 caller without QC1a that asks for short Phase 2 in INFO0a: our
+ * INFO0d has no bit 26, so the full Phase 2; what we send is octet for
+ * octet what we send to the same caller without bit 27 */
+static uint8_t rec0[RECN];
+static void plain_v92(void)
+{
+    qscen s;
+    long n0 = 0, k, ndiff = 0;
+    int b27;
+    printf("plain_v92\n");
+    for (b27 = 0; b27 < 2; b27++) {
+        scen(&s, V92); s.no_qc = 1; s.short_p2 = b27;
+        start(&s);
+        if (!b27) {
+            CHECK_EQ_I(to_data(30000), 1);
+            run(8000);
+            n0 = now; memcpy(rec0, rec, (size_t)n0);
+        } else {
+            run(n0);
+            for (k = 0; k < n0; k++) ndiff += rec[k] != rec0[k];
+            CHECK(moving());
+        }
+        CHECK_EQ_I(A.p2.info0a.short_p2, b27);
+        CHECK_EQ_I(C.d_short, 0);
+        CHECK_EQ_I(A.v8.qc.flags, 0);
+        CHECK_EQ_I(A.p2.v92 & (P2D_V92_SHORT_RAN | P2D_V92_SHORT_FULL), 0);
+        CHECK_EQ_I(A.phase, ANS_V92);
+    }
+    CHECK_EQ_I(ndiff, 0);
+    printf("  INFO0a bit 27 0 and 1: INFO0d bit 26 0, full Phase 2; %ld octets sent, %ld differ\n", n0, ndiff);
+    data_ok("plain_v92", ANS_MOD_V92);
+}
+
 int main(void)
 {
     qc_full(0);
@@ -371,5 +511,13 @@ int main(void)
     not_taken("v92_off", BASE, ANS_MOD_V90);
     not_taken("no_qc_option", V92 | ANS_MODE_NO_QC, ANS_MOD_V92);
     k56_clears_qc();
+    short_p2("short_t18_dil0", 0, 0, 0, 0);
+    short_p2("short_t19", 0, 1, 4, 1);
+    short_p2("short_t19_lo", 0, 1, 4, 0);
+    short_p2("alaw_short", 1, 0, 0, 0);
+    stale("stale_once", 1);
+    stale("stale_twice", 2);
+    short_no_rev();
+    plain_v92();
     T_REPORT("test_answer_qc");
 }

@@ -378,8 +378,10 @@ int16_t p2d_tick(p2d_t *p, int16_t x)
             info1a_parse(p->rx.frame, &p->info1a);
             kind = info1a_kind(&p->info1a);
             if (kind == INFO1A_PCM) {
-                /* Table 18/V.92: PCM upstream, which needs our bit 70 as in the full Phase 2 */
-                if (!((p->v92 & P2D_V92_ON) && p->peer_v92 && p->pcm_up)) { fail(p, P2D_ERR_PCM_UP); break; }
+                /* Table 18/V.92: PCM upstream, which needs our bit 70 as in the
+                 * full Phase 2. Without it, one we cannot serve: the caller has
+                 * seen no INFO1d to tell it so, and the full Phase 2's will */
+                if (!((p->v92 & P2D_V92_ON) && p->peer_v92 && p->pcm_up)) { short_full(p, 0); break; }
                 p->mode = P2D_MODE_V92; p->v92 |= P2D_V92_SHORT_RAN; go(p, P2D_DONE);
             } else if (kind == INFO1A_V90 && ((p->cfg.up_sr_mask >> p->info1a.up_sr) & 1)) {
                 /* Table 19/V.92: V.34 upstream at a rate our receiver has */
