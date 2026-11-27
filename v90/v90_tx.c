@@ -537,6 +537,19 @@ int v90tx_select(v90tx_t *t, v90tx_sig_t sig)
     return 0;
 }
 
+int v90tx_align(v90tx_t *t, int phase)
+{
+    if (phase < 0 || phase > 5) return -1;
+    if (t->pending != V90TX_NONE) return -1;
+    if (t->cur_sig != V90TX_SILENCE) return -1;
+    t->aligned = 1;
+    t->phase = (uint8_t)phase;
+    t->qn = 0;
+    /* the head frame is the one the next tick is part of */
+    if (phase != 0) advance(t);
+    return 0;
+}
+
 uint8_t v90tx_tick(v90tx_t *t)
 {
     const v90tx_frame_t *q;

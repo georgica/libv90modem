@@ -16,7 +16,7 @@ LIB_HDR := v90_pcm.h v90_scr.h v90_seq.h v90_enc.h v90_tx.h ../v34/v34.h
 # test-only support: the reference decoder (never linked into the modem)
 SUP_SRC := test/v90_dec.c
 SUP_HDR := test/v90_dec.h test/table1.inc ../test/test.h
-TESTS   := test_pcm test_scr test_seq test_enc test_tx test_tx92 test_e2e
+TESTS   := test_pcm test_scr test_seq test_enc test_tx test_tx92 test_txalign test_e2e
 
 .PHONY: all test test-arm clean build-tests build-tests-arm print-tests print-tests-arm
 all: test

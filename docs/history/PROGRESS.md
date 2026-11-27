@@ -7008,3 +7008,6 @@ measured figures.
     QC1a. Before Task 5 (Global Constraints, replay) the controller rules
     on the replay and fixture lines of these recordings that change once a
     run offering V.92 answers QC.
+
+## qc 4: the V.90 transmitter's grid, set from outside (2026-11-26)
+`v90tx_align(t, phase)` added (v90/v90_tx.[ch]); no field added. `make -s -C v90 build/test_txalign` failed to compile before, 416 checks 0 failures after (both laws, phases 0..5). v90 `make test` all pass; `make golden`: 170 programs identical after recording the new `v90/test_txalign.txt`; replay-proof 742 identical; bench-hashes 19 identical.
