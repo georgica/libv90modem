@@ -375,14 +375,17 @@ From 0.7.4.
 - **TONEq needs at least 100 ms of 980 Hz**, counted as 6 detector blocks
   of 10 ms and 40 ms more. A caller whose TONEq is shorter (BinModem's
   `BINMODEM_V92_TONEQ_MS` can cut it) is not heard, and the call falls
-  back to V.8.
+  back to V.8. V.92 9.2.1.3 has the caller hold TONEq (minimum 50 ms) until
+  it no longer detects ANSpcm, and our ANSpcm continues until we take
+  TONEq, so for a conforming caller the 100 ms floor is not a gap; only a
+  caller that cuts TONEq on purpose is missed.
 - **The 2 s of V.92 9.2.4.3 are counted at our port**, from the last
   sample of our QCA1d, so the line's round trip is part of them. By
   Figure 3 of V.92 a caller that did not hear ANSam for a second waits a
   second of ANSpcm before TONEq; ANSpcm begins 177 ms after QCA1d, so such
   a TONEq arrives at about 1.18 s plus the round trip, and a round trip of
-  a little under 0.8 s fits (the Figure 3 worst case). In the simulator a TONEq beginning
-  1.90 s after QCA1d is taken and one beginning 2.10 s after is not
+  a little under 0.8 s fits (the Figure 3 worst case). In the simulator a
+  TONEq beginning 1.90 s after QCA1d is taken and one beginning 2.10 s after is not
   (fallback).
 - **A run of 980 Hz that began before the 2 s are over may finish after
   them.** It is followed to its end and taken, up to about 2.1 s after

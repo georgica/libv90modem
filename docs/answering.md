@@ -313,8 +313,8 @@ version 1 alone) dropped it so, and connected in V.34 at 28800 at best
 
 From 0.7.4. Tried in simulation and live against BinModem on a local
 server (30 of 30 QC requests accepted); other V.92 clients (U.S. Robotics
-5686, Conexant) are not yet tested live ([limits.md](limits.md)). Quick Connect is part of
-`V90M_MOD_V92`: it is offered whenever `V90M_MOD_V90` and `V90M_MOD_V92`
+5686, Conexant) are not yet tested live ([limits.md](limits.md)). Quick
+Connect is part of `V90M_MOD_V92`: it is offered whenever `V90M_MOD_V90` and `V90M_MOD_V92`
 are both on, unless K56flex was agreed in the call or `V90M_OPT_NO_QC` is
 set. There is no other setting. A caller that sends no QC1a is answered
 exactly as in 0.7.3.
@@ -322,9 +322,9 @@ exactly as in 0.7.3.
 - **What we listen for.** The V.8 receiver we already run during ANSam
   also looks for a QC1a (V.92 8.2.1, Table 2): two equal copies, each at
   least 8 marks, the character 0x55, one information character (WXYZ and
-  P, no QC1d bit) and at least 8 marks again. A V.92 modem sends it one second after our ANSam begins by the
-  spec (about 1.25 s for BinModem), before its CM. The
-  first QC1a heard is the one acted on. A QC1a with WXYZ 1111 (a call
+  P, no QC1d bit) and at least 8 marks again. A V.92 modem sends it one
+  second after our ANSam begins by the spec (about 1.25 s for BinModem),
+  before its CM. The first QC1a heard is the one acted on. A QC1a with WXYZ 1111 (a call
   coming off modem-on-hold) or an octet that is not an analogue modem's
   is ignored, and the CM behind it decides as always. QC1d is not
   answered.

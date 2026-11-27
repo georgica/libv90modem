@@ -160,8 +160,9 @@ built and why; `docs/history/` keeps the development logs.
 ### Not implemented, or not checked
 
 - Modem-on-hold, either role. V.92 quick connect (and its short Phase 2) as
-  the answering digital modem only, in simulation: not the calling side, not
-  QC2a, not QC1d.
+  the answering digital modem only: tried in simulation and live against
+  BinModem on a local server, other V.92 modems not yet tested live. Not the
+  calling side, not QC2a, not QC1d.
 - The Bell 212A calling handshake follows V.22 and what this library's
   answerer accepts: it has not been checked against a Bell 212A
   specification document. The 3 s and 6 s fallbacks to Bell 103 are this

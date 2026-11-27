@@ -94,7 +94,8 @@ static int v34_phase2(const answer_t *a) { return a->phase == ANS_V34 && a->v34.
 
 /* the backstop of the phase (spec D5), samples; 0 = none: data mode, and
  * the phases their engines alone bound (V.8, x2 and K56flex start-ups,
- * ANS_K56RT's K56_RT_MS) */
+ * ANS_K56RT's K56_RT_MS, ANS_QC's short Phase 1: modem/qcd, 2 s and one
+ * TONEq run) */
 static int32_t phase_budget(const answer_t *a)
 {
     switch (a->phase) {

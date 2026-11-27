@@ -7236,7 +7236,7 @@ the clang matrix are GitHub CI's).
   the Figure 3 worst case), CHANGELOG (ANSam about 3.46 s, 0.47 s later than
   0.7.3, against 3.807 s), answering.md (QC1a one second after ANSam by the
   spec, about 1.25 s for BinModem), calling.md (calling side).
-- docs/history/qc-live.md: the runbook, every result row "not run yet".
+- docs/history/qc-live.md: the runbook; its result rows were filled in by the live run below.
 - live: run 2026-11-27 against BinModem on a local server (nsdiald
   `qc-local-test` 170f4a2, 127.0.0.1:5072): 30 of 30 QC requests accepted,
   short Phase 2 on 19 of 19 calls with a `pcm_up=1` memo (A-law too), start-up

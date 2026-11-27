@@ -5,7 +5,7 @@ requests accepted. This file holds status fields only, no recordings.
 
 ## Setup
 
-- **Caller:** `/home/georgica/hst-wt/build/binmodem/modem-sip` (BinModem
+- **Caller:** `<binmodem-build>/modem-sip` (BinModem
   `2a1bfcc`). Flags, from its own `--help` and `modem-sip.rs`: `--accounts
   <file>`, `--account <name>`, `--type <line>` (repeatable, typed a second
   apart), `--send <text>`, `--hold <s>`, `--seconds <s>` (bounds the whole
@@ -41,7 +41,8 @@ requests accepted. This file holds status fields only, no recordings.
   this file. No recording past error control up.
 - **Common command**, per run, with `M=build/qc-memos/<run>.txt`:
 
-      modem-sip --accounts sip.txt --account test --memos $M \
+      BINMODEM_V92_PCM_UP=1 modem-sip --accounts sip.txt --account test \
+        --memos $M \
         --type "AT+MS=V92" [--type "AT+A8E=,,,1"] \
         --type "ATD sip:modem@127.0.0.1:5072" \
         --send "hello" --hold 20 --seconds 120
@@ -86,13 +87,15 @@ Runs 2, 2a, 4 and 5 start with the memo-making call, as numbered steps.
 
 ### Run 3: QC always, A8E on
 
-1. `rm -f $M`. `BINMODEM_V92_QC=always`, common command with A8E on.
+1. `rm -f $M`. K56flex on in the test build. `BINMODEM_V92_QC=always`,
+   common command with A8E on.
 2. Pass: `v8bis_ack 1` (its MS `21 89 80 80 81 c2` asks ACK(1)), then as
    run 1.
 
 ### Run 4: default, A8E on, memo kept
 
-1. `rm -f $M`. Common command, A8E on (the memo-making call).
+1. `rm -f $M`. K56flex on in the test build. Common command, A8E on (the
+   memo-making call).
 2. Pass: V.8bis line as run 3 (`v8bis_ack 1`), full start-up, `heard 0`,
    `$M` written.
 3. Same command again with the same `$M`.
@@ -149,7 +152,8 @@ Status fields only. Every call: `lapm 1`, `odp_bypass 1`, `bypass 1` where
 | A-law | A-law account, memo | 3 | PASS: full start-up, then short Phase 2 with Table 18, A-law, V.92 56000/41333 |
 | base | QC off | 5 | baseline: see the start-up times and the V.90 drops below |
 
-QC requests accepted: 30 of 30. Short Phase 2: 19 of 19 calls with a
+QC requests accepted: 30 of 30 (31 of 31 with the K56flex-off reference
+call r3off, which is excluded from the count). Short Phase 2: 19 of 19 calls with a
 `pcm_up=1` memo, none of the 11 without one. Run 6 fell back as designed
 (2 of 2).
 
@@ -159,7 +163,7 @@ QC requests accepted: 30 of 30. Short Phase 2: 19 of 19 calls with a
 | --- | --- | --- |
 | Full start-up, trained cleanly (5 calls) | 15.5 s | - |
 | QC with a full Phase 2 | 13.9-14.5 s | 1.0-1.6 s |
-| QC with short Phase 2 | 11.7-12.0 s | 3.5-3.8 s (about 24 %) |
+| QC with short Phase 2 | 11.7-12.0 s | 3.5-3.8 s (about 23 %, 22.6-24.5 %) |
 | A-law, QC with short Phase 2 | 11.7-12.0 s | the same |
 | K56flex on, `+A8E`: full | 19.7 s | - |
 | K56flex on, `+A8E`: QC | 18.3-18.4 s | 1.3 s |
