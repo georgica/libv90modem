@@ -244,13 +244,16 @@ static int16_t tick_v92(answer_t *a, int16_t rx)
          *     carry PCM upstream, whatever a new design says):
          * then bit 70 of INFO1d says "no PCM upstream" for the rest of
          * the call and the caller is left with V.34 upstream (V.90).
-         * A Quick Connect call is the exception once (qc-facts.md, Readings 9): its
+         * One exception (qc-facts.md, Readings 9): the call's first
+         * start-up after short Phase 1 (TONEq heard, no retrain yet). Its
          * caller may have started from parameters it stored in an earlier
          * call, and these, not the line, are then the likely cause of a
-         * start-up that never reached data mode. The first such failure
-         * keeps PCM upstream on offer (V8A_QCX_SPENT); from the second on,
-         * the rule above. */
-        if ((a->v8.qc.flags & V8A_QC_ACCEPTED) && !(a->v8.qc.aux & V8A_QCX_SPENT) && !a->v92_data)
+         * start-up that never reached data mode: that failure keeps PCM
+         * upstream on offer (and sets V8A_QCX_SPENT). A QC fallback to V.8,
+         * and every later start-up, measured the line itself: the rule
+         * above. */
+        if ((a->v8.qc.flags & V8A_QC_TONEQ) && !(a->v8.qc.aux & V8A_QCX_SPENT)
+            && a->retrains == 0 && !a->v92_data)
             a->v8.qc.aux |= V8A_QCX_SPENT;
         else if (m->state == V92D_FAILED || !a->v92_data || m->up_floor) a->pcm_up = 0;
         ans_v90_retrain(a, m->state == V92D_FAILED ? WHY_OURS : m->retrain_ours); tx = 0;

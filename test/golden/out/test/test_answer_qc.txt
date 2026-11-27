@@ -50,6 +50,11 @@ short_t19_lo
   short_t19_lo                   Table 19: 3200 symbols/s, carrier 4/7 of it
   short_t19_lo                   INFO0d bit 26 1, short Phase 2; connected 5.426 s after answering
   short_t19_lo                   V.90: 50666 bit/s down, 28800 bit/s up; 152000 / 86400 bits, 0 / 0 bad
+short_t19_3000
+  short_t19_3000                 QCA1d 0x87 5 samples after QC1a, 600 silent, QTS at 1.709 s, 959 ANSpcm codewords, TONEq at 197 ms, INFO0d 607 samples after ANSpcm
+  short_t19_3000                 Table 19: 3000 symbols/s, carrier 3/5 of it
+  short_t19_3000                 INFO0d bit 26 1, short Phase 2; connected 5.558 s after answering
+  short_t19_3000                 V.90: 50666 bit/s down, 26400 bit/s up; 152000 / 79200 bits, 0 / 0 bad
 alaw_short
   alaw_short                     QCA1d 0x87 5 samples after QC1a, 600 silent, QTS at 1.709 s, 959 ANSpcm codewords, TONEq at 197 ms, INFO0d 610 samples after ANSpcm
   alaw_short                     INFO0d bit 26 1, short Phase 2; connected 6.129 s after answering
@@ -60,6 +65,9 @@ stale_once
 stale_twice
   stale_twice                    2 retrain(s), ours; INFO1d bit 70 1 after the first, 0 after the last
   stale_twice                    V.90: 50666 bit/s down, 28800 bit/s up; 152000 / 86400 bits, 0 / 0 bad
+fallback_mute
+  fallback_mute                  1 retrain(s), ours; INFO1d bit 70 0 after it
+  fallback_mute                  V.90: 50666 bit/s down, 28800 bit/s up; 152000 / 86400 bits, 0 / 0 bad
 short_no_rev
   short_no_rev                   QCA1d 0x87 5 samples after QC1a, 600 silent, QTS at 1.709 s, 959 ANSpcm codewords, TONEq at 197 ms, INFO0d 607 samples after ANSpcm
   short_no_rev                   full Phase 2 after the short one; connected 10.234 s after answering
@@ -67,4 +75,4 @@ short_no_rev
 plain_v92
   INFO0a bit 27 0 and 1: INFO0d bit 26 0, full Phase 2; 79952 octets sent, 0 differ
   plain_v92                      V.92: 50666 bit/s down, 38666 bit/s up; 152000 / 116000 bits, 0 / 0 bad
-test_answer_qc: 509 checks, 0 failures
+test_answer_qc: 563 checks, 0 failures

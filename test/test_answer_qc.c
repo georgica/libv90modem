@@ -17,9 +17,11 @@
  *   - v92_off and ANS_MODE_NO_QC: the QC1a heard, not taken, JM;
  *   - k56_clears_qc: an agreed K56flex client is never offered QC;
  *   - short Phase 2 (9.4.1): Table 18 with DIL N = 0 (and sooner to data
- *     than qc_full), Table 19 on its own carrier (bit 33: high, low), A-law;
+ *     than qc_full), Table 19 on its own carrier (bit 33: high, low; at
+ *     3200 and 3000), A-law;
  *   - Review Focus 3, the stale caller: its PCM upstream start-up fails
  *     once (PCM upstream kept, V.92 data) or twice (taken away, V.90);
+ *     once after a QC fallback (taken away, V.90, as 0.7.3);
  *     no Tone A reversal (9.4.1.2.2: the full Phase 2);
  *   - plain_v92: no QC1a, INFO0a bit 27: no bit 26, the run unchanged.
  * Times are samples at our port (our tick index); the caller's (C.*_at)
@@ -446,6 +448,26 @@ static void stale(const char *name, int mute)
     data_ok(name, mute == 1 ? ANS_MOD_V92 : ANS_MOD_V90);
 }
 
+/* the same fault after a QC fallback (no TONEq: V.8 and the full Phase 2,
+ * no stored parameters acted on): 0.7.3's rule, PCM upstream taken away
+ * at the first failed start-up */
+static void fallback_mute(void)
+{
+    qscen s;
+    printf("fallback_mute\n");
+    scen(&s, V92); s.no_toneq = 1; s.mute_pcm = 1;
+    start(&s);
+    CHECK_EQ_I(to_data(40000), 1);
+    CHECK(A.v8.qc.flags & V8A_QC_FALLBACK);
+    CHECK_EQ_I(A.v8.qc.flags & (V8A_QC_TONEQ | V8A_QC_SHORT | V8A_QC_SHORT_FULL), 0);
+    CHECK_EQ_I(A.v8.qc.aux & V8A_QCX_SPENT, 0);
+    CHECK_EQ_I(A.retrains, 1); CHECK_EQ_I(A.ev.rt_far, 0);
+    CHECK_EQ_I(C.pcm_starts, 1); CHECK_EQ_I(C.v90_starts, 1);
+    CHECK_EQ_I(C.d_pcm_up, 0); CHECK_EQ_I(A.pcm_up, 0);
+    printf("  %-30s %d retrain(s), ours; INFO1d bit 70 %d after it\n", "fallback_mute", A.retrains, C.d_pcm_up);
+    data_ok("fallback_mute", ANS_MOD_V90);
+}
+
 /* no Tone A reversal after ours (9.4.1.2.2): the full Phase 2 */
 static void short_no_rev(void)
 {
@@ -514,9 +536,11 @@ int main(void)
     short_p2("short_t18_dil0", 0, 0, 0, 0);
     short_p2("short_t19", 0, 1, 4, 1);
     short_p2("short_t19_lo", 0, 1, 4, 0);
+    short_p2("short_t19_3000", 0, 1, 3, 0);
     short_p2("alaw_short", 1, 0, 0, 0);
     stale("stale_once", 1);
     stale("stale_twice", 2);
+    fallback_mute();
     short_no_rev();
     plain_v92();
     T_REPORT("test_answer_qc");

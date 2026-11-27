@@ -396,6 +396,7 @@ int16_t p2d_tick(p2d_t *p, int16_t x)
 
     case P2D_DONE:
     case P2D_FAILED:
+    case P2D_NSTATES:       /* not a state */
         break;
     }
 

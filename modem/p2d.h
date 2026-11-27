@@ -40,7 +40,9 @@ typedef enum {
      * ask for it; no probing and no INFO1d */
     P2D_SHORT_REV,      /* Tone A heard, Tone B >= 50 ms: reverse it, 10 ms more, then silence */
     P2D_SHORT_WAIT_REV, /* silent; waiting for the caller's Tone A reversal (RTDEd) */
-    P2D_SHORT_INFO1A    /* silent; INFO1a of Table 18 or 19/V.92 */
+    P2D_SHORT_INFO1A,   /* silent; INFO1a of Table 18 or 19/V.92 */
+    P2D_NSTATES         /* the count, not a state: a new state goes above it
+                           (tools/trace.c's p2n[] is checked against it) */
 } p2d_state;
 
 enum { P2D_OK = 0, P2D_ERR_INFO0 = 1, P2D_ERR_REV, P2D_ERR_TONE_A, P2D_ERR_INFO1A,
@@ -127,7 +129,10 @@ void    p2d_retrain_v92(p2d_t *p, int pcm_up);
  * 18: P2D_MODE_V92; Table 19: P2D_MODE_V90) ends Phase 2 with
  * P2D_V92_SHORT_RAN set; there is no probing and no INFO1d. No Tone A
  * reversal or no INFO1a we can serve within P2D_SHORT_WAIT_MS of our
- * reversal: the full Phase 2, P2D_V92_SHORT_FULL set. An INFO0a without bit
+ * reversal: the full Phase 2, P2D_V92_SHORT_FULL set. An INFO1a we cannot
+ * serve counts as none (9.4.1.2.3): Table 19 at a symbol rate not in
+ * up_sr_mask, or Table 18 when PCM upstream is not on offer here (pcm_up
+ * 0; the full Phase 2's INFO1d then says so in bit 70). An INFO0a without bit
  * 27 gives the full Phase 2 with neither flag. */
 void    p2d_offer_short(p2d_t *p);
 int16_t p2d_tick(p2d_t *p, int16_t rx);

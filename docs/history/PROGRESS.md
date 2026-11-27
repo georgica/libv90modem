@@ -7107,3 +7107,11 @@ state count at compile time.
   programs identical. `make replay-proof`: 742 identical; `make
   bench-hashes`: 19 identical; `check-headers` 114; `check-diag-names`
   119. `api_test_api` x86-64 1234, ARM A5/A7 1224, 0 failures.
+- Fix round 1:
+  - The PCM-upstream exception is narrowed to the call's first start-up after short Phase 1: `V8A_QC_TONEQ`, not SPENT, `retrains == 0`, `!v92_data`. A QC fallback to V.8, and any later start-up, follow 0.7.3's rule.
+  - New case `fallback_mute` (`no_toneq`, `mute_pcm 1`). Before the fix: 6 failures, V.92 with bit 70 1. After: V.90, bit 70 0.
+  - New case `short_t19_3000`: Table 19 at 3000 with the low carrier, 3/5.
+  - `P2D_NSTATES` ends `p2d_state`, and `tools/trace.c` checks `p2n[]` against it. The p2d.h comment now names the Table 18 `pcm_up` 0 recovery.
+  - `test_answer_qc`: 563 checks, 0 failures; `stale_once` and `stale_twice` are unchanged.
+  - `make golden`: only `test_answer_qc` was re-recorded, with new lines and the count line; 171 programs identical.
+  - Replay 742 identical, bench 19 identical. `api_test_api`: x86-64 1234, ARM A5 and A7 1224, 0 failures each.

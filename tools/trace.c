@@ -143,8 +143,9 @@ int rec_tx92;
 int16_t x2d_trace_tx(const x2d_t *d, int16_t y) { (void)d; return rec_tx_on ? rec_tx : y; }
 int16_t v92d_trace_tx(const v92d_t *p, int16_t y) { if (p->state == V92D_DATA) rec_tx92 = 1; return rec_tx92 && tr_on ? rec_tx : y; }
 static const char *p2n[] = { "INFO0", "WAIT_REV1", "REPLY1", "WAIT_REV2", "RECOVER", "PROBE_RX", "WAIT_REV3", "REPLY3", "L1", "L2", "INFO1D", "WAIT_INFO1A", "DONE", "FAILED", "SHORT_REV", "SHORT_WAIT_REV", "SHORT_INFO1A" };
-/* one name for each p2d_state (modem/p2d.h), the last P2D_SHORT_INFO1A */
-typedef char p2n_names_check[sizeof p2n / sizeof *p2n == P2D_SHORT_INFO1A + 1 ? 1 : -1];
+/* one name for each p2d_state (modem/p2d.h): a new state without its name
+ * fails to compile here instead of reading past the end of p2n[] */
+typedef char p2n_names_check[sizeof p2n / sizeof *p2n == P2D_NSTATES ? 1 : -1];
 
 static int last_ph = -1, last_v8 = -1, last_p2 = -1, last_p34 = -1, last_v8b = -1;
 /* a new pass over the recording: report the phases again */
