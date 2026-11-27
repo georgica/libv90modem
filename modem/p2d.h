@@ -35,7 +35,12 @@ typedef enum {
     P2D_INFO1D,
     P2D_WAIT_INFO1A,    /* silent; INFO1a, or INFO0a again (9.2.1.2.1: back to INFO0) */
     P2D_DONE,
-    P2D_FAILED
+    P2D_FAILED,
+    /* V.92 short Phase 2 (9.4.1), after the INFO0 exchange when both INFO0s
+     * ask for it; no probing and no INFO1d */
+    P2D_SHORT_REV,      /* Tone A heard, Tone B >= 50 ms: reverse it, 10 ms more, then silence */
+    P2D_SHORT_WAIT_REV, /* silent; waiting for the caller's Tone A reversal (RTDEd) */
+    P2D_SHORT_INFO1A    /* silent; INFO1a of Table 18 or 19/V.92 */
 } p2d_state;
 
 enum { P2D_OK = 0, P2D_ERR_INFO0 = 1, P2D_ERR_REV, P2D_ERR_TONE_A, P2D_ERR_INFO1A,
@@ -83,11 +88,20 @@ typedef struct {
     int       snr[PROBE_NBIN + 1];  /* probing result per 150 Hz bin, 0.1 dB */
     int       rx_level[PROBE_NBIN + 1];
     /* V.92 (9.3/V.92) */
-    int       v92;                  /* we indicate V.92 in INFO0d bit 27 */
+    int       v92;                  /* P2D_V92_x bits; ON: we indicate V.92 in INFO0d bit 27 */
     int       pcm_up;               /* INFO1d bit 70 when both sides are V.92 */
     int       peer_v92;             /* INFO0a bit 26 (or the owner's word, in a retrain) */
     int       mode;                 /* P2D_MODE_x, valid in P2D_DONE */
 } p2d_t;
+
+/* p2d_t.v92 */
+#define P2D_V92_ON          1   /* V.92 indicated (INFO0d bit 27): p2d_offer_v92, p2d_retrain_v92 */
+#define P2D_V92_SHORT       2   /* short Phase 2 asked for (INFO0d bit 26): p2d_offer_short */
+#define P2D_V92_SHORT_RAN   4   /* short Phase 2 ended with INFO1a (no probing, no INFO1d) */
+#define P2D_V92_SHORT_FULL  8   /* short Phase 2 began and went to the full Phase 2 (9.4.1.2.2, .3) */
+/* 9.4.1.2.2, 9.4.1.2.3: no Tone A reversal, or no INFO1a, this long after
+ * our Tone B reversal: the full Phase 2 */
+#define P2D_SHORT_WAIT_MS 2500
 
 void    p2d_init(p2d_t *p, const p2d_cfg *cfg);
 /* Phase 2 of a retrain (9.5.1), after the 70 ms of silence: Tone B at once,
@@ -105,6 +119,17 @@ void    p2d_offer_v92(p2d_t *p, int pcm_up);
  * V.92 when the call began ("any subsequent retrains shall use Phase 2 of
  * ITU-T V.92", 9.3/V.92). */
 void    p2d_retrain_v92(p2d_t *p, int pcm_up);
+/* Optional, after p2d_offer_v92() and before the first tick: ask for the
+ * short Phase 2 of V.92 (9.4.1): INFO0d with bit 26 as well as bit 27
+ * (replacing the queued one, as p2d_offer_v92 does). When the INFO0a has
+ * both its bits 26 (V.92) and 27 (short Phase 2), Tone B is reversed once
+ * Tone A is heard, the caller's reversal gives RTDEd, and its INFO1a (Table
+ * 18: P2D_MODE_V92; Table 19: P2D_MODE_V90) ends Phase 2 with
+ * P2D_V92_SHORT_RAN set; there is no probing and no INFO1d. No Tone A
+ * reversal or no INFO1a we can serve within P2D_SHORT_WAIT_MS of our
+ * reversal: the full Phase 2, P2D_V92_SHORT_FULL set. An INFO0a without bit
+ * 27 gives the full Phase 2 with neither flag. */
+void    p2d_offer_short(p2d_t *p);
 int16_t p2d_tick(p2d_t *p, int16_t rx);
 /* nominal level (RMS, sample units) for a power in dBm0 */
 int     p2_level(int dbm0);

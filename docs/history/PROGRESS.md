@@ -7042,3 +7042,35 @@ next sample's interval. ODP bypass from the P bits while not fallen back.
 - Information only: usr6/usr7 replayed with `-9` and no `-Q` enter QC at
   7.11/7.01 s, fall back to V.8 2.2 s later (the recorded caller never
   heard a QCA1d) and do not connect open-loop, as expected.
+
+## qc 6: short Phase 2 in the digital modem's Phase 2 (2026-11-26)
+
+`modem/p2d.[ch]`: `p2d_t.v92` is now bits (`P2D_V92_ON` 1, `_SHORT` 2,
+`_SHORT_RAN` 4, `_SHORT_FULL` 8); every read tests `ON`, and
+`p2d_offer_v92` / `p2d_retrain_v92` set exactly 1 as before. New
+`p2d_offer_short` (INFO0d bit 26 with 27, replacing the queued INFO0d) and
+states `P2D_SHORT_REV`, `P2D_SHORT_WAIT_REV`, `P2D_SHORT_INFO1A`, appended
+after `P2D_FAILED` (existing state numbers unchanged; `tools/trace.c` names
+them). Entered from `P2D_INFO0` where the full Phase 2 enters `WAIT_REV1`,
+when we asked and INFO0a has bits 26 and 27. Our reversal 50 ms after
+entry (Tone B on since INFO0d ended), 10 ms more, silence; RTDEd by the
+full Phase 2's formula; INFO1a Table 18 -> `P2D_MODE_V92` (pcm_up, else
+`P2D_ERR_PCM_UP`), Table 19 with `up_sr` in `up_sr_mask` -> `P2D_MODE_V90`.
+Recovery from `b_rev_line` (no new field; `p2d_t`/`answer_t` sizes as
+before): no reversal in 2500 ms -> `P2D_RECOVER`; no INFO1a in 2500 ms or
+one we cannot serve -> Tone B at once, `WAIT_REV1`; both set `SHORT_FULL`,
+count in `n_recover`, and drop bit 26 from any later INFO0d. `sim/p2a`: a
+caller in `P2A_DONE` after a short INFO1a that hears Tone B goes on with
+the full Phase 2 (needed for `t19_3429`; `v92call` stops ticking p2a at
+DONE, so unaffected).
+- `make -s build/test_p2_qc` failed to build before (`p2d_offer_short`
+  undeclared); after: 248 checks, 0 failures. INFO0d without
+  `p2d_offer_short` equals the literal captured from v0.7.3's p2d (mu and
+  A-law). D 0/400/2400: short done 0.330/0.405/0.780 s against full
+  1.964/2.228/3.458 s; rtd 2/402/2402 against full 3/403/2403. no_rev,
+  no_info1a: full Phase 2 2.500 s after our reversal; t19_3429 after
+  0.163/0.213/0.463 s; all then P2D_DONE with INFO1d.
+- `make golden`: ALL HOST CHECKS PASS; new `test_p2_qc`, 171 programs
+  identical. `make replay-proof`: 742 identical; `make bench-hashes`: 19
+  identical; `check-headers` 114; `check-diag-names` 119. `api_test_api`
+  x86-64 1234 checks, 0 failures; ARM A5, A7 1224, 0 failures.

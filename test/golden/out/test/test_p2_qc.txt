@@ -1,0 +1,22 @@
+info0d_bits: 0.7.3 11110111001000011110010100010011011101000001100100000010011111
+             short 11110111001000011110010100110011011101000001111111100100011111
+short_t18 D    0: done 0.330 s (full 1.964 s), rtd 2 (full 3), v92 7
+short_t19 D    0: done 0.330 s, rtd 2, up_sr 4 hi 1
+peer_no_short D    0: done 1.964 s, rtd 3, v92 3
+no_rev D    0: full after 2.500 s, done 4.521 s, rtd 2, mode 2, v92 11
+no_info1a D    0: full after 2.500 s, done 4.521 s, rtd 3, mode 2, v92 11
+t19_3429 D    0: full after 0.163 s, done 2.242 s, rtd 3, mode 1, v92 11
+short_t18 D  400: done 0.405 s (full 2.228 s), rtd 402 (full 403), v92 7
+short_t19 D  400: done 0.405 s, rtd 402, up_sr 4 hi 1
+peer_no_short D  400: done 2.228 s, rtd 403, v92 3
+no_rev D  400: full after 2.500 s, done 4.816 s, rtd 402, mode 2, v92 11
+no_info1a D  400: full after 2.500 s, done 4.816 s, rtd 403, mode 2, v92 11
+t19_3429 D  400: full after 0.213 s, done 2.587 s, rtd 403, mode 1, v92 11
+short_t18 D 2400: done 0.780 s (full 3.458 s), rtd 2402 (full 2403), v92 7
+short_t19 D 2400: done 0.780 s, rtd 2402, up_sr 4 hi 1
+peer_no_short D 2400: done 3.458 s, rtd 2403, v92 3
+no_rev D 2400: full after 2.500 s, done 6.171 s, rtd 2402, mode 2, v92 11
+no_info1a D 2400: full after 2.500 s, done 6.171 s, rtd 2403, mode 2, v92 11
+t19_3429 D 2400: full after 0.463 s, done 4.192 s, rtd 2403, mode 1, v92 11
+alaw_short: done 0.405 s, rtd 402
+p2_qc: 248 checks, 0 failures

@@ -299,6 +299,15 @@ int16_t p2a_tick(p2a_t *p, int16_t x)
         break;
 
     case P2A_DONE:
+        /* after short Phase 2's INFO1a: Tone B again is the digital modem
+         * that could not use it (9.4.1.2.3); Tone A, and the full Phase 2 */
+        if (p->short_run && p->rx.steady >= TONE_SEEN) {
+            p->short_run = 0; p->full = 1;
+            dpsktx_on(&p->tx);
+            p->tone_since = p->now;
+            go(p, P2A_INFO0);
+        }
+        break;
     case P2A_FAILED:
         break;
     }

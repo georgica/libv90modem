@@ -39,7 +39,9 @@ typedef struct {
      * written by p2a_t19_build(). Faults: short_no_rev, the reversal is never
      * answered; short_no_info1a, it is, and no INFO1a follows. Either way the
      * caller keeps Tone A, and when Tone B comes again (9.4.1.2.2, .3) goes
-     * on as in the full Phase 2. */
+     * on as in the full Phase 2. So does a caller in P2A_DONE after its short
+     * INFO1a when Tone B comes (the digital modem could not use the INFO1a,
+     * 9.4.1.2.3): Tone A, the full Phase 2. */
     int short_p2, short_t19, short_sr, short_hi, short_no_rev, short_no_info1a;
 } p2a_cfg;
 
