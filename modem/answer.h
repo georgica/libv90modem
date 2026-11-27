@@ -32,7 +32,10 @@
  * K56flex (ANS_MODE_K56, with V8_MOD_V34, on a mu-law line): V.8bis comes
  * first (ANS_V8BIS: modem/v8bis), then V.8 as above whatever came of it. A
  * client whose MS carries the K56flex block is agreed (k56): x2 is
- * then not offered, and V.34 is told (v34ans_cfg.k56). V.34's Phase 2 then
+ * then not offered, and V.34 is told (v34ans_cfg.k56). An MS for data that
+ * leaves the modulation to V.8 (v8bis_ms_v8) gets ACK(1) when it asks for
+ * it (ANS_K56_MS_V8; V.8bis 9.7, 9.9.1), then V.8 and Quick Connect as
+ * without V.8bis (V.92 9.2.4.1). V.34's Phase 2 then
  * flags our INFO1a when the client's INFO1c takes K56flex up and the symbol
  * rate is 3200 (modem/p2ans): the point of no return, ANS_K56: modem/k56d
  * (PCM downstream, V.34 upstream) to data mode. A K56flex start-up that
@@ -273,6 +276,8 @@ typedef struct {
 #define ANS_K56_DECLINED 0x08u  /* ... selecting version 1: we sent NAK(3) */
 #define ANS_K56_VER_SHIFT 4     /* bits 4 to 6: the version its MS selected (v8bis_version_of), 0..5 */
 #define ANS_K56_VER_MASK 0x70u
+#define ANS_K56_MS_V8    0x80u  /* the client's MS left the modulation to V.8 (v8bis_ms_v8,
+                                   V8B_RES_V8) and asked for ACK(1): we sent it */
 #define ANS_K56_AGREED_OF(a) (((a)->k56 & ANS_K56_AGREED) != 0)
 
 /* the HST engine shares the union and fits in it (the spec's "HST pump":

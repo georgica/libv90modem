@@ -36,6 +36,8 @@
 #   make hst-scan        HST's back-channel detector over recorded calls (RECS=<dir>): none
 #   make qc-scan         V.92's QC1a in recorded calls (RECS=<dir>): the list (real V.92
 #                        callers send one; not an error)
+#   make v8bis-scan      V.8bis messages in recorded calls (RECS=<dir>): the list (an MS for
+#                        V.8 asking for ACK(1) replays otherwise since 0.7.4)
 #   make hst-wsize       sizing W, HST's wait after ANSam: detection times over levels,
 #                        dropouts and a line's lower edge (rig/hst_wsize.c), for docs/limits.md
 #   make hst-thresh      HST's thresholds of "good": BER against SNR at codes 3..6
@@ -138,7 +140,7 @@ DEV      := $(BUILD)/$(NAME)-dev.a
 
 # ---- the simulator and the test suite ----
 SIM_SRC  := sim/g711.c sim/noise.c sim/filt.c sim/resamp.c sim/channel.c sim/v8call.c sim/callpeer.c sim/p2a.c sim/qammod.c \
-            sim/p34a.c v90/test/v90_dec.c sim/p2c.c sim/v34peer.c sim/v32call.c sim/v32line.c sim/v92chan.c sim/v92a.c sim/v92call.c sim/qca.c sim/dschan.c sim/x2call.c sim/k56call.c sim/mnppeer.c sim/hstcall.c
+            sim/p34a.c v90/test/v90_dec.c sim/p2c.c sim/v34peer.c sim/v32call.c sim/v32line.c sim/v92chan.c sim/v92a.c sim/v92call.c sim/qca.c sim/v8bisc.c sim/dschan.c sim/x2call.c sim/k56call.c sim/mnppeer.c sim/hstcall.c
 SIM_OBJ  := $(patsubst %.c,$(BUILD)/obj/%.o,$(SIM_SRC))
 MODEM_SRC := modem/sintab.c modem/v34_tabs.c modem/v21.c modem/ansam.c modem/v8msg.c modem/async.c modem/v8rx.c modem/v8ans.c \
              modem/scramble.c modem/v22tx.c modem/v22rx.c modem/v22bis.c modem/v14.c modem/answer.c modem/ans_legacy.c modem/ans_v90.c modem/ans_v34.c modem/ans_x2.c modem/ans_k56.c modem/ans_hst.c \
@@ -595,6 +597,26 @@ qc-scan: $(BUILD)/qc-scan
 	   grep 'QC1a heard' $(BUILD)/qc-scan.out | sed "s|^[^:]*:|$$f:|"; \
 	   if grep -q 'QC1a heard' $(BUILD)/qc-scan.out; then d=$$((d + 1)); fi; n=$$((n + 1)); done; \
 	echo "qc-scan: $$n recordings, $$d with a QC1a"
+# V.8bis messages (modem/v8bismsg) in what the answerer heard in recorded
+# calls (tools/v8bis_scan.c): RECS=<dir> of v90m-replay recordings (*.raw,
+# and *.raw.xz unpacked to $(BUILD)/tmp one at a time); a recording with an
+# MS for V.8 that asks for ACK(1) may replay otherwise since 0.7.4 (the
+# plan's Global Constraints, F13). Host only, not part of check.
+V8BIS_SCAN_SRC := tools/v8bis_scan.c modem/v8bis.c modem/v8bismsg.c modem/v21.c modem/sintab.c v90/v90_pcm.c v90/v90_pcm_tab.c
+$(BUILD)/v8bis-scan: $(V8BIS_SCAN_SRC) $(LIB_HDR)
+	@mkdir -p $(BUILD)
+	$(CC) $(T_CFLAGS) -o $@ $(V8BIS_SCAN_SRC) $(LDLIBS)
+.PHONY: v8bis-scan
+v8bis-scan: $(BUILD)/v8bis-scan
+	@if [ -z "$(RECS)" ]; then echo "RECS not set (a directory of recordings)"; exit 1; fi; \
+	mkdir -p $(BUILD)/tmp; n=0; d=0; f8=0; for f in $(RECS)/*.raw $(RECS)/*.raw.xz; do [ -f "$$f" ] || continue; \
+	   g="$$f"; case "$$f" in *.xz) g=$(BUILD)/tmp/v8bis-scan.raw; xz -dc "$$f" > "$$g" || exit 1;; esac; \
+	   $(abspath $(BUILD))/v8bis-scan "$$g" > $(BUILD)/v8bis-scan.out 2>&1; \
+	   r=$$?; rm -f $(BUILD)/tmp/v8bis-scan.raw; [ $$r -eq 0 ] || { cat $(BUILD)/v8bis-scan.out; exit 1; }; \
+	   grep ' V.21(' $(BUILD)/v8bis-scan.out | sed "s|^[^:]*:|$$f:|"; \
+	   f8=$$((f8 + $$(grep -c ' V.21(' $(BUILD)/v8bis-scan.out))); \
+	   if grep -q 'asks for ACK(1)' $(BUILD)/v8bis-scan.out; then d=$$((d + 1)); fi; n=$$((n + 1)); done; \
+	echo "v8bis-scan: $$n recordings, $$f8 V.8bis frames, $$d with an MS for V.8 asking for ACK(1)"
 # our K56flex encoder's octets and data bits at every rate, pad and robbed
 # mask (tools/k56enc_dump.c), for SM56's decoder harness outside the
 # repository (docs/history/k56-facts.md "Oracle"). Host only, not part of check.

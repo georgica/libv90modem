@@ -261,3 +261,35 @@ int v8bis_version_of(int octet)
     while (m) { v++; m >>= 1; }
     return v;
 }
+
+/* the octets from a to b (a block) carry no parameter bits but those in
+ * keep, in the first octet; mask: the level's parameter bits */
+static int only(const uint8_t *o, int a, int b, int mask, int keep)
+{
+    int k;
+    for (k = a; k < b; k++)
+        if (o[k] & mask & ~(k == a ? keep : 0)) return 0;
+    return 1;
+}
+
+int v8bis_ms_v8(const uint8_t *o, int n)
+{
+    int p, q, sp, se, end, first, sfirst;
+
+    if (n < 1 || (o[0] & 0x0f) != V8B_MSG_MS) return 0;
+    p = skip_field(o, n, 1, &first);              /* identification field */
+    if (p < 0 || !(first & 0x01)) return 0;       /* V.8 requested */
+    end = skip_field(o, n, p, &sfirst);           /* the standard information field parses */
+    if (end < 0) return 0;
+    sp = skip1(o, n, p);                          /* past its {NPar(1)}: {SPar(1)} */
+    se = skip1(o, n, sp);
+    if (!(o[sp] & 0x01) || !only(o, sp, se, 0x7f, 0x01)) return 0;    /* data, and nothing else */
+    /* the data Par(2) block, the only one: {NPar(2)} of bits 1 to 4 ... */
+    q = se;
+    while (!(o[q] & 0x40)) q++;
+    if (!only(o, se, q + 1, 0x3f, 0x0f)) return 0;
+    /* ... and an {SPar(2)}, if there is one, with none set (so no NPar(3)) */
+    if (!(o[q] & 0x80) && !only(o, q + 1, end, 0x3f, 0)) return 0;
+    if (v8bis_ms_is_k56(o, n)) return 0;
+    return (first & 0x08) ? 2 : 1;
+}

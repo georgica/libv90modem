@@ -23,7 +23,15 @@
  *     once (PCM upstream kept, V.92 data) or twice (taken away, V.90);
  *     once after a QC fallback (taken away, V.90, as 0.7.3);
  *     no Tone A reversal (9.4.1.2.2: the full Phase 2);
- *   - plain_v92: no QC1a, INFO0a bit 27: no bit 26, the run unchanged.
+ *   - plain_v92: no QC1a, INFO0a bit 27: no bit 26, the run unchanged;
+ *   - Review Focus 4, K56flex offered (V.8bis first, mu-law), QC after it
+ *     (9.2.4.1): k56_no_crd (the caller ignores CRe: ANSam begins on the
+ *     same sample as for that caller without QC1a; then QC, V.92 data);
+ *     k56_ms_v8 (its MS leaves the modulation to V.8, BinModem's +A8E
+ *     21 89 80 80 81 c2 and the revision-1 11 89 ...: ACK(1) received,
+ *     ANS_K56_MS_V8, ANSam, QC, V.92 data); k56_agreed (SM56's MS, then
+ *     QC1a and CM: K56flex agreed, QC not offered, the QC1a heard and
+ *     ignored, the CM's JM).
  * Times are samples at our port (our tick index); the caller's (C.*_at)
  * are its own, 2 later for what we send (PORT). */
 #include <stdio.h>
@@ -77,6 +85,7 @@ typedef struct {
     int no_qc;                      /* the caller sends no QC1a */
     int short_p2, t19, sr, hi;      /* INFO0a bit 27; Table 19's INFO1a, its bits 34:36, 33 */
     int dil_n, mute_pcm, no_rev;    /* the caller's DIL-segments; faults */
+    const uint8_t *bis; int nbis;   /* its V.8bis MS (sent on our CRe); NULL: CRe ignored */
 } qscen;
 
 /* what the run saw, by tick (-1 not seen) */
@@ -89,6 +98,8 @@ static struct {
     long toneq;             /* ANS_QC took TONEq */
     long conn;              /* the first tick with connected */
     int  odp_at_back;       /* answer_odp_bypass on the tick of the fallback */
+    long v8;                /* V.8bis over: ANS_V8 from the next tick */
+    long ansam;             /* after it, the first tick that is not silence */
 } W;
 
 static void scen(qscen *s, unsigned modes)
@@ -114,6 +125,7 @@ static void start(const qscen *s)
     cc.dil_n = s->dil_n; cc.mute_pcm = s->mute_pcm;
     cc.qc_deaf = s->deaf; cc.qc_no_toneq = s->no_toneq; cc.toneq_delay_ms = s->toneq_delay_ms;
     cc.echo_gain = 0.1; cc.echo_delay = 21;
+    cc.v8bis_ms = s->bis; cc.v8bis_ms_len = s->nbis;
     cc.getbit = p_get; cc.putbit = p_put; cc.user = &UC;
     v92call_init(&C, &cc);
     atx = v90_pcm_octet(s->alaw, 0, 1); now = 0;
@@ -137,6 +149,8 @@ static void run(long samples)
         if (was == ANS_QC && A.phase == ANS_V8) { W.back = now; W.odp_at_back = answer_odp_bypass(&A); }
         if (was == ANS_QC && A.phase == ANS_P2) W.toneq = now;
         if (A.connected && W.conn < 0) W.conn = now;
+        if (was == ANS_V8BIS && A.phase == ANS_V8) W.v8 = now;
+        if (W.v8 >= 0 && W.v8 < now && W.ansam < 0 && atx != v90_pcm_octet(0, 0, 1)) W.ansam = now;
         now++;
     }
 }
@@ -519,6 +533,81 @@ static void plain_v92(void)
     data_ok("plain_v92", ANS_MOD_V92);
 }
 
+/* Review Focus 4: K56flex offered (mu-law), V.8bis before V.8, then QC
+ * (9.2.4.1: "even when a previous V.8 bis session has timed out") */
+static void k56_no_crd(void)
+{
+    qscen s;
+    long v8[2], ansam[2];
+    int qc;
+    printf("k56_no_crd\n");
+    for (qc = 0; qc < 2; qc++) {
+        scen(&s, V92 | ANS_MODE_K56); s.no_qc = !qc;
+        start(&s);
+        CHECK_EQ_I(A.phase, ANS_V8BIS);
+        CHECK(A.v8.qc.aux & V8A_QCX_OFFER);
+        CHECK_EQ_I(to_data(30000), 1);
+        v8[qc] = W.v8; ansam[qc] = W.ansam;
+        CHECK(W.v8 > 0 && W.ansam > W.v8);
+        CHECK_EQ_I(A.k56, 0);                       /* no CRd: no CL, nothing agreed */
+        CHECK_EQ_I(C.v8bis_got, 0);
+        if (qc) {
+            phase1_ok("k56_no_crd", 0, 1);
+            CHECK_EQ_I(A.v8.qc.flags, ALLF);
+            grid_ok(1);
+        } else {
+            CHECK_EQ_I(A.v8.qc.flags, 0); CHECK_EQ_I(W.hand, -1);
+        }
+        CHECK_EQ_I(A.phase, ANS_V92);
+    }
+    CHECK_EQ_I(v8[1], v8[0]); CHECK_EQ_I(ansam[1], ansam[0]);
+    printf("  V.8bis over at %.3f s, ANSam from %.3f s, with QC1a and without\n", v8[1] / 8000.0, ansam[1] / 8000.0);
+    data_ok("k56_no_crd", ANS_MOD_V92);
+}
+
+/* its MS for data, the modulation left to V.8 (V.8bis 9.7, 9.9.1) */
+static void k56_ms_v8(const char *name, const uint8_t *ms)
+{
+    qscen s;
+    printf("%s\n", name);
+    scen(&s, V92 | ANS_MODE_K56); s.bis = ms; s.nbis = 6;
+    start(&s);
+    CHECK_EQ_I(to_data(30000), 1);
+    CHECK_EQ_I(C.v8bis_got, 0x14);
+    CHECK(A.k56 & ANS_K56_MS_V8);
+    CHECK_EQ_I(A.k56, ANS_K56_CL | ANS_K56_MS_V8);
+    CHECK(W.v8 > 0 && W.ansam > W.v8);
+    phase1_ok(name, 0, 1);
+    CHECK_EQ_I(A.v8.qc.flags, ALLF);
+    CHECK_EQ_I(A.phase, ANS_V92);
+    grid_ok(1);
+    printf("  %-30s ACK(1) received (0x%02X), k56 0x%02X, ANSam from %.3f s\n", name, C.v8bis_got, A.k56, W.ansam / 8000.0);
+    data_ok(name, ANS_MOD_V92);
+}
+
+/* SM56's MS (K56flex's block, its echo 0x03 of our 0x43), then QC1a and CM */
+static void k56_agreed(void)
+{
+    static const uint8_t sm56[13] = { 0x11, 0xc9, 0x80, 0x80, 0x80, 0x07, 0xb5, 0x02, 0x00, 0x94, 0x81, 0x83, 0x03 };
+    qscen s;
+    printf("k56_agreed\n");
+    scen(&s, V92 | ANS_MODE_K56); s.bis = sm56; s.nbis = 13;
+    start(&s);
+    CHECK_EQ_I(to_data(30000), 1);
+    CHECK_EQ_I(C.v8bis_got, 0x14);
+    CHECK(ANS_K56_AGREED_OF(&A));
+    CHECK_EQ_I(A.k56 & ANS_K56_MS_V8, 0);
+    CHECK_EQ_I(A.v8.qc.aux & V8A_QCX_OFFER, 0);
+    CHECK_EQ_I(A.v8.qc.flags, V8A_QC_HEARD);
+    CHECK_EQ_I(A.v8.qc.oct, 0xA4);
+    CHECK_EQ_I(W.hand, -1); CHECK_EQ_I(C.qca1d, 0); CHECK_EQ_I(C.qts_at, -1);
+    CHECK_EQ_I(A.v8.result, V8A_RES_OK);
+    CHECK_EQ_I(A.v8.selected, V8_SEL_V90);
+    printf("  k56 0x%02X, QC1a heard (0x%02X) and not taken, the CM's JM\n", A.k56, A.v8.qc.oct);
+    CHECK_EQ_I(A.phase, ANS_V92);
+    data_ok("k56_agreed", ANS_MOD_V92);
+}
+
 int main(void)
 {
     qc_full(0);
@@ -543,5 +632,13 @@ int main(void)
     fallback_mute();
     short_no_rev();
     plain_v92();
+    {
+        static const uint8_t bm[6] = { 0x21, 0x89, 0x80, 0x80, 0x81, 0xc2 };
+        static const uint8_t bm1[6] = { 0x11, 0x89, 0x80, 0x80, 0x81, 0xc2 };
+        k56_no_crd();
+        k56_ms_v8("k56_ms_v8", bm1);
+        k56_ms_v8("k56_ms_v8_rev2", bm);
+        k56_agreed();
+    }
     T_REPORT("test_answer_qc");
 }

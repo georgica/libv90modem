@@ -575,11 +575,13 @@ void v90m_get_restarts(const v90m_t *m, v90m_restarts *r)
 
 /* v90m_k56 from answer_t.k56, one octet (answer_t and v90m_mem_size keep
  * 0.7.1's sizes): every version v8bis_version_of gives fits its field, the
- * flags below it; offered is V.8bis's own mask; the option bits are
+ * flags below it and ANS_K56_MS_V8 (0.7.4) above it; offered is V.8bis's own mask; the option bits are
  * options (bits 16 and up), apart */
 typedef char v90m_check_k56[(sizeof(((answer_t *)0)->k56) == 1
                              && (ANS_K56_VER_MASK >> ANS_K56_VER_SHIFT) >= 5 && (ANS_K56_VER_MASK & 0x8fu) == 0
                              && ((ANS_K56_AGREED | ANS_K56_CL | ANS_K56_MS | ANS_K56_DECLINED) & ANS_K56_VER_MASK) == 0
+                             && ((ANS_K56_AGREED | ANS_K56_CL | ANS_K56_MS | ANS_K56_DECLINED | ANS_K56_VER_MASK)
+                                 & ANS_K56_MS_V8) == 0 && ANS_K56_MS_V8 <= 0xffu
                              && V8B_VERS_1 == 1 && V8B_VERS_2 == 2 && V8B_VER_MASK == 0x1f
                              && (V90M_OPTS & V90M_MOD_ALL) == 0 && (V90M_OPTS & 0xffffu) == 0
                              && (ANS_MODE_K56_V2_ONLY & ANS_MODE_K56_V1) == 0) ? 1 : -1];

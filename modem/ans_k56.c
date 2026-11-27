@@ -30,6 +30,9 @@ static int16_t tick_v8bis(answer_t *a, int16_t rx)
     if (b->ms_ver >= 0) k |= ANS_K56_MS | (v8bis_version_of(b->ms_ver) << ANS_K56_VER_SHIFT);
     if (res == V8B_RES_AGREED) k |= ANS_K56_AGREED;
     if (res == V8B_RES_DECLINED) k |= ANS_K56_DECLINED;
+    /* an MS that left the modulation to V.8 and had its ACK(1): V.8 and
+     * Quick Connect go on as without V.8bis (V.92 9.2.4.1) */
+    if (res == V8B_RES_V8 && b->ms_v8 == 2) k |= ANS_K56_MS_V8;
     a->k56 = (uint8_t)k;
     /* nor V.92's Quick Connect: a K56flex client is not a V.92 caller
      * (qc-facts.md "Readings" 1) */

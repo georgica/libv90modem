@@ -7115,3 +7115,41 @@ state count at compile time.
   - `test_answer_qc`: 563 checks, 0 failures; `stale_once` and `stale_twice` are unchanged.
   - `make golden`: only `test_answer_qc` was re-recorded, with new lines and the count line; 171 programs identical.
   - Replay 742 identical, bench 19 identical. `api_test_api`: x86-64 1234, ARM A5 and A7 1224, 0 failures each.
+
+## qc 8: V.8bis, an MS that leaves the modulation to V.8; QC after V.8bis (2026-11-27)
+
+Step 0 (F13), before any code: `tools/v8bis_scan.c` (`make v8bis-scan
+RECS=<dir>`) runs both V.21 channels' receivers over the heard side of each
+recording and lists every V.8bis frame with a good FCS. test/fixtures: 8
+recordings, 0 V.8bis frames. Private recordings (live-050, by the tool
+only, nothing copied): 106 recordings, 0 V.8bis frames (mu-law and A-law
+read both); the sha256 of the sorted list of their sha256s begins
+4e197a5851d03dd0. A synthetic recording of two MSs (21 89 80 80 81 c2 and
+a block-less SM56 form) is found by it. So no replay run can change.
+
+`modem/v8bismsg`: `v8bis_ms_v8` (the trees as `v8bis_ms_is_k56` parses
+them; I NPar(1) V.8; S SPar(1) data alone; data NPar(2) bits 1 to 4 only,
+an SPar(2) without bits; no K56flex block; 2 with transmit ACK(1), else
+1). `modem/v8bis`: `V8B_RES_V8`; such an MS gets ACK(1) 180 ms after it
+when it asks (V.8bis 9.7, 9.9.1), else V.8bis ends at once; `ms_v8` in
+`v8bis_t` (inside the union: no size change). `modem/ans_k56.c`:
+`ANS_K56_MS_V8` (0x80) when ACK(1) went to such an MS; QC stays offered.
+`v90m_check_k56` keeps the bit apart from the others. `sim/v8bisc`: a
+V.8bis responder with its own framing, receiver and FCS (k56-facts.md),
+in `sim/v92call` with `cfg.v8bis_ms`.
+- `build/test_v8bis` before: 121 checks, 16 failures (each new MS
+  `NO_MS`, no ACK(1)); after: 121, 0 failures. BinModem's 21 89 80 80 81
+  c2 and 11 89 ...: ACK(1) (14, FCS dd a6) 180.0 ms after the MS, done at
+  its end; 11 81 ...: V8B_RES_V8, nothing sent; 11 89 80 80 80 and 11 88
+  ...: NO_MS, nothing sent. Mutations (no bit-4 test, no data-bits test,
+  no S SPar(1) test, no K56flex exclusion) each fail it.
+- `build/test_answer_qc` before: 690 checks, 14 failures (no V.8bis in the
+  caller; `k56_agreed` took QC); after: 691, 0 failures. k56_no_crd: V.8bis
+  over at 1.790 s, ANSam from 1.990 s with and without QC1a, then QC, V.92
+  data; k56_ms_v8 and k56_ms_v8_rev2: ACK(1) received (0x14), k56 0x82,
+  QC, V.92 data; k56_agreed: k56 0x27, QC1a heard (0xA4) and not taken,
+  JM, V.92 data.
+- `make golden`: re-recorded `test_v8bis` (5 new lines and the count) and
+  `test_answer_qc` (16 new lines and the count); 170 programs identical.
+  `make replay-proof`: 742 identical; `make bench-hashes`: 19 identical.
+  ARM A5/A7 `api_test_api` 1224, 0 failures.

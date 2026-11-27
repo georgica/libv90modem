@@ -77,6 +77,7 @@ void v92call_init(v92call_t *c, const v92call_cfg *cfg)
     c->stage = VCL_V8;
     c->qts_at = c->toneq_on = c->toneq_off = c->anspcm_end_at = c->info0d_at = -1;
     for (k = 0; k < 4; k++) c->sd_at[k] = -1;
+    if (cfg->v8bis_ms && cfg->v8bis_ms_len > 0) v8bisc_init(&c->bis, cfg->v8bis_ms, cfg->v8bis_ms_len, c->cfg.level);
     if (cfg->qc) {
         uint8_t bits[QCA_QC1A_BITS];
         int n = qca_qc1a_bits(cfg->qc_wxyz, cfg->qc_lapm, bits);
@@ -322,6 +323,10 @@ static uint8_t tick(v92call_t *c, uint8_t ds_octet)
                 break;
             }
         }
+        if (c->cfg.v8bis_ms && c->cfg.v8bis_ms_len > 0) {
+            c->bis_out = v8bisc_tick(&c->bis, x);
+            c->v8bis_got = v8bisc_got(&c->bis);
+        }
         if (v8call_tick(&c->v8, x, &o) == V8C_DONE) {
             if (c->v8.got_jm && v8_selected(&c->v8.jm) == V8_SEL_V90) {
                 p2a_cfg pc;
@@ -332,7 +337,7 @@ static uint8_t tick(v92call_t *c, uint8_t ds_octet)
                 c->stage = c->v8.got_jm ? VCL_NO_PCM : VCL_FAILED;
             }
         }
-        c->ctx = o;
+        c->ctx = o + c->bis_out;
         break;
     case VCL_QC:
         c->ctx = qc_tick(c, ds_octet, x);

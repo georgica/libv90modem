@@ -24,6 +24,7 @@
 #include "v92chan.h"
 #include "channel.h"
 #include "qca.h"
+#include "v8bisc.h"
 
 typedef struct {
     int alaw;               /* law of the digital modem's codec */
@@ -60,7 +61,9 @@ typedef struct {
     /* faults: qc_deaf, QCA1d is not heard (CM goes on); qc_no_toneq, no TONEq;
      * short_no_rev and short_no_info1a as sim/p2a's */
     int qc_deaf, qc_no_toneq, toneq_delay_ms, short_no_rev, short_no_info1a;
-    /* V.8 bis (Task 8): the MS sent when a CRe is heard; NULL = CRe ignored */
+    /* V.8 bis (sim/v8bisc, alongside V.8 until JM): CRd to a CRe, the MS of
+     * these octets after our CL, ACK(1) or NAK listened for; NULL = CRe
+     * ignored */
     const uint8_t *v8bis_ms; int v8bis_ms_len;
     int  (*getbit)(void *user);
     void (*putbit)(void *user, int bit);
@@ -120,7 +123,9 @@ typedef struct {
     double    ai, aq, aph; int an, ahits;   /* ANSam (2100 Hz) in 20 ms blocks */
     int       d_short;          /* INFO0d bit 26 of the latest INFO0d */
     int       d_pcm_up;         /* INFO1d bit 70 of the latest full Phase 2 */
-    int       v8bis_got;        /* ACK(1) or NAK octet received (Task 8) */
+    v8bisc_t  bis;              /* its V.8bis responder (cfg.v8bis_ms) */
+    double    bis_out;          /* its sample of this tick */
+    int       v8bis_got;        /* ACK(1) or NAK octet received (v8bisc_got), 0 none */
 } v92call_t;
 
 void    v92call_init(v92call_t *c, const v92call_cfg *cfg);
