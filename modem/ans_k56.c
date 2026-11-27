@@ -19,7 +19,7 @@ static int16_t tick_v8bis(answer_t *a, int16_t rx)
     /* K56flex's V.8bis; V.8 follows from its own silence, whatever came
      * of it (a version 1 declined with NAK(3) as well). An agreement turns
      * x2 off for the call (k56 design, decision 5): no x2 JM, no x2
-     * INFO0a. */
+     * INFO0a; and Quick Connect. */
     const v8bis_t *b = &a->u.v8b;
     int res, k = 0;
     if (v8bis_tick(&a->u.v8b, rx, &tx) != V8B_DONE) return tx;
@@ -31,7 +31,9 @@ static int16_t tick_v8bis(answer_t *a, int16_t rx)
     if (res == V8B_RES_AGREED) k |= ANS_K56_AGREED;
     if (res == V8B_RES_DECLINED) k |= ANS_K56_DECLINED;
     a->k56 = (uint8_t)k;
-    if (ANS_K56_AGREED_OF(a)) a->v8.x2_offer = 0;
+    /* nor V.92's Quick Connect: a K56flex client is not a V.92 caller
+     * (qc-facts.md "Readings" 1) */
+    if (ANS_K56_AGREED_OF(a)) { a->v8.x2_offer = 0; v8ans_offer_qc(&a->v8, 0); }
     ans_enter(a, ANS_V8); a->t = 0;
     return tx;
 }

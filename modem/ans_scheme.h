@@ -12,6 +12,7 @@
  *   ans_x2      ANS_X2 (modem/ans_x2.c)
  *   ans_v8bis   ANS_V8BIS; ans_k56 ANS_K56; ans_k56rt ANS_K56RT (modem/ans_k56.c)
  *   ans_hst     ANS_HST_WAIT, ANS_HST (modem/ans_hst.c)
+ *   ans_qc      ANS_QC: V.92 short Phase 1 (modem/ans_qc.c)
  *   ans_v8      ANS_V8; ans_ended ANS_FAILED (modem/answer.c)
  * The signal to noise, round trip and (between engines) echo delay are the
  * modulation's, not the phase's: answer.c finds those through the scheme of
@@ -34,7 +35,7 @@ typedef struct ans_scheme {
     uint8_t pcm_out;                         /* the codeword of the sample is a->pcm (answer_tick_lin) */
 } ans_scheme_t;
 extern const ans_scheme_t ans_legacy, ans_v90, ans_v92, ans_v34, ans_x2, ans_k56;
-extern const ans_scheme_t ans_v8, ans_v8bis, ans_p2, ans_k56rt, ans_hst;
+extern const ans_scheme_t ans_v8, ans_v8bis, ans_p2, ans_k56rt, ans_hst, ans_qc;
 /* enter phase p: answer_t.phase and the scheme of it (answer_t.t is the caller's) */
 void ans_enter(answer_t *a, ans_phase p);
 
@@ -85,5 +86,6 @@ void ans_start_x2(answer_t *a);         /* modem/ans_x2.c */
 void ans_start_k56(answer_t *a);        /* modem/ans_k56.c */
 void ans_start_hst_wait(answer_t *a);   /* modem/ans_hst.c: ANSam over, no CM, no AA */
 void ans_start_hst(answer_t *a, int det); /* the detector fired (HST_DET_450 / HST_DET_300) */
+void ans_start_qc(answer_t *a);         /* modem/ans_qc.c: V.8 took a QC1a (V8A_RES_QC) */
 
 #endif

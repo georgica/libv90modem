@@ -87,7 +87,7 @@ struct v90m {
  * as their analogue modem) */
 #define V90M_MOD_ORIG (V90M_MOD_ALL & ~(V90M_MOD_X2 | V90M_MOD_K56 | V90M_MOD_HST))
 /* the option bits (bits 16 and up) */
-#define V90M_OPTS (V90M_OPT_V34_TX_CAP | V90M_OPT_K56_V2_ONLY | V90M_OPT_K56_V1)
+#define V90M_OPTS (V90M_OPT_V34_TX_CAP | V90M_OPT_K56_V2_ONLY | V90M_OPT_K56_V1 | V90M_OPT_NO_QC)
 
 typedef char v90m_check_orig[(SAME(ORIG_MOD_V21, ANS_MOD_V21) && SAME(ORIG_MOD_V22, ANS_MOD_V22) && SAME(ORIG_MOD_V22BIS, ANS_MOD_V22BIS)
                               && SAME(ORIG_MOD_V32BIS, ANS_MOD_V32BIS) && SAME(ORIG_MOD_V34, ANS_MOD_V34)
@@ -191,6 +191,7 @@ static void setup(v90m_t *m, const v90m_cfg *cfg)
         if (cfg->modulations & V90M_OPT_V34_TX_CAP) ac.modes |= ANS_MODE_V34_TX_CAP;
         if (cfg->modulations & V90M_OPT_K56_V2_ONLY) ac.modes |= ANS_MODE_K56_V2_ONLY;
         if (cfg->modulations & V90M_OPT_K56_V1) ac.modes |= ANS_MODE_K56_V1;
+        if (cfg->modulations & V90M_OPT_NO_QC) ac.modes |= ANS_MODE_NO_QC;
         ac.getbit = cfg->getbit;
         ac.putbit = cfg->putbit;
         ac.user = cfg->user;

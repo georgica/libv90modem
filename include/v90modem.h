@@ -230,6 +230,17 @@ typedef enum {
  * the call goes on as without K56flex, V.8 then V.34 or V.90
  * (v90m_get_k56). Meant for a test number only. Calling: ignored. */
 #define V90M_OPT_K56_V1 0x40000u
+/* Not a modulation (added in 0.7.4): an option bit, off by default.
+ * Answering, with V90M_MOD_V92: a caller's V.92 Quick Connect request
+ * (QC1a, V.92 8.2.1) is not taken; the call starts with V.8 as in 0.7.3,
+ * whatever the caller sent before its CM. Without it Quick Connect is part
+ * of V.92: a QC1a heard during our answer tone ends V.8 at once, short
+ * Phase 1 (QCA1d, QTS, ANSpcm, the caller's TONEq) replaces the rest of
+ * V.8, and a caller that does not complete it within 2 s gets our answer
+ * tone again and V.8 (V.92 9.2.4). A safety valve per port, and what a
+ * replay of a call answered by 0.7.3 or earlier needs (v90m-replay -Q).
+ * 0x80000 is kept free. Calling: ignored. */
+#define V90M_OPT_NO_QC 0x100000u
 
 /* the modulation of a connection (v90m_state.modulation) */
 typedef enum {

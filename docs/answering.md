@@ -32,7 +32,9 @@ options, not modulations: `V90M_OPT_V34_TX_CAP` (off by default) caps our
 V.34 transmit at the caller's own INFO1 projection (below, "The V.34
 transmit cap"); `V90M_OPT_K56_V2_ONLY` and `V90M_OPT_K56_V1` (off by
 default; the second experimental) change what K56flex's V.8bis offers and
-accepts (below, "K56flex versions").
+accepts (below, "K56flex versions"); `V90M_OPT_NO_QC` (off by default)
+answers a V.92 caller's Quick Connect request (QC1a) as 0.7.3 did, with
+V.8 (without it Quick Connect is part of `V90M_MOD_V92`).
 
 ## The start of a call
 

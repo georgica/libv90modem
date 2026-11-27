@@ -75,6 +75,11 @@ static void refuse(void)
     CHECK_EQ_I(v90tx_select(&b, V90TX_SD), 0);
     CHECK_EQ_I(v90tx_align(&a, 4), -1);
     for (i = 0; i < 200; i++) CHECK_EQ_I(v90tx_tick(&a), v90tx_tick(&b));
+    /* the signal under way, nothing pending: refused too, nothing changes */
+    CHECK(v90tx_signal(&a) == V90TX_SD && a.pending == V90TX_NONE);
+    CHECK_EQ_I(v90tx_align(&a, 0), -1);
+    CHECK_EQ_I(v90tx_align(&a, 3), -1);
+    for (i = 0; i < 200; i++) CHECK_EQ_I(v90tx_tick(&a), v90tx_tick(&b));
 }
 
 int main(void)

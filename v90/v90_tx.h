@@ -297,12 +297,12 @@ void v90_pack_bits(const uint8_t *bits, int n, uint8_t *packed);
  * Returns 0, or -1 if the signal's parameters are missing (nothing changes). */
 int v90tx_select(v90tx_t *t, v90tx_sig_t sig);
 
-/* V.92 8.3.6: set the frame grid before the first signal. Only before the
- * first selection after v90tx_init() (else -1, nothing changes): the grid is
- * established, phase (0..5) is the data frame interval of the next tick,
+/* V.92 8.3.6: set the frame grid before the first signal. Only while the
+ * signal is still silence and nothing is pending (else -1, nothing
+ * changes): the grid is established, phase (0..5) is the data frame interval of the next tick,
  * silence runs on that grid, and the first selected signal starts at the next
  * interval 0. v90tx_align(t, 0) is the unaligned start. Returns 0, or -1 for
- * a phase outside 0..5 or after a selection. */
+ * a phase outside 0..5, a selection pending or a signal begun. */
 int v90tx_align(v90tx_t *t, int phase);
 
 /* The next PCM octet. Call once per 8 kHz sample. */

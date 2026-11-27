@@ -1,6 +1,7 @@
 #!/bin/sh
 # Replay proof: every private recording through v90m-replay in seven flag sets
-# (the K56flex ones with -K: 0.7.1's CL, as the recordings were answered);
+# (the K56flex ones with -K: 0.7.1's CL, as the recordings were answered; the
+# V.92 ones with -Q: a caller's QC1a not taken, as they were answered);
 # what the tool prints, the bits it decides and its exit code, hashed against
 # test/golden/replay.sha256.
 #
@@ -24,12 +25,15 @@ set -u
 # worker of run_all (xargs): SET REC, with RP_* in the environment
 if [ "${1:-}" = --job ]; then
     set=$2; rec=$3
+    # -Q: V.92's QC1a not taken (0.7.4's V90M_OPT_NO_QC), as the recordings
+    # were answered; RP_Q= (empty) for a tool from before 0.7.4 (diff)
+    q=${RP_Q--Q}
     case $set in
-    base) o="" ;;       v92) o="-9" ;;
-    x2) o="-x" ;;       x2-v92) o="-x -9" ;;
+    base) o="" ;;       v92) o="-9 $q" ;;
+    x2) o="-x" ;;       x2-v92) o="-x -9 $q" ;;
     # -K: 0.7.1's CL (0x42), as the recordings were answered; RP_K=-k for
     # a tool from before 0.7.2 (diff), whose -k was that CL
-    k56) o="${RP_K:--K}" ;;      k56-v92) o="${RP_K:--K} -9" ;;
+    k56) o="${RP_K:--K}" ;;      k56-v92) o="${RP_K:--K} -9 $q" ;;
     hst) o="-H" ;;
     *) exit 2 ;;
     esac
@@ -144,6 +148,8 @@ diff)
     ROUT=$rd/out
     # a tool from before 0.7.2 has no -K: its -k sent 0.7.1's CL
     grep -q -- '"-K"' "$rd/tools/v90m_replay.c" 2>/dev/null || { RP_K=-k; export RP_K; }
+    # nor -Q before 0.7.4: it took no QC1a
+    grep -q -- '"-Q"' "$rd/tools/v90m_replay.c" 2>/dev/null || { RP_Q=; export RP_Q; }
     run_all "$rd/build/v90m-replay" "$ROUT" 0
     hashes "$ROUT" > "$rd/hashes"
     nd=0

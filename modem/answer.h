@@ -11,8 +11,15 @@
  * (Table 16), INFO1d takes the form of Table 17 with bit 70 = PCM upstream
  * on offer, and the caller's INFO1a decides (9.3/V.92): PCM upstream (Table
  * 18: Phases 3 and 4 and data mode of V.92, ../v92/v92_p34d), V.34 upstream
- * (V.90 as before) or V.34. Full start-up only: no quick connect, no short
- * Phase 2, no modem on hold.
+ * (V.90 as before) or V.34. No short Phase 2, no modem on hold.
+ * V.92 Quick Connect (with ANS_MODE_V90 and ANS_MODE_V92, not after a
+ * K56flex agreement, not with ANS_MODE_NO_QC): a QC1a heard during ANSam
+ * (modem/v8ans) ends V.8 at once; ANS_QC (modem/ans_qc.c, modem/qcd) sends
+ * QCA1d (our P the caller's, LM from our Phase 2 power), QTS and ANSpcm,
+ * and on TONEq goes to Phase 2 (9.2.4.1); with no TONEq within 2 s, ANSam
+ * again and V.8 as above (9.2.4.3), the QC1a no longer taken. The data
+ * frame grid of every Phase 3 of such a call is QTS's (8.3.6); V.42's
+ * ODP/ADP is skipped when both P bits are set (9.2.5).
  * x2 (ANS_MODE_X2, with V8_MOD_V34, on a mu-law line): offered to a caller
  * whose CM offers V.34 and no PCM, in its JM (modem/v8ans) and its INFO0a
  * (modem/p2ans). A client that sends the x2 marker after our L1 makes the
@@ -69,6 +76,7 @@
 #include "../v92/v92_p34d.h"
 #include "../v42/hst_link.h"
 #include "hst.h"
+#include "qcd.h"
 #include "callev.h"
 
 typedef enum {
@@ -94,6 +102,8 @@ typedef enum {
                             listening for its back channel (u.hst.det) for W, then ANS_V22 or
                             ANS_V21 as without HST */
     ANS_HST,             /* HST: from the detection on (u.hst), data mode included */
+    ANS_QC,              /* V.92 short Phase 1 after the caller's QC1a (u.qc): QCA1d, QTS,
+                            ANSpcm, TONEq (modem/qcd); then ANS_P2, or ANSam and ANS_V8 again */
     ANS_NPHASES          /* the number of phases (not a phase): a new one goes above */
 } ans_phase;
 
@@ -134,6 +144,9 @@ typedef enum {
  * acknowledged and K56flex's start-up (version 2's, modem/k56d) runs;
  * without it such an MS gets NAK(3) and the call goes on as without K56flex */
 #define ANS_MODE_K56_V1 0x4000000u
+/* with ANS_MODE_V92: a caller's V.92 QC1a is not taken (V.8 as in 0.7.3,
+ * the QC1a ignored): V90M_OPT_NO_QC */
+#define ANS_MODE_NO_QC 0x8000000u
 
 #define ANS_MOD_NONE   0
 #define ANS_MOD_V21    1
@@ -207,13 +220,15 @@ typedef struct {
      * PCM mode of V.8, x2 a CM without it and V.34 selected, K56flex the
      * V.8bis agreement, which turns x2 off; V.32 is what V.8 selects without
      * V.34 or a caller without V.8 asks for with AA, and no phase leads back
-     * to V.8): they share their storage. u.v92 holds a call's V.92 engine
+     * to V.8 but ANS_QC's fall-back, before any of them): they share their storage. u.v92 holds a call's V.92 engine
      * from ANS_P3X on, u.x2 the x2 engine from ANS_X2 on; u.v8b K56flex's
      * V.8bis, during ANS_V8BIS only (before any of the others), u.k56 the
      * K56flex engine from ANS_K56 on; u.hst the HST engine from
      * ANS_HST_WAIT on (a caller without V.8, after ANSam: none of the
-     * others; V.22 and V.21, which may follow it, keep their own storage). */
-    union { v32_t v32; v92d_t v92; x2d_t x2; v8bis_t v8b; k56d_t k56; hst_t hst; } u;
+     * others; V.22 and V.21, which may follow it, keep their own storage).
+     * u.qc: short Phase 1 of V.92's Quick Connect, during ANS_QC only
+     * (after V.8, before Phase 2: none of the others is in use then). */
+    union { v32_t v32; v92d_t v92; x2d_t x2; v8bis_t v8b; k56d_t k56; hst_t hst; qcd_t qc; } u;
     v32_aadet_t aadet;       /* 1800 Hz from the caller while the answer tone runs */
     v21mod_t   fmod;
     int        bpos;         /* the place in bpf */
@@ -263,6 +278,8 @@ typedef struct {
 /* the HST engine shares the union and fits in it (the spec's "HST pump":
  * no growth of answer_t) */
 typedef char hst_size_check[sizeof(hst_t) <= sizeof(v92d_t) ? 1 : -1];
+/* and so does short Phase 1's */
+typedef char qcd_size_check[sizeof(qcd_t) <= sizeof(v92d_t) ? 1 : -1];
 
 void    answer_init(answer_t *a, const answer_cfg *cfg);
 /* The same modem at the G.711 interface: one received codeword in, one out
@@ -315,7 +332,9 @@ int     answer_retrain(answer_t *a);
  * retraining, and (V.90, V.92) not inside a rate renegotiation. */
 int     answer_moving(const answer_t *a);
 /* 1 when both modems indicated V.92 in Phase 2 (V.92 9.3) and LAPM in V.8:
- * the caller then skips the ODP / ADP exchange of V.42 (9.3.1/V.92). */
+ * the caller then skips the ODP / ADP exchange of V.42 (9.3.1/V.92). After
+ * a Quick Connect start (short Phase 1 taken, no fall-back to V.8): 1 when
+ * both P bits asked for LAPM (9.2.5). */
 int     answer_odp_bypass(const answer_t *a);
 /* Why the call ended: ANS_END_*, ANS_END_NONE until the phase is ANS_FAILED. */
 int     answer_end(const answer_t *a);
@@ -333,7 +352,8 @@ hst_link_t *answer_hst_link(answer_t *a, int *state);
  * any other call */
 unsigned answer_hst_reversals(const answer_t *a);
 /* 1 once the modem has decided whether to offer HST (it has left ANS_V8
- * and ANS_V8BIS): an endpoint can no longer be linked for this call. */
+ * and ANS_V8BIS, or took a QC1a: still 1 after a fall-back to V.8): an
+ * endpoint can no longer be linked for this call. */
 int     answer_hst_decided(const answer_t *a);
 /* The echo delay in samples the running engine measured or was given (V.90,
  * V.92, x2, K56flex): the engine of the phase; between engines (a retrain,

@@ -45,6 +45,15 @@ void ans_start_p2(answer_t *a)
     ans_enter(a, ANS_P2); a->t = 0;
 }
 
+/* V.92 8.3.6: a call that had short Phase 1 keeps QTS's data frame grid
+ * from there on, so every Phase 3 transmitter of it (V.90's, V.92's;
+ * retrains included) starts on it. In a scheme's tick qc.grid is the
+ * interval of this sample, and the transmitter's first tick is the next. */
+static void qc_align(const answer_t *a, v90tx_t *t)
+{
+    if (a->v8.qc.flags & V8A_QC_GRID) (void)v90tx_align(t, a->v8.qc.grid == 5 ? 0 : a->v8.qc.grid + 1);
+}
+
 /* Phase 2 is done: INFO1a says how the caller will send */
 static void start_p34(answer_t *a)
 {
@@ -61,6 +70,7 @@ static void start_p34(answer_t *a)
     else { c.sym_rate = 3200; c.car_num = hi ? 3 : 4; c.car_den = hi ? 5 : 7; }
     /* a symbol rate we did not offer cannot be served */
     if ((sr != 3 && sr != 4) || p34d_init(&a->p34, &c) != 0) { ans_fail(a, ans_retrain_or(a, ANS_END_FAILED)); return; }
+    qc_align(a, &a->p34.tx);
     ans_enter(a, ANS_P3); a->t = 0;
 }
 
@@ -94,6 +104,7 @@ static void start_v92(answer_t *a)
     c.getbit = a->cfg.getbit; c.putbit = a->cfg.putbit; c.user = a->cfg.user;
     a->v92_data = 0;
     if (v92d_init(&a->u.v92, &c) != 0) { ans_fail(a, ans_retrain_or(a, ANS_END_FAILED)); return; }
+    qc_align(a, &a->u.v92.tx);
     ans_enter(a, ANS_P3X); a->t = 0;
 }
 

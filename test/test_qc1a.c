@@ -176,6 +176,68 @@ static void test_qc_ok(const v8_menu_t *local, const v8_menu_t *cm)
     }
 }
 
+/* WXYZ 0111 P 0: the octet 0xE0, V.8's CM/JM sync octet; not offered:
+ * heard, and the CM decides */
+static void test_e0_not_offered(const v8_menu_t *local, const v8_menu_t *cm)
+{
+    uint8_t q[64]; runcfg rc; outcome o, plain;
+    printf("e0_not_offered\n");
+    defcfg(&rc, cm); run(&rc, local, 0, &plain);
+    defcfg(&rc, cm);
+    rc.pre = q; rc.npre = qca_qc1a_bits(7, 0, q); rc.offer = 0;
+    run(&rc, local, 0, &o);
+    CHECK_EQ_I(o.result, V8A_RES_OK);
+    CHECK(o.qc.flags & V8A_QC_HEARD);
+    CHECK_EQ_I(o.qc.flags & ~V8A_QC_HEARD, 0);
+    CHECK_EQ_I(o.qc.oct, 0xE0);
+    CHECK(same_jm(&o, &plain));
+    printf("  QC1a 0xE0 not offered: heard, the CM's JM\n");
+}
+
+/* v8ans_restart_ansam after V8A_RES_QC (9.2.4.3): ANSam from the next
+ * sample, the QC1a no longer taken, the CM's JM as for any caller */
+static void test_restart(const v8_menu_t *local, const v8_menu_t *cm)
+{
+    static const double one[1] = {1.0};
+    uint8_t q[64];
+    channel_cfg cfg; channel_t ch;
+    v8ans_t ans; v8call_t call;
+    int16_t atx = 0, ctx = 0;
+    int n, qc_at = -1, back = 0, loud = 0;
+    printf("restart\n");
+    memset(&cfg, 0, sizeof cfg);
+    cfg.ds_noise_dbfs = cfg.us_noise_dbfs = -63.14;
+    cfg.ds_taps = one; cfg.ds_ntaps = 1; cfg.us_taps = one; cfg.us_ntaps = 1;
+    cfg.full_scale = 32124.0; cfg.seed = 4242;
+    channel_init(&ch, &cfg);
+    v8ans_init(&ans, FS, AMP, local);
+    v8ans_offer_qc(&ans, 1);
+    v8call_init(&call, FS, AMP, cm);
+    v8call_prefix(&call, q, qca_qc1a_bits(5, 1, q));
+    for (n = 0; n < 15 * FS; n++) {
+        double crx; uint8_t srv;
+        channel_tick(&ch, linear_to_ulaw(atx), (double)ctx, &crx, &srv);
+        v8call_tick(&call, (int16_t)lround(crx), &ctx);
+        if (v8ans_tick(&ans, (int16_t)ulaw_to_linear(srv), &atx) == V8A_DONE) {
+            if (qc_at >= 0) break;
+            CHECK_EQ_I(ans.result, V8A_RES_QC);
+            qc_at = n;
+            v8ans_restart_ansam(&ans);
+            CHECK_EQ_I(ans.state, V8A_ANSAM);
+            CHECK(ans.qc.flags & V8A_QC_FALLBACK);
+            CHECK_EQ_I(ans.qc.aux & (V8A_QCX_OFFER | V8A_QCX_TRACK), 0);
+            CHECK_EQ_I(ans.result, V8A_RES_NONE);
+            back = 1;
+        } else if (back && n < qc_at + FS / 10 && (atx > 1000 || atx < -1000)) loud = 1;
+    }
+    CHECK(qc_at > 0);
+    CHECK(loud);                                    /* ANSam again */
+    CHECK_EQ_I(ans.result, V8A_RES_OK);
+    CHECK_EQ_I(ans.selected, V8_SEL_V90);
+    CHECK_EQ_I(ans.qc.flags, V8A_QC_HEARD | V8A_QC_FALLBACK);
+    printf("  V8A_RES_QC at %.3f s, ANSam again, then the CM's JM: V.8 done at %.3f s\n", qc_at / 8000.0, n / 8000.0);
+}
+
 static void test_every_uqts(const v8_menu_t *local, const v8_menu_t *cm)
 {
     uint8_t q[64]; runcfg rc; outcome o, plain;
@@ -209,10 +271,10 @@ static void test_every_uqts(const v8_menu_t *local, const v8_menu_t *cm)
 
 static void test_cm_only(const v8_menu_t *local)
 {
-    static const int lev[3] = { -9, -26, -43 };
+    static const int lev[4] = { -9, -26, -38, -43 };
     v8_menu_t m[8];
     runcfg rc;
-    int i, k, okn = 0;
+    int i, k, okn = 0, taken = 0;
     printf("cm_only\n");
     for (i = 0; i < 8; i++) {
         memset(&m[i], 0, sizeof m[i]);
@@ -229,14 +291,22 @@ static void test_cm_only(const v8_menu_t *local)
     m[7].modes = 0x1FFE; m[7].n_mod_octets = 3; m[7].has_pcm = 1; m[7].pcm = V8_PCM_ANALOG | V8_PCM_V91;
     m[7].has_prot = 1; m[7].prot = V8_PROT_LAPM; m[7].has_access = 1; m[7].access = V8_ACC_CALL_CELL;
     for (i = 0; i < 8; i++)
-        for (k = 0; k < 3; k++) {
+        for (k = 0; k < 4; k++) {
             defcfg(&rc, &m[i]);
             rc.amp = (int16_t)lround(22300.0 * pow(10.0, lev[k] / 20.0));
-            okn += same_both_ways(&rc, local) == V8A_RES_OK;
+            {
+                int r = same_both_ways(&rc, local);
+                okn += r == V8A_RES_OK;
+                taken += r != V8A_RES_NO_CM;
+            }
         }
     /* at -43 dBm0 the CM is not taken (V8A_RES_NO_CM) either way: the V.21
-     * squelch's edge */
-    printf("  24 callers (8 CMs at -9, -26, -43 dBm0): the same samples either way, %d V8A_RES_OK\n", okn);
+     * squelch's edge; at -38 the CM is taken (JM sent; under our ANSam's
+     * echo the caller does not take our JM: V8A_RES_NO_CJ), so the QC1a
+     * tracker has had its bits */
+    CHECK_EQ_I(taken, 24);
+    printf("  32 callers (8 CMs at -9, -26, -38, -43 dBm0): the same samples either way, %d CMs taken, %d V8A_RES_OK\n",
+           taken, okn);
 }
 
 static void test_echo(const v8_menu_t *local, const v8_menu_t *cm)
@@ -250,18 +320,18 @@ static void test_echo(const v8_menu_t *local, const v8_menu_t *cm)
 
 static void test_noise(const v8_menu_t *local)
 {
-    static const double lev[2] = { -30.0, -46.0 };
+    static const double lev[3] = { -30.0, -38.0, -46.0 };
     runcfg rc;
     int s, k, nocm = 0;
     printf("noise\n");
-    for (k = 0; k < 2; k++)
+    for (k = 0; k < 3; k++)
         for (s = 0; s < 20; s++) {
             defcfg(&rc, NULL);
             rc.noise_dbm0 = lev[k]; rc.echo = 0; rc.seed = (uint32_t)(1000 + 17 * s); rc.max_s = 7;
             nocm += same_both_ways(&rc, local) == V8A_RES_NO_CM;
         }
-    CHECK_EQ_I(nocm, 40);
-    printf("  noise at -30 and -46 dBm0, 20 seeds: the same samples either way, %d V8A_RES_NO_CM\n", nocm);
+    CHECK_EQ_I(nocm, 60);
+    printf("  noise at -30, -38 and -46 dBm0, 20 seeds: the same samples either way, %d V8A_RES_NO_CM\n", nocm);
 }
 
 /* a prefix that is not a QC1a, ahead of the CM: no QC, the CM decides */
@@ -380,6 +450,8 @@ int main(void)
     menus(&local, &cm);
     test_qc_ok(&local, &cm);
     test_every_uqts(&local, &cm);
+    test_e0_not_offered(&local, &cm);
+    test_restart(&local, &cm);
     test_cm_only(&local);
     test_echo(&local, &cm);
     test_noise(&local);

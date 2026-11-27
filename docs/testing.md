@@ -79,7 +79,8 @@ program's own golden file is not a re-record.
 106 recordings of real calls (private, never in the repository: `RECS`,
 their names and hashes in `test/golden/recordings.sha256`) go through
 `v90m-replay` in seven flag sets (none, `-9`, `-x`, `-x -9`, `-k`, `-k -9`,
-`-H`): 742 runs, whose trace, decided bits and exit code are hashed against
+`-H`; the V.92 ones with `-Q`, as the calls were answered without Quick
+Connect): 742 runs, whose trace, decided bits and exit code are hashed against
 `test/golden/replay.sha256`. `check` compares (and stops at once on a set
 the manifest has no lines for), `record` writes the manifest, `diff REF`
 replays with this tree and with the tool built from a git REF and prints
@@ -294,13 +295,14 @@ recorded call into the answering modem and reports what it made of it,
 phase by phase:
 
 ```
-v90m-replay [-a] [-9] [-x] [-k] [-B] [-H] [-M] [-F] [-u BPS] [-d BPS] [-l DBM0 | -r RMS] [-e SAMPLES] [-P CODE] [-s SAMPLE] [-b FILE] RECORDING
+v90m-replay [-a] [-9] [-Q] [-x] [-k] [-B] [-H] [-M] [-F] [-u BPS] [-d BPS] [-l DBM0 | -r RMS] [-e SAMPLES] [-P CODE] [-s SAMPLE] [-b FILE] RECORDING
 ```
 
 | | |
 |---|---|
 | `-a` | A-law line (mu-law otherwise) |
 | `-9` | V.92 offered (PCM upstream up to 48000 bit/s unless `-u`) |
+| `-Q` | with `-9`: a caller's V.92 QC1a not taken (`V90M_OPT_NO_QC`), V.8 as 0.7.3 answered; the replay proof's and the fixtures' V.92 runs use it (a U.S. Robotics 5686 sends a QC1a) |
 | `-x` | x2 offered (`V90M_MOD_X2`) |
 | `-k` | K56flex offered (`V90M_MOD_K56`): V.8bis first; the recording is lined up with our answer tone after it |
 | `-B` | Bell 103 and Bell 212A offered too (`V90M_MOD_BELL103`, `V90M_MOD_BELL212A`), as a host may offer them (nsdiald's sidecar: `bell103`, `bell212`); without them a caller without V.8 hears no 2225 Hz from us 4 s into the V.22 wait |

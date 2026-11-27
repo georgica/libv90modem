@@ -7011,3 +7011,34 @@ measured figures.
 
 ## qc 4: the V.90 transmitter's grid, set from outside (2026-11-26)
 `v90tx_align(t, phase)` added (v90/v90_tx.[ch]); no field added. `make -s -C v90 build/test_txalign` failed to compile before, 416 checks 0 failures after (both laws, phases 0..5). v90 `make test` all pass; `make golden`: 170 programs identical after recording the new `v90/test_txalign.txt`; replay-proof 742 identical; bench-hashes 19 identical.
+
+## qc 5: short Phase 1 on the answering side, ANS_QC (2026-11-26)
+`ANS_QC` (the 20th phase) with `modem/qcd.[ch]` (QCA1d, 75 ms, QTS/QTS\,
+ANSpcm, TONEq after 60 + 40 ms of 980 Hz, 75 ms; no TONEq run under way
+16000 samples after QCA1d's last: ANSam again and V.8) and
+`modem/ans_qc.c`. QC is offered with `ANS_MODE_V90 | ANS_MODE_V92`, taken
+away by a K56flex agreement and by `ANS_MODE_NO_QC` (public
+`V90M_OPT_NO_QC` 0x100000, `v90m-replay -Q`, `v90m-fields -Q`; the replay
+proof's V.92 sets and the V.92 fixtures use it). The grid from QTS's first
+symbol: `answer_tick` runs `qc.grid`, one helper in `ans_v90.c` aligns
+every Phase 3 transmitter (V.90's and V.92's, retrains included) with the
+next sample's interval. ODP bypass from the P bits while not fallen back.
+- `make -s build/test_answer_qc` failed to build before (no `ANS_QC`,
+  `modem/qcd.h`); after: 269 checks, 0 failures (qc_full, lapm_off,
+  v90_choice, retrain, no_toneq, deaf, late_toneq 1897 ms taken, too_late,
+  alaw, v92_off, no_qc_option, k56_clears_qc). QCA1d 4-5 samples after the
+  QC1a's last bit was sent; 600 silent; INFO0d 607 (A-law 610) samples
+  after ANSpcm; fallback ANSam exactly 16000 samples after QCA1d's end; Sd
+  on QTS's grid (passing `qc.grid` itself, or no align, fails 7 checks).
+- Carried items: `test_qc1a` 607 -> 763 checks (-38 dBm0 in cm_only, 24
+  CMs taken, and noise, 60 NO_CM; `e0_not_offered`; `restart`);
+  `test_txalign` 416 -> 619 (align refused with the signal under way);
+  `qc-scan` exits 0 on hits (fixtures: 8 recordings, 2 with a QC1a).
+- `make golden`: ALL HOST CHECKS PASS; re-recorded `test_ans_table`
+  (19 -> 20 phases, 57 -> 60 checks), `test_qc1a`, `v90/test_txalign`; new
+  `test_answer_qc`; 171 programs identical. Fixtures: all pass (-Q).
+  `make replay-proof`: 742 identical; `make bench-hashes`: 19 identical;
+  `check-headers` 114. ARM A5, A7 `api_test_api`: 1224 checks, 0 failures.
+- Information only: usr6/usr7 replayed with `-9` and no `-Q` enter QC at
+  7.11/7.01 s, fall back to V.8 2.2 s later (the recorded caller never
+  heard a QCA1d) and do not connect open-loop, as expected.

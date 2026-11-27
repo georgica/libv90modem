@@ -1,7 +1,8 @@
 /* qc-scan: V.92's QC1a (Table 2) in recorded calls, for Quick Connect's
  * evidence (docs/history/qc-facts.md; the plan's Global Constraints,
- * replay): a recording whose heard side holds a QC1a may replay otherwise
- * once our answerer takes it.
+ * replay): a recording whose heard side holds a QC1a replays otherwise
+ * once our answerer takes it (V90M_OPT_NO_QC, v90m-replay -Q, answers it
+ * as it was answered).
  *
  *   qc-scan [-a] FILE...        (make qc-scan RECS=<dir>: every recording)
  *
@@ -16,8 +17,9 @@
  * the recorded answerer's; and the QC1a
  * tracker of modem/v8rx (v8rx_tick_qc) on the V.21(L) demodulator over the
  * whole recording, wherever the answer tone was. Each QC1a found is printed
- * as "QC1a heard" with its time and information octet. Exits 1 when one
- * was found, 2 on a file it cannot read. Host tool, not installed; nothing
+ * as "QC1a heard" with its time and information octet. Exits 0 whether
+ * or not one was found (real V.92 callers send it: 0.7.4 answers it, and
+ * the replay proof runs with v90m-replay -Q), 2 on a file it cannot read. Host tool, not installed; nothing
  * but these lines and a count is printed. */
 #include <stdio.h>
 #include <stdlib.h>
@@ -122,5 +124,5 @@ int main(int argc, char **argv)
         n++;
     }
     printf("qc-scan: %d recordings, %d with a QC1a\n", n, hits);
-    return hits ? 1 : 0;
+    return 0;
 }

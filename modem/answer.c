@@ -7,7 +7,7 @@
 /* The answering modem: init, V.8, the dispatch to the scheme of the phase
  * (modem/ans_scheme.h), the end of a call and the backstop of the phases.
  * The schemes: modem/ans_legacy.c, ans_v90.c, ans_v34.c, ans_x2.c,
- * ans_k56.c, ans_hst.c. */
+ * ans_k56.c, ans_hst.c, ans_qc.c. */
 
 #define MS(ms) ((int32_t)(ms) * 8)
 /* The backstop of the phases before data mode (spec D5), above the limits
@@ -38,6 +38,7 @@ static const ans_scheme_t *const phase_scheme[] = {
     [ANS_V34] = &ans_v34, [ANS_X2] = &ans_x2,
     [ANS_K56] = &ans_k56, [ANS_K56RT] = &ans_k56rt,
     [ANS_HST_WAIT] = &ans_hst, [ANS_HST] = &ans_hst,
+    [ANS_QC] = &ans_qc,
     [ANS_FAILED] = &ans_ended
 };
 /* one row per phase: a new last phase without its row fails to compile */
@@ -164,6 +165,10 @@ void answer_init(answer_t *a, const answer_cfg *cfg)
     a->v92_both = 0; a->v92_data = 0;
     memset(&a->ev, 0, sizeof a->ev);
     a->pcm_up = local.has_pcm && (cfg->modes & ANS_MODE_V92) != 0;
+    /* V.92 Quick Connect is part of V.92 (a QC1a taken: 9.2.4.1);
+     * ANS_MODE_NO_QC answers it as 0.7.3 did; a K56flex agreement takes
+     * it away (modem/ans_k56.c) */
+    v8ans_offer_qc(&a->v8, (cfg->modes & ANS_MODE_V90) && (cfg->modes & ANS_MODE_V92) && !(cfg->modes & ANS_MODE_NO_QC));
     x2_offer(a);
     a->k56 = 0;
     k56_offer(a);
@@ -211,6 +216,14 @@ static int16_t tick_v8(answer_t *a, int16_t rx)
         return tx;
     }
     a->used_v8 = 1;
+    if (a->v8.result == V8A_RES_QC) {
+        /* V.92 9.2.4.1: QCA1d at once; V.92 (V.90's PCM) is the choice. This
+         * sample is ANSam's last: ANS_QC's scheme sends a->pcm */
+        a->v8.selected = V8_SEL_V90;
+        ans_start_qc(a);
+        a->pcm = pcm_encode(a->p2cfg.alaw, tx);
+        return tx;
+    }
     if (a->v8.selected == V8_SEL_V90) ans_start_p2(a);     /* V.90 9.2.1.1.1 */
     else if (a->v8.selected == 1 && (a->cfg.modes & V8_MOD_V34)) ans_start_v34(a);
     else if (a->v8.selected == 3 && (a->cfg.modes & V8_MOD_V32)) ans_start_v32(a);
@@ -230,6 +243,9 @@ int16_t answer_tick(answer_t *a, int16_t rx)
     int32_t budget;
     a->t = clk_sat_inc(a->t);
     tx = a->s->tick(a, rx);
+    /* after Quick Connect's QTS: the data frame interval of the next sample
+     * (8.3.6), for every Phase 3 of the call (modem/ans_v90.c) */
+    if (a->v8.qc.flags & V8A_QC_GRID) a->v8.qc.grid = (uint8_t)(a->v8.qc.grid == 5 ? 0 : a->v8.qc.grid + 1);
 
     /* the backstop: its clock starts again with every phase (and with V.34's
      * Phase 2), not with the engines' own states */
@@ -315,6 +331,9 @@ int answer_echo_delay(const answer_t *a) { return a->s->echo_delay ? a->s->echo_
 
 int answer_odp_bypass(const answer_t *a)
 {
+    uint8_t f = a->v8.qc.flags;
+    /* 9.2.5/V.92: after short Phase 1 (no CM, no JM), both P bits */
+    if ((f & V8A_QC_ACCEPTED) && !(f & V8A_QC_FALLBACK)) return (f & V8A_QC_BYPASS) != 0;
     /* 9.3.1/V.92: V.92 at both ends (INFO0) and LAPM in the protocol category of CM and JM */
     return a->v92_both && a->v8.cm.has_prot && a->v8.cm.prot == V8_PROT_LAPM
            && a->v8.jm.has_prot && a->v8.jm.prot == V8_PROT_LAPM;
@@ -336,4 +355,10 @@ unsigned answer_hst_reversals(const answer_t *a)
     return a->modulation == ANS_MOD_HST ? (unsigned)a->u.hst.reversals : 0u;
 }
 
-int answer_hst_decided(const answer_t *a) { return a->phase != ANS_V8 && a->phase != ANS_V8BIS; }
+int answer_hst_decided(const answer_t *a)
+{
+    /* a QC1a taken decides it: no caller without V.8 (and V.8 after a
+     * fall-back does not undo it) */
+    if ((a->v8.qc.flags & V8A_QC_HEARD) && (a->v8.qc.flags & V8A_QC_ACCEPTED)) return 1;
+    return a->phase != ANS_V8 && a->phase != ANS_V8BIS;
+}

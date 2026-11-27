@@ -1,0 +1,36 @@
+qc_full
+  qc_full                        QCA1d 0x87 5 samples after QC1a, 600 silent, QTS at 1.709 s, 959 ANSpcm codewords, TONEq at 197 ms, INFO0d 607 samples after ANSpcm
+  qc_full                        V.92: 50666 bit/s down, 38666 bit/s up; 152000 / 116000 bits, 0 / 0 bad
+lapm_off
+  lapm_off                       QCA1d 0x83 4 samples after QC1a, 600 silent, QTS at 1.709 s, 959 ANSpcm codewords, TONEq at 197 ms, INFO0d 607 samples after ANSpcm
+  lapm_off                       V.92: 50666 bit/s down, 38666 bit/s up; 152000 / 116000 bits, 0 / 0 bad
+v90_choice
+  v90_choice                     QCA1d 0x87 5 samples after QC1a, 600 silent, QTS at 1.709 s, 959 ANSpcm codewords, TONEq at 197 ms, INFO0d 607 samples after ANSpcm
+  v90_choice                     V.90: 50666 bit/s down, 28800 bit/s up; 152000 / 86400 bits, 0 / 0 bad
+retrain
+  before the caller's retrain    V.92: 50666 bit/s down, 38666 bit/s up; 152000 / 116000 bits, 0 / 0 bad
+  Sd of both Phase 3s 21480 and 91974 samples after QTS (both multiples of 6)
+  after it                       V.92: 50666 bit/s down, 38666 bit/s up; 152000 / 116000 bits, 0 / 0 bad
+no_toneq
+  ANSam again 16000 samples after QCA1d's end; JM, Phase 2; flags 0x8B
+  no_toneq                       V.92: 50666 bit/s down, 38666 bit/s up; 152000 / 116000 bits, 0 / 0 bad
+deaf
+  ANSam again 16000 samples after QCA1d's end; JM, Phase 2; flags 0x8B
+  deaf                           V.92: 50666 bit/s down, 38666 bit/s up; 152000 / 116000 bits, 0 / 0 bad
+late_toneq
+  TONEq's run from 1897 ms after QCA1d, taken 16575 samples after QCA1d's end
+  late_toneq                     V.92: 50666 bit/s down, 38666 bit/s up; 152000 / 116000 bits, 0 / 0 bad
+too_late
+  ANSam again 16000 samples after QCA1d's end; JM, Phase 2; flags 0x8B
+  too_late                       V.92: 50666 bit/s down, 38666 bit/s up; 152000 / 116000 bits, 0 / 0 bad
+alaw
+  alaw                           QCA1d 0x87 5 samples after QC1a, 600 silent, QTS at 1.709 s, 959 ANSpcm codewords, TONEq at 197 ms, INFO0d 610 samples after ANSpcm
+  alaw                           V.92: 50666 bit/s down, 40000 bit/s up; 152000 / 120000 bits, 0 / 0 bad
+v92_off
+  v92_off                        V.90: 50666 bit/s down, 28800 bit/s up; 152000 / 86400 bits, 0 / 0 bad
+no_qc_option
+  no_qc_option                   V.92: 50666 bit/s down, 38666 bit/s up; 152000 / 116000 bits, 0 / 0 bad
+k56_clears_qc
+  K56flex agreed (SM56's MS): QC no longer offered
+  K56flex not agreed (no V.8bis answer): QC still offered
+test_answer_qc: 269 checks, 0 failures
