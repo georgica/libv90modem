@@ -23,6 +23,7 @@
 #include "v92a.h"
 #include "v92chan.h"
 #include "channel.h"
+#include "qca.h"
 
 typedef struct {
     int alaw;               /* law of the digital modem's codec */
@@ -44,13 +45,32 @@ typedef struct {
     int dil_n;              /* DIL-segments asked for (0 = SCR instead) */
     uint32_t up_rates;      /* Ja: upstream rates, 0 = all */
     int mute_pcm;           /* fault: the first n PCM upstream start-ups send nothing at all */
+    /* V.92 Quick Connect, the calling analogue modem (9.2.1.1, 9.2.1.3; sim/qca):
+     * qc sends QC1a (Table 2: UQTS qc_wxyz, P qc_lapm) ahead of the first CM.
+     * On QCA1d: silence, QTS and QTS\ and ANSpcm checked codeword by codeword,
+     * TONEq once 20 ms of ANSpcm are in (toneq_delay_ms > 0: that long after
+     * ANSpcm began instead), until ANSpcm stops; 75 ms; Phase 2. ANSam heard
+     * for 1 s in place of any of that (9.2.4.3): CM, and V.8 as usual.
+     * qc_lapm is QC1a's P; the CM's is lapm (a test that means one call's P
+     * sets both). */
+    int qc, qc_wxyz, qc_lapm;
+    int short_p2;           /* INFO0a bit 27: short Phase 2 (9.4.2, sim/p2a) */
+    int short_t19;          /* ... with Table 19's INFO1a (V.34 upstream), else Table 18's */
+    int short_sr, short_hi; /* Table 19 bits 34:36 and 33 */
+    /* faults: qc_deaf, QCA1d is not heard (CM goes on); qc_no_toneq, no TONEq;
+     * short_no_rev and short_no_info1a as sim/p2a's */
+    int qc_deaf, qc_no_toneq, toneq_delay_ms, short_no_rev, short_no_info1a;
+    /* V.8 bis (Task 8): the MS sent when a CRe is heard; NULL = CRe ignored */
+    const uint8_t *v8bis_ms; int v8bis_ms_len;
     int  (*getbit)(void *user);
     void (*putbit)(void *user, int bit);
     void *user;
 } v92call_cfg;
 
 typedef enum {
-    VCL_V8, VCL_P2,
+    VCL_V8,
+    VCL_QC,                 /* short Phase 1 after QCA1d: QTS, ANSpcm, TONEq, 75 ms */
+    VCL_P2,
     VCL_PCM,                /* V.92 Phases 3 and 4, data: PCM upstream */
     VCL_V90,                /* V.90 Phases 3 and 4, data: V.34 upstream */
     VCL_RTSIL,              /* the 70 ms of silence that begin a retrain */
@@ -79,6 +99,28 @@ typedef struct {
     int       hung;             /* on hook */
     long      n;
     int16_t   rx_lin;           /* what the network hands the digital modem, linear */
+    /* Quick Connect (cfg.qc). Samples are n at our port: the digital modem's
+     * octet handed to the n-th v92call_tick, or that tick's returned octet. */
+    qca_rx_t  qrx;
+    int       qs;               /* VCL_QC's step */
+    long      qt;               /* octets in that step */
+    int       qc_on;            /* QCA1d is listened for (until a fall-back) */
+    int       qc_fallbacks;     /* times ANSam came back and CM was sent */
+    long      qts_at;           /* QTS's first octet, -1 none */
+    long      sd_at[4]; int n_sd;   /* the first Sd octet of each Phase 3 (the first four) */
+    int       sd_seen;          /* this Phase 3's Sd is in sd_at */
+    long      p3_n0;            /* n when this Phase 3 began */
+    uint8_t   qca1d;            /* the QCA1d octet read, 0 none */
+    int       qts_ok, anspcm_ok;    /* every codeword the sim's own */
+    long      anspcm_n;         /* ANSpcm codewords that matched */
+    long      toneq_on, toneq_off;  /* first sample of TONEq on our line and the first after it, -1 none */
+    long      anspcm_end_at;    /* the first octet that was not ANSpcm, -1 none */
+    long      info0d_at;        /* after ANSpcm, the first octet that is not a Ucode 0, -1 none */
+    double    tph;              /* TONEq's phase */
+    double    ai, aq, aph; int an, ahits;   /* ANSam (2100 Hz) in 20 ms blocks */
+    int       d_short;          /* INFO0d bit 26 of the latest INFO0d */
+    int       d_pcm_up;         /* INFO1d bit 70 of the latest full Phase 2 */
+    int       v8bis_got;        /* ACK(1) or NAK octet received (Task 8) */
 } v92call_t;
 
 void    v92call_init(v92call_t *c, const v92call_cfg *cfg);

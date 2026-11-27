@@ -309,8 +309,15 @@ static void down_octet(v92a_t *p, uint8_t o, const uint8_t *ahead)
 
     switch (p->ds) {
     case VD_WAIT_SD:
+        /* a run of Sd units, as delivered: ahead[0] came 23 octets ago */
+        if (is_unit(p, ahead, W, 0, 0)) {
+            long at = p->tick - 23;
+            if (p->sd_run_last != at - 6) p->sd_run0 = at;
+            p->sd_run_last = at;
+        }
         if (is_unit(p, ahead, W, 0, 0) && is_unit(p, ahead + 6, W, 0, 1)) {
             p->sd_at = p->tick;
+            p->sd_first = p->sd_run0;
             dnext(p, VD_SDBAR); p->dn = -5;
         }
         break;
@@ -468,6 +475,7 @@ void v92a_init(v92a_t *p, const v92a_cfg *cfg)
     memset(p, 0, sizeof *p);
     p->cfg = *cfg;
     p->us = VA_SIL0; p->ds = VD_WAIT_SD;
+    p->sd_run_last = -100;
     p->ml.nbits = 2;
 
     /* the DIL we ask for */

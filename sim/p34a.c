@@ -288,9 +288,16 @@ static void down_octet(p34a_t *p, uint8_t o, const uint8_t *ahead)
     switch (p->ds) {
     case D_WAIT_SD:
         /* `ahead` holds this octet and the next 11: Sd unit then Sd-bar unit */
+        /* a run of Sd units, as delivered: ahead[0] came 11 octets ago */
+        if (is_unit(p, ahead, W, 0, 0)) {
+            long at = p->tick - 11;
+            if (p->sd_run_last != at - 6) p->sd_run0 = at;
+            p->sd_run_last = at;
+        }
         if (is_unit(p, ahead, W, 0, 0) && is_unit(p, ahead + 6, W, 0, 1)) {
             /* this octet starts the last Sd unit */
             p->sd_at = p->tick;
+            p->sd_first = p->sd_run0;
             dnext(p, D_SDBAR); p->dn = -5;
         }
         break;
@@ -480,6 +487,7 @@ void p34a_init(p34a_t *p, const p34a_cfg *cfg)
     p->cfg = *cfg;
     qammod_init(&p->mod, cfg->sym_rate, cfg->ppm, cfg->fc, cfg->gain, up_sym, p);
     p->us = U_SIL0; p->ds = D_WAIT_SD;
+    p->sd_run_last = -100;
 
     /* the DIL we ask for */
     p->dil.n = (uint8_t)cfg->dil_n; p->dil.lsp = 5; p->dil.ltp = 12;

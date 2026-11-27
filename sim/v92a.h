@@ -98,6 +98,8 @@ typedef struct {
     int b1d_bad, b1d_frames, dec_bad, seq_bad;
     int tx_ready, rx_ready, up_rate, down_rate;
     long sd_at, tick;
+    long sd_first;              /* the first octet of that Sd, as delivered (tick), 0 none */
+    long sd_run0, sd_run_last;  /* the run of Sd units being read */
     int rd_pol, rd_units, rdbar_units, rd_bad;
     int renegs, clear_seen, cleardown, data_starts, in_reneg;
     double pw_acc; long pw_n;       /* mean square of G v(n) in data mode */

@@ -6911,3 +6911,28 @@ measured figures.
   README, docs/api.md, getting-started.md (`.so.0.7.3`, SONAME unchanged
   `.so.0.7`), testing.md and call_loop's golden.
 - CHANGELOG 0.7.3 (2026-11-26): content as written under unreleased.
+
+## qc 1: the facts; the simulated QC caller (2026-11-26)
+
+- `docs/history/qc-facts.md`: V.92 8.2-8.3, 9.2, 9.4 and Tables 2, 6-10,
+  13, 15-19 by section (Short Phase 1, UQTS, ANSpcm, QTS, Timing, Short
+  Phase 2), BinModem's behaviour `[BM]` at 2a1bfcc with file:line, and the
+  plan's readings `[OURS]`.
+- ANSpcm convention: x floored, then G.711; against all 2408 entries parsed
+  from the V.92 text, floor 0 differ, truncation 96, rounding 118.
+- BinModem's `+A8E` MS to our CL, read from its encoder: `21 89 80 80 81
+  c2` (revision 2, V.8 follows, ACK(1) asked for, data, V.42), not the
+  plan's `11 ...`. Its `modem-sip` does have `--memos <file>`.
+- `sim/qca` (QC1a bits, QCA1d receiver, QTS, ANSpcm, from the text and
+  `sim/g711`), `v8call_prefix`, `p2a` short Phase 2 (Tables 18/19,
+  `p2a_t19_build`, faults `short_no_rev`, `short_no_info1a`), `v92call`
+  stage `VCL_QC` (QC1a + CM, QCA1d, QTS/ANSpcm checks, TONEq, 75 ms,
+  fall-back to CM on ANSam), `qts_at`, `sd_at` (first Sd octet of each
+  Phase 3, from `v92a`/`p34a` `sd_first`).
+- `make -s build/test_qca` before the sim: `sim/qca.h: No such file or
+  directory`; after: `test_qca: 129 checks, 0 failures` (QC1a 8002 samples
+  after ANSam began; CM stopped 265 samples before QCA1d's end, i.e. right
+  after its bit 59; TONEq 160 samples into ANSpcm, until it stopped; 610
+  samples from TONEq's end to INFO0a's first loud sample).
+- `make check`: ALL HOST CHECKS PASS (x86-64, 2 min 57 s at PAR=16).
+  `make golden`: only the new `test/golden/out/test/test_qca.txt`.
