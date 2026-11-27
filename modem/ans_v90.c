@@ -36,13 +36,29 @@ static uint32_t jd_rates(const answer_t *a)
     return m;
 }
 
-/* V.8 selected V.90 (9.2.1.1.1): INFO0d after the 75 ms */
+/* V.8 selected V.90 (9.2.1.1.1), or short Phase 1 heard TONEq (9.2.4.3):
+ * INFO0d after the 75 ms */
 void ans_start_p2(answer_t *a)
 {
     p2d_init(&a->p2, &a->p2cfg);
     /* 9.3/V.92: bit 27 of INFO0d; the rest follows from INFO0a */
-    if (a->cfg.modes & ANS_MODE_V92) p2d_offer_v92(&a->p2, a->pcm_up);
+    if (a->cfg.modes & ANS_MODE_V92) {
+        p2d_offer_v92(&a->p2, a->pcm_up);
+        /* 9.4: bit 26 too in a call that came through short Phase 1. INFO0d
+         * goes out before INFO0a is heard, so whatever the caller asks for;
+         * one that does not ask (INFO0a bit 27) has the full Phase 2 */
+        if (a->v8.qc.flags & V8A_QC_TONEQ) p2d_offer_short(&a->p2);
+    }
     ans_enter(a, ANS_P2); a->t = 0;
+}
+
+/* V.92 8.3.6: a call that had short Phase 1 keeps QTS's data frame grid
+ * from there on, so every Phase 3 transmitter of it (V.90's, V.92's;
+ * retrains included) starts on it. In a scheme's tick qc.grid is the
+ * interval of this sample, and the transmitter's first tick is the next. */
+static void qc_align(const answer_t *a, v90tx_t *t)
+{
+    if (a->v8.qc.flags & V8A_QC_GRID) (void)v90tx_align(t, a->v8.qc.grid == 5 ? 0 : a->v8.qc.grid + 1);
 }
 
 /* Phase 2 is done: INFO1a says how the caller will send */
@@ -50,6 +66,9 @@ static void start_p34(answer_t *a)
 {
     p34d_cfg c;
     int sr = a->p2.info1a.up_sr, hi = (a->p2cfg.up_hi_carrier >> sr) & 1;
+    /* after short Phase 2 there was no INFO1d to name the carrier: the
+     * caller's INFO1a does (Table 19/V.92 bit 33) */
+    if (a->p2.v92 & P2D_V92_SHORT_RAN) hi = a->p2.info1a.hi_carrier != 0;
     c.alaw = a->p2cfg.alaw;
     c.uinfo = a->p2.info1a.uinfo; c.md_len = a->p2.info1a.md_len; c.rtd = a->p2.rtd;
     c.echo_delay = a->echo_delay;
@@ -61,6 +80,7 @@ static void start_p34(answer_t *a)
     else { c.sym_rate = 3200; c.car_num = hi ? 3 : 4; c.car_den = hi ? 5 : 7; }
     /* a symbol rate we did not offer cannot be served */
     if ((sr != 3 && sr != 4) || p34d_init(&a->p34, &c) != 0) { ans_fail(a, ans_retrain_or(a, ANS_END_FAILED)); return; }
+    qc_align(a, &a->p34.tx);
     ans_enter(a, ANS_P3); a->t = 0;
 }
 
@@ -94,6 +114,7 @@ static void start_v92(answer_t *a)
     c.getbit = a->cfg.getbit; c.putbit = a->cfg.putbit; c.user = a->cfg.user;
     a->v92_data = 0;
     if (v92d_init(&a->u.v92, &c) != 0) { ans_fail(a, ans_retrain_or(a, ANS_END_FAILED)); return; }
+    qc_align(a, &a->u.v92.tx);
     ans_enter(a, ANS_P3X); a->t = 0;
 }
 
@@ -145,7 +166,10 @@ static int16_t tick_p2(answer_t *a, int16_t rx)
     tx = p2d_tick(&a->p2, rx);
     if (a->p2.state == P2D_DONE) {
         /* a retrain's Phase 2 has no INFO0: what the first one found holds */
-        if (a->p2.n_info0d > 0) a->v92_both = a->p2.v92 && a->p2.info0a.v92;
+        if (a->p2.n_info0d > 0) a->v92_both = (a->p2.v92 & P2D_V92_ON) && a->p2.info0a.v92;
+        /* the record of short Phase 2 (9.4.1): run, or begun and gone to the full one */
+        if (a->p2.v92 & P2D_V92_SHORT_RAN) a->v8.qc.flags |= V8A_QC_SHORT;
+        if (a->p2.v92 & P2D_V92_SHORT_FULL) a->v8.qc.flags |= V8A_QC_SHORT_FULL;
         if (a->p2.mode == P2D_MODE_V92) start_v92(a);
         else if (a->p2.info1a.v90) start_p34(a);
         else start_v34_call(a);
@@ -219,8 +243,19 @@ static int16_t tick_v92(answer_t *a, int16_t rx)
          *     even the lowest PCM rate in data mode (the line does not
          *     carry PCM upstream, whatever a new design says):
          * then bit 70 of INFO1d says "no PCM upstream" for the rest of
-         * the call and the caller is left with V.34 upstream (V.90). */
-        if (m->state == V92D_FAILED || !a->v92_data || m->up_floor) a->pcm_up = 0;
+         * the call and the caller is left with V.34 upstream (V.90).
+         * One exception (qc-facts.md, Readings 9): the call's first
+         * start-up after short Phase 1 (TONEq heard, no retrain yet). Its
+         * caller may have started from parameters it stored in an earlier
+         * call, and these, not the line, are then the likely cause of a
+         * start-up that never reached data mode: that failure keeps PCM
+         * upstream on offer (and sets V8A_QCX_SPENT). A QC fallback to V.8,
+         * and every later start-up, measured the line itself: the rule
+         * above. */
+        if ((a->v8.qc.flags & V8A_QC_TONEQ) && !(a->v8.qc.aux & V8A_QCX_SPENT)
+            && a->retrains == 0 && !a->v92_data)
+            a->v8.qc.aux |= V8A_QCX_SPENT;
+        else if (m->state == V92D_FAILED || !a->v92_data || m->up_floor) a->pcm_up = 0;
         ans_v90_retrain(a, m->state == V92D_FAILED ? WHY_OURS : m->retrain_ours); tx = 0;
     } else if (m->state == V92D_DATA) {
         /* also after a rate renegotiation */

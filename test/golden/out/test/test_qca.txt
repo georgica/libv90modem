@@ -1,0 +1,18 @@
+qc1a_bits
+qca1d_rx
+  QCA1d read 1600 samples after its first bit
+qts
+anspcm
+caller_qc short_p2 1
+  QC1a began 8002 samples after ANSam
+  CM stopped -265 samples from QCA1d's end
+  TONEq from 160 to 559 samples after ANSpcm began; ANSpcm 561 samples
+  silence 610 samples, then INFO0a
+caller_qc short_p2 0
+  QC1a began 8002 samples after ANSam
+  CM stopped -265 samples from QCA1d's end
+  TONEq from 160 to 559 samples after ANSpcm began; ANSpcm 561 samples
+  silence 610 samples, then INFO0a
+caller_deaf
+t19
+test_qca: 129 checks, 0 failures

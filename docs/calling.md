@@ -98,7 +98,8 @@ when answering. At least one is required (0 gives `V90M_EINVAL`).
   the receiver's is sent as a cleardown first (V.90 9.7 / V.92 9.11).
 - **Cleardown** either way (`v90m_cleardown`; `V90M_END_CLEARDOWN_FAR`
   when the answerer clears down).
-- **Not done:** V.92 quick connect, short Phase 2, modem-on-hold.
+- **Not done on the calling side:** V.92 quick connect, short Phase 2,
+  modem-on-hold.
 
 ## Bell 103 and Bell 212A
 

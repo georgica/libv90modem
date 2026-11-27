@@ -24,7 +24,7 @@ The host suite:
   internals renamed `v90m__i_*`) and the compiler's helpers;
 - `check-version`: the Makefile's `VERSION` is the header's
   `V90M_VERSION_*`, README's "This is X" and the `.so` names of
-  [getting-started.md](getting-started.md) (`version: 0.7.3 everywhere`);
+  [getting-started.md](getting-started.md) (`version: 0.7.4 everywhere`);
 - `check-soname`: the shared library's SONAME is
   `libv90modem.so.MAJOR.MINOR` while MAJOR is 0 (`soname:
   libv90modem.so.0.7`);
@@ -79,7 +79,8 @@ program's own golden file is not a re-record.
 106 recordings of real calls (private, never in the repository: `RECS`,
 their names and hashes in `test/golden/recordings.sha256`) go through
 `v90m-replay` in seven flag sets (none, `-9`, `-x`, `-x -9`, `-k`, `-k -9`,
-`-H`): 742 runs, whose trace, decided bits and exit code are hashed against
+`-H`; the V.92 ones with `-Q`, as the calls were answered without Quick
+Connect): 742 runs, whose trace, decided bits and exit code are hashed against
 `test/golden/replay.sha256`. `check` compares (and stops at once on a set
 the manifest has no lines for), `record` writes the manifest, `diff REF`
 replays with this tree and with the tool built from a git REF and prints
@@ -287,6 +288,49 @@ several sides, each saying what it supports (the design,
   shows only that every recording completes; the proof that nothing else
   moved is the replay without `-k`, byte-identical to 0.4.0's.
 
+## V.92 Quick Connect's checks
+
+Quick Connect is built from the V.92 text, and its tests check it against a
+simulated V.92 caller (`sim/qca`, `sim/p2a`, `sim/v92call`; written from the
+V.92 text, never from the library's code, its tables and bit writers
+deliberately a second copy). All of them are in `make check`:
+
+- `test_qcsig`: the QC signals (QC1a, QCA1d, QTS, ANSpcm, LM) against the
+  tables of the V.92 text, both laws.
+- `test_qca`: the simulated caller itself.
+- `test_qc1a`: the QC1a tracker in V.8's receiver, with the cases that
+  must not be taken for one (CM-only callers, echo, noise, start-stop
+  text, QC1d, one copy, two different copies), each compared sample for
+  sample with a run that did not offer Quick Connect.
+- `test_txalign` (`v90/`): the V.90 transmitter's frame grid set from QTS.
+- `test_p2_qc`: short Phase 2 and its recovery, Tables 18 and 19.
+- `test_answer_qc`: whole calls, `qc_full`, the fallbacks (`no_toneq`,
+  `deaf`, `late_toneq`, `too_late`), A-law, the stale caller, the
+  K56flex and V.8bis cases, `V90M_OPT_NO_QC`.
+- `test_v8bis`: V.8bis's MS for V.8 and the ACK(1) it gets.
+- `api/test_qc`: `v90m_get_qc` through the public API.
+- **`make qc-scan RECS=<dir>`:** V.92's QC1a in the recordings of a
+  directory (`.raw` and `.raw.xz`, as `v90m-replay` reads them): each one
+  found with its time and information octet, then a count. Real V.92
+  callers send one, so a hit is not an error. Two of the fixtures (the
+  U.S. Robotics 5686 calls) and about half of the private recordings hold
+  one; they replay otherwise from 0.7.4 unless `v90m-replay -Q` is given,
+  which is why the replay proof and the fixtures use it.
+- **`make v8bis-scan RECS=<dir>`:** every V.8bis frame with a good FCS in
+  what the answering modem heard, classified as K56flex's, an MS for V.8
+  with or without ACK(1), or other. An MS for V.8 that asks for ACK(1) is
+  answered from 0.7.4 and so may replay otherwise. None of the fixtures
+  and none of the private recordings holds a V.8bis frame.
+- **The replay's `qc:` line:** `v90m-replay` prints `qc: heard H uqts U
+  lapm P accepted A level L toneq T fallback F short S` after the
+  modulation line when a QC1a was heard and the run could take it (`-9`
+  without `-Q`).
+- **The proof:** every recording and bench hash that is not a Quick
+  Connect call is unchanged by 0.7.4 (`make replay-proof`, `make
+  bench-hashes`).
+- Memory pins: the sizes of 0.7.3 hold on x86-64 and on ARMv5 and ARMv7
+  (`api_test_api`).
+
 ## Recorded calls and the replay tool
 
 `v90m-replay` (`make replay`, installed by `make install`) plays a
@@ -294,13 +338,14 @@ recorded call into the answering modem and reports what it made of it,
 phase by phase:
 
 ```
-v90m-replay [-a] [-9] [-x] [-k] [-B] [-H] [-M] [-F] [-u BPS] [-d BPS] [-l DBM0 | -r RMS] [-e SAMPLES] [-P CODE] [-s SAMPLE] [-b FILE] RECORDING
+v90m-replay [-a] [-9] [-Q] [-x] [-k] [-B] [-H] [-M] [-F] [-u BPS] [-d BPS] [-l DBM0 | -r RMS] [-e SAMPLES] [-P CODE] [-s SAMPLE] [-b FILE] RECORDING
 ```
 
 | | |
 |---|---|
 | `-a` | A-law line (mu-law otherwise) |
 | `-9` | V.92 offered (PCM upstream up to 48000 bit/s unless `-u`) |
+| `-Q` | with `-9`: a caller's V.92 QC1a not taken (`V90M_OPT_NO_QC`), V.8 as 0.7.3 answered; the replay proof's and the fixtures' V.92 runs use it (a U.S. Robotics 5686 sends a QC1a) |
 | `-x` | x2 offered (`V90M_MOD_X2`) |
 | `-k` | K56flex offered (`V90M_MOD_K56`): V.8bis first; the recording is lined up with our answer tone after it |
 | `-B` | Bell 103 and Bell 212A offered too (`V90M_MOD_BELL103`, `V90M_MOD_BELL212A`), as a host may offer them (nsdiald's sidecar: `bell103`, `bell212`); without them a caller without V.8 hears no 2225 Hz from us 4 s into the V.22 wait |

@@ -76,6 +76,8 @@ typedef struct {
     int mp_n, b1d_bad, b1d_frames, dec_bad;
     int tx_ready, rx_ready, up_rate, odd_frames;
     long sd_at, tick;
+    long sd_first;              /* the first octet of that Sd, as delivered (tick), 0 none */
+    long sd_run0, sd_run_last;  /* the run of Sd units being read */
     /* rate renegotiation (9.6.2) and cleardown (9.7) */
     int reneg_scr;              /* symbols of SCR after S-bar */
     int reneg_silence;          /* ask for silence: CPs, CPs', SCR, then CP (9.6.2.1.5 to .8) */

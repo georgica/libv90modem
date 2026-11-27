@@ -1,4 +1,9 @@
   CRe: 1375.0 + 2002.0 Hz, 400.0 Hz; 14.6 / 14.6 dB below the CL
   CL begins 125.0 ms after CRd ends; ACK(1) 180.0 ms after the MS ends
   version 1 selected: NAK(3) 180.0 ms after the MS ends
-test_v8bis: 76 checks, 0 failures
+  MS 21 89 80 80 81 c2 (BinModem's, revision 2): ACK(1) 180.0 ms after it, done at its end
+  MS 11 89 80 80 81 c2 (revision 1): ACK(1) 180.0 ms after it, done at its end
+  MS 11 81 80 80 81 c2 (no ACK(1) asked): V.8, nothing sent, done 0.0 ms after it
+  MS 11 89 80 80 80 (no data): no MS, nothing sent, done 0.1 ms after it
+  MS 11 88 80 80 81 c2 (no V.8): no MS, nothing sent, done 0.0 ms after it
+test_v8bis: 121 checks, 0 failures

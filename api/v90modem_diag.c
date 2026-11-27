@@ -211,6 +211,9 @@ void diag_track_answer(diag_track_t *t, const answer_t *a)
     case ANS_HST:
         ph = legacy_phase(a->connected); sel = V90M_CONN_HST;
         break;
+    case ANS_QC:            /* V.92 short Phase 1: V.8's place, V.92 (V.90's PCM) chosen */
+        ph = V90M_PHASE_V8; sel = v8_choice(V8_SEL_V90, a->cfg.modes);
+        break;
     default:
         break;
     }

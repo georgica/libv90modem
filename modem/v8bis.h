@@ -13,7 +13,10 @@
  *   the client's MS on channel 2 (1650 / 1850 Hz), until V8B_MS_WAIT_MS
  *     after our CL ended; V8B_ACK_GAP_MS after it, ACK(1) to an MS that
  *     carries the K56flex block (v8bis_ms_is_k56), NAK(1) to an invalid
- *     frame (7.2.9, 9.8; ruling C6), nothing to a valid frame without it;
+ *     frame (7.2.9, 9.8; ruling C6); to an MS for data that leaves the
+ *     modulation to V.8 (v8bis_ms_v8, V8B_RES_V8: BinModem's +A8E MS),
+ *     ACK(1) when it asks for it (V.8bis 9.7, 9.9.1), else nothing;
+ *     nothing to any other valid frame;
  *     NAK(3) (9.5: a mode we do not support or have disabled) to an MS
  *     whose block selects version 1 alone when our CL offered it among
  *     others and accept_v1 is clear (docs/history/k56-facts.md
@@ -42,8 +45,12 @@ typedef enum {
 #define V8B_RES_NONE   0
 #define V8B_RES_AGREED 1    /* its MS carried the K56flex block; we sent ACK(1) */
 #define V8B_RES_NO_CRD 2
-#define V8B_RES_NO_MS  3    /* none, a valid frame without the block, or an invalid frame */
+#define V8B_RES_NO_MS  3    /* no MS in time; or a message that is neither an MS with the K56flex
+                               block nor an MS for V.8 data (v8bis_ms_v8): nothing sent; or an
+                               invalid frame: NAK(1) */
 #define V8B_RES_DECLINED 4  /* its MS carried the block but selected version 1: NAK(3) */
+#define V8B_RES_V8     5    /* its MS was for data, the modulation left to V.8 (v8bis_ms_v8):
+                               ACK(1) when it asked for it (ms_v8 2), else nothing */
 
 #define V8B_SIL_MS          400
 #define V8B_CRE_DUAL_MS     290
@@ -100,6 +107,7 @@ typedef struct {
     int         accept_v1;      /* an MS selecting version 1 is acknowledged too */
     int         cl_sent;        /* our CL went out */
     int         ms_ver;         /* the version octet of its MS's K56flex block, -1 none */
+    int         ms_v8;          /* v8bis_ms_v8 of its MS (2: ACK(1) asked for), 0 none */
     int         result;
 } v8bis_t;
 

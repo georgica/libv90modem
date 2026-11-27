@@ -15,6 +15,16 @@ void v8call_init(v8call_t *c, int fs, int16_t amp, const v8_menu_t *cm)
     c->gi = c->gq = c->gph = 0; c->gn = 0; c->ghits = 0;
     c->ncm = v8_frame(V8_SYNC_CM_JM, oct, n, c->cmbits, 200);
     c->pos = 0; c->want_cj = 0; c->got_jm = 0; c->cm_sent = 0;
+    c->npre = c->ppos = 0; c->te = fs;
+}
+
+void v8call_prefix(v8call_t *c, const uint8_t *bits, int n)
+{
+    int k;
+    if (n > (int)sizeof c->pre) n = (int)sizeof c->pre;
+    for (k = 0; k < n; k++) c->pre[k] = bits[k];
+    c->npre = n; c->ppos = 0;
+    c->te = c->fs - 10 * 160;                   /* 1 s from ANSam's start, the 10 blocks heard */
 }
 
 v8c_state v8call_tick(v8call_t *c, int16_t rx, int16_t *tx)
@@ -33,12 +43,17 @@ v8c_state v8call_tick(v8call_t *c, int16_t rx, int16_t *tx)
         }
         break;
     case V8C_TE:                                 /* Te = 1 s of silence */
-        if (++c->t >= c->fs) { c->state = V8C_CM; c->t = 0; }
+        if (++c->t >= c->te) { c->state = V8C_CM; c->t = 0; }
         break;
     case V8C_CM:
         ev = v8rx_tick(&c->rx, v21demod_tick(&c->dem, rx));
         if ((ev & V8RX_MENU) && !c->want_cj && v8_decode(c->rx.msg, c->rx.nmsg, &c->jm) == 0) {
             c->got_jm = 1; c->want_cj = 1;
+        }
+        if (c->ppos < c->npre) {                /* the prefix, once */
+            *tx = v21mod_tick(&c->mod, c->pre[c->ppos], &done);
+            if (done) c->ppos++;
+            break;
         }
         *tx = v21mod_tick(&c->mod, c->cmbits[c->pos], &done);
         if (done) {

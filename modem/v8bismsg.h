@@ -89,6 +89,17 @@ int v8bis_cl_is_k56(const uint8_t *blk, int len);
  * anything else, a message that does not parse included. */
 int v8bis_ms_is_k56(const uint8_t *o, int n);
 
+/* An MS for data that leaves the modulation to V.8 (V.8bis 9.7, 9.9.1;
+ * docs/history/qc-facts.md "BinModem", "Readings" 10): the n octets parse
+ * by the trees (8.2.3) as v8bis_ms_is_k56 parses them, its I NPar(1) asks
+ * for V.8 (bit 1), its S SPar(1) selects data (bit 1) and nothing else,
+ * the data block's NPar(2) has no bits but transparent data, V.42, V.42
+ * bis and V.14 (bits 1 to 4; an SPar(2), if any, has none), and no NS
+ * block is K56flex's. Then 2 when its I NPar(1) asks for ACK(1) (bit 4),
+ * else 1; 0 for anything else. The revision (octet 0's high nibble) is
+ * not looked at. */
+int v8bis_ms_v8(const uint8_t *o, int n);
+
 /* the version octet (blk[7]) of the block v8bis_ms_is_k56 finds, 0..255;
  * -1 when there is none */
 int v8bis_ms_version(const uint8_t *o, int n);

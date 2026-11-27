@@ -15,7 +15,7 @@ inside `v90m_process_*()` on the calling thread.
 
 What a callback may do to the modem that calls it: `v90m_retrain`,
 `v90m_cleardown`, `v90m_get_state`, `v90m_get_stats`, `v90m_get_diag`,
-`v90m_get_v34_cap`, `v90m_get_restarts`, `v90m_get_k56` (and anything on another object: every `v90m_ec_*` and `v90m_async_*` function).
+`v90m_get_v34_cap`, `v90m_get_restarts`, `v90m_get_k56`, `v90m_get_qc` (and anything on another object: every `v90m_ec_*` and `v90m_async_*` function).
 `v90m_reset` returns `V90M_ESTATE` and changes nothing. `v90m_destroy`
 takes effect at the end of the sample under way: no event after it, the
 rest of the block is silence (linear 0, mu-law 0xFF, A-law 0xD5), the
@@ -28,7 +28,7 @@ that goes on. `v90m_init` on the modem's own memory is not allowed.
 
 NULL: every function checks the object it is given (and the struct that
 `v90m_get_state`, `v90m_get_stats`, `v90m_get_diag`, `v90m_get_v34_cap`,
-`v90m_get_restarts`, `v90m_get_k56` and `v90m_ec_get_status` fill): with
+`v90m_get_restarts`, `v90m_get_k56`, `v90m_get_qc` and `v90m_ec_get_status` fill): with
 NULL a function returning `int` returns `V90M_EINVAL`, one returning
 `size_t` or `unsigned long` 0, a `void` one does nothing. Except the four
 called for every bit, `v90m_ec_tx_bit`, `v90m_ec_rx_bit`,
@@ -43,8 +43,8 @@ the object first.
 
 | | |
 |---|---|
-| `V90M_VERSION_MAJOR`, `V90M_VERSION_MINOR`, `V90M_VERSION_PATCH` | the header's version: 0, 7, 3 |
-| `const char *v90m_version(void)` | "0.7.3": the version of the library linked in (may differ from the header) |
+| `V90M_VERSION_MAJOR`, `V90M_VERSION_MINOR`, `V90M_VERSION_PATCH` | the header's version: 0, 7, 4 |
+| `const char *v90m_version(void)` | "0.7.4": the version of the library linked in (may differ from the header) |
 
 ## Error codes
 
@@ -110,10 +110,11 @@ version; the init functions check the length given):
 | `V90M_MOD_BELL103` | 0x0040 | not in the defaults, either role |
 | `V90M_MOD_BELL212A` | 0x0080 | not in the defaults, either role; answering only with `V90M_MOD_V22` (without: `V90M_ENOTSUP`) |
 | `V90M_MOD_X2` | 0x0100 | answering only (calling: `V90M_ENOTSUP`), with `V90M_MOD_V34` (without: `V90M_ENOTSUP`), not in the defaults: x2 as its server, offered on a mu-law line to a caller whose CM offers V.34 and no PCM; see [answering.md](answering.md), "x2" |
-| `V90M_MOD_K56` | 0x0200 | answering only (calling: `V90M_ENOTSUP`), with `V90M_MOD_V34` (without: `V90M_ENOTSUP`), not in the defaults; experimental: K56flex as its server, offered on a mu-law line in V.8bis before V.8 (every caller then hears our answer tone later: 1.790 s without V.8bis, 3.807 s for a V.8bis caller without K56flex, 3.413 s for a K56flex client, as measured with 0.7.1's CL; 0.7.2's adds 3 to 4 ms to the last two, and a client declined for version 1 hears it 3.420 s later); see [answering.md](answering.md), "K56flex" |
+| `V90M_MOD_K56` | 0x0200 | answering only (calling: `V90M_ENOTSUP`), with `V90M_MOD_V34` (without: `V90M_ENOTSUP`), not in the defaults; experimental: K56flex as its server, offered on a mu-law line in V.8bis before V.8 (every caller then hears our answer tone later: 1.790 s without V.8bis, 3.807 s for a V.8bis caller without K56flex, 3.413 s for a K56flex client, as measured with 0.7.1's CL; 0.7.2's adds 3 to 4 ms to the last two, and a client declined for version 1 hears it 3.420 s later; from 0.7.4 a V.8bis caller whose MS has no K56flex block, leaves the modulation to V.8 and asks for ACK(1) gets it and hears it about 3.46 s later); see [answering.md](answering.md), "K56flex" |
 | `V90M_MOD_HST` | 0x0400 | answering only (calling: `V90M_ENOTSUP`), needs no other bit, not in the defaults: HST, U.S. Robotics' asymmetric modem (a fast forward channel and a 450 or 300 bit/s back channel, MNP error control), as its answering side. Offered only when an MNP endpoint is linked with `v90m_ec_link_hst` before the modem decides (the end of ANSam), and `max_down_bps` is 0 or 4800 and up. A caller that sends neither CM nor AA is listened to for its back channel for 650 ms after ANSam (up to 2 s while 250-500 Hz energy is there): heard, HST (`V90M_CONN_HST`); not heard, V.22bis or V.21 as without HST, that much later. Callers that send CM or AA are answered exactly as without HST. No MNP link within 15 s: `V90M_END_HST_FAILED`. See [error-control.md](error-control.md) for the host's side |
 | `V90M_OPT_V34_TX_CAP` | 0x10000 | not a modulation (alone: `V90M_EINVAL`; bits 16 and up are options); off by default. Answering, V.34: cap our V.34 transmit at the caller's own INFO1c / INFO1a projection (our MP offers the lower of `max_down_bps` and the projection); for a host to set per call, see [answering.md](answering.md), "The V.34 transmit cap"; calling: ignored |
 | `V90M_OPT_K56_V2_ONLY` | 0x20000 | an option (added in 0.7.2), off by default. Answering, with `V90M_MOD_K56`: our V.8bis CL offers K56flex version 2 alone (version octet 0x42) instead of versions 1 and 2 (0x43, the default from 0.7.2 on), and every K56flex selection is acknowledged: 0.7.1's exchange, for a replay of a call 0.7.1 answered or a client that dislikes 0x43; `V90M_OPT_K56_V1` then changes nothing; see [answering.md](answering.md), "K56flex versions"; calling: ignored |
+| `V90M_OPT_NO_QC` | 0x100000 | an option (added in 0.7.4), off by default. Answering, with `V90M_MOD_V92`: a caller's V.92 Quick Connect request (QC1a) is not taken, and the call starts with V.8 as in 0.7.3. Without it Quick Connect is part of V.92: a QC1a heard during our answer tone is answered with short Phase 1 (QCA1d, QTS, ANSpcm), and a caller that does not finish it within 2 s gets the answer tone again and V.8. A safety valve per port, and what a replay of a call answered by 0.7.3 or earlier needs (`v90m-replay -Q`). 0x80000 is kept free; calling: ignored |
 | `V90M_OPT_K56_V1` | 0x40000 | an option (added in 0.7.2), off by default, **experimental**. Answering, with `V90M_MOD_K56`: a client that selects K56flex version 1 is acknowledged and our (version 2) start-up runs; it may fail in training, past the point where V.34 could still be had (`V90M_END_K56_FAILED`). Without it such a client is declined (NAK(3)) and goes on to V.8 as without K56flex. For a test number; see [answering.md](answering.md), "K56flex versions"; calling: ignored |
 
 What each does in each role: [answering.md](answering.md),
@@ -398,6 +399,43 @@ the disassembly of its controller, V1.101, and the simulator; not yet seen
 on a live call); a version-2 client
 `3, 1, 2, 0, 1`; before 0.7.2 (or with `V90M_OPT_K56_V2_ONLY`) the WebTV
 read `2, 0, 0, 0, 0`: it dropped our CL without a word.
+
+## Quick Connect
+
+Added in 0.7.4. `void v90m_get_qc(const v90m_t *m, v90m_qc *q)`:
+answering, what V.92's Quick Connect did in the call (see
+[answering.md](answering.md), "V.92 Quick Connect"). Settled field by
+field as the call goes, kept after the end until `v90m_reset`; cheap, fine
+after every sample, also from a callback. All 0 when calling and, but for
+`v8bis_ack` (V.8bis comes first), before a QC1a has been heard. A struct
+and a function of their own, as `v90m_get_k56`: `v90m_stats` keeps its
+size within 0.7, and so does `v90m_qc` (ten ints). Quick Connect is part
+of `V90M_MOD_V92`; `V90M_OPT_NO_QC` turns it off. The QC1a reported is the
+first heard in the call, the one acted on: a QC1a sent again after a
+fallback is not taken.
+
+| `v90m_qc` | |
+|---|---|
+| `heard` | 1: a QC1a (two equal copies) during our answer tone, whether or not we acted on it (with `V90M_OPT_NO_QC` or after K56flex was agreed it is heard and ignored) |
+| `uqts` | its UQTS (WXYZ) as the Ucode QTS uses, 61 to 87; -1 for WXYZ 1111 (a call coming off modem-on-hold) or an octet that is not an analogue modem's QC1a: ignored, and V.8 goes on; 0 when not heard |
+| `lapm` | its P bit (LAPM asked for); 0 when not heard |
+| `accepted` | 1: we answered it with QCA1d, QTS and ANSpcm |
+| `level_db10` | the ANSpcm level our QCA1d named (LM), in 0.1 dBm0: -95, -120, -150 or -180; 0 when not accepted |
+| `toneq_ms` | milliseconds from the end of our QCA1d to the start of the caller's TONEq (a run that began within the 2 s, so 1 to 2000; it may be taken up to about 2.1 s); 0 for none |
+| `fallback` | 1: no TONEq within 2 s: our answer tone again and V.8 (9.2.4.3) |
+| `bypass` | `v90m_state.odp_bypass` once a QC1a is heard: V.42's ODP / ADP skipped. For an accepted call without a fallback that is both P bits set (9.2.5); otherwise V.8's rule (V.92 at both ends, LAPM in CM and JM, 9.3.1), so after a fallback it can be 1. 0 when no QC1a was heard, even where `odp_bypass` is 1 (a V.92 call that sent none) |
+| `short_p2` | 0: short Phase 2 not run; 1: completed (9.4.1); 2: begun, then the full Phase 2 took over |
+| `v8bis_ack` | 1: with `V90M_MOD_K56`, the client's V.8bis MS left the modulation to V.8 (no K56flex block) and got our ACK(1) (V.8bis 9.7, 9.9.1), with or without a QC1a after it. `v90m_k56.exchanged` still means the MS carried the K56flex block |
+
+`odp_bypass` under Quick Connect: set when both P bits are (the caller's in
+its QC1a, ours mirroring it in QCA1d), before Phase 2 is over; the V.42
+endpoint should then start without ODP / ADP detection
+([error-control.md](error-control.md)). Without a QC1a it is 0.7.3's rule.
+
+A typical Quick Connect call reads `heard 1, uqts 70, lapm 1, accepted 1,
+level_db10 -120, toneq_ms` between 1 and 2000, `fallback 0, bypass 1, short_p2
+1`; one whose caller never sent TONEq, `heard 1, accepted 1, fallback 1,
+toneq_ms 0, short_p2 0`.
 
 ## Control calls
 

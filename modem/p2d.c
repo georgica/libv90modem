@@ -26,7 +26,10 @@ static void send_info0d(p2d_t *p, int ack)
     i.tx_power = (uint8_t)(-6 - p->cfg.tx_dbm0);
     i.max_tx_power = (uint8_t)p->cfg.max_tx_code;
     i.alaw = (uint8_t)p->cfg.alaw;
-    i.v92 = (uint8_t)(p->v92 != 0);     /* Table 15/V.92 bit 27; short Phase 2 (bit 26) is not asked for */
+    i.v92 = (uint8_t)((p->v92 & P2D_V92_ON) != 0);  /* Table 15/V.92 bit 27 */
+    /* bit 26, short Phase 2 (9.4): asked for by p2d_offer_short, and no more
+     * once it has gone to the full Phase 2 */
+    i.short_p2 = (uint8_t)((p->v92 & (P2D_V92_ON | P2D_V92_SHORT | P2D_V92_SHORT_FULL)) == (P2D_V92_ON | P2D_V92_SHORT));
     n = info0d_build(&i, bits);
     dpsktx_send(&p->tx, bits, n);
     p->n_info0d++;
@@ -85,6 +88,24 @@ void p2d_retrain_v92(p2d_t *p, int pcm_up)
     p->v92 = 1; p->pcm_up = pcm_up != 0; p->peer_v92 = 1;
 }
 
+void p2d_offer_short(p2d_t *p)
+{
+    p->v92 |= P2D_V92_SHORT;
+    if (p->state == P2D_INFO0 && p->now == 0) {
+        /* replace the queued INFO0d by one with bits 26 and 27 set */
+        dpsktx_init(&p->tx, DPSK_FC_B, p->level, 0);
+        p->n_info0d = 0;
+        send_info0d(p, 0);
+    }
+}
+
+/* 9.4: both INFO0s say V.92 and ask for short Phase 2 (INFO0a bits 26 and 27) */
+static int short_wanted(const p2d_t *p)
+{
+    return (p->v92 & (P2D_V92_ON | P2D_V92_SHORT | P2D_V92_SHORT_FULL)) == (P2D_V92_ON | P2D_V92_SHORT)
+        && p->info0a.v92 && p->info0a.short_p2;
+}
+
 /* 9.2.1.2.1: the caller's INFO0a again (in p->rx.frame) once the INFO0
  * exchange is behind us. It has not heard us: INFO0d with bit 28 set, as
  * INFO0a came in correctly, then Tone B, and P2D_INFO0 goes on from there
@@ -101,6 +122,18 @@ static void info0a_again(p2d_t *p)
     dpskrx_expect(&p->rx, INFO_PAYLOAD(INFO0A_BITS));
     send_info0d(p, 1);
     go(p, P2D_INFO0);
+}
+
+/* 9.4.1.2.2 (silent: Tone B once Tone A is heard, P2D_RECOVER) and
+ * 9.4.1.2.3 (Tone B at once): short Phase 2 gives way to the full one */
+static void short_full(p2d_t *p, int silent)
+{
+    p->v92 |= P2D_V92_SHORT_FULL;
+    if (p->n_recover >= P2D_MAX_RECOVER) { fail(p, P2D_ERR_REV); return; }
+    p->n_recover++;
+    dpskrx_expect(&p->rx, INFO_PAYLOAD(INFO0A_BITS));
+    if (silent) go(p, P2D_RECOVER);
+    else { dpsktx_on(&p->tx); go(p, P2D_WAIT_REV1); }
 }
 
 /* turn the probing measurements into INFO1d */
@@ -143,7 +176,7 @@ static void send_info1d(p2d_t *p)
     int n;
     if (p->n_info0d > 0) p->peer_v92 = p->info0a.v92;   /* a retrain has no INFO0a */
     /* 9.3/V.92: Table 17 when both sides indicated V.92, else 8.2.3.2/V.90 */
-    if (p->v92 && p->peer_v92) n = info1d_build_v92(&p->info1d, p->pcm_up, bits);
+    if ((p->v92 & P2D_V92_ON) && p->peer_v92) n = info1d_build_v92(&p->info1d, p->pcm_up, bits);
     else n = info1d_build(&p->info1d, bits);
     dpsktx_send(&p->tx, bits, n);
 }
@@ -171,7 +204,7 @@ int16_t p2d_tick(p2d_t *p, int16_t x)
                 send_info0d(p, p->got0a);
                 p->resend = 0;
             } else if (p->got0a && p->rx.steady >= TONE_SEEN) {
-                go(p, P2D_WAIT_REV1);
+                go(p, short_wanted(p) ? P2D_SHORT_REV : P2D_WAIT_REV1);
             }
         }
         if (p->t > MS(5000)) fail(p, P2D_ERR_INFO0);
@@ -292,7 +325,7 @@ int16_t p2d_tick(p2d_t *p, int16_t x)
             switch (info1a_kind(&p->info1a)) {
             case INFO1A_PCM:
                 /* Table 18/V.92 needs V.92 at both ends and bit 70 of INFO1d */
-                if (!(p->v92 && p->peer_v92 && p->pcm_up)) { fail(p, P2D_ERR_PCM_UP); break; }
+                if (!((p->v92 & P2D_V92_ON) && p->peer_v92 && p->pcm_up)) { fail(p, P2D_ERR_PCM_UP); break; }
                 p->mode = P2D_MODE_V92; go(p, P2D_DONE);
                 break;
             case INFO1A_V90: p->mode = P2D_MODE_V90; go(p, P2D_DONE); break;
@@ -303,8 +336,67 @@ int16_t p2d_tick(p2d_t *p, int16_t x)
         }
         break;
 
+    case P2D_SHORT_REV:
+        /* 9.4.1.1.3: Tone A heard; Tone B, on since INFO0d ended, for 50 ms
+         * more at least, its reversal, 10 ms of it, then silence */
+        if (ev & DPSK_EV_FRAME) {           /* 9.4.1.2.1: INFO0a again */
+            info0a_parse(p->rx.frame, &p->info0a);
+            p->resend = !p->info0a.ack;
+            go(p, P2D_INFO0);
+        } else if (p->t == MS(50)) {
+            dpsktx_reverse(&p->tx);
+            p->b_rev_line = p->now + DPSK_TX_DELAY;
+        } else if (p->t == MS(50) + TAIL) {
+            dpsktx_off(&p->tx);
+            go(p, P2D_SHORT_WAIT_REV);
+        }
+        break;
+
+    case P2D_SHORT_WAIT_REV:
+        if (ev & DPSK_EV_FRAME) {
+            info0a_again(p);
+        } else if (ev & DPSK_EV_REVERSAL) {
+            /* 9.4.1.1.4: RTDEd, as in the full Phase 2 (WAIT_REV2) */
+            int32_t line = p->now - DPSK_RX_REV_DELAY;
+            p->rtd = line - p->b_rev_line - TURN - p->cfg.io_delay;
+            if (p->rtd < 0) p->rtd = 0;
+            p->rev2_at = line;
+            p->peer_v92 = p->info0a.v92;
+            dpskrx_expect(&p->rx, INFO_PAYLOAD(INFO1A_BITS));
+            dpskrx_expect_also(&p->rx, INFO_PAYLOAD(INFO0A_BITS));     /* 9.4.1.2.1 */
+            go(p, P2D_SHORT_INFO1A);
+        } else if (p->now - p->b_rev_line >= MS(P2D_SHORT_WAIT_MS)) {
+            short_full(p, 1);               /* 9.4.1.2.2 */
+        }
+        break;
+
+    case P2D_SHORT_INFO1A:
+        if ((ev & DPSK_EV_FRAME) && p->rx.flen == INFO_PAYLOAD(INFO0A_BITS)) {
+            info0a_again(p);
+        } else if (ev & DPSK_EV_FRAME) {
+            int kind;
+            info1a_parse(p->rx.frame, &p->info1a);
+            kind = info1a_kind(&p->info1a);
+            if (kind == INFO1A_PCM) {
+                /* Table 18/V.92: PCM upstream, which needs our bit 70 as in the
+                 * full Phase 2. Without it, one we cannot serve: the caller has
+                 * seen no INFO1d to tell it so, and the full Phase 2's will */
+                if (!((p->v92 & P2D_V92_ON) && p->peer_v92 && p->pcm_up)) { short_full(p, 0); break; }
+                p->mode = P2D_MODE_V92; p->v92 |= P2D_V92_SHORT_RAN; go(p, P2D_DONE);
+            } else if (kind == INFO1A_V90 && ((p->cfg.up_sr_mask >> p->info1a.up_sr) & 1)) {
+                /* Table 19/V.92: V.34 upstream at a rate our receiver has */
+                p->mode = P2D_MODE_V90; p->v92 |= P2D_V92_SHORT_RAN; go(p, P2D_DONE);
+            } else {
+                short_full(p, 0);           /* one we cannot serve: as none (9.4.1.2.3) */
+            }
+        } else if (p->now - p->b_rev_line >= MS(P2D_SHORT_WAIT_MS)) {
+            short_full(p, 0);               /* 9.4.1.2.3 */
+        }
+        break;
+
     case P2D_DONE:
     case P2D_FAILED:
+    case P2D_NSTATES:       /* not a state */
         break;
     }
 

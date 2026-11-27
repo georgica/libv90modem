@@ -17,7 +17,7 @@ V.92 and Bell:
 | flag | what | default |
 |---|---|---|
 | `V90M_MOD_V90` | V.90, the digital side: PCM downstream, V.34 upstream | on |
-| `V90M_MOD_V92` | V.92 PCM upstream on offer; only with `V90M_MOD_V90` (alone: `V90M_ENOTSUP`) | off |
+| `V90M_MOD_V92` | V.92 PCM upstream on offer, and from 0.7.4 Quick Connect for a caller that asks for it (below, "V.92 Quick Connect"); only with `V90M_MOD_V90` (alone: `V90M_ENOTSUP`) | off |
 | `V90M_MOD_V34` | V.34 | on |
 | `V90M_MOD_V32BIS` | V.32bis and V.32 | on |
 | `V90M_MOD_V22` | V.22bis and V.22 | on |
@@ -32,7 +32,9 @@ options, not modulations: `V90M_OPT_V34_TX_CAP` (off by default) caps our
 V.34 transmit at the caller's own INFO1 projection (below, "The V.34
 transmit cap"); `V90M_OPT_K56_V2_ONLY` and `V90M_OPT_K56_V1` (off by
 default; the second experimental) change what K56flex's V.8bis offers and
-accepts (below, "K56flex versions").
+accepts (below, "K56flex versions"); `V90M_OPT_NO_QC` (off by default)
+answers a V.92 caller's Quick Connect request (QC1a) as 0.7.3 did, with
+V.8 (without it Quick Connect is part of `V90M_MOD_V92`).
 
 ## The start of a call
 
@@ -178,7 +180,9 @@ answering, on a mu-law line: never with `alaw` set.
   versions 1 and 2: below, "K56flex versions"); a caller whose MS carries
   the block and selects version 2 gets ACK(1), and K56flex is agreed (x2,
   if offered too, is then not offered in that call); one that selects
-  version 1 gets NAK(3) and is answered as without K56flex. V.8 follows in every
+  version 1 gets NAK(3) and is answered as without K56flex. A caller whose
+  MS has no K56flex block but asks for V.8 and for ACK(1) gets ACK(1)
+  too, from 0.7.4 (below, "V.92 Quick Connect"). V.8 follows in every
   case, from its 200 ms of silence, and decides as without K56flex: a
   caller whose CM offers PCM while V.90 is offered gets V.90, and one that
   gets V.34 goes on to Phase 2.
@@ -186,7 +190,11 @@ answering, on a mu-law line: never with `alaw` set.
   than without K56flex for a caller without V.8bis, 3.807 s later for a
   V.8bis caller without K56flex (CRd, no MS), and 3.413 s later for a
   K56flex client (measured in the simulator with 0.7.1's CL; 0.7.2's,
-  one bit longer, adds 3 to 4 ms to the last two). A client declined for
+  one bit longer, adds 3 to 4 ms to the last two). From 0.7.4, a V.8bis
+  caller whose MS leaves the modulation to V.8 and asks for ACK(1) hears
+  it about 3.46 s later (3.464 and 3.470 s in the simulator): our ACK(1)
+  follows its MS after 180 ms, where 0.7.3 sent nothing and went on at the
+  MS's end. A client declined for
   version 1 (below, "K56flex versions") is on the agreed client's timing,
   3.420 s later with 0.7.2's CL: NAK(3) ends V.8bis where an ACK(1) would (with 0.7.1's CL
   such a client sent no MS and was on the 3.807 s one). A caller that gives up in
@@ -301,6 +309,110 @@ version 1 alone) dropped it so, and connected in V.34 at 28800 at best
   acknowledged it. A host's log line from it, after V.8bis, is what tells
   how many version-1 clients call.
 
+## V.92 Quick Connect
+
+From 0.7.4. Tried in simulation and live against BinModem on a local
+server (30 of 30 QC requests accepted); other V.92 clients (U.S. Robotics
+5686, Conexant) are not yet tested live ([limits.md](limits.md)). Quick
+Connect is part of `V90M_MOD_V92`: it is offered whenever `V90M_MOD_V90` and `V90M_MOD_V92`
+are both on, unless K56flex was agreed in the call or `V90M_OPT_NO_QC` is
+set. There is no other setting. A caller that sends no QC1a is answered
+exactly as in 0.7.3.
+
+- **What we listen for.** The V.8 receiver we already run during ANSam
+  also looks for a QC1a (V.92 8.2.1, Table 2): two equal copies, each at
+  least 8 marks, the character 0x55, one information character (WXYZ and
+  P, no QC1d bit) and at least 8 marks again. A V.92 modem sends it one
+  second after our ANSam begins by the spec (about 1.25 s for BinModem),
+  before its CM. The first QC1a heard is the one acted on. A QC1a with WXYZ 1111 (a call
+  coming off modem-on-hold) or an octet that is not an analogue modem's
+  is ignored, and the CM behind it decides as always. QC1d is not
+  answered.
+- **What a Quick Connect caller hears from us.** V.8 ends at once, and
+  then, in this order:
+  1. QCA1d, on V.21 (high channel). It names the level of our ANSpcm
+     (LM) and carries our P bit, which mirrors the caller's.
+  2. 75 ms of silence.
+  3. QTS (768 codewords, then 48 of QTS-bar), in the Ucode its QC1a asked
+     for (UQTS). The 6-symbol data frame grid starts at QTS's first
+     symbol (V.92 8.3.6), and every Phase 3 of the call, retrains
+     included, keeps it.
+  4. ANSpcm, while we listen for the caller's TONEq. ANSpcm's level (LM)
+     is the nearest of -9.5, -12, -15 and -18 dBm0 to our nominal Phase 2
+     transmit power (a tie goes to the lower), moved down while it is
+     above the maximum our INFO0d will advertise, never below -18 dBm0.
+     It goes on until TONEq comes or the 2 s run out.
+  5. On TONEq, 75 ms of silence and Phase 2, with INFO0d bit 26 set: the
+     short Phase 2 below.
+- **TONEq** is 980 Hz held for at least 100 ms (6 blocks of the tone
+  detector, then 40 ms more). 980 Hz is also V.21(L)'s mark, which is why
+  a shorter run does not count: a caller that missed QCA1d goes on with
+  its CM, whose marks run at most about 63 ms.
+- **The 2 s fallback** (V.92 9.2.4.3). With no TONEq within 2 s of the end
+  of QCA1d, ANSam begins again exactly 16000 samples after it, and V.8
+  goes on as for any caller: the caller's CM, our JM. The QC1a is not
+  taken a second time. `v90m_get_qc` says `fallback`. A TONEq run that
+  began before the 2 s are over is followed to its end: it can be taken
+  up to about 2.1 s after QCA1d; one that begins in the last 10 to 20 ms
+  before the deadline has not yet shown a full detector block and is
+  dropped ([limits.md](limits.md)).
+- **P bits and V.42.** Our P bit mirrors the caller's, as our JM mirrors
+  its CM's LAPM. When both are set V.42's ODP / ADP detection is bypassed
+  (V.92 9.2.5): `v90m_state.odp_bypass` is 1 and the V.42 endpoint should
+  start without detection ([error-control.md](error-control.md)). After a
+  fallback, the V.8 rule of 9.3.1 (V.92 at both ends, LAPM in CM and JM)
+  decides, as for any V.92 call.
+- **Short Phase 2** (V.92 9.4.1), only in a call that went through
+  TONEq; every other call has the full Phase 2. Our INFO0d has bit 26
+  set; when the caller's INFO0a has both its bits 26 and 27 set, we
+  reverse Tone B (at least 50 ms after it began), the caller's reversal
+  gives the round-trip delay, and its INFO1a ends Phase 2: no probing, no
+  INFO1d. INFO1a of Table 18 (PCM upstream) goes to V.92 Phases 3 and 4;
+  of Table 19 (V.34 upstream, with its carrier in bit 33) to V.90's, at
+  3000 or 3200 symbols a second. In the simulator, Phase 2 took 0.33 s
+  against 1.96 s for the full one on a short line, and 0.78 s against 3.46
+  s with a 2400-sample delay.
+- **Recovery.** 2500 ms after our reversal, with no reversal from the
+  caller or no INFO1a we can serve (Table 19 naming 3429 symbols a
+  second, which we do not receive, or Table 18 when PCM upstream is not on
+  offer), the full Phase 2 follows (9.4.1.2.2, 9.4.1.2.3), its INFO0d
+  without bit 26. `v90m_get_qc` says `short_p2` 2.
+- **One kept PCM-upstream offer.** A caller that starts from parameters
+  it stored in an earlier call (a memo) fails the first start-up if the
+  line has changed, and the line is then not the likely cause. So the
+  call's first start-up after a TONEq that does not reach data mode
+  (the caller's PCM upstream sends nothing) keeps PCM upstream on offer
+  once: our retrain's INFO1d still says bit 70 = 1. The second failure
+  clears it, as 0.7.3's rule does, and the call goes on as V.90. It does
+  not apply after a fallback to V.8, nor to a failure in data mode.
+- **V.8bis and K56flex.** With `V90M_MOD_K56` on a mu-law line V.8bis
+  comes before ANSam, and Quick Connect after it. A caller that ignores
+  our CRe hears ANSam exactly when a caller without a QC1a does, then Quick
+  Connect. A caller that agreed K56flex is never offered Quick Connect,
+  and a QC1a it sends is heard and ignored. A caller whose MS has no
+  K56flex block and leaves the modulation to V.8 (data, V.8 follows) is
+  answered with ACK(1) when it asks for it (V.8bis 9.7, 9.9.1: transmit
+  ACK(1), 180 ms after its MS), then V.8 and Quick Connect as usual; with
+  0.7.3 it got silence. An MS that asks for no ACK(1) gets none. Any
+  other MS (a different modulation, another NS block, a voice or T.120
+  request) is answered as before. Our CL is unchanged.
+  `v90m_qc.v8bis_ack` records it.
+- **The report.** `v90m_get_qc` ([api.md](api.md), "Quick Connect"): what
+  was heard, the level we named, the TONEq time, the fallback, the short
+  Phase 2. `v90m-replay` prints a `qc:` line when a QC1a was heard and the
+  run could take it (`-9`, no `-Q`).
+- **Tools.** `make qc-scan RECS=<dir>` lists the QC1a in recordings,
+  `make v8bis-scan RECS=<dir>` the V.8bis messages ([testing.md](testing.md)).
+  A recording of a real V.92 caller that sends a QC1a replays otherwise
+  from 0.7.4: with `-9` the replay now enters Quick Connect and the
+  recording, which was answered with V.8, does not follow it (about 2.2 s
+  later it falls back). `v90m-replay -Q` takes the call as 0.7.3 answered
+  it.
+- **Not done.** QC2a (a caller's Quick Connect request in V.8bis, during
+  CRe), QC1d, modem-on-hold (UQTS 1111 is ignored and the CM decides), the
+  calling side (we never send a QC1a; `v90m_get_qc` is 0 when calling),
+  Quick Connect in our V.8bis CL.
+
 ## Retrains, rate renegotiation, cleardown
 
 - **Retrains** in V.92, V.90, V.34 and V.32bis, begun by either end.
@@ -347,7 +459,8 @@ version 1 alone) dropped it so, and connected in V.34 at 28800 at best
 
 ## Limits
 
-- No V.92 quick connect, short Phase 2 or modem-on-hold.
+- No modem-on-hold, and of Quick Connect only what the section above says
+  (no QC2a, no QC1d, not tried on a real V.92 caller).
 - x2 and K56flex: above, and their limits in [limits.md](limits.md) (x2:
   A-law, robbed bits, no way back to V.34, the free sign; K56flex: A-law,
   no renegotiation or retrain of ours, the tables of Lucent clients, the

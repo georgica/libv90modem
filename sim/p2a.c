@@ -10,6 +10,65 @@
 
 static void go(p2a_t *p, p2a_state s) { p->state = s; p->t = 0; }
 
+/* 9.4/V.92: short Phase 2 when both INFO0s say V.92 and ask for it */
+static int short_on(const p2a_t *p)
+{
+    return p->cfg.short_p2 && p->cfg.info0a.v92 && p->info0d.v92 && p->info0d.short_p2 && !p->full;
+}
+
+static int put_bits(uint8_t *bits, int n, unsigned v, int nbits)
+{
+    int k;
+    for (k = 0; k < nbits; k++) bits[n++] = (uint8_t)((v >> k) & 1u);    /* LSB first in time */
+    return n;
+}
+
+int p2a_t19_build(int md_len, int uinfo, int hi, int sr, int freq_off, uint8_t *bits)
+{
+    static const uint8_t sync[8] = { 0, 1, 1, 1, 0, 0, 1, 0 };     /* 01110010, left-most first */
+    int n = 0, k;
+    uint16_t crc;
+    n = put_bits(bits, n, 0xF, 4);                  /* 0:3 fill */
+    for (k = 0; k < 8; k++) bits[n++] = sync[k];    /* 4:11 */
+    n = put_bits(bits, n, 0, 6);                    /* 12:17 reserved, 0 */
+    n = put_bits(bits, n, (unsigned)md_len, 7);     /* 18:24 MD, x 35 ms */
+    n = put_bits(bits, n, (unsigned)uinfo, 7);      /* 25:31 UINFO */
+    n = put_bits(bits, n, 0, 1);                    /* 32 reserved, 0 */
+    n = put_bits(bits, n, (unsigned)(hi != 0), 1);  /* 33 high carrier */
+    n = put_bits(bits, n, (unsigned)sr, 3);         /* 34:36 upstream symbol rate, 3..5 */
+    n = put_bits(bits, n, 6, 3);                    /* 37:39 the digital modem's: 6 */
+    n = put_bits(bits, n, (unsigned)freq_off & 0x3FFu, 10);    /* 40:49, two's complement */
+    crc = info_crc(bits + 12, n - 12);              /* 50:65 */
+    n = put_bits(bits, n, crc, 16);
+    n = put_bits(bits, n, 0xF, 4);                  /* 66:69 fill */
+    return n;
+}
+
+/* short Phase 2's INFO1a: Table 18, or with cfg.short_t19 Table 19 */
+static void send_short_info1a(p2a_t *p)
+{
+    uint8_t bits[INFO_MAX_BITS];
+    int n;
+    memset(&p->info1a, 0, sizeof p->info1a);
+    p->info1a.v90 = 1;
+    p->info1a.uinfo = (uint8_t)p->cfg.uinfo;
+    p->info1a.md_len = (uint8_t)p->cfg.md_len;
+    if (p->cfg.short_t19) {
+        p->info1a.up_sr = (uint8_t)p->cfg.short_sr;
+        p->info1a.hi_carrier = (uint8_t)(p->cfg.short_hi != 0);
+        p->info1a.freq_off = -512;
+        n = p2a_t19_build(p->cfg.md_len, p->cfg.uinfo, p->cfg.short_hi, p->cfg.short_sr, -512, bits);
+    } else {
+        p->info1a.pcm = 1; p->info1a.up_sr = 6;
+        p->info1a.sections = (uint8_t)p->cfg.sections;
+        p->info1a.ltot_code = (uint8_t)p->cfg.ltot_code;
+        p->info1a.lmax_code = (uint8_t)p->cfg.lmax_code;
+        n = info1a_build(&p->info1a, bits);
+    }
+    dpsktx_send(&p->tx, bits, n);
+    p->short_run = 1;
+}
+
 static void send_info0a(p2a_t *p, int ack)
 {
     info0_t i = p->cfg.info0a;
@@ -83,6 +142,8 @@ int16_t p2a_tick(p2a_t *p, int16_t x)
             if (p->resend || (!p->got0d && p->rx.steady >= MS(50))) {
                 send_info0a(p, p->got0d);
                 p->resend = 0;
+            } else if (p->got0d && short_on(p)) {
+                go(p, P2A_SHORT_WAIT);      /* 9.4.2.1.2: Tone A, for the Tone B reversal */
             } else if (p->got0d && p->rx.steady >= TONE_SEEN && p->now - p->tone_since >= MS(50) + 60
                        && p->rep_left != 0) {
                 send_info0a(p, 1);          /* cfg.info0_repeat: INFO0a once more */
@@ -211,7 +272,42 @@ int16_t p2a_tick(p2a_t *p, int16_t x)
         else if (p->t == 60) { dpsktx_off(&p->tx); p->done_at = p->now; go(p, P2A_DONE); }
         break;
 
+    case P2A_SHORT_WAIT:
+        if (ev & DPSK_EV_FRAME) {           /* repeated INFO0d (9.4.2.2.1) */
+            info0d_parse(p->rx.frame, &p->info0d);
+            p->resend = !p->info0d.ack;
+            p->tone_since = p->now;
+            go(p, P2A_INFO0);
+        } else if ((ev & DPSK_EV_REVERSAL) && p->cfg.short_no_rev) {
+            p->full = 1; p->tone_since = p->now; go(p, P2A_INFO0);
+        } else if (ev & DPSK_EV_REVERSAL) {
+            /* 9.4.2.1.3: ours 40 ms after theirs, both at the line terminals */
+            p->act_at = p->now - DPSK_RX_REV_DELAY + TURN - DPSK_TX_DELAY;
+            go(p, P2A_SHORT_REPLY);
+        } else if (p->t > MS(2500)) {
+            /* 9.4.2.2.2 would retrain; this caller tries the full Phase 2 */
+            p->full = 1; p->tone_since = p->now; go(p, P2A_INFO0);
+        }
+        break;
+
+    case P2A_SHORT_REPLY:
+        if (p->now == p->act_at) dpsktx_reverse(&p->tx);
+        if (p->now == p->act_at + TAIL) {
+            if (p->cfg.short_no_info1a) { p->full = 1; p->tone_since = p->now; go(p, P2A_INFO0); }
+            else { send_short_info1a(p); go(p, P2A_INFO1A); }   /* 9.4.2.1.4 */
+        }
+        break;
+
     case P2A_DONE:
+        /* after short Phase 2's INFO1a: Tone B again is the digital modem
+         * that could not use it (9.4.1.2.3); Tone A, and the full Phase 2 */
+        if (p->short_run && p->rx.steady >= TONE_SEEN) {
+            p->short_run = 0; p->full = 1;
+            dpsktx_on(&p->tx);
+            p->tone_since = p->now;
+            go(p, P2A_INFO0);
+        }
+        break;
     case P2A_FAILED:
         break;
     }

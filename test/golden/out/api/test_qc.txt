@@ -1,0 +1,28 @@
+qc: v90m_get_qc, V.92 Quick Connect answering
+accepted
+    data both ways from 6.76 s; then 2 s: 77372 bits up, 101346 down, 0 bad
+  accepted       heard 1 uqts 70 lapm 1 accepted 1 level -120 toneq (0, 2000] fallback 0 bypass 1 short 1 v8bis_ack 0; V.92, odp_bypass 1
+  phases: tone v8 phase2 phase3 phase4 data
+fallback
+    data both ways from 12.58 s; then 2 s: 77314 bits up, 101308 down, 0 bad
+  fallback       heard 1 uqts 70 lapm 1 accepted 1 level -120 toneq 0 fallback 1 bypass 1 short 0 v8bis_ack 0; V.92, odp_bypass 1
+fallback_nolapm
+    data both ways from 12.64 s; then 2 s: 77314 bits up, 101308 down, 0 bad
+  fallback_nolapm heard 1 uqts 70 lapm 0 accepted 1 level -120 toneq 0 fallback 1 bypass 0 short 0 v8bis_ack 0; V.92, odp_bypass 0
+default_mods
+    data both ways from 8.12 s; then 2 s: 57600 bits up, 101308 down, 0 bad
+  default_mods   heard 1 uqts 70 lapm 1 accepted 0 level 0 toneq 0 fallback 0 bypass 0 short 0 v8bis_ack 0; V.90, odp_bypass 0
+no_qc
+    data both ways from 9.30 s; then 2 s: 77314 bits up, 101346 down, 0 bad
+  no_qc          heard 1 uqts 70 lapm 1 accepted 0 level 0 toneq 0 fallback 0 bypass 1 short 0 v8bis_ack 0; V.92, odp_bypass 1
+k56_ms_v8
+    data both ways from 11.76 s; then 2 s: 77314 bits up, 101308 down, 0 bad
+  k56_ms_v8      heard 1 uqts 70 lapm 1 accepted 1 level -120 toneq (0, 2000] fallback 0 bypass 1 short 0 v8bis_ack 1; V.92, odp_bypass 1
+                 k56 offered 3 exchanged 0 chosen 0 declined 0 agreed 0
+plain
+    data both ways from 9.60 s; then 2 s: 77314 bits up, 101346 down, 0 bad
+  plain          heard 0 uqts 0 lapm 0 accepted 0 level 0 toneq 0 fallback 0 bypass 0 short 0 v8bis_ack 0; V.92, odp_bypass 1
+null_and_reset
+    data both ways from 8.46 s; then 2 s: 77314 bits up, 101308 down, 0 bad
+  NULL: untouched; after v90m_reset and calling: all 0
+test_qc: 4958 checks, 0 failures

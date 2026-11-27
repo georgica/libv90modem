@@ -14,7 +14,7 @@ analogue telephone adapter, from the ITU-T recommendations. The answering
 side has answered real modems there (see "Tried on real modems"); the
 calling side has not yet called one.
 
-**The API is not stable before version 1.0.** This is 0.7.3; what changed
+**The API is not stable before version 1.0.** This is 0.7.4; what changed
 from one version to the next is in `CHANGELOG.md`.
 
 ## How to use
@@ -159,7 +159,10 @@ built and why; `docs/history/` keeps the development logs.
 
 ### Not implemented, or not checked
 
-- V.92 quick connect, short Phase 2 and modem-on-hold, either role.
+- Modem-on-hold, either role. V.92 quick connect (and its short Phase 2) as
+  the answering digital modem only: tried in simulation and live against
+  BinModem on a local server, other V.92 modems not yet tested live. Not the
+  calling side, not QC2a, not QC1d.
 - The Bell 212A calling handshake follows V.22 and what this library's
   answerer accepts: it has not been checked against a Bell 212A
   specification document. The 3 s and 6 s fallbacks to Bell 103 are this
@@ -299,7 +302,7 @@ clears down; `-m` picks what the caller offers:
 
 ```
 $ build/call_loop
-libv90modem 0.7.3
+libv90modem 0.7.4
 caller   CONNECT 40000/50666 V.92
 answerer CONNECT 50666/40000 V.92
 caller   got "hello from the answerer"

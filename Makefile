@@ -34,6 +34,10 @@
 #                        (calling the library's own answerer; make check runs it)
 #   make crd-scan        K56flex's CRd detector over recorded calls (RECS=<dir>): no detection
 #   make hst-scan        HST's back-channel detector over recorded calls (RECS=<dir>): none
+#   make qc-scan         V.92's QC1a in recorded calls (RECS=<dir>): the list (real V.92
+#                        callers send one; not an error)
+#   make v8bis-scan      V.8bis messages in recorded calls (RECS=<dir>): the list (an MS for
+#                        V.8 asking for ACK(1) replays otherwise since 0.7.4)
 #   make hst-wsize       sizing W, HST's wait after ANSam: detection times over levels,
 #                        dropouts and a line's lower edge (rig/hst_wsize.c), for docs/limits.md
 #   make hst-thresh      HST's thresholds of "good": BER against SNR at codes 3..6
@@ -82,7 +86,7 @@
 # test peer and may use double; it is never installed.
 
 NAME     := libv90modem
-VERSION  := 0.7.3
+VERSION  := 0.7.4
 # the SONAME's version: MAJOR.MINOR while MAJOR is 0 (every 0.x changes the
 # ABI), MAJOR from 1.0
 SOVER    := $(shell echo '$(VERSION)' | awk -F. '{ print ($$1 == 0 ? $$1 "." $$2 : $$1) }')
@@ -136,14 +140,14 @@ DEV      := $(BUILD)/$(NAME)-dev.a
 
 # ---- the simulator and the test suite ----
 SIM_SRC  := sim/g711.c sim/noise.c sim/filt.c sim/resamp.c sim/channel.c sim/v8call.c sim/callpeer.c sim/p2a.c sim/qammod.c \
-            sim/p34a.c v90/test/v90_dec.c sim/p2c.c sim/v34peer.c sim/v32call.c sim/v32line.c sim/v92chan.c sim/v92a.c sim/v92call.c sim/dschan.c sim/x2call.c sim/k56call.c sim/mnppeer.c sim/hstcall.c
+            sim/p34a.c v90/test/v90_dec.c sim/p2c.c sim/v34peer.c sim/v32call.c sim/v32line.c sim/v92chan.c sim/v92a.c sim/v92call.c sim/qca.c sim/v8bisc.c sim/dschan.c sim/x2call.c sim/k56call.c sim/mnppeer.c sim/hstcall.c
 SIM_OBJ  := $(patsubst %.c,$(BUILD)/obj/%.o,$(SIM_SRC))
 MODEM_SRC := modem/sintab.c modem/v34_tabs.c modem/v21.c modem/ansam.c modem/v8msg.c modem/async.c modem/v8rx.c modem/v8ans.c \
              modem/scramble.c modem/v22tx.c modem/v22rx.c modem/v22bis.c modem/v14.c modem/answer.c modem/ans_legacy.c modem/ans_v90.c modem/ans_v34.c modem/ans_x2.c modem/ans_k56.c modem/ans_hst.c \
              modem/info.c modem/dpsk.c modem/probe.c modem/p2d.c modem/p2common.c modem/qamrx.c modem/ec.c modem/ecdly.c modem/tonedet.c modem/v34train.c modem/p34d.c modem/v34up.c modem/pcmenc.c \
              modem/v34mp.c modem/p2ans.c modem/v34mod.c modem/v34dx.c modem/v34ans.c modem/anstone.c modem/v8orig.c modem/orig.c modem/p2call.c modem/v34orig.c modem/v90arx.c modem/v90adec.c modem/v90dil.c modem/v90a.c modem/v90a_up90.c modem/v90a_up92.c modem/v90a_down.c modem/v90a_watch.c modem/pcmtx.c modem/v92aseq.c modem/belltone.c \
              modem/x2rec.c modem/x2map.c modem/x2tab.c modem/x2bank.c modem/x2tx.c modem/x2d.c modem/k56tab.c modem/k56enc.c modem/k56tx.c modem/k56d.c modem/v8bismsg.c modem/v8bis.c \
-             modem/hst_tabs.c modem/hst_back.c modem/hst_fwd.c \
+             modem/hst_tabs.c modem/hst_back.c modem/hst_fwd.c modem/qc.c modem/qc_tab.c modem/qcd.c modem/ans_qc.c \
              $(wildcard v90/*.c) $(wildcard v34/*.c) $(wildcard v32/*.c) $(wildcard v92/*.c)
 T_SRC    := $(SIM_SRC) $(MODEM_SRC)
 HDRS     := $(wildcard modem/*.h sim/*.h test/*.h v90/*.h v34/*.h v92/*.h v90/test/v90_dec.h)
@@ -154,7 +158,7 @@ TESTS    := test_g711 test_noise test_filt test_resamp test_channel test_v21 tes
             test_v22tx test_v22rx test_v22bis test_v14 test_answer test_info test_dpsk test_probe test_p2 test_qamrx test_ec test_ecdly test_v34train test_sres test_answer_v90 test_p34 test_pcmenc \
             test_v34mp test_p2ans test_v34mod test_v34dx test_v34call test_answer_v34 test_answer_v32 test_answer_v90_v34 \
             test_p2_v92 test_v92call test_answer_v92 test_v92real test_answer_lin \
-            test_anstone test_v8orig test_orig test_orig_v32 test_p2call test_orig_v34 test_v90arx test_v90arx_robust test_v90adec test_v90dil test_p2v90 test_v90a test_orig_v90 test_orig_v90_te test_orig_seeds test_orig_retrain test_pcmtx test_v92aseq test_p2v92a test_v92a test_orig_v92 test_belltone test_orig_bell test_realcheck test_x2_pad test_answer_x2 test_x2rec test_x2map test_x2tx test_k56tab test_k56enc test_k56tx test_v8bismsg test_v8bis test_answer_k56 test_clock test_shared test_fixmath test_v34up test_ans_table test_exact test_interp_bound test_v90arx_paths test_small_exact test_v92_hostile test_hst_back test_hst_det test_hst_fwd test_hstcall
+            test_anstone test_v8orig test_orig test_orig_v32 test_p2call test_orig_v34 test_v90arx test_v90arx_robust test_v90adec test_v90dil test_p2v90 test_v90a test_orig_v90 test_orig_v90_te test_orig_seeds test_orig_retrain test_pcmtx test_v92aseq test_p2v92a test_v92a test_orig_v92 test_belltone test_orig_bell test_realcheck test_x2_pad test_answer_x2 test_x2rec test_x2map test_x2tx test_k56tab test_k56enc test_k56tx test_v8bismsg test_v8bis test_answer_k56 test_clock test_shared test_fixmath test_v34up test_ans_table test_exact test_interp_bound test_v90arx_paths test_small_exact test_v92_hostile test_hst_back test_hst_det test_hst_fwd test_hstcall test_qca test_qcsig test_qc1a test_answer_qc test_p2_qc
 # the slowest programs, split by case: `prog --cases` prints the count, `prog N`
 # runs case N alone, no argument all of them (tools/split-check.sh); the ARM
 # runner (check-arm) runs each case as its own job
@@ -163,7 +167,7 @@ SPLIT_TESTS := test_p34 test_orig_v92 test_orig_seeds test_orig_bell test_hstcal
 # test_answer_hst runs as six programs from one source (-DHST_PART=k: its
 # cases shared out, none much over 30 s on x86-64; the final review's m7)
 HST_PARTS := 1 2 3 4 5 6
-API_TESTS := test_api test_ec_fields test_reneg test_restarts test_diag test_mnp_call test_ec_hstlink $(addprefix test_answer_hst_,$(HST_PARTS))
+API_TESTS := test_api test_ec_fields test_reneg test_restarts test_diag test_qc test_mnp_call test_ec_hstlink $(addprefix test_answer_hst_,$(HST_PARTS))
 SUBS     := v34 v90 v92 v42 v32
 
 .PHONY: test-x2-courier test-k56-sm56 test-fixtures test-examples all lib dev install uninstall clean check check-arm check-ubsan test test-arm test-all test-times test-api test-interop examples bench-v90 bench-v34 bench-v90a bench-v90c bench-v92c replay
@@ -328,6 +332,9 @@ $(BUILD)/api_test_reneg: test/api/test_reneg.c $(DEV) include/v90modem.h api/v90
 # so does the test of who began them (v90m_get_restarts)
 $(BUILD)/api_test_restarts: test/api/test_restarts.c $(DEV) include/v90modem.h api/v90modem_priv.h
 	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -Iapi -o $@ $< $(DEV) $(LDLIBS)
+# V.92 Quick Connect against the simulated caller (sim/v92call): the dev archive
+$(BUILD)/api_test_qc: test/api/test_qc.c $(DEV) include/v90modem.h
+	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -o $@ $< $(DEV) $(LDLIBS)
 # MNP calls against the simulator's callers (sim/v32call, sim/callpeer,
 # sim/mnppeer): the development archive alone
 $(BUILD)/api_test_mnp_call: test/api/test_mnp_call.c $(DEV) include/v90modem.h
@@ -358,6 +365,8 @@ $(BUILD)/arm/api_test_reneg: test/api/test_reneg.c include/v90modem.h api/v90mod
 	$(ARM_CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -Iapi -static -o $@ $< $(BUILD)/arm/$(NAME)-dev.a $(LDLIBS)
 $(BUILD)/arm/api_test_restarts: test/api/test_restarts.c include/v90modem.h api/v90modem_priv.h $(ARM_API_LIBS)
 	$(ARM_CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -Iapi -static -o $@ $< $(BUILD)/arm/$(NAME)-dev.a $(LDLIBS)
+$(BUILD)/arm/api_test_qc: test/api/test_qc.c include/v90modem.h $(ARM_API_LIBS)
+	$(ARM_CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -static -o $@ $< $(BUILD)/arm/$(NAME)-dev.a $(LDLIBS)
 $(BUILD)/arm/api_test_mnp_call: test/api/test_mnp_call.c include/v90modem.h $(ARM_API_LIBS)
 	$(ARM_CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -static -o $@ $< $(BUILD)/arm/$(NAME)-dev.a $(LDLIBS)
 $(BUILD)/arm/api_test_ec_hstlink: test/api/test_ec_hstlink.c include/v90modem.h api/v90modem_priv.h $(ARM_API_LIBS)
@@ -574,6 +583,45 @@ hst-scan: $(BUILD)/hst-scan
 	   grep 'back channel detected' $(BUILD)/hst-scan.out; \
 	   d=$$((d + $$(grep -c 'back channel detected' $(BUILD)/hst-scan.out))); n=$$((n + 1)); done; \
 	echo "hst-scan: $$n recordings, $$d back-channel detections"; [ $$d -eq 0 ]
+# V.92's QC1a (modem/v8rx v8rx_tick_qc, modem/v8ans) in what the answerer
+# heard in recorded calls (tools/qc_scan.c): RECS=<dir> of v90m-replay
+# recordings (*.raw, and *.raw.xz unpacked to $(BUILD)/tmp one at a time);
+# a recording listed may replay otherwise once QC is answered (the 0.7.4
+# plan's Global Constraints). Host only, not part of check.
+QC_SCAN_SRC := tools/qc_scan.c $(MODEM_SRC)
+$(BUILD)/qc-scan: $(QC_SCAN_SRC) $(HDRS)
+	@mkdir -p $(BUILD)
+	$(CC) $(T_CFLAGS) -o $@ $(QC_SCAN_SRC) $(LDLIBS)
+.PHONY: qc-scan
+qc-scan: $(BUILD)/qc-scan
+	@if [ -z "$(RECS)" ]; then echo "RECS not set (a directory of recordings)"; exit 1; fi; \
+	mkdir -p $(BUILD)/tmp; n=0; d=0; for f in $(RECS)/*.raw $(RECS)/*.raw.xz; do [ -f "$$f" ] || continue; \
+	   g="$$f"; case "$$f" in *.xz) g=$(BUILD)/tmp/qc-scan.raw; xz -dc "$$f" > "$$g" || exit 1;; esac; \
+	   $(abspath $(BUILD))/qc-scan "$$g" > $(BUILD)/qc-scan.out 2>&1; \
+	   r=$$?; rm -f $(BUILD)/tmp/qc-scan.raw; [ $$r -eq 0 ] || { cat $(BUILD)/qc-scan.out; exit 1; }; \
+	   grep 'QC1a heard' $(BUILD)/qc-scan.out | sed "s|^[^:]*:|$$f:|"; \
+	   if grep -q 'QC1a heard' $(BUILD)/qc-scan.out; then d=$$((d + 1)); fi; n=$$((n + 1)); done; \
+	echo "qc-scan: $$n recordings, $$d with a QC1a"
+# V.8bis messages (modem/v8bismsg) in what the answerer heard in recorded
+# calls (tools/v8bis_scan.c): RECS=<dir> of v90m-replay recordings (*.raw,
+# and *.raw.xz unpacked to $(BUILD)/tmp one at a time); a recording with an
+# MS for V.8 that asks for ACK(1) may replay otherwise since 0.7.4 (the
+# plan's Global Constraints, F13). Host only, not part of check.
+V8BIS_SCAN_SRC := tools/v8bis_scan.c modem/v8bis.c modem/v8bismsg.c modem/v21.c modem/sintab.c v90/v90_pcm.c v90/v90_pcm_tab.c
+$(BUILD)/v8bis-scan: $(V8BIS_SCAN_SRC) $(LIB_HDR)
+	@mkdir -p $(BUILD)
+	$(CC) $(T_CFLAGS) -o $@ $(V8BIS_SCAN_SRC) $(LDLIBS)
+.PHONY: v8bis-scan
+v8bis-scan: $(BUILD)/v8bis-scan
+	@if [ -z "$(RECS)" ]; then echo "RECS not set (a directory of recordings)"; exit 1; fi; \
+	mkdir -p $(BUILD)/tmp; n=0; d=0; f8=0; for f in $(RECS)/*.raw $(RECS)/*.raw.xz; do [ -f "$$f" ] || continue; \
+	   g="$$f"; case "$$f" in *.xz) g=$(BUILD)/tmp/v8bis-scan.raw; xz -dc "$$f" > "$$g" || exit 1;; esac; \
+	   $(abspath $(BUILD))/v8bis-scan "$$g" > $(BUILD)/v8bis-scan.out 2>&1; \
+	   r=$$?; rm -f $(BUILD)/tmp/v8bis-scan.raw; [ $$r -eq 0 ] || { cat $(BUILD)/v8bis-scan.out; exit 1; }; \
+	   grep ' V.21(' $(BUILD)/v8bis-scan.out | sed "s|^[^:]*:|$$f:|"; \
+	   f8=$$((f8 + $$(grep -c ' V.21(' $(BUILD)/v8bis-scan.out))); \
+	   if grep -q 'asks for ACK(1)' $(BUILD)/v8bis-scan.out; then d=$$((d + 1)); fi; n=$$((n + 1)); done; \
+	echo "v8bis-scan: $$n recordings, $$f8 V.8bis frames, $$d with an MS for V.8 asking for ACK(1)"
 # our K56flex encoder's octets and data bits at every rate, pad and robbed
 # mask (tools/k56enc_dump.c), for SM56's decoder harness outside the
 # repository (docs/history/k56-facts.md "Oracle"). Host only, not part of check.

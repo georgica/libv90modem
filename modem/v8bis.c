@@ -214,6 +214,11 @@ v8b_state v8bis_tick(v8bis_t *b, int16_t rx, int16_t *tx)
             else
                 b->result = V8B_RES_AGREED;
             go(b, V8B_GAP_ACK);
+        } else if (r > 0 && (b->ms_v8 = v8bis_ms_v8(b->msg, r)) != 0) {
+            /* data, the modulation left to V.8 (V.8bis 9.7, 9.9.1): ACK(1)
+             * when it asks for it, then V.8 as after an agreed MS */
+            b->result = V8B_RES_V8;
+            go(b, b->ms_v8 == 2 ? V8B_GAP_ACK : V8B_DONE);
         } else if (r < 0) {
             b->result = V8B_RES_NO_MS;             /* NAK(1) to an invalid frame (7.2.9, 9.8) */
             go(b, V8B_GAP_ACK);
@@ -224,7 +229,7 @@ v8b_state v8bis_tick(v8bis_t *b, int16_t rx, int16_t *tx)
         break;
     case V8B_GAP_ACK:
         if (b->t >= MS(V8B_ACK_GAP_MS)) {
-            if (b->result == V8B_RES_AGREED) r = v8bis_ack1_octets(o);
+            if (b->result == V8B_RES_AGREED || b->result == V8B_RES_V8) r = v8bis_ack1_octets(o);
             else { o[0] = b->result == V8B_RES_DECLINED ? NAK3 : NAK1; r = 1; }
             send(b, o, r);
             go(b, V8B_ACK);

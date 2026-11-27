@@ -17,7 +17,14 @@
  *     (no version bit): ACK(1); version 2 alone offered (0x42, 0.7.1's
  *     CL): ACK(1) to 0x21 and to 0x01, as in 0.7.1; the 7-octet block
  *     (0x61, version 1 alone): ACK(1) to SM56's 0x21;
- *   - the MS with its clock 0.1 % off and noise 40 dB down: received.
+ *   - the MS with its clock 0.1 % off and noise 40 dB down: received;
+ *   - an MS for data that leaves the modulation to V.8 (V.8bis 9.7, 9.9.1:
+ *     I NPar(1) V.8, S SPar(1) data, no K56flex block): BinModem's +A8E
+ *     MS, revision 2 (21 89 80 80 81 c2), and its revision-1 form (11 89
+ *     ...): V8B_RES_V8, ACK(1) (14, FCS dd a6) 180 ms after it, done at
+ *     ACK's end; without transmit ACK(1) (11 81 ...): V8B_RES_V8, nothing
+ *     sent, done when it ends; no data (11 89 80 80 80) or no V.8 (11 88
+ *     ...): V8B_RES_NO_MS, nothing sent; and v8bis_ms_v8 alone.
  * And the CRd detector alone: the pair held 150 ms, its 1900 Hz end. */
 #include <string.h>
 #include "test.h"
@@ -36,7 +43,12 @@ static uint8_t sts[NMAX];
 static const uint8_t sm56_ms[13] = { 0x11, 0xc9, 0x80, 0x80, 0x80, 0x07, 0xb5, 0x02, 0x00, 0x94, 0x81, 0x83, 0x21 };
 static const uint8_t plain_ms[5] = { 0x11, 0xc9, 0x80, 0x80, 0x80 };     /* an MS without NS */
 
-enum { MS_NONE, MS_SM56, MS_PLAIN, MS_BADFCS };
+/* BinModem's +A8E MS (docs/history/qc-facts.md "BinModem"): revision 2,
+ * V.8 and transmit ACK(1), data with V.42; and the revision-1 form */
+static const uint8_t bm_ms[6] = { 0x21, 0x89, 0x80, 0x80, 0x81, 0xc2 };
+static const uint8_t bm_ms1[6] = { 0x11, 0x89, 0x80, 0x80, 0x81, 0xc2 };
+
+enum { MS_NONE, MS_SM56, MS_PLAIN, MS_BADFCS, MS_RAW };
 
 typedef struct {
     int crd_ms;             /* CRd's start after CRe's end; -1 none */
@@ -49,6 +61,7 @@ typedef struct {
     int ms_ver;             /* the version octet of its MS; 0: SM56's echo of our CL's
                                (ours less 0x40) */
     int ns7;                /* our CL's 7-octet block (0x61) in place of V8B_NS_DEFAULT */
+    const uint8_t *raw; int nraw;   /* MS_RAW: the MS's octets */
 } script_t;
 
 typedef struct {
@@ -80,6 +93,7 @@ static void run(const script_t *s, events_t *e)
     }
     if (s->ms == MS_SM56 || s->ms == MS_BADFCS) nms = v8bis_frame(ms, 13, msbits);
     if (s->ms == MS_PLAIN) nms = v8bis_frame(plain_ms, 5, msbits);
+    if (s->ms == MS_RAW) nms = v8bis_frame(s->raw, s->nraw, msbits);
     /* a bad FCS: octet 0's first bit (a one) sent as a zero, nothing else changed */
     if (s->ms == MS_BADFCS) msbits[32 + 24] = 0;
     v8bis_init(&B, 4243, s->ns7 ? V8B_NS7 : V8B_NS_DEFAULT, vers, s->accept_v1);
@@ -210,6 +224,83 @@ static void test_detector(void)
         r |= v8bis_crd_tick(&d, (int16_t)lround(x));
     }
     CHECK_EQ_I(r, 0);
+}
+
+/* v8bis_ms_v8 alone: 2 with transmit ACK(1), 1 without, 0 for anything else */
+static void test_ms_v8(void)
+{
+    static const uint8_t no_ack[6] = { 0x11, 0x81, 0x80, 0x80, 0x81, 0xc2 };
+    static const uint8_t no_data[5] = { 0x11, 0x89, 0x80, 0x80, 0x80 };
+    static const uint8_t no_v8[6] = { 0x11, 0x88, 0x80, 0x80, 0x81, 0xc2 };
+    static const uint8_t all4[6] = { 0x11, 0x89, 0x80, 0x80, 0x81, 0xcf };   /* transparent, V.42, V.42 bis, V.14 */
+    static const uint8_t t120[6] = { 0x11, 0x89, 0x80, 0x80, 0x81, 0xd2 };   /* V.42 and T.120 */
+    static const uint8_t svd[7] = { 0x11, 0x89, 0x80, 0x80, 0x83, 0xc2, 0xc0 };  /* data, and voice and data */
+    static const uint8_t as_cl[6] = { 0x12, 0x89, 0x80, 0x80, 0x81, 0xc2 };  /* a CL */
+    static const uint8_t other_ns[11] = { 0x11, 0xc9, 0x80, 0x80, 0x81, 0xc2, 0x04, 0xb5, 0x01, 0x33, 0x44 };
+    static const uint8_t client[16] = { 0x11, 0xc9, 0x80, 0x80, 0x81, 0xc2, 0x09, 0xb5, 0x02, 0x00, 0x94,
+                                        0x81, 0x81, 0x02, 0x47, 0x85 };        /* the real client's, K56flex */
+    static const uint8_t ack1[1] = { 0x14 };
+    CHECK_EQ_I(v8bis_ms_v8(bm_ms, 6), 2);
+    CHECK_EQ_I(v8bis_ms_v8(bm_ms1, 6), 2);
+    CHECK_EQ_I(v8bis_ms_v8(no_ack, 6), 1);
+    CHECK_EQ_I(v8bis_ms_v8(no_data, 5), 0);
+    CHECK_EQ_I(v8bis_ms_v8(no_v8, 6), 0);
+    CHECK_EQ_I(v8bis_ms_v8(all4, 6), 2);
+    CHECK_EQ_I(v8bis_ms_v8(t120, 6), 0);
+    CHECK_EQ_I(v8bis_ms_v8(svd, 7), 0);
+    CHECK_EQ_I(v8bis_ms_v8(as_cl, 6), 0);
+    CHECK_EQ_I(v8bis_ms_v8(bm_ms, 5), 0);                  /* its data block cut off */
+    CHECK_EQ_I(v8bis_ms_v8(other_ns, 11), 2);              /* an NS block, not K56flex's */
+    CHECK_EQ_I(v8bis_ms_v8(client, 16), 0);
+    CHECK_EQ_I(v8bis_ms_v8(sm56_ms, 13), 0);
+    CHECK_EQ_I(v8bis_ms_v8(plain_ms, 5), 0);
+    /* ACK(1)'s FCS, low octet first: dd a6 */
+    CHECK_EQ_I(v8bis_fcs16(ack1, 1) & 0xff, 0xdd);
+    CHECK_EQ_I(v8bis_fcs16(ack1, 1) >> 8, 0xa6);
+}
+
+/* an MS for V.8 through the whole exchange */
+static void test_ms_v8_run(void)
+{
+    static const uint8_t no_ack[6] = { 0x11, 0x81, 0x80, 0x80, 0x81, 0xc2 };
+    static const uint8_t no_data[5] = { 0x11, 0x89, 0x80, 0x80, 0x80 };
+    static const uint8_t no_v8[6] = { 0x11, 0x88, 0x80, 0x80, 0x81, 0xc2 };
+    static const struct { const char *name; const uint8_t *o; int n, res, ack; } c[5] = {
+        { "21 89 80 80 81 c2 (BinModem's, revision 2)", bm_ms, 6, V8B_RES_V8, 1 },
+        { "11 89 80 80 81 c2 (revision 1)", bm_ms1, 6, V8B_RES_V8, 1 },
+        { "11 81 80 80 81 c2 (no ACK(1) asked)", no_ack, 6, V8B_RES_V8, 0 },
+        { "11 89 80 80 80 (no data)", no_data, 5, V8B_RES_NO_MS, 0 },
+        { "11 88 80 80 81 c2 (no V.8)", no_v8, 6, V8B_RES_NO_MS, 0 },
+    };
+    script_t s;
+    events_t e;
+    uint8_t fr[4][V8B_MAXOCT];
+    int len[4], nf, ok, j;
+    long n;
+    for (j = 0; j < 5; j++) {
+        memset(&s, 0, sizeof s);
+        s.crd_ms = 175; s.ms = MS_RAW; s.ms_gap_ms = 10; s.raw = c[j].o; s.nraw = c[j].n;
+        run(&s, &e);
+        CHECK_EQ_I(e.result, c[j].res);
+        CHECK_EQ_I(B.ms_ver, -1);
+        if (c[j].ack) {
+            CHECK_NEAR(e.ack_start - e.ms_end, 8 * V8B_ACK_GAP_MS, 80);
+            nf = decode(e.ack_start, e.ack_end, fr, len, 4);
+            CHECK_EQ_I(nf, 1);
+            CHECK(nf == 1 && len[0] == 1 && fr[0][0] == 0x14);
+            CHECK_EQ_I(e.done, e.ack_end);
+            for (n = e.cl_end, ok = 1; n < e.ack_start; n++) if (txs[n] != 0) ok = 0;
+            CHECK(ok);
+            printf("  MS %s: ACK(1) %.1f ms after it, done at its end\n", c[j].name, (e.ack_start - e.ms_end) / 8.0);
+        } else {
+            CHECK_EQ_I(e.ack_start, -1);
+            CHECK(e.done >= e.ms_end && e.done - e.ms_end < 8 * 20);
+            for (n = e.cl_end, ok = 1; n <= e.done; n++) if (txs[n] != 0) ok = 0;
+            CHECK(ok);
+            printf("  MS %s: %s, nothing sent, done %.1f ms after it\n", c[j].name,
+                   e.result == V8B_RES_V8 ? "V.8" : "no MS", (e.done - e.ms_end) / 8.0);
+        }
+    }
 }
 
 int main(void)
@@ -377,6 +468,9 @@ int main(void)
     s.fs_far = 0; s.noise = 0; s.ms_gap_ms = 220;
     run(&s, &e);
     CHECK_EQ_I(e.result, V8B_RES_AGREED);
+
+    test_ms_v8();
+    test_ms_v8_run();
 
     T_REPORT("test_v8bis");
 }

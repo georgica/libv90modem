@@ -311,7 +311,10 @@ a Rockwell or Lucent modem.
   0.7.1's CL; 0.7.2's 0x43 CL is one bit longer and adds 3 to 4 ms to the
   last two); a client declined for version 1 is on the agreed timing, 3.420 s
   with 0.7.2's CL (NAK(3) ends V.8bis where ACK(1) would; with 0.7.1's CL it sent
-  no MS and was on the 3.807 s one). A caller
+  no MS and was on the 3.807 s one); from 0.7.4 a V.8bis caller whose MS
+  carries no K56flex block, leaves the modulation to V.8 and asks for
+  ACK(1) gets it, and hears ANSam about 3.46 s later (3.464 and 3.470 s in
+  the simulator; 0.7.3 sent nothing and went on at the MS's end). A caller
   that gives up in that time is not known; the live calls with K56flex
   offered, before v90d offers it, are to show it.
 - **A line that answers with no ringing may meet SM56's blind-dial wait.**
@@ -342,6 +345,82 @@ a Rockwell or Lucent modem.
   INFO1c in a later V.34 retrain gets our INFO1a flagged there and goes
   K56flex mid-call (`V90M_EV_RATES`). Designed, not driven by any test.
 - **No calling (client) side.**
+
+## V.92 Quick Connect (answering)
+
+From 0.7.4.
+
+- **Tested in simulation and live against BinModem only.** The simulated
+  caller (`sim/qca`) is written from the V.92 text. Live, on a local test
+  server (docs/history/qc-live.md): BinModem's QC requests were accepted
+  30 of 30, and short Phase 2 ran on all 19 calls with a PCM-upstream memo
+  (mu-law and A-law). Recordings of real V.92 callers show that a U.S.
+  Robotics 5686 sends a QC1a during our answer tone (two fixtures, and about
+  half of the private recordings), but how it and the Conexant modems answer
+  our QCA1d, QTS and ANSpcm has not been seen: not yet tested live. The
+  live runs did not exercise our short-Phase-2 recovery or retrain; those
+  are proven in simulation only.
+- **A false QC1a is possible in one pattern.** A caller that sends no QC1a
+  could still be taken for one if its signal holds, twice, at least 8
+  marks, the character 0x55, one character with bits 0, 1 and 4 clear and
+  at least 8 marks, the two characters equal. Tested not to happen: every
+  CM our tests use at -9 to -43 dBm0, our own ANSam echoed at -6 dB under a
+  CM, noise at -30 and -46 dBm0 over 20 seeds, start-stop text with one
+  stop bit, QC1d, one copy only, two different copies, a character after
+  the information one. The one pattern that is a QC1a by Table 2 (the
+  characters U and D, ten marks, U and D again) is taken as one on
+  purpose. The cost of a false one is a delay, not a lost call: QCA1d,
+  QTS and ANSpcm go out, nothing answers, and V.8 starts again about 2.2 s
+  after the QC1a was taken.
+- **TONEq needs at least 100 ms of 980 Hz**, counted as 6 detector blocks
+  of 10 ms and 40 ms more. A caller whose TONEq is shorter (BinModem's
+  `BINMODEM_V92_TONEQ_MS` can cut it) is not heard, and the call falls
+  back to V.8. V.92 9.2.1.3 has the caller hold TONEq (minimum 50 ms) until
+  it no longer detects ANSpcm, and our ANSpcm continues until we take
+  TONEq, so for a conforming caller the 100 ms floor is not a gap; only a
+  caller that cuts TONEq on purpose is missed.
+- **The 2 s of V.92 9.2.4.3 are counted at our port**, from the last
+  sample of our QCA1d, so the line's round trip is part of them. By
+  Figure 3 of V.92 a caller that did not hear ANSam for a second waits a
+  second of ANSpcm before TONEq; ANSpcm begins 177 ms after QCA1d, so such
+  a TONEq arrives at about 1.18 s plus the round trip, and a round trip of
+  a little under 0.8 s fits (the Figure 3 worst case). In the simulator a
+  TONEq beginning 1.90 s after QCA1d is taken and one beginning 2.10 s after is not
+  (fallback).
+- **A run of 980 Hz that began before the 2 s are over may finish after
+  them.** It is followed to its end and taken, up to about 2.1 s after
+  QCA1d (a run that began at 1.897 s was taken at 2.07 s). A TONEq that
+  begins in the last 10 to 20 ms before the deadline has not yet shown
+  a complete detector block when the 2 s end and is dropped: that is
+  within 9.2.4.3, which asks for TONEq during the 2 s and leaves the
+  rest to ANSam and V.8.
+- **TONEq under a strong echo of our ANSpcm.** The echo is at 2100 Hz and
+  can only hide the caller's 980 Hz, never imitate it. In the simulator,
+  with the hybrid's echo at a linear gain of 0.1, 0.3 and 0.5 (6 dB down)
+  TONEq is taken; at 0.7 (3 dB down) and 1.0 it is missed, and the call
+  falls back cleanly to V.8 and still reaches V.92 data, about 2 s later.
+  How loud a real line's echo of our ANSpcm is has not been measured.
+- **Short Phase 2's recovery takes 2500 ms** from our Tone B reversal,
+  with no Tone A reversal or no INFO1a we can serve, before the full
+  Phase 2 begins (9.4.1.2.2, 9.4.1.2.3). Our reversal comes 50 ms after we
+  enter the state, not 50 ms after Tone B began, so at most about 50 ms
+  later than the minimum. The simulated caller, on a reversal that never
+  comes, goes to the full Phase 2 instead of 9.4.2.2.2's retrain.
+  INFO1a naming 3429 symbols a second (we do not receive it) is treated as
+  none; the simulated caller's own 3429 path is not known to work.
+- **One kept PCM-upstream offer.** A first start-up after TONEq that does
+  not reach data mode keeps PCM upstream on offer for one retrain, on the
+  ground that a caller's stored parameters, not the line, are the likely
+  cause. The cost, when the line is the cause, is one more failed
+  start-up before 0.7.3's rule (bit 70 cleared, V.90) applies. A fallback to
+  V.8 does not use it up, and a failure in data mode does not use it.
+- **Only mu-law and A-law lines through the simulator.** QTS and ANSpcm are
+  law-specific codewords, checked codeword by codeword against the
+  simulator's own generator for both laws; the ANSpcm table is generated
+  from the formula of V.92 8.3.1 and compared with the printed tables
+  (2408 of 2408 entries).
+- **Not implemented:** QC2a in V.8bis, QC1d, modem-on-hold, the calling
+  side. A QC1a with WXYZ 1111 is ignored, and V.8 decides.
 
 ## HST (answering)
 
@@ -1072,7 +1151,9 @@ CPU"); 0.5.0's in brackets:
 
 ## Not implemented
 
-- V.92 quick connect, short Phase 2 and modem-on-hold, either role.
+- Modem-on-hold, either role. V.92 Quick Connect and its short Phase 2 only
+  as the answering digital modem (above, "V.92 Quick Connect"): not QC2a,
+  not QC1d, not the calling side.
 - The calling (client) side of x2 and of K56flex. Their answering (server)
   sides are there since 0.4.0 and 0.5.0 (above).
 - Fax (V.17, V.29, V.27ter), V.23, half-duplex V.34.

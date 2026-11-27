@@ -16,6 +16,7 @@
 #define TONEDET_BLOCKS  6           /* blocks in a row: more than 50 ms */
 #define TONEDET_1200    0x26666666u /* 1200 / 8000 of a turn */
 #define TONEDET_2400    0x4CCCCCCDu
+#define TONEDET_980     0x1F5C28F6u /* 980 / 8000: TONEq (V.92 8.2.5), V.21(L) mark */
 
 typedef struct {
     uint32_t ph, dph;

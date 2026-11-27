@@ -216,11 +216,16 @@ void info1a_parse(const uint8_t *payload, info1a_t *i)
         i->lmax_code = (uint8_t)get(&r, 2);
         i->md_len = (uint8_t)get(&r, 7);
         i->uinfo = (uint8_t)get(&r, 7);
-        (void)get(&r, 2);
+        (void)get(&r, 1);
+        /* bit 33: reserved (0) in Table 10/V.90; in Table 19/V.92 (INFO1a
+         * after short Phase 2) the high carrier for the caller's
+         * transmitter. Not carried by Table 18 (PCM upstream). */
+        i->hi_carrier = (uint8_t)get(&r, 1);
         i->up_sr = (uint8_t)get(&r, 3);
         (void)get(&r, 3);
         i->pcm = (uint8_t)(i->up_sr == 6);
         if (!i->pcm) i->sections = i->ltot_code = i->lmax_code = 0;
+        else i->hi_carrier = 0;
     } else {
         i->min_pwr_red = (uint8_t)get(&r, 3);
         i->add_pwr_red = (uint8_t)get(&r, 3);

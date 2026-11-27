@@ -26,7 +26,7 @@
  *
  * What a callback may do to the modem that calls it: v90m_retrain,
  * v90m_cleardown, v90m_get_state, v90m_get_stats, v90m_get_diag,
- * v90m_get_v34_cap, v90m_get_restarts, v90m_get_k56 (and anything on another object: every v90m_ec_* and
+ * v90m_get_v34_cap, v90m_get_restarts, v90m_get_k56, v90m_get_qc (and anything on another object: every v90m_ec_* and
  * v90m_async_* function).
  * v90m_reset returns V90M_ESTATE and changes nothing. v90m_destroy takes effect at the end of
  * the sample under way: no event after it, the rest of the block is
@@ -40,7 +40,7 @@
  *
  * NULL: every function checks the object it is given (and the struct that
  * v90m_get_state, v90m_get_stats, v90m_get_diag, v90m_get_v34_cap,
- * v90m_get_restarts, v90m_get_k56 and v90m_ec_get_status fill): with NULL a function returning int returns V90M_EINVAL, one
+ * v90m_get_restarts, v90m_get_k56, v90m_get_qc and v90m_ec_get_status fill): with NULL a function returning int returns V90M_EINVAL, one
  * returning size_t or unsigned long 0, a void one does nothing. Except the four called for
  * every bit, v90m_ec_tx_bit, v90m_ec_rx_bit, v90m_async_getbit and
  * v90m_async_putbit: their object must not be NULL. */
@@ -56,8 +56,8 @@ extern "C" {
 
 #define V90M_VERSION_MAJOR 0
 #define V90M_VERSION_MINOR 7
-#define V90M_VERSION_PATCH 3
-/* "0.7.3": the version of the library linked in (may differ from the header) */
+#define V90M_VERSION_PATCH 4
+/* "0.7.4": the version of the library linked in (may differ from the header) */
 const char *v90m_version(void);
 
 /* error codes (negative returns) */
@@ -230,6 +230,17 @@ typedef enum {
  * the call goes on as without K56flex, V.8 then V.34 or V.90
  * (v90m_get_k56). Meant for a test number only. Calling: ignored. */
 #define V90M_OPT_K56_V1 0x40000u
+/* Not a modulation (added in 0.7.4): an option bit, off by default.
+ * Answering, with V90M_MOD_V92: a caller's V.92 Quick Connect request
+ * (QC1a, V.92 8.2.1) is not taken; the call starts with V.8 as in 0.7.3,
+ * whatever the caller sent before its CM. Without it Quick Connect is part
+ * of V.92: a QC1a heard during our answer tone ends V.8 at once, short
+ * Phase 1 (QCA1d, QTS, ANSpcm, the caller's TONEq) replaces the rest of
+ * V.8, and a caller that does not complete it within 2 s gets our answer
+ * tone again and V.8 (V.92 9.2.4). A safety valve per port, and what a
+ * replay of a call answered by 0.7.3 or earlier needs (v90m-replay -Q).
+ * 0x80000 is kept free. Calling: ignored. */
+#define V90M_OPT_NO_QC 0x100000u
 
 /* the modulation of a connection (v90m_state.modulation) */
 typedef enum {
@@ -615,7 +626,9 @@ const char *v90m_cause_name(v90m_cause c);
  * v90m_restarts: v90m_stats keeps its size within 0.7, and so does
  * v90m_k56 from 0.7.2 on. Cheap; fine to read after every sample. For the
  * host's log: a client declined is one that would have run K56flex
- * version 1 (docs/answering.md, "K56flex versions"). */
+ * version 1 (docs/answering.md, "K56flex versions"). A client whose MS
+ * left the modulation to V.8 (no K56flex block) and got our ACK(1) reads
+ * exchanged 0 here: v90m_qc.v8bis_ack says it (0.7.4). */
 typedef struct {
     int        offered;     /* the versions our CL offered, a mask: bit 0
                                version 1, bit 1 version 2; 3 (both) by
@@ -634,6 +647,46 @@ typedef struct {
                                client's INFO1c and our INFO1a agree) */
 } v90m_k56;
 void     v90m_get_k56(const v90m_t *m, v90m_k56 *k);
+
+/* V.92 Quick Connect, answering (added in 0.7.4): the caller's QC1a heard
+ * during our answer tone (V.92 8.2.1, Table 2) and what came of it: short
+ * Phase 1 taken (QCA1d, QTS, ANSpcm; V90M_MOD_V92 offered, K56flex not
+ * agreed, no V90M_OPT_NO_QC), the caller's TONEq or the fallback to V.8
+ * (9.2.4.3), and short Phase 2 (9.4.1). Settled field by field as the call
+ * goes, kept after the end until v90m_reset. All 0 when calling, and in a
+ * call before a QC1a is heard (v8bis_ack apart: V.8bis comes first). A
+ * struct and a function of their own, as v90m_k56: v90m_stats keeps its
+ * size within 0.7, and so does v90m_qc from 0.7.4 on. Cheap; fine to read
+ * after every sample. The QC1a reported is the first one heard in the
+ * call, the one acted on: V.8 listens for no other (a QC1a sent again after
+ * a fallback is not taken). */
+typedef struct {
+    int        heard;       /* 1: a QC1a during our ANSam (two equal copies) */
+    int        uqts;        /* its UQTS (WXYZ) as a Ucode, 61..87; -1 for WXYZ
+                               1111 (cleardown from modem-on-hold) or an octet
+                               that is not an analogue modem's QC1a: ignored,
+                               the call goes on with V.8; 0 when not heard */
+    int        lapm;        /* its P bit (LAPM asked for); 0 when not heard */
+    int        accepted;    /* 1: we answered it with QCA1d, QTS and ANSpcm */
+    int        level_db10;  /* the ANSpcm level our QCA1d named (LM), 0.1 dBm0:
+                               -95, -120, -150 or -180; 0 when not accepted */
+    int        toneq_ms;    /* ms from the end of our QCA1d to the caller's
+                               TONEq heard (within 2 s of it); 0 none */
+    int        fallback;    /* 1: no TONEq within 2 s: our answer tone again
+                               and V.8 (9.2.4.3) */
+    int        bypass;      /* once heard, v90m_state.odp_bypass: V.42's ODP /
+                               ADP skipped. Accepted without a fallback: both P
+                               bits set (9.2.5); otherwise V.8's rule (V.92 at
+                               both ends, LAPM in CM and JM: 9.3.1), so after a
+                               fallback it can be 1. 0 when not heard */
+    int        short_p2;    /* 0 not run; 1 short Phase 2 completed (9.4.1); 2
+                               begun, then the full Phase 2 */
+    int        v8bis_ack;   /* 1: with V90M_MOD_K56, the client's V.8bis MS
+                               left the modulation to V.8 (no K56flex block)
+                               and got our ACK(1) (V.8bis 9.7, 9.9.1), with or
+                               without a QC1a after it */
+} v90m_qc;
+void     v90m_get_qc(const v90m_t *m, v90m_qc *q);
 
 /* ------------------------------------- start-stop characters (V.14 basic)
  * Characters (1 start, 8 data LSB first, 1 stop, mark idle) on the bit pump
