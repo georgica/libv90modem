@@ -43,8 +43,8 @@ the object first.
 
 | | |
 |---|---|
-| `V90M_VERSION_MAJOR`, `V90M_VERSION_MINOR`, `V90M_VERSION_PATCH` | the header's version: 0, 7, 3 |
-| `const char *v90m_version(void)` | "0.7.3": the version of the library linked in (may differ from the header) |
+| `V90M_VERSION_MAJOR`, `V90M_VERSION_MINOR`, `V90M_VERSION_PATCH` | the header's version: 0, 7, 4 |
+| `const char *v90m_version(void)` | "0.7.4": the version of the library linked in (may differ from the header) |
 
 ## Error codes
 

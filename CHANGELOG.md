@@ -8,7 +8,7 @@ change is listed here. Rebuild against the new header with every version;
 "Simulation and own answerer only" means: tried against simulated lines and
 this library's own answering modem, never against a real modem or server.
 
-## 0.7.4 (unreleased)
+## 0.7.4 (2026-11-27)
 
 V.92 Quick Connect for the answering side, and an ACK(1) fix in V.8bis.
 The ABI of 0.7.3 kept: no struct changes size, `v90m_mem_size()` unchanged

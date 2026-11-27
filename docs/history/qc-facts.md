@@ -10,10 +10,10 @@ facts, each with where it came from, in our own words.
 ## Tags and sources
 
 - [V.92 n]: ITU-T V.92 (11/2000), clause or table n, read from
-  `/home/georgica/v90d/refs/itu/T-REC-V.92-200011-I.txt` (the text, read
+  the ITU-T V.92 text file (read
   only).
 - [BM file:line]: BinModem's behaviour, read from its source at
-  `/home/georgica/modem-research/ext/BinModem`, commit `2a1bfcc`. Read for
+  the BinModem source (github.com/CasualArclamp/BinModem), commit `2a1bfcc`. Read for
   what it does, never copied. Paths are relative to that tree.
 - [OURS]: a reading or a choice this plan makes, with its reason, for the
   owner to overrule ("Readings").

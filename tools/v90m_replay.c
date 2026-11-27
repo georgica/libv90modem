@@ -13,7 +13,7 @@
  *               caller (a U.S. Robotics 5686 sends one) would part from
  *               them at its QCA1d. Without -Q, a QC1a heard adds a line to
  *               the report: "qc: heard 1 uqts U lapm P accepted A level L
-               toneq T fallback F short S" (v90m_get_qc), after the
+ *               toneq T fallback F short S" (v90m_get_qc), after the
  *               modulation line; without -9, or with -Q, there is none
  *   -x          x2 offered
  *   -k          K56flex offered: V.8bis comes first, and what the recording
