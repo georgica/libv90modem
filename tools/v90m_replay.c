@@ -11,7 +11,10 @@
  *               replay proof's V.92 sets: their recordings were answered
  *               so, and an open-loop replay that took the QC1a of a V.92
  *               caller (a U.S. Robotics 5686 sends one) would part from
- *               them at its QCA1d
+ *               them at its QCA1d. Without -Q, a QC1a heard adds a line to
+               the report: "qc: heard 1 uqts U lapm P accepted A level L
+               toneq T fallback F short S" (v90m_get_qc), after the
+               modulation line; without -9, or with -Q, there is none
  *   -x          x2 offered
  *   -k          K56flex offered: V.8bis comes first, and what the recording
  *               holds is lined up with our answer tone after it (V.8bis
@@ -522,6 +525,14 @@ int main(int argc, char **argv)
         v90m_stats sx; v90m_get_stats(m, &sx);
         printf("modulation %d, %d bit/s down, %d up, SNR %.1f dB, round trip %d, echo delay %d, %u retrains, %u renegotiations; %ld bits received\n",
                (int)sx.modulation, sx.tx_bps, sx.rx_bps, sx.snr_db10 / 10.0, sx.rtd, sx.echo_delay, sx.retrains, sx.renegotiations, bits_rx);
+    }
+    if (opt_v92 && !opt_noqc) {
+        /* only where QC could be taken: the reports of -Q and of runs
+         * without -9 stay as 0.7.3's (the replay proof) */
+        v90m_qc q; v90m_get_qc(m, &q);
+        if (q.heard)
+            printf("qc: heard %d uqts %d lapm %d accepted %d level %d toneq %d fallback %d short %d\n",
+                   q.heard, q.uqts, q.lapm, q.accepted, q.level_db10, q.toneq_ms, q.fallback, q.short_p2);
     }
     if (opt_hst) { v90m_state st; v90m_get_state(m, &st); hst_report(&st); }
     for (i = 0; i < 120; i++) if (dsec[i]) printf("  second %ld: %ld samples differ\n", i, dsec[i]);

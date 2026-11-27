@@ -14,6 +14,7 @@
 #include "v90modem_diag.h"
 #include "../modem/pcmenc.h"
 #include "../modem/v14.h"
+#include "../modem/qc.h"
 #include "../v90/v90_pcm.h"
 
 /* the public numbers are the internal ones (checked at compile time) */
@@ -600,6 +601,42 @@ void v90m_get_k56(const v90m_t *m, v90m_k56 *k)
     k->chosen = (int)((f & ANS_K56_VER_MASK) >> ANS_K56_VER_SHIFT);
     k->declined = (f & ANS_K56_DECLINED) != 0;
     k->agreed = (f & ANS_K56_AGREED) != 0;
+}
+
+/* v90m_qc from answer_t.v8.qc (modem/v8ans.h, 8 octets carved in v8ans_t)
+ * and answer_t.k56: no state of its own. qc.oct is the QC1a's octet once
+ * V8A_QC_HEARD (before it, the tracker's candidate copy); V.8 tracks no
+ * QC1a after that (v8ans_tick), so it is the one acted on. LM lives in aux
+ * bits 3-4, TONEq's ms in tq_lo / tq_hi. */
+typedef char v90m_check_qc[(sizeof(((answer_t *)0)->v8.qc) == 8 && V8A_QCX_LM_SHIFT + 2 <= 8
+                            && (V8A_QCX_TRACK & (3u << V8A_QCX_LM_SHIFT)) == 0
+                            && ((V8A_QCX_OFFER | V8A_QCX_SPENT | V8A_QCX_ONHOLD) & (3u << V8A_QCX_LM_SHIFT)) == 0
+                            && (ANS_K56_MS_V8 & 0xffu) == ANS_K56_MS_V8) ? 1 : -1];
+
+void v90m_get_qc(const v90m_t *m, v90m_qc *q)
+{
+    const answer_t *a;
+    unsigned f;
+    int wxyz = 0, lapm = 0;
+    if (!m || !q) return;
+    memset(q, 0, sizeof *q);
+    if (ORIGINATING(m)) return;
+    a = &m->u.a;
+    q->v8bis_ack = (a->k56 & ANS_K56_MS_V8) != 0;
+    f = a->v8.qc.flags;
+    if (!(f & V8A_QC_HEARD)) return;
+    q->heard = 1;
+    if (qc1a_parse(a->v8.qc.oct, &wxyz, &lapm) == 0) {
+        q->lapm = lapm;
+        q->uqts = qc_uqts_ucode(wxyz);          /* -1 for 1111 */
+    } else q->uqts = -1;
+    q->accepted = (f & V8A_QC_ACCEPTED) != 0;
+    if (q->accepted) q->level_db10 = qc_lm_db10((int)((a->v8.qc.aux >> V8A_QCX_LM_SHIFT) & 3u));
+    if (f & V8A_QC_TONEQ) q->toneq_ms = a->v8.qc.tq_lo | a->v8.qc.tq_hi << 8;
+    q->fallback = (f & V8A_QC_FALLBACK) != 0;
+    /* the bypass the call used (F9: after a fallback, V.8's 9.3.1) */
+    q->bypass = answer_odp_bypass(a);
+    q->short_p2 = (f & V8A_QC_SHORT_FULL) ? 2 : (f & V8A_QC_SHORT) ? 1 : 0;
 }
 
 const char *v90m_cause_name(v90m_cause c)

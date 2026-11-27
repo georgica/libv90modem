@@ -7153,3 +7153,42 @@ in `sim/v92call` with `cfg.v8bis_ms`.
   `test_answer_qc` (16 new lines and the count); 170 programs identical.
   `make replay-proof`: 742 identical; `make bench-hashes`: 19 identical.
   ARM A5/A7 `api_test_api` 1224, 0 failures.
+
+## qc 9: v90m_get_qc, what Quick Connect did in a call; the replay report's qc line (2026-11-27)
+
+`include/v90modem.h`: `v90m_qc` (ten ints) and `v90m_get_qc` after
+`v90m_get_k56`, among the functions safe from callbacks and with NULL.
+`api/v90modem.c` reads `answer_t.v8.qc` and `answer_t.k56` (no state of
+its own, no struct grown; `v90m_check_qc` pins the layout it reads). The
+carried items:
+- the QC1a's octet (uqts, lapm) only once `V8A_QC_HEARD`; it is the first
+  QC1a heard, the one acted on: `v8ans_tick` runs the QC1a tracker only
+  while HEARD is clear, and a fallback leaves HEARD set, so no later QC1a
+  replaces it (documented in the header);
+- `bypass` is `answer_odp_bypass()`, the bypass the call used, equal to
+  `v90m_state.odp_bypass` once heard: after a fallback V.8's 9.3.1 rule
+  (1 with LAPM in CM and JM, 0 without), not `BYPASS && !FALLBACK`;
+- `ANS_K56_MS_V8` is `v90m_qc.v8bis_ack`; `v90m_k56` is unchanged
+  (`exchanged` stays "the MS carried the K56flex block"), its comment
+  points to the new field.
+`tools/v90m_replay.c`: `qc: heard H uqts U lapm P accepted A level L toneq
+T fallback F short S` after the modulation line, when a QC1a was heard and
+the run could take one (`-9` without `-Q`): the replay proof's sets (no
+`-9`, or `-9 -Q`) hear the QC1a of 54 recordings, so a line on `heard`
+alone would have changed their reports. usr7 with `-9`: `qc: heard 1 uqts
+78 lapm 0 accepted 1 level -120 toneq 0 fallback 1 short 0` (open loop:
+the recording goes on with its CM).
+- `test/api/test_qc.c` (`API_TESTS`, x86 and ARM rules), the public API
+  in blocks of 160 octets against `sim/v92call`: before, it did not
+  compile (`v90m_qc` unknown); after, 4958 checks, 0 failures. accepted
+  (short Phase 2, V.92 at 6.76 s; phases tone v8 phase2 phase3 phase4
+  data; kept after the end), fallback (bypass 1, odp_bypass 1),
+  fallback_nolapm (0, 0), default_mods (heard, not taken, V.90), no_qc,
+  k56_ms_v8 (BinModem's 21 89 80 80 81 c2: v8bis_ack 1, k56 exchanged 0),
+  plain (all 0, odp_bypass 1), null_and_reset. Reporting
+  `BYPASS && !FALLBACK` instead fails it (2 failures).
+- `make golden`: only `api/test_qc.txt` new; 173 programs identical.
+  `make replay-proof`: 742 identical; `make bench-hashes`: 19 identical;
+  check-headers 114, check-diag-names 119. ARM A5 and A7 `api_test_api`
+  1224, 0 failures; A5 `api_test_qc` 0 failures, output identical to
+  x86-64's.

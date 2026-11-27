@@ -167,7 +167,7 @@ SPLIT_TESTS := test_p34 test_orig_v92 test_orig_seeds test_orig_bell test_hstcal
 # test_answer_hst runs as six programs from one source (-DHST_PART=k: its
 # cases shared out, none much over 30 s on x86-64; the final review's m7)
 HST_PARTS := 1 2 3 4 5 6
-API_TESTS := test_api test_ec_fields test_reneg test_restarts test_diag test_mnp_call test_ec_hstlink $(addprefix test_answer_hst_,$(HST_PARTS))
+API_TESTS := test_api test_ec_fields test_reneg test_restarts test_diag test_qc test_mnp_call test_ec_hstlink $(addprefix test_answer_hst_,$(HST_PARTS))
 SUBS     := v34 v90 v92 v42 v32
 
 .PHONY: test-x2-courier test-k56-sm56 test-fixtures test-examples all lib dev install uninstall clean check check-arm check-ubsan test test-arm test-all test-times test-api test-interop examples bench-v90 bench-v34 bench-v90a bench-v90c bench-v92c replay
@@ -332,6 +332,9 @@ $(BUILD)/api_test_reneg: test/api/test_reneg.c $(DEV) include/v90modem.h api/v90
 # so does the test of who began them (v90m_get_restarts)
 $(BUILD)/api_test_restarts: test/api/test_restarts.c $(DEV) include/v90modem.h api/v90modem_priv.h
 	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -Iapi -o $@ $< $(DEV) $(LDLIBS)
+# V.92 Quick Connect against the simulated caller (sim/v92call): the dev archive
+$(BUILD)/api_test_qc: test/api/test_qc.c $(DEV) include/v90modem.h
+	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -o $@ $< $(DEV) $(LDLIBS)
 # MNP calls against the simulator's callers (sim/v32call, sim/callpeer,
 # sim/mnppeer): the development archive alone
 $(BUILD)/api_test_mnp_call: test/api/test_mnp_call.c $(DEV) include/v90modem.h
@@ -362,6 +365,8 @@ $(BUILD)/arm/api_test_reneg: test/api/test_reneg.c include/v90modem.h api/v90mod
 	$(ARM_CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -Iapi -static -o $@ $< $(BUILD)/arm/$(NAME)-dev.a $(LDLIBS)
 $(BUILD)/arm/api_test_restarts: test/api/test_restarts.c include/v90modem.h api/v90modem_priv.h $(ARM_API_LIBS)
 	$(ARM_CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -Iapi -static -o $@ $< $(BUILD)/arm/$(NAME)-dev.a $(LDLIBS)
+$(BUILD)/arm/api_test_qc: test/api/test_qc.c include/v90modem.h $(ARM_API_LIBS)
+	$(ARM_CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -static -o $@ $< $(BUILD)/arm/$(NAME)-dev.a $(LDLIBS)
 $(BUILD)/arm/api_test_mnp_call: test/api/test_mnp_call.c include/v90modem.h $(ARM_API_LIBS)
 	$(ARM_CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(API_INC) -static -o $@ $< $(BUILD)/arm/$(NAME)-dev.a $(LDLIBS)
 $(BUILD)/arm/api_test_ec_hstlink: test/api/test_ec_hstlink.c include/v90modem.h api/v90modem_priv.h $(ARM_API_LIBS)
