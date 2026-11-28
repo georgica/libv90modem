@@ -15,7 +15,8 @@ inside `v90m_process_*()` on the calling thread.
 
 What a callback may do to the modem that calls it: `v90m_retrain`,
 `v90m_cleardown`, `v90m_get_state`, `v90m_get_stats`, `v90m_get_diag`,
-`v90m_get_v34_cap`, `v90m_get_restarts`, `v90m_get_k56`, `v90m_get_qc` (and anything on another object: every `v90m_ec_*` and `v90m_async_*` function).
+`v90m_get_v34_cap`, `v90m_get_restarts`, `v90m_get_k56`, `v90m_get_qc`,
+`v90m_get_negotiation` (and anything on another object: every `v90m_ec_*` and `v90m_async_*` function).
 `v90m_reset` returns `V90M_ESTATE` and changes nothing. `v90m_destroy`
 takes effect at the end of the sample under way: no event after it, the
 rest of the block is silence (linear 0, mu-law 0xFF, A-law 0xD5), the
@@ -28,7 +29,8 @@ that goes on. `v90m_init` on the modem's own memory is not allowed.
 
 NULL: every function checks the object it is given (and the struct that
 `v90m_get_state`, `v90m_get_stats`, `v90m_get_diag`, `v90m_get_v34_cap`,
-`v90m_get_restarts`, `v90m_get_k56`, `v90m_get_qc` and `v90m_ec_get_status` fill): with
+`v90m_get_restarts`, `v90m_get_k56`, `v90m_get_qc`, `v90m_get_negotiation`
+and `v90m_ec_get_status` fill): with
 NULL a function returning `int` returns `V90M_EINVAL`, one returning
 `size_t` or `unsigned long` 0, a `void` one does nothing. Except the four
 called for every bit, `v90m_ec_tx_bit`, `v90m_ec_rx_bit`,
@@ -116,6 +118,7 @@ version; the init functions check the length given):
 | `V90M_OPT_K56_V2_ONLY` | 0x20000 | an option (added in 0.7.2), off by default. Answering, with `V90M_MOD_K56`: our V.8bis CL offers K56flex version 2 alone (version octet 0x42) instead of versions 1 and 2 (0x43, the default from 0.7.2 on), and every K56flex selection is acknowledged: 0.7.1's exchange, for a replay of a call 0.7.1 answered or a client that dislikes 0x43; `V90M_OPT_K56_V1` then changes nothing; see [answering.md](answering.md), "K56flex versions"; calling: ignored |
 | `V90M_OPT_NO_QC` | 0x100000 | an option (added in 0.7.4), off by default. Answering, with `V90M_MOD_V92`: a caller's V.92 Quick Connect request (QC1a) is not taken, and the call starts with V.8 as in 0.7.3. Without it Quick Connect is part of V.92: a QC1a heard during our answer tone is answered with short Phase 1 (QCA1d, QTS, ANSpcm), and a caller that does not finish it within 2 s gets the answer tone again and V.8. A safety valve per port, and what a replay of a call answered by 0.7.3 or earlier needs (`v90m-replay -Q`). 0x80000 is kept free; calling: ignored |
 | `V90M_OPT_K56_V1` | 0x40000 | an option (added in 0.7.2), off by default, **experimental**. Answering, with `V90M_MOD_K56`: a client that selects K56flex version 1 is acknowledged and our (version 2) start-up runs; it may fail in training, past the point where V.34 could still be had (`V90M_END_K56_FAILED`). Without it such a client is declined (NAK(3)) and goes on to V.8 as without K56flex. For a test number; see [answering.md](answering.md), "K56flex versions"; calling: ignored |
+| `V90M_OPT_NEG_EVENTS` | 0x200000 | an option (added in 0.7.5), off by default, either role: report `V90M_EV_NEGOTIATION`, see "The negotiation" |
 
 What each does in each role: [answering.md](answering.md),
 [calling.md](calling.md), and the header's comments above `v90m_role` and
@@ -153,7 +156,8 @@ On the scale of V.90 Table 1 (16-bit, the scale the modem works in);
 
 `v90m_event`, reported to `on_event` from inside `v90m_process_*()` right
 after the sample at which the change happened, before the next one is
-processed:
+processed. The list may grow in a later version, so a `switch` over
+`v90m_event` wants a `default:`.
 
 | | |
 |---|---|
@@ -162,6 +166,7 @@ processed:
 | `V90M_EV_DATA_STOPPED` | data stopped moving (retrain, rate renegotiation) |
 | `V90M_EV_DATA_MOVING` | data moves again both ways (error control: say so to V.42) |
 | `V90M_EV_ENDED` | the modem stopped: see `v90m_state.end` |
+| `V90M_EV_NEGOTIATION` | (added in 0.7.5; only with `V90M_OPT_NEG_EVENTS`) before data mode is reached, something changed of what `v90m_get_negotiation` tells, of `v90m_diag`'s `phase` or `selected`, or `v90m_state.used_v8` |
 
 `void v90m_get_state(const v90m_t *m, v90m_state *st)`: cheap, fine to read
 after every sample, and after the end (`end` says why).
@@ -436,6 +441,45 @@ A typical Quick Connect call reads `heard 1, uqts 70, lapm 1, accepted 1,
 level_db10 -120, toneq_ms` between 1 and 2000, `fallback 0, bypass 1, short_p2
 1`; one whose caller never sent TONEq, `heard 1, accepted 1, fallback 1,
 toneq_ms 0, short_p2 0`.
+
+## The negotiation
+
+Added in 0.7.5. `void v90m_get_negotiation(const v90m_t *m,
+v90m_negotiation *n)`: what V.8 said, and which modulation the start-up is
+on and why, either role, for a host that shows its owner why a modem does
+not connect. `v90m_diag.selected` names a modulation only once it is
+chosen; this also tells the fallbacks an answering modem tries on a caller
+without V.8, before anything of the caller is heard. Cheap, fine after
+every sample; a host that wants only the changes sets
+`V90M_OPT_NEG_EVENTS` and reads it (and `v90m_get_diag`) at each
+`V90M_EV_NEGOTIATION`. With m or n NULL it does nothing.
+
+| `v90m_negotiation` | |
+|---|---|
+| `far_menu` | 1 once the far modem's V.8 menu was received: answering, its CM; calling, its JM. 0: the next four are 0. A menu that was sent but not understood is not told apart from none |
+| `cm_modes`, `jm_modes` | `V90M_V8_*`, bit n for item n of Table 4/V.8: what the calling modem offered in CM, and what the answering modem's JM kept of it. Modulations the library does not have (V.23, V.17, ...) show in the CM |
+| `cm_pcm`, `jm_pcm` | `V90M_V8_PCM_*`: PCM modem availability in CM and JM |
+| `trying` | `v90m_conn`: the modulation the start-up is on. `V90M_CONN_V22BIS` for V.22 and V.22bis until the connection says which |
+| `basis` | `v90m_basis`: `V90M_BASIS_V8` JM chose it; `V90M_BASIS_QC` answering, V.92 Quick Connect taken in V.8's place; `V90M_BASIS_HEARD` the far modem's signal for it was heard (x2 and K56flex too, which the client's own signals choose); `V90M_BASIS_TRYING` answering a caller without V.8, our fallback with nothing of the caller heard on it; `V90M_BASIS_NONE` with `V90M_CONN_NONE`, nothing yet |
+
+An answering modem whose caller sends nothing, with V.22, V.21 and Bell
+212A offered, reads `V.22bis` trying once V.8 has given up, `Bell 212A`
+trying 4 s later (its answer tone; the V.22bis receiver goes on listening,
+so both are on offer), and `V.21` trying 4 s after that. A V.21 caller that
+first speaks after that silent wait reads `heard` only once connected.
+`trying` and `basis` follow the call as `v90m_diag.selected` does and are
+kept after the end, until `v90m_reset`.
+
+`V90M_BASIS_V8` is told from the moment our JM names the modulation, which
+can be before `v90m_state.used_v8` reads 1. Not every event changes what
+this function tells: most during training are changes of
+`v90m_diag.phase`.
+
+A V.92 Quick Connect that is taken ("Quick Connect" above) stands in V.8's
+place with no CM or JM: `far_menu` stays 0 although `v90m_state.used_v8` is
+1, and `trying` reads `V.90`, and `V.92` once a Phase 3 with PCM upstream
+has begun (without PCM upstream it stays `V.90`), with `V90M_BASIS_QC`. One
+that falls back goes on to V.8, whose menus are told as for any caller.
 
 ## Control calls
 

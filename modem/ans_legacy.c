@@ -135,6 +135,14 @@ static int16_t tick_v21(answer_t *a, int16_t rx)
     return out;
 }
 
+int answer_bell_tone(const answer_t *a)
+{
+    return !a->connected && !a->used_v8 && (a->cfg.modes & ANS_MODE_BELL212A)
+           && a->v22.state == V22S_WAIT && a->t > MS(V22_BELL_MS);
+}
+
+int answer_v21_mark(const answer_t *a) { return a->v21mark.blocks >= V21_MARK_BLOCKS; }
+
 static int16_t tick_v22(answer_t *a, int16_t rx)
 {
     int16_t tx;
@@ -166,8 +174,7 @@ static int16_t tick_v22(answer_t *a, int16_t rx)
          * It gets that in place of the ones while the V.22bis modem
          * goes on listening; what a 212A caller then sends is what a
          * V.22 caller sends, and the start-up continues from there. */
-        int tone = !a->connected && !a->used_v8 && (a->cfg.modes & ANS_MODE_BELL212A)
-                   && a->v22.state == V22S_WAIT && a->t > MS(V22_BELL_MS);
+        int tone = answer_bell_tone(a);
         tx = v22m_tick(&a->v22, rx);
         if (tone) {
             int done;

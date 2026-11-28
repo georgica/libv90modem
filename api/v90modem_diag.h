@@ -108,9 +108,18 @@ static inline int dg_count(int fam)
  * order a call goes through them */
 typedef struct { uint8_t iphase, phase, sel; } diag_track_t;
 
+/* v90m_get_negotiation: the modulation the start-up is on (v90m_conn), why
+ * (v90m_basis), and DG_NEG_* of the last sample */
+typedef struct { uint8_t trying, basis, flags; } neg_track_t;
+#define DG_NEG_MENU 1       /* the far modem's V.8 menu was received */
+#define DG_NEG_V8   2       /* v90m_state.used_v8 */
+
 /* after a sample that did not end the call */
 void diag_track_answer(diag_track_t *t, const answer_t *a);
 void diag_track_orig(diag_track_t *t, const orig_t *o);
+/* the same for v90m_get_negotiation; sel: as diag_track_* just left it */
+void neg_track_answer(neg_track_t *t, const answer_t *a, uint8_t sel);
+void neg_track_orig(neg_track_t *t, const orig_t *o, uint8_t sel);
 /* the code of why the call ended (the modem's phase is ANS_FAILED /
  * ORIG_FAILED; t as the last sample before left it) */
 int  diag_err_answer(const answer_t *a, const diag_track_t *t);

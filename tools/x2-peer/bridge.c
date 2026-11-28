@@ -244,6 +244,8 @@ static void on_event(void *u, v90m_event ev)
     case V90M_EV_ENDED:
         printf("[%7.2f] ours: ended: %s\n", line_s(), NAME(end_name, st.end));
         break;
+    case V90M_EV_NEGOTIATION:                           /* not asked for here */
+        break;
     }
     fflush(stdout);
 }
