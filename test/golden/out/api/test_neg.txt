@@ -36,18 +36,18 @@
     caller   2.59 s: far menu 1, CM 1000 pcm 0, JM 0000 pcm 0, none (none)
   V.92 Quick Connect, taken:
     answerer   0.00 s: far menu 0, CM 0000 pcm 0, JM 0000 pcm 0, none (none)
-    answerer   1.40 s: far menu 0, CM 0000 pcm 0, JM 0000 pcm 0, V.90 (V.8)
-    answerer   2.01 s: far menu 0, CM 0000 pcm 0, JM 0000 pcm 0, V.90 (V.8)
-    answerer   2.34 s: far menu 0, CM 0000 pcm 0, JM 0000 pcm 0, V.92 (V.8)
-    answerer   4.27 s: far menu 0, CM 0000 pcm 0, JM 0000 pcm 0, V.92 (V.8)
-    answerer   6.04 s: far menu 0, CM 0000 pcm 0, JM 0000 pcm 0, V.92 (V.8)
+    answerer   1.40 s: far menu 0, CM 0000 pcm 0, JM 0000 pcm 0, V.90 (QC)
+    answerer   2.01 s: far menu 0, CM 0000 pcm 0, JM 0000 pcm 0, V.90 (QC)
+    answerer   2.34 s: far menu 0, CM 0000 pcm 0, JM 0000 pcm 0, V.92 (QC)
+    answerer   4.27 s: far menu 0, CM 0000 pcm 0, JM 0000 pcm 0, V.92 (QC)
+    answerer   6.04 s: far menu 0, CM 0000 pcm 0, JM 0000 pcm 0, V.92 (QC)
   V.92 Quick Connect, not completed:
     answerer   0.00 s: far menu 0, CM 0000 pcm 0, JM 0000 pcm 0, none (none)
-    answerer   1.40 s: far menu 0, CM 0000 pcm 0, JM 0000 pcm 0, V.90 (V.8)
+    answerer   1.40 s: far menu 0, CM 0000 pcm 0, JM 0000 pcm 0, V.90 (QC)
     answerer   3.63 s: far menu 0, CM 0000 pcm 0, JM 0000 pcm 0, none (none)
     answerer   5.15 s: far menu 1, CM 1012 pcm 1, JM 0002 pcm 2, V.90 (V.8)
     answerer   6.16 s: far menu 1, CM 1012 pcm 1, JM 0002 pcm 2, V.90 (V.8)
     answerer   8.13 s: far menu 1, CM 1012 pcm 1, JM 0002 pcm 2, V.92 (V.8)
     answerer  10.06 s: far menu 1, CM 1012 pcm 1, JM 0002 pcm 2, V.92 (V.8)
     answerer  12.31 s: far menu 1, CM 1012 pcm 1, JM 0002 pcm 2, V.92 (V.8)
-test_neg: 76 checks, 0 failures
+test_neg: 161 checks, 0 failures

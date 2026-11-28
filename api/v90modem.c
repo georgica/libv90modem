@@ -56,7 +56,8 @@ int16_t v90m_g711_decode(int alaw, uint8_t codeword) { return (int16_t)v90_octet
 struct v90m {
     v90m_cfg cfg;
     uint8_t  owned;             /* from v90m_create: v90m_destroy frees it */
-    neg_track_t neg;            /* v90m_get_negotiation (in the octets an int owned would take) */
+    neg_track_t neg;            /* v90m_get_negotiation. With owned, the 4 octets an int owned took:
+                                   struct v90m must not grow (v90m_mem_size() is pinned) */
     /* what the last sample left, to report changes */
     uint8_t  was_connected, was_moving, was_ended;
     uint8_t  busy;              /* inside v90m_process_*: a callback may be running */
@@ -353,12 +354,13 @@ static void diag_track(v90m_t *m, int orig)
  * data_reached as it was before this sample) */
 static inline void track(v90m_t *m, int orig, int reached)
 {
-    diag_track_t was = m->diag;
-    neg_track_t on = m->neg;
+    diag_track_t was;
+    neg_track_t on;
+    if (reached || !(m->cfg.modulations & V90M_OPT_NEG_EVENTS)) { diag_track(m, orig); return; }
+    was = m->diag; on = m->neg;
     diag_track(m, orig);
-    if (!reached && (m->cfg.modulations & V90M_OPT_NEG_EVENTS)
-        && (m->diag.phase != was.phase || m->diag.sel != was.sel || m->neg.trying != on.trying
-            || m->neg.basis != on.basis || m->neg.flags != on.flags))
+    if (m->diag.phase != was.phase || m->diag.sel != was.sel || m->neg.trying != on.trying
+        || m->neg.basis != on.basis || m->neg.flags != on.flags)
         event(m, V90M_EV_NEGOTIATION);
 }
 

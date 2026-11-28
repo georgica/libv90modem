@@ -347,7 +347,9 @@ int     answer_odp_bypass(const answer_t *a);
 int     answer_end(const answer_t *a);
 /* for the negotiation report (v90m_get_negotiation): in ANS_V22, whether a
  * caller without V.8 is being sent the Bell 212A answer tone; in ANS_V21,
- * whether a V.21 caller's mark was heard while we waited in V.22 */
+ * whether a V.21 caller's mark was heard while we waited in V.22. The mark's
+ * detector (v21mark) is ticked in ANS_V22 only, so in ANS_V21 it still holds
+ * what it had when V.22 ended and tells how ANS_V21 was entered: keep it so */
 int     answer_bell_tone(const answer_t *a);
 int     answer_v21_mark(const answer_t *a);
 /* v90m_get_restarts: on the sample data stops for a rate renegotiation, who

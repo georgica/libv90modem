@@ -6,12 +6,16 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+#include <math.h>
 #include "v90modem.h"
 #include "test.h"
 #include "callpeer.h"
 #include "v92call.h"
+#include "v32call.h"
+#include "x2call.h"
+#include "k56call.h"
 
-#define MAXSTEP 24
+#define MAXSTEP 48
 
 /* one line of what a modem reported, at each V90M_EV_NEGOTIATION */
 typedef struct { long at; v90m_negotiation n; } step_t;
@@ -37,24 +41,26 @@ static void end_event(void *u, v90m_event ev)
     e->n_steps++;
 }
 
-static void end_init(end_t *e, v90m_role role, unsigned mods)
+static void end_init_opt(end_t *e, v90m_role role, unsigned mods, unsigned opt)
 {
     v90m_cfg c; int err;
     memset(e, 0, sizeof *e);
     e->a = v90m_async_create(&err);
     v90m_cfg_default(&c);
-    c.role = role; c.modulations = mods | V90M_OPT_NEG_EVENTS;
+    c.role = role; c.modulations = mods | opt;
     c.getbit = end_get; c.putbit = end_put; c.user = e; c.on_event = end_event;
     e->cfg = c;
     e->m = v90m_create(&c, &err);
     CHECK(e->m != NULL);
 }
-static void end_free(end_t *e) { v90m_destroy(e->m); v90m_async_destroy(e->a); }
+static void end_init(end_t *e, v90m_role role, unsigned mods) { end_init_opt(e, role, mods, V90M_OPT_NEG_EVENTS); }
+/* every step kept: more would be a storm of events, and find() blind to them */
+static void end_free(end_t *e) { CHECK(e->n_steps <= MAXSTEP); v90m_destroy(e->m); v90m_async_destroy(e->a); }
 
 static const char *basis_name(v90m_basis b)
 {
     return b == V90M_BASIS_NONE ? "none" : b == V90M_BASIS_TRYING ? "trying" : b == V90M_BASIS_HEARD ? "heard"
-           : b == V90M_BASIS_V8 ? "V.8" : "?";
+           : b == V90M_BASIS_V8 ? "V.8" : b == V90M_BASIS_QC ? "QC" : "?";
 }
 
 static void show(const char *who, const end_t *e)
@@ -225,8 +231,9 @@ static void test_option_off(void)
 }
 
 /* a V.92 caller that sends QC1a. Taken: V.92 is chosen in V.8's place with
- * no CM or JM, so no menu is reported. Not completed (no TONEq): V.8 goes
- * on, and its menus are reported as for any caller */
+ * no CM or JM, so no menu is reported and the basis is Quick Connect. Not
+ * completed (no TONEq): V.8 goes on, and its menus and basis are reported as
+ * for any caller */
 static void quick_connect(int no_toneq)
 {
     static end_t e;
@@ -253,11 +260,203 @@ static void quick_connect(int no_toneq)
     v90m_get_negotiation(e.m, &n); v90m_get_qc(e.m, &q);
     CHECK(d.data_reached);
     CHECK_EQ_I(q.accepted, 1); CHECK_EQ_I(q.fallback, no_toneq);
-    CHECK_EQ_I(n.trying, V90M_CONN_V92); CHECK_EQ_I(n.basis, V90M_BASIS_V8);
-    CHECK(find(&e, V90M_CONN_V92, V90M_BASIS_V8) != NULL);
+    CHECK_EQ_I(n.trying, V90M_CONN_V92); CHECK_EQ_I(n.basis, no_toneq ? V90M_BASIS_V8 : V90M_BASIS_QC);
+    CHECK(find(&e, V90M_CONN_V92, no_toneq ? V90M_BASIS_V8 : V90M_BASIS_QC) != NULL);
+    if (!no_toneq) CHECK(find(&e, V90M_CONN_V92, V90M_BASIS_V8) == NULL);
     CHECK_EQ_I(n.far_menu, no_toneq);
     if (no_toneq) { CHECK(n.cm_modes & V90M_V8_V34); CHECK(n.jm_modes & V90M_V8_V34); }
     else { CHECK_EQ_I(n.cm_modes, 0); CHECK_EQ_I(n.jm_modes, 0); }
+    end_free(&e);
+}
+
+/* the option changes nothing on the line: the same pair with it and without,
+ * every sample sent both ways hashed */
+static uint32_t pair_hash(unsigned c_mods, unsigned a_mods, unsigned opt, int *events)
+{
+    static end_t c, a;
+    int16_t c_rx = 0, a_rx = 0;
+    uint32_t h = 2166136261u;
+    long k;
+    end_init_opt(&c, V90M_ROLE_ORIGINATE, c_mods, opt);
+    end_init_opt(&a, V90M_ROLE_ANSWER, a_mods, opt);
+    if (!c.m || !a.m) return 0;
+    for (k = 0; k < 8000L * 15; k++) {
+        int16_t c_tx, a_tx;
+        c.k = a.k = k;
+        v90m_process_linear(c.m, &c_rx, &c_tx, 1);
+        v90m_process_linear(a.m, &a_rx, &a_tx, 1);
+        a_rx = c_tx; c_rx = a_tx;
+        h = (h ^ (uint16_t)c_tx) * 16777619u;
+        h = (h ^ (uint16_t)a_tx) * 16777619u;
+    }
+    *events = c.n_steps + a.n_steps;
+    end_free(&c); end_free(&a);
+    return h;
+}
+
+static void test_same_signal(void)
+{
+    static const unsigned mods[3][2] = {
+        { V90M_MOD_V90 | V90M_MOD_V34, V90M_MOD_V90 | V90M_MOD_V92 | V90M_MOD_V34 },
+        { V90M_MOD_V22 | V90M_MOD_V21, V90M_MOD_V22 | V90M_MOD_V21 | V90M_MOD_BELL212A },
+        { V90M_MOD_V32BIS, V90M_MOD_V32BIS | V90M_MOD_V22 }
+    };
+    int i, off, on;
+    for (i = 0; i < 3; i++) {
+        uint32_t without = pair_hash(mods[i][0], mods[i][1], 0, &off);
+        uint32_t with = pair_hash(mods[i][0], mods[i][1], V90M_OPT_NEG_EVENTS, &on);
+        CHECK(without == with);
+        CHECK_EQ_I(off, 0); CHECK(on > 0);
+    }
+}
+
+/* nothing more once data mode was reached, through a retrain too */
+static void test_quiet_after_data(void)
+{
+    static end_t c, a;
+    int16_t c_rx = 0, a_rx = 0;
+    long k, data_at = -1;
+    int at_data = -1;
+    v90m_stats sx;
+    end_init(&c, V90M_ROLE_ORIGINATE, V90M_MOD_V34);
+    end_init(&a, V90M_ROLE_ANSWER, V90M_MOD_V34);
+    if (!c.m || !a.m) return;
+    for (k = 0; k < 8000L * 40; k++) {
+        int16_t c_tx, a_tx;
+        v90m_diag d;
+        c.k = a.k = k;
+        v90m_process_linear(c.m, &c_rx, &c_tx, 1);
+        v90m_process_linear(a.m, &a_rx, &a_tx, 1);
+        a_rx = c_tx; c_rx = a_tx;
+        v90m_get_diag(a.m, &d);
+        if (d.data_reached && data_at < 0) { data_at = k; at_data = a.n_steps; }
+        if (data_at >= 0 && k == data_at + 4000) CHECK_EQ_I(v90m_retrain(a.m), V90M_OK);
+        if (data_at >= 0 && k == data_at + 8000L * 15) break;
+    }
+    CHECK(data_at >= 0);
+    v90m_get_stats(a.m, &sx);
+    CHECK(sx.retrains >= 1);
+    CHECK_EQ_I(a.n_steps, at_data);
+    end_free(&c); end_free(&a);
+}
+
+/* calling, an answerer without V.8 (a plain 2100 Hz answer tone): training,
+ * and nothing to report until its signal says which */
+static void test_calling_no_v8(void)
+{
+    static end_t e;
+    v90m_negotiation n;
+    v90m_diag d;
+    int16_t rx, tx;
+    int i;
+    end_init(&e, V90M_ROLE_ORIGINATE, V90M_MOD_V22 | V90M_MOD_V21);
+    if (!e.m) return;
+    for (e.k = 0; e.k < 8000L * 5; e.k++) {
+        rx = e.k < 8000L * 3 ? (int16_t)lrint(3000.0 * sin(6.283185307179586 * 2100.0 * (double)e.k / 8000.0)) : 0;
+        v90m_process_linear(e.m, &rx, &tx, 1);
+    }
+    v90m_get_negotiation(e.m, &n); v90m_get_diag(e.m, &d);
+    CHECK_EQ_I(d.phase, V90M_PHASE_TRAIN);
+    CHECK_EQ_I(n.far_menu, 0); CHECK_EQ_I(n.trying, V90M_CONN_NONE); CHECK_EQ_I(n.basis, V90M_BASIS_NONE);
+    for (i = 0; i < e.n_steps && i < MAXSTEP; i++) CHECK_EQ_I(e.step[i].n.basis, V90M_BASIS_NONE);
+    end_free(&e);
+}
+
+/* a V.32bis caller without V.8: its AA during our answer tone is heard */
+static void test_v32_caller(void)
+{
+    static end_t e;
+    static v32call_t p;
+    vc_cfg cc;
+    v90m_diag d;
+    int16_t line = 0, rx, tx;
+    end_init(&e, V90M_ROLE_ANSWER, V90M_MOD_V32BIS | V90M_MOD_V22);
+    if (!e.m) return;
+    memset(&cc, 0, sizeof cc);
+    cc.level = 3000; cc.rates = 0x1Fu; cc.trn_len = 1280;
+    cc.getbit = end_get; cc.putbit = end_put; cc.user = &e;
+    v32call_init(&p, &cc);
+    for (e.k = 0; e.k < 8000L * 30; e.k++) {
+        long q = e.k < 8000L * 2 ? 0 : lrint(v32call_tick(&p, line));
+        rx = (int16_t)(q > 32767 ? 32767 : q < -32768 ? -32768 : q);
+        v90m_process_linear(e.m, &rx, &tx, 1);
+        line = tx;
+        v90m_get_diag(e.m, &d);
+        if (d.data_reached || e.n_ended) break;
+    }
+    CHECK(d.data_reached);
+    CHECK(find(&e, V90M_CONN_V32BIS, V90M_BASIS_HEARD) != NULL);
+    CHECK(find(&e, V90M_CONN_V32BIS, V90M_BASIS_V8) == NULL);
+    end_free(&e);
+}
+
+/* HST offered with an endpoint linked, a silent caller: our wait for its back
+ * channel is a fallback we try */
+static void test_hst_wait(void)
+{
+    static end_t e;
+    v90m_ec_cfg ec_cfg;
+    v90m_ec_t *ec;
+    int16_t rx = 0, tx;
+    int err;
+    end_init(&e, V90M_ROLE_ANSWER, V90M_MOD_HST | V90M_MOD_V22);
+    if (!e.m) return;
+    v90m_ec_cfg_default(&ec_cfg, 0);
+    ec_cfg.mnp.enable = 1;
+    ec = v90m_ec_create(&ec_cfg, &err);
+    CHECK(ec != NULL);
+    if (!ec) return;
+    CHECK_EQ_I(v90m_ec_link_hst(ec, e.m), V90M_OK);
+    for (e.k = 0; e.k < 8000L * 30; e.k++) {
+        v90m_process_linear(e.m, &rx, &tx, 1);
+        if (e.n_ended || find(&e, V90M_CONN_HST, V90M_BASIS_TRYING)) break;
+    }
+    CHECK(find(&e, V90M_CONN_HST, V90M_BASIS_TRYING) != NULL);
+    end_free(&e);
+    v90m_ec_destroy(ec);
+}
+
+/* x2 and K56flex: the client's own signals choose them, so "heard", not V.8 */
+static void test_x2_k56(int k56)
+{
+    static end_t e;
+    static x2call_t x;
+    static k56call_t k;
+    static uint8_t down[64];
+    v90m_conn want = k56 ? V90M_CONN_K56FLEX : V90M_CONN_X2;
+    v90m_negotiation n;
+    v90m_diag d;
+    uint8_t rx = 0xFF, tx;
+    end_init(&e, V90M_ROLE_ANSWER, V90M_MOD_V34 | V90M_MOD_V90
+             | (k56 ? V90M_MOD_K56 | V90M_OPT_K56_V2_ONLY : V90M_MOD_X2));
+    if (!e.m) return;
+    if (k56) {
+        k56call_cfg kc;
+        k56call_default(&kc, 3000);
+        kc.rate = 1; kc.getbit = end_get; kc.putbit = end_put; kc.user = &e;
+        k56call_init(&k, &kc);
+    } else {
+        x2call_cfg xc;
+        memset(&xc, 0, sizeof xc);
+        xc.level = 3000; xc.max_index = 1; xc.up_mask = 0x03FE;
+        xc.getbit = end_get; xc.putbit = end_put; xc.user = &e;
+        x2call_init(&x, &xc);
+    }
+    memset(down, k56 ? 0xFF : 0x7F, sizeof down);
+    for (e.k = 0; e.k < 8000L * 40; e.k++) {
+        int16_t s;
+        v90m_process_g711(e.m, &rx, &tx, 1);
+        down[e.k & 63] = tx;
+        s = k56 ? k56call_tick(&k, down[(e.k - 30) & 63]) : x2call_tick(&x, down[(e.k - 30) & 63]);
+        rx = v90m_g711_encode(0, (int16_t)(s / 2));
+        v90m_get_diag(e.m, &d);
+        if (d.data_reached || e.n_ended) break;
+    }
+    v90m_get_negotiation(e.m, &n);
+    CHECK(d.data_reached);
+    CHECK_EQ_I(n.trying, want); CHECK_EQ_I(n.basis, V90M_BASIS_HEARD);
+    CHECK(find(&e, want, V90M_BASIS_HEARD) != NULL);
+    CHECK(find(&e, want, V90M_BASIS_V8) == NULL);
     end_free(&e);
 }
 
@@ -269,5 +468,12 @@ int main(void)
     test_option_off();
     quick_connect(0);
     quick_connect(1);
+    test_same_signal();
+    test_quiet_after_data();
+    test_calling_no_v8();
+    test_v32_caller();
+    test_hst_wait();
+    test_x2_k56(0);
+    test_x2_k56(1);
     T_REPORT("test_neg");
 }

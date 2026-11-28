@@ -309,6 +309,8 @@ deliberately a second copy). All of them are in `make check`:
   K56flex and V.8bis cases, `V90M_OPT_NO_QC`.
 - `test_v8bis`: V.8bis's MS for V.8 and the ACK(1) it gets.
 - `api/test_qc`: `v90m_get_qc` through the public API.
+- `api/test_neg`: `v90m_get_negotiation` and `V90M_EV_NEGOTIATION` through
+  the public API, Quick Connect among its calls.
 - **`make qc-scan RECS=<dir>`:** V.92's QC1a in the recordings of a
   directory (`.raw` and `.raw.xz`, as `v90m-replay` reads them): each one
   found with its time and information octet, then a count. Real V.92
